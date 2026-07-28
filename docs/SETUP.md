@@ -72,10 +72,14 @@
    - **Secret**: 같은 토큰 붙여넣기
 4. **Add secret**
 
-## 4단계 — GitHub Pages 켜기
+## 4단계 — GitHub Pages 켜기 ⚠️ 5단계보다 먼저 해야 합니다
 
 1. `Investment-Analytics-Workbench` 저장소 → **Settings** → 왼쪽 **Pages**
 2. **Build and deployment → Source**: **GitHub Actions** 선택 (저장 버튼 없음, 선택 즉시 적용)
+
+> 이 단계를 건너뛰고 빌드를 돌리면 **Setup Pages** 단계에서
+> `Get Pages site failed … Not Found` 오류로 실패합니다.
+> 그럴 땐 여기서 Source를 설정한 뒤 5단계로 재실행하면 됩니다(수정할 코드 없음).
 
 ## 5단계 — 첫 빌드 실행 & 확인
 
@@ -126,6 +130,7 @@
 |---|---|
 | 엑셀을 올렸는데 대시보드가 안 바뀜 | ① data 저장소 Actions에서 Notify workbench가 성공했는지 ② 실패 로그에 토큰 오류가 있으면 `WORKBENCH_DISPATCH_TOKEN` 재확인 (만료 여부 포함) |
 | Build & deploy dashboard가 체크아웃 단계에서 실패 | `DATA_REPO_TOKEN` 시크릿 누락/만료, 또는 토큰의 Repository access에 `data`가 포함 안 됨 |
+| **Setup Pages** 단계에서 `Get Pages site failed … Not Found` | 4단계(Pages Source = GitHub Actions)를 아직 안 한 것 — 설정 후 워크플로우 재실행 |
 | 대시보드 접속 시 404 | 4단계 Pages 설정(Source = GitHub Actions)이 되어 있는지, 첫 배포가 성공했는지 |
 | deploy 단계에서 `Branch "…" is not allowed to deploy to github-pages` 오류 | 기본 브랜치 이름을 바꾼 뒤 발생 — Settings → Environments → github-pages → Deployment branches에 새 기본 브랜치 추가 |
 | 빌드는 성공했는데 일부 차트가 "데이터 없음" | 엑셀에서 해당 시리즈(Notation)가 빠졌거나 이름이 바뀐 경우 — Actions 로그와 대시보드 하단 경고 수, 브라우저 콘솔의 `pipeline warnings` 확인 |
