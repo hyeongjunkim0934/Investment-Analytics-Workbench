@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Investment Analytics Workbench</title>
+<meta name="description" content="금리·크레딧·FX·인플레이션·지수 데이터를 자동 갱신하는 투자 분석 대시보드">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%F0%9F%93%88%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="vendor/uplot.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark">IA</span>
+      <div>
+        <div class="brand-title">Investment Analytics Workbench</div>
+        <div class="brand-sub" id="meta-line">데이터 로딩 중…</div>
+      </div>
+    </div>
+    <nav class="nav" id="nav">
+      <a href="#overview">개요</a>
+      <a href="#rates">금리</a>
+      <a href="#irs">IRS</a>
+      <a href="#credit">크레딧</a>
+      <a href="#fx">FX</a>
+      <a href="#inflation">물가</a>
+      <a href="#acwi">ACWI</a>
+      <a href="#macro">매크로</a>
+      <a href="#catalog">카탈로그</a>
+    </nav>
+    <button class="theme-btn" id="theme-btn" title="라이트/다크 전환" aria-label="라이트/다크 전환">◐</button>
+  </div>
+</header>
+
+<main class="page">
+
+  <div class="filter-row" role="group" aria-label="기간 선택">
+    <span class="filter-label">기간</span>
+    <div class="range-group" id="range-group">
+      <button data-range="1">1년</button>
+      <button data-range="3">3년</button>
+      <button data-range="5" class="active">5년</button>
+      <button data-range="10">10년</button>
+      <button data-range="0">전체</button>
+    </div>
+    <span class="filter-note">시계열 차트에 공통 적용</span>
+  </div>
+
+  <section id="overview" class="section">
+    <h2>시장 개요</h2>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <section id="rates" class="section">
+    <h2>금리</h2>
+    <div class="grid-2">
+      <div class="card" id="card-curve"></div>
+      <div class="card" id="card-ts10"></div>
+      <div class="card" id="card-spreads"></div>
+      <div class="card" id="card-policy"></div>
+    </div>
+  </section>
+
+  <section id="irs" class="section">
+    <h2>IRS 포워드</h2>
+    <div class="grid-2">
+      <div class="card" id="card-irs-fwd"></div>
+      <div class="card" id="card-irs-ts"></div>
+    </div>
+  </section>
+
+  <section id="credit" class="section">
+    <h2>크레딧</h2>
+    <div class="grid-2">
+      <div class="card" id="card-credit-kr1"></div>
+      <div class="card" id="card-credit-kr2"></div>
+      <div class="card" id="card-credit-us"></div>
+      <div class="card" id="card-cds"></div>
+    </div>
+  </section>
+
+  <section id="fx" class="section">
+    <h2>FX · 환헤지</h2>
+    <div class="grid-2" id="fx-grid"></div>
+    <div class="grid-2">
+      <div class="card" id="card-hedge-ts"></div>
+      <div class="card" id="card-hedge-table"></div>
+    </div>
+  </section>
+
+  <section id="inflation" class="section">
+    <h2>기대인플레이션</h2>
+    <div class="grid-2">
+      <div class="card" id="card-bei"></div>
+      <div class="card" id="card-tips"></div>
+    </div>
+  </section>
+
+  <section id="acwi" class="section">
+    <h2>MSCI ACWI</h2>
+    <div class="cards" id="acwi-stats"></div>
+    <div class="grid-2">
+      <div class="card" id="card-acwi-price"></div>
+      <div class="card" id="card-acwi-dd"></div>
+    </div>
+  </section>
+
+  <section id="macro" class="section">
+    <h2>매크로</h2>
+    <div class="grid-3" id="macro-grid"></div>
+  </section>
+
+  <section id="catalog" class="section">
+    <h2>시리즈 카탈로그</h2>
+    <p class="section-note">비공개 데이터 저장소에 존재하는 전체 시계열의 메타데이터입니다. 값 자체는 공개되지 않습니다.</p>
+    <div class="catalog-controls">
+      <input type="search" id="catalog-search" placeholder="이름·카테고리 검색" aria-label="시리즈 검색">
+      <span id="catalog-count" class="filter-note"></span>
+    </div>
+    <div class="table-wrap catalog-wrap">
+      <table id="catalog-table">
+        <thead><tr><th>소스</th><th>카테고리</th><th>이름</th><th>시작</th><th>최근</th><th>관측수</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <p>원본 데이터 파일은 비공개 저장소에만 보관됩니다. 이 페이지에는 선별된 시리즈와
+     파생 지표만 게시되며, 장기 시계열의 과거 구간은 주별로 축약되어 있습니다.</p>
+  <p id="build-line"></p>
+</footer>
+
+<script src="vendor/uplot.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+name: Build & deploy dashboard
+
+# 트리거:
+#   1) repository_dispatch(data-updated) — 비공개 data 저장소에 엑셀이 푸시될 때
+#   2) workflow_dispatch — Actions 탭에서 수동 실행
+#   3) push — 이 저장소의 파이프라인/대시보드 코드가 바뀔 때
+#
+# 필요한 시크릿 (Settings → Secrets and variables → Actions):
+#   DATA_REPO_TOKEN — hyeongjunkim0934/data 저장소 Contents: Read 권한이 있는
+#   Fine-grained PAT (비공개 데이터 체크아웃용)
+#
+# 필요한 설정: Settings → Pages → Source = "GitHub Actions"
+
+on:
+  repository_dispatch:
+    types: [data-updated]
+  workflow_dispatch:
+  push:
+    branches: [main, master, "claude/data-repo-dashboard-automation-cj8y59"]
+    paths:
+      - "pipeline/**"
+      - "dashboard/**"
+      - ".github/workflows/build-dashboard.yml"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 진행 중인 프로덕션 배포는 취소하지 않고 대기시킨다 — 배포 도중 취소되면
+# 다음 실행이 deployment 충돌로 실패할 수 있다 (GitHub Pages 공식 권장값).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout workbench
+        uses: actions/checkout@v4
+
+      - name: Checkout private data repo
+        uses: actions/checkout@v4
+        with:
+          repository: hyeongjunkim0934/data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          ref: ${{ github.event.client_payload.ref || '' }}
+          path: source-data
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pipeline/requirements.txt
+
+      - name: Build dashboard data
+        run: |
+          mkdir -p _site
+          cp -r dashboard/. _site/
+          python pipeline/process.py --data-dir source-data --out _site/data
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
