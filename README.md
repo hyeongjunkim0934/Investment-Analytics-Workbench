@@ -1,6 +1,12 @@
 # Investment Analytics Workbench
 
-금리 · IRS · 크레딧 · FX · 인플레이션 · 지수 데이터를 자동 갱신하는 투자 분석 대시보드.
+보험사 자산운용(자산배분·리스크·운용 담당)을 위한 의사결정 보조 대시보드.
+엑셀 업로드만으로 자동 갱신됩니다.
+
+**현재 제공**: 리스크 스코어보드(현재 위험 = walk-forward 검증된 IC가중 + 최소바닥 —
+`pipeline/research/wf_validation.py`, 잠재 위험 = 동일가중) · 이벤트 자동 검출(규칙 공개) ·
+시장 모니터(금리/IRS/크레딧/FX/물가/지수/매크로) · 시리즈 카탈로그.
+**로드맵**: 환헤지 시뮬레이터 → 자산배분 시뮬레이터 → 모델 랩(전망 모델 백테스트).
 
 **대시보드**: https://hyeongjunkim0934.github.io/Investment-Analytics-Workbench/
 

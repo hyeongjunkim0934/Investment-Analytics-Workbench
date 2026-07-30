@@ -32,8 +32,8 @@ function destroyAllCharts() {
   uplots = [];
 }
 
-const FILES = ["meta", "overview", "rates", "irs", "credit", "fx",
-               "inflation", "acwi", "macro", "catalog"];
+const FILES = ["meta", "overview", "risk", "events", "rates", "irs", "credit",
+               "fx", "inflation", "acwi", "macro", "catalog"];
 
 /* ---------------- theme & palette ---------------- */
 
@@ -635,12 +635,464 @@ function renderMetaLine() {
   if (m.warnings && m.warnings.length) console.warn("pipeline warnings:", m.warnings);
 }
 
+/* ---------------- 리스크 스코어보드 ---------------- */
+
+const GRADE_CLS = { "낮음": "c-low", "보통": "c-mid", "주의": "c-warn", "경계": "c-crit" };
+const BANDS = [[0, 25, "#0ca30c", "낮음"], [25, 50, "#898781", "보통"],
+               [50, 75, "#eda100", "주의"], [75, 100, "#d03b3b", "경계"]];
+
+function gradeChip(g) {
+  return g ? el("span", { class: `chip ${GRADE_CLS[g] || "c-mid"}` }, g)
+           : el("span", { class: "chip c-mid" }, "대기");
+}
+
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function deltaPts(d) {
+  if (d == null) return el("span", { class: "d-flat" }, "–");
+  if (Math.abs(d) < 0.5) return el("span", { class: "d-flat" }, "변화 없음");
+  const cls = d > 0 ? "d-up" : "d-down";
+  return el("span", { class: cls }, `${d > 0 ? "▲" : "▼"} ${fmtNum(Math.abs(d), 0)}p`);
+}
+
+function legendKey(color, text) {
+  const s = el("span", {}, "");
+  s.append(el("i", { style: `border-color:${color}` }), text);
+  return s;
+}
+
+function withToday(hist, asofTs, cur) {
+  const t = [...hist.t], v = [...hist.v];
+  if (t.length && t[t.length - 1] < asofTs) { t.push(asofTs); v.push(cur); }
+  return { t, v };
+}
+
+/* 0~100 고정 스케일 + 등급 밴드 배경 차트 (기간 필터 미적용) */
+function makeBandChart(box, { seriesDefs, height = 300 }) {
+  const pal = palette();
+  const dark = currentTheme() === "dark";
+  const data = joinSeries(seriesDefs);
+  const series = [{ label: "주", value: "{YYYY}-{MM}-{DD}" }];
+  seriesDefs.forEach((sd) => series.push({
+    label: sd.label, stroke: sd.color, width: 2.5, spanGaps: true,
+    points: { show: false },
+    value: (u, v) => v == null ? "–" : fmtNum(v, 0) + "점",
+  }));
+  const opts = {
+    width: Math.max(280, box.clientWidth), height,
+    tzDate: (ts) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
+    cursor: { points: { size: 8 }, y: false },
+    scales: { y: { range: () => [0, 100] } },
+    series,
+    axes: baseAxes(pal, (v) => fmtNum(v, 0)),
+    legend: { live: true },
+    hooks: {
+      drawClear: [(u) => {
+        const { ctx, bbox } = u;
+        ctx.save();
+        for (const [lo, hi, c] of BANDS) {
+          const y1 = u.valToPos(hi, "y", true), y0 = u.valToPos(lo, "y", true);
+          ctx.fillStyle = hexA(c, dark ? 0.10 : 0.07);
+          ctx.fillRect(bbox.left, y1, bbox.width, y0 - y1);
+        }
+        ctx.restore();
+      }],
+      draw: [(u) => {
+        const { ctx, bbox } = u;
+        ctx.save();
+        // 등급 라벨 (좌측 안쪽)
+        ctx.font = `${11 * devicePixelRatio}px system-ui, sans-serif`;
+        ctx.textAlign = "left";
+        for (const [lo, hi, c, nm] of BANDS) {
+          ctx.fillStyle = c;
+          ctx.fillText(`${nm} ${lo}–${hi}`, bbox.left + 8 * devicePixelRatio,
+                       u.valToPos((lo + hi) / 2, "y", true) + 4 * devicePixelRatio);
+        }
+        // 끝점 값 라벨
+        let prevY = null;
+        seriesDefs.forEach((sd, i) => {
+          const xs = u.data[0], ys = u.data[i + 1];
+          let li = ys.length - 1;
+          while (li >= 0 && ys[li] == null) li--;
+          if (li < 0) return;
+          const x = u.valToPos(xs[li], "x", true), y = u.valToPos(ys[li], "y", true);
+          ctx.beginPath(); ctx.arc(x, y, 4.5 * devicePixelRatio, 0, 2 * Math.PI);
+          ctx.fillStyle = sd.color; ctx.fill();
+          ctx.lineWidth = 2 * devicePixelRatio; ctx.strokeStyle = palette().surface; ctx.stroke();
+          ctx.font = `700 ${12.5 * devicePixelRatio}px system-ui, sans-serif`;
+          ctx.fillStyle = sd.color;
+          let ly = y - 8 * devicePixelRatio;
+          if (prevY != null && Math.abs(ly - prevY) < 15 * devicePixelRatio) ly = prevY + 18 * devicePixelRatio;
+          ctx.fillText(String(Math.round(ys[li])), Math.max(bbox.left + 4, x - 24 * devicePixelRatio), ly);
+          prevY = ly;
+        });
+        ctx.restore();
+      }],
+    },
+  };
+  const u = new uPlot(opts, data, box);
+  const ro = new ResizeObserver(() => u.setSize({ width: Math.max(280, box.clientWidth), height }));
+  ro.observe(box);
+  return trackChart(u, ro);
+}
+
+function evMini(e) {
+  const sevCls = e.sev === "경계" ? "c-crit" : e.sev === "주의" ? "c-warn" : "c-mid";
+  const d = el("div", { class: "evmini" });
+  d.append(el("span", { class: "d" }, e.date),
+           el("span", { class: `chip ${sevCls}` }, e.sev),
+           el("span", {}, e.title),
+           el("b", {}, e.value));
+  return d;
+}
+
+function factorRow(f, r, asofTs) {
+  if (f.pending || f.score == null) {
+    const row = el("div", { class: "fr pend" });
+    row.append(
+      el("span", { class: "nm" }, f.name, el("small", {}, f.sub)),
+      el("span", { style: "color:var(--ink-3);font-size:12px" }, f.pending || "데이터 대기"),
+      el("span"), el("span"),
+      el("span", { style: "text-align:right" }, gradeChip(null)),
+      el("span", { class: "chev" }, "›"));
+    return row;
+  }
+  const row = el("div", { class: "fr", onclick: () => { location.hash = `detail-${f.key}`; } });
+  const sparkWrap = el("span", { class: "spark-wrap" },
+    sparkSVG(withToday(f.hist, asofTs, f.score), palette().accent));
+  row.append(
+    el("span", { class: "nm" }, f.name, el("small", {}, f.sub)),
+    sparkWrap,
+    el("span", { class: "dl" }, deltaPts(f.delta)),
+    el("span", { class: "sc" }, String(Math.round(f.score))),
+    el("span", { style: "text-align:right" }, gradeChip(f.grade)),
+    el("span", { class: "chev" }, "›"));
+  return row;
+}
+
+function renderFactorGroup(titleSel, rowsSel, layerKey, layer, subtitle, r, asofTs) {
+  const title = $(titleSel);
+  title.textContent = "";
+  title.append(`${layer.name} ${Math.round(layer.score)}점 `, gradeChip(layer.grade), ` — ${subtitle}`);
+  const wrap = $(rowsSel);
+  wrap.textContent = "";
+  const head = el("div", { class: "frh" });
+  ["요인", "점수 추이 (24개월)", "1개월 변화", "점수", "등급", ""].forEach((h, i) =>
+    head.append(el("span", { style: i >= 2 && i <= 4 ? "text-align:right" : "" }, h)));
+  wrap.append(head);
+  r.factors.filter((f) => f.layer === layerKey).forEach((f) => wrap.append(factorRow(f, r, asofTs)));
+}
+
+function buildRiskMethod(r) {
+  const box = $("#risk-method");
+  box.textContent = "";
+  box.append(el("summary", {}, "산식 · 가중치 · 검증 (방법론)"));
+  const w = r.weights;
+  box.append(el("p", {}, el("b", {}, "점수"), ` — ${r.howto}`));
+  box.append(el("p", {}, el("b", {}, "현재 위험 가중치"),
+    ` — ${w.desc} (학습 타깃: ${w.target} · 최근 재학습 ${w.refit})`));
+  const wt = el("table", {},
+    el("tr", {}, ...w.items.map((x) => el("th", {}, x.name))),
+    el("tr", {}, ...w.items.map((x) => el("td", { class: "num" }, (x.w * 100).toFixed(1) + "%"))));
+  box.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, wt));
+  const v = r.validation;
+  if (v && v.metrics) {
+    box.append(el("p", {}, el("b", {}, "표본 외 검증"),
+      ` — ${v.window} (${v.n_weeks}주 · 위기주 ${v.crisis_weeks}주)`));
+    const vt = el("table", {},
+      el("tr", {}, el("th", {}, "합성 방식"), el("th", { class: "num" }, "위험 추적력(IC)"),
+        el("th", { class: "num" }, "위기 판별(AUC)")),
+      ...v.metrics.map((m) => el("tr", {}, el("td", {}, m.name),
+        el("td", { class: "num" }, String(m.ic)), el("td", { class: "num" }, String(m.auc5)))));
+    box.append(vt, el("p", { style: "font-size:11.5px;color:var(--ink-3)" }, v.note));
+  }
+  box.append(el("p", {}, el("b", {}, "한계"), ` — ${r.limits}`));
+}
+
+function prependRiskCards(r) {
+  const wrap = $("#cards");
+  if (!wrap || wrap.querySelector(".kpi-risk")) return;
+  const asofTs = Math.floor(Date.parse(r.asof + "T00:00:00Z") / 1000);
+  ["vuln", "stress"].forEach((k) => {
+    const L = r.layers[k];
+    if (!L || L.score == null) return;
+    const kpi = el("div", { class: "kpi kpi-risk", style: "cursor:pointer",
+      onclick: () => { location.href = "#risk"; } });
+    kpi.append(el("div", { class: "kpi-label" },
+      el("span", {}, L.name), el("span", { class: "kpi-date" }, r.asof)));
+    const val = el("div", { class: "kpi-value" }, String(Math.round(L.score)));
+    val.append(el("span", { class: "unit" }, "점 "), gradeChip(L.grade));
+    kpi.append(val);
+    kpi.append(el("div", { class: "kpi-delta" }, el("span", {}, "1개월 "), deltaPts(L.delta)));
+    kpi.append(sparkSVG(withToday(L.hist, asofTs, L.score), palette().accent));
+    wrap.prepend(kpi);
+  });
+}
+
+function renderRisk() {
+  const r = DATA.risk;
+  if (!$("#risk")) return;
+  if (!r || !r.layers) {
+    $("#risk-headline").textContent = "리스크 데이터를 불러오지 못했습니다 — 파이프라인 로그를 확인하세요.";
+    return;
+  }
+  const S = r.layers.stress, V = r.layers.vuln;
+  const asofTs = Math.floor(Date.parse(r.asof + "T00:00:00Z") / 1000);
+  const pal = palette();
+
+  const hl = $("#risk-headline");
+  hl.textContent = "";
+  hl.append(el("div", { class: "q" }, "이 화면이 답하는 질문"));
+  const a = el("div", { class: "a" }, `지금 시장 위험은 어느 수준인가 — 현재 위험 ${Math.round(S.score)} `);
+  a.append(gradeChip(S.grade), ` · 잠재 위험 ${Math.round(V.score)} `, gradeChip(V.grade));
+  hl.append(a);
+
+  const cc = $("#risk-chart-card");
+  cc.textContent = "";
+  cc.append(el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, "위험 수준 추이 — 최근 24개월"),
+    el("span", { class: "card-sub" }, `기준일 ${r.asof} · 선이 위로 갈수록 위험 · 배경 음영 = 등급 구간`)));
+  const lg = el("div", { class: "legendline" });
+  lg.append(legendKey(pal.series[0], `현재 위험 — ${S.question}`),
+            legendKey(pal.series[1], `잠재 위험 — ${V.question} (가동 ${V.active}/${V.total} 요인)`));
+  cc.append(lg);
+  const box = el("div", { class: "chart-box" });
+  cc.append(box);
+  const sh = withToday(S.hist, asofTs, S.score), vh = withToday(V.hist, asofTs, V.score);
+  makeBandChart(box, { seriesDefs: [
+    { label: "현재 위험", color: pal.series[0], t: sh.t, v: sh.v },
+    { label: "잠재 위험", color: pal.series[1], t: vh.t, v: vh.v },
+  ] });
+
+  const hw = $("#risk-howto");
+  hw.textContent = "";
+  hw.append(el("b", {}, "점수 읽는 법"), ` — ${r.howto}`);
+  const gb = el("div", { class: "gradebar" });
+  BANDS.forEach(([lo, hi, c, nm]) =>
+    gb.append(el("div", { style: `flex:1;background:${hexA(c, 0.85)}` }, `${nm} (${lo}–${hi})`)));
+  hw.append(gb);
+
+  const em = $("#risk-events-mini");
+  em.textContent = "";
+  const emHead = el("div", { class: "card-head" }, el("span", { class: "card-title" }, "최근 이벤트"));
+  emHead.append(el("a", { href: "#events",
+    style: "margin-left:auto;font-size:12px;color:var(--accent);text-decoration:none" }, "전체 보기 →"));
+  em.append(emHead);
+  const evs = ((DATA.events && DATA.events.events) || []).slice(0, 5);
+  if (!evs.length) em.append(el("div", { class: "chart-empty" }, "최근 이벤트 없음"));
+  else evs.forEach((e) => em.append(evMini(e)));
+
+  renderFactorGroup("#risk-stress-title", "#risk-stress-rows", "stress", S, "무엇이 흔들리고 있나", r, asofTs);
+  renderFactorGroup("#risk-vuln-title", "#risk-vuln-rows", "vuln", V, "무엇이 쌓여 있나", r, asofTs);
+  buildRiskMethod(r);
+  prependRiskCards(r);
+}
+
+/* ---------------- 이벤트 타임라인 ---------------- */
+
+const evFilter = { sev: null, cat: null };
+
+function renderEventsTimeline() {
+  const E = DATA.events;
+  const tl = $("#events-timeline");
+  tl.textContent = "";
+  let list = E.events;
+  if (evFilter.sev) list = list.filter((e) => e.sev === evFilter.sev);
+  if (evFilter.cat) list = list.filter((e) => e.cat === evFilter.cat);
+  if (!list.length) {
+    tl.append(el("div", { class: "chart-empty" }, "조건에 맞는 이벤트가 없습니다."));
+    return;
+  }
+  const byDate = new Map();
+  list.forEach((e) => {
+    if (!byDate.has(e.date)) byDate.set(e.date, []);
+    byDate.get(e.date).push(e);
+  });
+  const sevRail = { "경계": "s-crit", "주의": "s-warn", "정보": "s-info" };
+  for (const [date, evs] of byDate) {
+    const body = el("div", { class: "tlbody" });
+    evs.forEach((e) => {
+      const sevCls = e.sev === "경계" ? "c-crit" : e.sev === "주의" ? "c-warn" : "c-mid";
+      const card = el("div", { class: "ecard" });
+      card.append(el("span", { class: `chip ${sevCls}` }, e.sev),
+                  el("span", { class: "t" }, e.title),
+                  el("span", { class: "v" }, e.value),
+                  el("span", { class: "r" }, `규칙: ${e.rule}`));
+      body.append(card);
+    });
+    tl.append(el("div", { class: "tlday" },
+      el("div", { class: "tldate" }, date),
+      el("div", { class: `tlrail ${sevRail[evs[0].sev]}` }, el("i")),
+      body));
+  }
+}
+
+function renderEvents() {
+  const E = DATA.events;
+  if (!$("#events")) return;
+  if (!E || !E.events) {
+    $("#events-headline").textContent = "이벤트 데이터를 불러오지 못했습니다.";
+    return;
+  }
+  const counts = { "경계": 0, "주의": 0, "정보": 0 };
+  E.events.forEach((e) => { counts[e.sev] = (counts[e.sev] || 0) + 1; });
+  const hl = $("#events-headline");
+  hl.textContent = "";
+  hl.append(el("div", { class: "q" }, "이 화면이 답하는 질문"));
+  const a = el("div", { class: "a" },
+    `지난 업로드 이후 무엇이 특이했나 — 최근 ${E.lookback_days}일 이벤트 ${E.events.length}건 `);
+  a.append(el("small", {}, `경계 ${counts["경계"]} · 주의 ${counts["주의"]} · 정보 ${counts["정보"]} · 엑셀 업로드 시마다 자동 검출`));
+  hl.append(a);
+
+  const ft = $("#events-filters");
+  ft.textContent = "";
+  const mkChip = (label, kind, val) => {
+    const on = kind === "sev" ? evFilter.sev === val : kind === "cat" ? evFilter.cat === val
+             : !evFilter.sev && !evFilter.cat;
+    return el("span", { class: on ? "on" : "", onclick: () => {
+      if (kind === "all") { evFilter.sev = null; evFilter.cat = null; }
+      else if (kind === "sev") evFilter.sev = evFilter.sev === val ? null : val;
+      else evFilter.cat = evFilter.cat === val ? null : val;
+      renderEvents();
+    } }, label);
+  };
+  ft.append(mkChip("전체", "all"));
+  ["경계", "주의", "정보"].forEach((s) => ft.append(mkChip(s, "sev", s)));
+  ft.append(el("span", { class: "sep" }, "|"));
+  [...new Set(E.events.map((e) => e.cat))].forEach((c) => ft.append(mkChip(c, "cat", c)));
+
+  renderEventsTimeline();
+
+  const rules = $("#events-rules");
+  rules.textContent = "";
+  rules.append(el("summary", {}, "이벤트 규칙 카탈로그 (전 규칙 공개)"));
+  const t = el("table", {},
+    el("tr", {}, el("th", {}, "분류"), el("th", {}, "규칙"), el("th", {}, "심각도")));
+  (E.catalog || []).forEach((c) =>
+    t.append(el("tr", {}, el("td", {}, c.cat), el("td", {}, c.rule), el("td", {}, c.sev))));
+  rules.append(t, el("p", { style: "font-size:11.5px;color:var(--ink-3)" },
+    "알림 피로 방지: 동일 시리즈·동일 규칙은 하루 1건으로 병합됩니다."));
+}
+
+/* ---------------- 요인 상세 오버레이 ---------------- */
+
+let overlayCharts = [];
+
+function hideDetail() {
+  overlayCharts.forEach(destroyChart);
+  overlayCharts = [];
+  const ov = $("#detail-overlay");
+  ov.hidden = true;
+  ov.textContent = "";
+  document.body.style.overflow = "";
+}
+
+function openDetail(key) {
+  const r = DATA.risk;
+  const f = r && r.factors.find((x) => x.key === key);
+  if (!f || f.pending || f.score == null) { hideDetail(); return; }
+  overlayCharts.forEach(destroyChart);
+  overlayCharts = [];
+  const layer = r.layers[f.layer];
+  const asofTs = Math.floor(Date.parse(r.asof + "T00:00:00Z") / 1000);
+  const pal = palette();
+  const ov = $("#detail-overlay");
+  ov.textContent = "";
+  ov.hidden = false;
+  document.body.style.overflow = "hidden";
+  const inner = el("div", { class: "detail-inner" });
+  ov.append(inner);
+
+  const back = el("a", { onclick: () => { location.hash = "risk"; } }, "‹ 리스크로 돌아가기");
+  inner.append(el("div", { class: "crumb" }, back, ` / ${layer.name} / ${f.name}`));
+
+  const hl = el("div", { class: "qa" });
+  hl.append(el("div", { class: "q" }, `이 요인이 답하는 질문 — ${f.question}`));
+  const a = el("div", { class: "a" }, `${f.name} ${Math.round(f.score)}점 `);
+  a.append(gradeChip(f.grade), " ", el("small", {}, "1개월 전 대비 "), deltaPts(f.delta));
+  hl.append(a);
+  inner.append(hl);
+
+  const two = el("div", { class: "detail-two" });
+  inner.append(two);
+
+  const left = el("div", {});
+  const chartCard = el("div", { class: "card" });
+  chartCard.append(el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, `${f.name} 점수 추이 — 24개월`),
+    el("span", { class: "card-sub" }, "배경 음영 = 등급 구간")));
+  const box = el("div", { class: "chart-box" });
+  chartCard.append(box);
+  left.append(chartCard);
+
+  const steps = el("div", { class: "howto", style: "margin-top:14px" });
+  steps.append(el("b", {}, "이 점수가 나오는 과정"));
+  const stepBox = el("div", { class: "steps" });
+  (f.steps || []).forEach((s) => stepBox.append(el("div", {}, s)));
+  if (f.weight != null) {
+    stepBox.append(el("div", {}, el("b", {},
+      `현재 위험 합성 시 이 요인의 가중치 ${(f.weight * 100).toFixed(1)}%`),
+      " (예측력 비례 + 최소바닥 8%, 매 4주 재학습)"));
+  }
+  steps.append(stepBox);
+  left.append(steps);
+  if (f.note) left.append(el("p", { class: "section-note", style: "margin-top:10px" }, `참고 — ${f.note}`));
+  left.append(el("p", { class: "section-note", style: "margin-top:6px" }, `한계 — ${r.limits}`));
+  two.append(left);
+
+  const right = el("div", {});
+  right.append(el("h3", { style: "font-size:14px;margin:2px 0 10px" }, "구성 지표 (원자료)"));
+  (f.indicators || []).forEach((ind, i) => {
+    const c = el("div", { class: "icard" });
+    const head = el("div", { style: "display:flex;align-items:baseline;gap:10px;flex-wrap:wrap" });
+    head.append(el("b", {}, ind.label));
+    if (ind.desc) head.append(el("span", { style: "color:var(--ink-3);font-size:11.5px" }, ind.desc));
+    const vb = el("span", { class: "vbig", style: "margin-left:auto" }, ind.value);
+    vb.append(el("small", {}, ind.unit ? ` ${ind.unit}` : ""));
+    head.append(vb);
+    c.append(head);
+    if (ind.spark) c.append(sparkSVG(ind.spark, pal.series[i % 8]));
+    c.append(el("div", { class: "expl" },
+      `${ind.since}년 이후 이력 대비 백분위 ${Math.round(ind.pctl)}% → 점수 `,
+      el("b", {}, `${Math.round(ind.score)}점`), ` (${ind.date} 기준)`));
+    right.append(c);
+  });
+  const rel = ((DATA.events && DATA.events.events) || [])
+    .filter((e) => (e.tags || []).some((t) => (f.tags || []).includes(t))).slice(0, 6);
+  if (rel.length) {
+    const rc = el("div", { class: "card" });
+    rc.append(el("div", { class: "card-head" }, el("span", { class: "card-title" }, "관련 이벤트")));
+    rel.forEach((e) => rc.append(evMini(e)));
+    right.append(rc);
+  }
+  two.append(right);
+
+  const fh = withToday(f.hist, asofTs, f.score);
+  overlayCharts.push(makeBandChart(box, {
+    seriesDefs: [{ label: `${f.name} 점수`, color: pal.series[0], t: fh.t, v: fh.v }],
+    height: 280,
+  }));
+  ov.scrollTop = 0;
+}
+
+function handleHash() {
+  const m = location.hash.match(/^#detail-(.+)$/);
+  if (m && DATA.risk) openDetail(decodeURIComponent(m[1]));
+  else hideDetail();
+}
+
 /* ---------------- render all / boot ---------------- */
 
 function renderAll() {
   destroyAllCharts();
+  overlayCharts = [];
   registry.length = 0;
   renderOverview();
+  renderRisk();
+  renderEvents();
   renderRates();
   renderIRS();
   renderCredit();
@@ -648,6 +1100,7 @@ function renderAll() {
   renderInflation();
   renderACWI();
   renderMacro();
+  if (!$("#detail-overlay").hidden) handleHash();   // 테마 전환 시 열린 상세 재구성
 }
 
 function bindTheme() {
@@ -685,6 +1138,11 @@ async function boot() {
   renderMetaLine();
   renderAll();
   renderCatalog();
+  window.addEventListener("hashchange", handleHash);
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("#detail-overlay").hidden) location.hash = "risk";
+  });
+  handleHash();
   window.__iaw = { registry, state };   // 디버그/테스트 훅
 }
 

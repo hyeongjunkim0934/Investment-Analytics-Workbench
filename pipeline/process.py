@@ -26,6 +26,8 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 
+import risk
+
 # --------------------------------------------------------------------------
 # series store
 # --------------------------------------------------------------------------
@@ -682,6 +684,19 @@ def main() -> None:
 
     payloads = {
         "overview.json": build_overview(),
+    }
+
+    # 리스크 스코어보드 — 계산 실패가 대시보드 전체 빌드를 막지 않도록 격리
+    try:
+        risk_payload, events_payload = risk.build(SERIES, warn)
+        payloads["risk.json"] = risk_payload
+        payloads["events.json"] = events_payload
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        warn("risk: 스코어보드 계산 실패 — 해당 섹션 없이 배포됩니다")
+
+    payloads.update({
         "rates.json": build_rates(),
         "irs.json": build_irs(),
         "credit.json": build_credit(),
@@ -690,7 +705,7 @@ def main() -> None:
         "acwi.json": build_acwi(),
         "macro.json": build_macro(),
         "catalog.json": build_catalog(),
-    }
+    })
     payloads["meta.json"] = {
         "built_at_utc": now_utc.strftime("%Y-%m-%d %H:%M UTC"),
         "built_at_kst": kst.strftime("%Y-%m-%d %H:%M KST"),
