@@ -26,6 +26,7 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 
+import hedge
 import risk
 
 # --------------------------------------------------------------------------
@@ -695,6 +696,13 @@ def main() -> None:
         import traceback
         traceback.print_exc()
         warn("risk: 스코어보드 계산 실패 — 해당 섹션 없이 배포됩니다")
+
+    try:
+        payloads["hedge.json"] = hedge.build(SERIES, warn)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        warn("hedge: 환헤지 계산 실패 — 해당 섹션 없이 배포됩니다")
 
     payloads.update({
         "rates.json": build_rates(),

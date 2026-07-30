@@ -32,8 +32,8 @@ function destroyAllCharts() {
   uplots = [];
 }
 
-const FILES = ["meta", "overview", "risk", "events", "rates", "irs", "credit",
-               "fx", "inflation", "acwi", "macro", "catalog"];
+const FILES = ["meta", "overview", "risk", "events", "hedge", "rates", "irs",
+               "credit", "fx", "inflation", "acwi", "macro", "catalog"];
 
 /* ---------------- theme & palette ---------------- */
 
@@ -1079,9 +1079,350 @@ function openDetail(key) {
 }
 
 function handleHash() {
+  if (location.hash === "#hedge-sim") {
+    if (DATA.hedge) openHedgeSim();
+    return;
+  }
   const m = location.hash.match(/^#detail-(.+)$/);
   if (m && DATA.risk) openDetail(decodeURIComponent(m[1]));
   else hideDetail();
+}
+
+/* ---------------- 환헤지 ---------------- */
+
+function fmtCost(x) {
+  if (x == null) return el("span", { class: "d-flat" }, "—");
+  return el("span", { class: x < 0 ? "neg" : "pos" }, `${x > 0 ? "+" : ""}${fmtNum(x, 2)}%`);
+}
+
+/* 숫자 x축(헤지비율) 차트 */
+function makeRatioChart(box, { seriesDefs, height = 280, unit = "%" }) {
+  const pal = palette();
+  const xs = seriesDefs[0].x;
+  const series = [{ label: "헤지비율", value: (u, v) => v == null ? "–" : v + "%" }];
+  seriesDefs.forEach((sd) => series.push({
+    label: sd.label, stroke: sd.color, width: 2.5, spanGaps: true,
+    points: { show: false },
+    value: (u, v) => v == null ? "–" : fmtNum(v, 1) + unit,
+  }));
+  const u = new uPlot({
+    width: Math.max(280, box.clientWidth), height,
+    cursor: { points: { size: 8 }, y: false },
+    scales: { x: { time: false, range: [0, 100] } },
+    series,
+    axes: [
+      { stroke: pal.ink3, font: AXIS_FONT, grid: { stroke: pal.grid, width: 1 },
+        ticks: { show: false }, values: (u2, vals) => vals.map((v) => v + "%") },
+      baseAxes(pal, (v) => fmtNum(v, 0) + unit)[1],
+    ],
+    legend: { live: true },
+  }, [xs, ...seriesDefs.map((sd) => sd.v)], box);
+  const ro = new ResizeObserver(() => u.setSize({ width: Math.max(280, box.clientWidth), height }));
+  ro.observe(box);
+  return trackChart(u, ro);
+}
+
+function renderHedge() {
+  const H2 = DATA.hedge;
+  if (!$("#hedge")) return;
+  if (!H2 || !H2.matrix) {
+    $("#hedge-headline").textContent = "환헤지 데이터를 불러오지 못했습니다.";
+    return;
+  }
+  const pal = palette();
+
+  const hl = $("#hedge-headline");
+  hl.textContent = "";
+  hl.append(el("div", { class: "q" }, "이 화면이 답하는 질문"));
+  const a = el("div", { class: "a" }, "통화별 환오픈을 얼마나 둘 것인가 ");
+  a.append(el("small", {}, "관점에 따라 답이 다릅니다 — 경제 관점: 채권 88~102% · 주식 10~30% / 회계 관점(장부가): 100%가 손익변동 최소, 판단 변수는 비용"));
+  hl.append(a);
+
+  const hv = $("#hedge-views");
+  hv.textContent = "";
+  hv.append(el("b", {}, "두 관점, 두 참고치"), el("br"),
+    "· ", el("b", {}, "경제(시가) 관점"), " — 자산가격과 환율의 상쇄(자연 쿠션)까지 반영한 최소분산 헤지비율(MVH). 위기 때 환율 급등이 주가 하락을 상쇄하므로 주식은 낮은 헤지가 변동성 최소.", el("br"),
+    "· ", el("b", {}, "회계(손익) 관점"), " — 장부가 채권은 가격변동이 손익에 안 오지만 환산손익·FX스왑 손익·스왑레이트는 손익 직행. 상쇄해줄 상대가 없어 손익변동 최소는 언제나 헤지 100%이고, 남는 변동은 스왑 MTM뿐입니다.");
+
+  const mx = $("#hedge-matrix");
+  mx.textContent = "";
+  mx.append(el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, "통화 매트릭스 (7통화)"),
+    el("span", { class: "card-sub" }, `채권 MVH = 경제 관점 참고치 · 비용 양수 = 프리미엄 수취 · 기준일 ${H2.asof}`)));
+  const t = el("table", { class: "mini-table" },
+    el("tr", {}, ...["통화", "환변동성(연)", "채권 MVH(경제)", "환-채권 상관", "헤지비용(12M)", "근거"]
+      .map((h, i) => el("th", { style: i === 5 ? "text-align:left" : "" }, h))));
+  H2.matrix.forEach((m) => {
+    t.append(el("tr", { style: m.active ? "" : "opacity:.5" },
+      el("td", {}, `${m.name} (${m.c})`),
+      el("td", { class: "num" }, `${m.vol_e}%`),
+      el("td", { class: "num" }, m.mvh != null ? el("b", {}, `${m.mvh}%`) : "—"),
+      el("td", { class: "num" }, m.corr != null ? String(m.corr) : "—"),
+      el("td", { class: "num" }, fmtCost(m.cost_12m)),
+      el("td", { style: "text-align:left;color:var(--ink-3);font-size:11.5px" },
+        `${m.src}${m.bond_kind ? " · " + m.bond_kind : ""}`)));
+  });
+  mx.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, t));
+  const rec = H2.matrix.filter((m) => m.cost_12m != null && m.cost_12m > 0)
+    .map((m) => `${m.name}(+${m.cost_12m}%)`).join("·");
+  const pay = H2.matrix.filter((m) => m.cost_12m != null && m.cost_12m < 0)
+    .map((m) => `${m.name}(${m.cost_12m}%)`).join("·");
+  mx.append(el("div", { class: "hl-box" },
+    el("b", {}, "💡 현 시점 눈에 띄는 것"),
+    ` — 헤지하면 프리미엄을 받는 통화: ${rec || "없음"}. 특히 엔화 장부가 채권은 헤지 100%가 손익변동 제거 + 프리미엄 수취를 동시에 얻습니다. 비용을 내는 통화: ${pay || "없음"}.`));
+
+  const cc = $("#hedge-curve-card");
+  cc.textContent = "";
+  const bMin = H2.curves.bond.indexOf(Math.min(...H2.curves.bond)) * 5;
+  const eMin = H2.curves.equity.indexOf(Math.min(...H2.curves.equity)) * 5;
+  const xs = Array.from({ length: 21 }, (_, i) => i * 5);
+  const curveBox = cardScaffold(cc, {
+    title: "헤지비율 vs 변동성 — 달러 (경제 관점)",
+    sub: `변동성 최소: 채권 ${bMin}% · 주식 ${eMin}%`,
+    csvName: "헤지비율-변동성.csv",
+    tableFn: (cap, raw) => ({
+      headers: ["헤지비율", "채권 변동성(%)", "주식 변동성(%)"],
+      rows: xs.map((h, i) => [`${h}%`, H2.curves.bond[i], H2.curves.equity[i]]),
+    }),
+  });
+  makeRatioChart(curveBox, { seriesDefs: [
+    { label: "미국 채권(종합)", color: pal.series[0], x: xs, v: H2.curves.bond },
+    { label: "미국 주식(S&P500 TR)", color: pal.series[1], x: xs, v: H2.curves.equity },
+  ] });
+
+  const bt = $("#hedge-bt-card");
+  bt.textContent = "";
+  bt.append(el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, "백테스트 — 달러자산 헤지비율별"),
+    el("span", { class: "card-sub" }, Object.values(H2.backtest)[0].period)));
+  const bthead = el("tr", {}, ...["자산", "헤지", "CAGR", "변동성", "MDD"].map((h) => el("th", {}, h)));
+  const btt = el("table", { class: "mini-table" }, bthead);
+  Object.entries(H2.backtest).forEach(([name, b]) => {
+    b.rows.forEach((r, i) => {
+      const tr = el("tr", {});
+      if (i === 0) tr.append(el("td", { rowspan: "3" }, name));
+      tr.append(el("td", { class: "num" }, `${r.h}%`), el("td", { class: "num" }, `${r.cagr}%`),
+                el("td", { class: "num" }, `${r.vol}%`), el("td", { class: "num" }, `${r.mdd}%`));
+      btt.append(tr);
+    });
+  });
+  bt.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, btt),
+    el("div", { class: "card-sub", style: "margin-top:6px" },
+      "주식 완전 헤지는 MDD를 키웁니다(위기 시 환쿠션 상실) — 헤지비용은 3M 스왑레이트 실측 반영."));
+
+  const cost = $("#hedge-cost-card");
+  cost.textContent = "";
+  const cs = H2.cost_stats;
+  const costBox = cardScaffold(cost, {
+    title: "달러 헤지비용 25년 (3M 스왑레이트, 연율)",
+    sub: `평균 ${cs.mean > 0 ? "+" : ""}${cs.mean}% · 현재 ${cs.now}% · 최악(2008) ${cs.min}%`,
+    csvName: "달러-스왑레이트.csv",
+    tableFn: tsTableFn(["스왑레이트(%)"], [H2.cost_hist_usd.t, H2.cost_hist_usd.v], 2),
+  });
+  makeTimeChart(costBox, { labels: ["3M 스왑레이트"], colors: [pal.series[0]],
+    data: [H2.cost_hist_usd.t, H2.cost_hist_usd.v], dec: 2, unit: "%", fill: true, height: 230 });
+
+  const mtm = $("#hedge-mtm-card");
+  mtm.textContent = "";
+  mtm.append(el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, "스왑 MTM — 만기의 트레이드오프"),
+    el("span", { class: "card-sub" }, "기체결 스왑의 평가손익 (회계 손익에 인식)")));
+  const mt = el("table", { class: "mini-table" },
+    el("tr", {}, ...["롤 만기", "MTM 변동성(연, 명목 대비)", "2008년 최악의 달"].map((h) => el("th", {}, h))));
+  [[3, 0.125], [6, 0.25], [9, 0.375], [12, 0.5]].forEach(([m, tau]) => {
+    const vol = (tau * H2.mtm.sigma_ds_3m * Math.sqrt(12)).toFixed(2);
+    const worst = (tau * Math.abs(H2.mtm.worst_ds)).toFixed(2);
+    mt.append(el("tr", { style: m === 9 ? "font-weight:700" : "" },
+      el("td", {}, `${m}개월${m === 9 ? " (현재 평균)" : ""}`),
+      el("td", { class: "num" }, `${vol}%`), el("td", { class: "num" }, `${worst}%`)));
+  });
+  mtm.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, mt),
+    el("div", { class: "card-sub", style: "margin-top:6px" },
+      `긴 만기 = 캐리 오래 고정(롤 리스크↓), MTM 변동↑. 평가손실은 스왑레이트 상승 시 발생 — 월간 σ ${H2.mtm.sigma_ds_3m}%p, 최대 급등(=최대 평가손) +${H2.mtm.worst_ds}%p (${H2.mtm.worst_date}), 환율과 상관 ${H2.mtm.corr_ds_e}.`));
+
+  const mth = $("#hedge-method");
+  mth.textContent = "";
+  mth.append(el("summary", {}, "산식 · 회계 모형 · 한계 (방법론)"));
+  mth.append(el("p", {}, el("b", {}, "회계 손익 모형 (장부가 해외채권 + FX스왑)")));
+  (H2.acct_model || []).forEach((s) => mth.append(el("div", { style: "font-size:12.5px" }, s)));
+  mth.append(el("p", {}, el("b", {}, "경제 관점"),
+    " — 원화수익 = 자산수익 + (1−h)×환율변화 + h×스왑레이트. MVH = 1 + Cov(자산,환율)/Var(환율). ",
+    `공분산 표본 ${H2.sim.sample} (${H2.sim.n_months}개월).`));
+  mth.append(el("p", {}, el("b", {}, "한계"), ` — ${H2.limits}`));
+}
+
+/* ---------------- 환헤지 시뮬레이터 (오버레이) ---------------- */
+
+const HEDGE_LS_KEY = "iaw-hedge-input";
+
+function hedgeRows(H2) {
+  const rows = [];
+  H2.matrix.forEach((m) => {
+    if (m.c === "USD") {
+      rows.push({ id: "USD_b", cur: "USD", kind: "bond", name: "달러 — 채권",
+                  ref: `경제 ${m.mvh}% · 회계 100%`, amt: 5000, book: 70, h: 90 });
+      rows.push({ id: "USD_e", cur: "USD", kind: "eq", name: "달러 — 해외주식(ACWI)",
+                  ref: "경제 10~30%", amt: 3000, book: null, h: 30 });
+    } else {
+      rows.push({ id: m.c + "_b", cur: m.c, kind: "bond", name: `${m.name} — 채권`,
+                  ref: m.active ? `경제 ${m.mvh}% · 회계 100%` : "데이터 확보 전",
+                  amt: m.active ? 0 : 0, book: 100, h: 100, dis: !m.active });
+    }
+  });
+  return rows;
+}
+
+function hedgeCostAt(m, tenorM) {
+  if (!m.cost_curve) return 0;
+  const c = m.cost_curve;
+  const x = Math.min(12, Math.max(3, tenorM));
+  if (x <= 6) return c["3M"] + (c["6M"] - c["3M"]) * (x - 3) / 3;
+  return c["6M"] + (c["12M"] - c["6M"]) * (x - 6) / 6;
+}
+
+function openHedgeSim() {
+  const H2 = DATA.hedge;
+  if (!H2 || !H2.sim) { hideDetail(); return; }
+  overlayCharts.forEach(destroyChart);
+  overlayCharts = [];
+  const ov = $("#detail-overlay");
+  ov.textContent = "";
+  ov.hidden = false;
+  document.body.style.overflow = "hidden";
+  const inner = el("div", { class: "detail-inner" });
+  ov.append(inner);
+
+  const back = el("a", { onclick: () => { location.hash = "hedge"; } }, "‹ 환헤지 기본 화면");
+  inner.append(el("div", { class: "crumb" }, back, " / 시뮬레이터 (7통화)"));
+  const hl = el("div", { class: "qa" });
+  hl.append(el("div", { class: "q" }, "이 화면이 하는 일"));
+  hl.append(el("div", { class: "a" }, "우리 포트폴리오 숫자로 통화별 헤지비율을 바꿔보기 ",
+    el("small", {}, "입력값은 이 브라우저에만 저장되며 서버로 전송되지 않습니다")));
+  inner.append(hl);
+
+  const saved = (() => {
+    try { return JSON.parse(localStorage.getItem(HEDGE_LS_KEY)) || {}; }
+    catch { return {}; }
+  })();
+  const rows = hedgeRows(H2).map((r) => ({ ...r, ...(saved.rows && saved.rows[r.id]) }));
+  const tenor0 = saved.tenor || H2.default_tenor_m;
+
+  const panel = el("div", { class: "card" });
+  panel.append(el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, "통화·자산별 입력과 헤지비율"),
+    el("span", { class: "card-sub" }, "장부가 비중 = 채권 중 만기보유 비율(회계 관점 계산용) · 파란 글씨 = 참고치")));
+  const grid = el("table", { class: "grid-inp" },
+    el("tr", {}, ...["자산 (통화)", "금액(억)", "장부가 비중", "헤지비율"].map((h) => el("th", {}, h))));
+  const inputs = {};
+  rows.forEach((r) => {
+    const tr = el("tr", { class: r.dis ? "dis" : "" });
+    const amt = el("input", { type: "number", id: `hg-a-${r.id}`, value: String(r.amt), min: "0" });
+    const book = r.book != null
+      ? el("input", { type: "number", id: `hg-q-${r.id}`, value: String(r.book), min: "0", max: "100" })
+      : null;
+    const slider = el("input", { type: "range", id: `hg-h-${r.id}`, value: String(r.h), min: "0", max: "100", step: "5" });
+    const hlbl = el("span", { class: "hlbl" }, `${r.h}%`);
+    if (r.dis) { amt.disabled = true; if (book) book.disabled = true; slider.disabled = true; }
+    inputs[r.id] = { amt, book, slider, hlbl, cfg: r };
+    tr.append(
+      el("td", {}, r.name, el("span", { class: "refbadge" }, r.ref)),
+      el("td", {}, amt),
+      el("td", {}, book ? book : el("span", { style: "color:var(--ink-3)" }, "—"), book ? "%" : ""),
+      el("td", {}, slider, hlbl));
+    grid.append(tr);
+  });
+  panel.append(el("div", { class: "table-wrap", style: "max-height:none;border:0;overflow:visible" }, grid));
+  const tenorInput = el("input", { type: "number", id: "hg-tenor", value: String(tenor0), min: "3", max: "12" });
+  panel.append(el("div", { class: "tenor-row" },
+    el("b", {}, "스왑 평균 만기"), tenorInput, "개월",
+    el("span", { style: "color:var(--ink-3);font-size:12px" },
+      "— 캐리 고정 기간과 MTM 민감도(잔존만기 = 만기/2)에 반영. 현재 실무 평균 9개월")));
+  const resetBtn = el("button", { class: "theme-btn", style: "width:auto;padding:0 14px;font-size:12.5px",
+    onclick: () => { localStorage.removeItem(HEDGE_LS_KEY); location.reload(); } }, "입력 초기화");
+  panel.append(el("div", { style: "margin-top:8px" }, resetBtn));
+  inner.append(panel);
+
+  const res = el("div", { class: "res" });
+  const tile = (id, label, note) => {
+    const d = el("div", { class: "rt" });
+    d.append(el("div", { class: "l" }, label), el("div", { class: "v", id }, "–"),
+             el("div", { class: "n" }, note));
+    return d;
+  };
+  res.append(
+    tile("hg-econ", "경제 관점 변동성 (연)", "시가 기준 · 자연 쿠션 반영"),
+    tile("hg-acct", "회계 관점 손익변동성 (연)", "장부가 채권: 환산손익+스왑 MTM만 반영"),
+    tile("hg-carry", "연간 헤지 캐리", "Σ 금액 × 헤지비율 × 스왑레이트(만기 보간)"));
+  inner.append(res);
+
+  const note = el("div", { class: "howto", style: "margin-top:14px" });
+  note.append(el("b", {}, "확인해볼 것"),
+    " — ① 엔 채권 헤지를 0%로: 회계 변동성과 캐리가 함께 나빠집니다. ② 달러 주식 헤지를 100%로: 경제 변동성이 오히려 커집니다(자연 쿠션 상실). ③ 만기를 3→12개월로: 캐리는 오래 고정되지만 MTM 변동이 4배가 됩니다.",
+    el("br"), el("b", {}, "산식"),
+    ` — 회계 손익 모형 5항 분해와 공분산 표본(${H2.sim.sample})은 환헤지 화면의 방법론 패널 참조. 위안 행은 단기금리·헤지비용 데이터 확보 시 활성화됩니다.`);
+  inner.append(note);
+
+  const IX = Object.fromEntries(H2.sim.labels.map((l, i) => [l, i]));
+  const COV = H2.sim.cov;
+  const N = H2.sim.labels.length;
+  const mmap = Object.fromEntries(H2.matrix.map((m) => [m.c, m]));
+
+  function recalc(save = true) {
+    const tenor = Math.min(12, Math.max(3, +tenorInput.value || 9));
+    const tau = tenor / 24;                       // 평균 잔존만기 (년)
+    const xe = new Array(N).fill(0), xa = new Array(N).fill(0);
+    let tot = 0, carry = 0;
+    const state = { rows: {}, tenor };
+    for (const [id, o] of Object.entries(inputs)) {
+      const r = o.cfg;
+      const A = Math.max(0, +o.amt.value || 0);              // 음수 입력 차단
+      const h = Math.min(1, Math.max(0, (+o.slider.value || 0) / 100));
+      const q = o.book ? Math.min(1, Math.max(0, (+o.book.value || 0) / 100)) : 0;
+      o.hlbl.textContent = `${Math.round(h * 100)}%`;
+      state.rows[id] = { amt: A, book: o.book ? Math.min(100, Math.max(0, +o.book.value || 0)) : null, h: h * 100 };
+      if (r.dis || !A) continue;
+      const eK = IX[`e_${r.cur}`], dsK = IX[`ds_${r.cur}`];
+      const bK = r.kind === "eq" ? IX.eq : IX[`b_${r.cur}`];
+      if (eK == null || bK == null) continue;                // 데이터 계약 불일치 가드 (예: CNY 조기 활성화)
+      tot += A;
+      carry += A * h * hedgeCostAt(mmap[r.cur], tenor) / 100;
+      if (r.kind === "eq") {
+        xe[bK] += A; xa[bK] += A;
+        xe[eK] += A * (1 - h); xa[eK] += A * (1 - h);
+      } else {
+        xe[bK] += A;                       // 경제: 가격변동 전액
+        xa[bK] += A * (1 - q);             // 회계: 시가 채권만 가격손익
+        xe[eK] += A * (1 - h); xa[eK] += A * (1 - h);
+      }
+      // 스왑 MTM (회계): 헤지 명목 전체(채권·주식)에 인식
+      if (dsK != null) xa[dsK] += -A * h * tau;
+    }
+    if (save) { try { localStorage.setItem(HEDGE_LS_KEY, JSON.stringify(state)); } catch {} }
+    if (!tot) {
+      $("#hg-econ").textContent = "–";
+      $("#hg-acct").textContent = "–";
+      const c0 = $("#hg-carry");
+      c0.textContent = "–";
+      c0.style.color = "";
+      return;
+    }
+    const qf = (x) => {
+      let s = 0;
+      for (let i = 0; i < N; i++) {
+        if (!x[i]) continue;
+        for (let j = 0; j < N; j++) if (x[j]) s += x[i] * x[j] * COV[i][j];
+      }
+      return Math.sqrt(Math.max(s, 0)) / tot * 100;
+    };
+    $("#hg-econ").textContent = fmtNum(qf(xe), 1) + "%";
+    $("#hg-acct").textContent = fmtNum(qf(xa), 1) + "%";
+    const cEl = $("#hg-carry");
+    cEl.textContent = `${carry >= 0 ? "+" : "−"}${fmtNum(Math.abs(carry), 0)}억/년`;
+    cEl.style.color = carry >= 0 ? "var(--down)" : "var(--up)";
+  }
+  inner.querySelectorAll("input").forEach((i) => i.addEventListener("input", () => recalc()));
+  recalc(false);
+  ov.scrollTop = 0;
 }
 
 /* ---------------- render all / boot ---------------- */
@@ -1093,6 +1434,7 @@ function renderAll() {
   renderOverview();
   renderRisk();
   renderEvents();
+  renderHedge();
   renderRates();
   renderIRS();
   renderCredit();
@@ -1140,7 +1482,9 @@ async function boot() {
   renderCatalog();
   window.addEventListener("hashchange", handleHash);
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !$("#detail-overlay").hidden) location.hash = "risk";
+    if (e.key === "Escape" && !$("#detail-overlay").hidden) {
+      location.hash = location.hash === "#hedge-sim" ? "hedge" : "risk";
+    }
   });
   handleHash();
   window.__iaw = { registry, state };   // 디버그/테스트 훅
