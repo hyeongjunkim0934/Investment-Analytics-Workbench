@@ -27,6 +27,7 @@ import openpyxl
 import pandas as pd
 
 import hedge
+import panel
 import risk
 
 # --------------------------------------------------------------------------
@@ -689,9 +690,15 @@ def main() -> None:
 
     # 리스크 스코어보드 — 계산 실패가 대시보드 전체 빌드를 막지 않도록 격리
     try:
-        risk_payload, events_payload = risk.build(SERIES, warn)
+        risk_payload, events_payload, risk_weekly = risk.build(SERIES, warn)
         payloads["risk.json"] = risk_payload
         payloads["events.json"] = events_payload
+        try:
+            payloads["panel.json"] = panel.build(SERIES, risk_weekly, warn)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            warn("panel: 관계분석 패널 계산 실패 — 해당 화면 없이 배포됩니다")
     except Exception:
         import traceback
         traceback.print_exc()

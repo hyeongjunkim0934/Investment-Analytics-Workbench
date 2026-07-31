@@ -11,9 +11,10 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 
 | 경로 | 역할 |
 |---|---|
-| `pipeline/process.py` | CLI 진입점. 엑셀 파싱 → 시리즈 저장소(`SERIES`) → 패널 빌더 → JSON 13개 출력 |
-| `pipeline/risk.py` | `build(SERIES, warn)` → `risk.json` + `events.json` (요인 점수·IC가중 합성·이벤트 검출) |
+| `pipeline/process.py` | CLI 진입점. 엑셀 파싱 → 시리즈 저장소(`SERIES`) → 패널 빌더 → JSON 14개 출력 |
+| `pipeline/risk.py` | `build(SERIES, warn)` → `risk.json` + `events.json` + 관계분석용 주간 프레임 (요인 점수·IC가중 합성·이벤트 검출) |
 | `pipeline/hedge.py` | `build(SERIES, warn)` → `hedge.json` (7통화 헤지 매트릭스·백테스트·시뮬레이터 공분산) |
+| `pipeline/panel.py` | `build(SERIES, risk_weekly, warn)` → `panel.json` (관계분석용 주간 정렬 패널. 공개 변수는 `VARS` 화이트리스트로만 통제) |
 | `pipeline/research/wf_validation.py` | 가중치 방식 비교용 수동 연구 하네스. **CI에서 실행되지 않음** |
 | `pipeline/requirements.txt` | 파이프라인이 직접 import 하는 3개를 `==` 로 고정 |
 | `dashboard/index.html` `app.js` `style.css` | 정적 대시보드 (섹션 12개, 라이트/다크, 기간 필터) |
@@ -38,9 +39,9 @@ cd _site && python -m http.server 8000     # http://localhost:8000
 python pipeline/research/wf_validation.py --data-dir ../Data
 ```
 
-- 파이프라인 정상 출력: 약 **30~40초**, exit 0, `parsed N series from M files` 뒤에 `wrote …` **13줄**
-  (합계 약 1.8MB), 마지막 줄 `N warning(s) — see meta.json`.
-- **13은 코드가 정한 수**(아래 JSON 계약)라 달라지면 그 자체가 버그다. 반대로 `N`·`M`·경고 건수는
+- 파이프라인 정상 출력: 약 **30~40초**, exit 0, `parsed N series from M files` 뒤에 `wrote …` **14줄**
+  (합계 약 2.1MB), 마지막 줄 `N warning(s) — see meta.json`.
+- **14는 코드가 정한 수**(아래 JSON 계약)라 달라지면 그 자체가 버그다. 반대로 `N`·`M`·경고 건수는
   `--data-dir` 의 엑셀에서 오는 수라 데이터를 갱신하면 정상적으로 바뀐다 — 현재 `../Data` 기준선은
   **444 시리즈 / 4 파일 / 경고 7건**(전부 stderr의 `data_bb.xlsx/D: duplicate column …`)이며, 이 기준선의
   정본은 Data 저장소 쪽(`../Data/CLAUDE.md`)이다. 급감이나 경고 성격 변화만 신호로 볼 것.
@@ -50,8 +51,8 @@ python pipeline/research/wf_validation.py --data-dir ../Data
 
 ## 출력 JSON 계약
 
-`process.py` 의 `payloads` 딕셔너리와 `dashboard/app.js` 의 `FILES` 상수가 **같은 13개**로 1:1 대응한다:
-`meta` `overview` `risk` `events` `hedge` `rates` `irs` `credit` `fx` `inflation` `acwi` `macro` `catalog`.
+`process.py` 의 `payloads` 딕셔너리와 `dashboard/app.js` 의 `FILES` 상수가 **같은 14개**로 1:1 대응한다:
+`meta` `overview` `risk` `events` `panel` `hedge` `rates` `irs` `credit` `fx` `inflation` `acwi` `macro` `catalog`.
 JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 
 - 대시보드는 `fetch("data/<이름>.json")` 상대경로로 읽는다 → `--out` 은 항상 `index.html` 옆 `data/` 여야 하고,
@@ -90,13 +91,17 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   `IRS_TENORS`/`IRS_COUNTRIES` 476행, `KR_CREDIT_3Y` 514행, `MACRO_DEFS` 618행)와, `build_rates` /
   `build_irs` / `build_credit` / `build_fx` / `build_inflation` 안에 **인라인으로 박힌 `series_group([...])`
   리스트**(451·455·507·538·542·551·570·578·583행)에 절반씩 흩어져 있다. 여기에 더해 `risk.py` 의
-  `Indicator` `spark` 와 `hedge.py` 의 `cost_hist_usd` 도 원본 값을 그대로 싣는다.
+  `Indicator` `spark` 와 `hedge.py` 의 `cost_hist_usd`, 그리고 **`panel.py` 의 `VARS`** (관계분석용 30개
+  변수의 주간 수준값 전 구간)도 원본 값을 그대로 싣는다.
   어느 경로든 넣은 시리즈의 **값이 Pages로 나간다** — 상수만 훑고 공개 범위를 판단하면 크게 과소평가한다.
 - **리스크 요인 구성·가중** = `risk.py` 의 `FACTORS` 리스트와 `Indicator` (모드 `hi`/`lo`/`up`),
   상수 `FLOOR`/`EMBARGO_W`/`REFIT_EVERY_W`. 등급 밴드는 `GRADE_BANDS`.
 - **이벤트 규칙** = `risk.py` 의 `detect_events()` (급변 2.5σ·백분위 90% 교차·커브 역전·삼 룰·데이터 지연).
   규칙을 바꾸면 화면에 노출되는 `catalog` 설명 문구도 같은 함수 안에서 같이 고칠 것.
 - **환헤지 통화·프록시** = `hedge.py` 의 `CURRENCIES`/`FX`/`BONDS`/`R3M`.
+- **관계분석 변수 목록·기본 선택** = `panel.py` 의 `VARS`/`DEFAULT_VARS`. 통계(상관·교차상관·OLS+HAC)는
+  파이썬이 아니라 `app.js` 의 통계 엔진(`pearson`/`crossCorr`/`ols`/`normInv`)에서 브라우저가 돌린다 —
+  방법론을 바꾸려면 그쪽을 고친다.
 - `wf_validation.py` 는 `process` 를 import 해 `load_data_dir()` 만 재사용한다 — 파서 시그니처를 바꾸면
   같이 깨진다.
 
