@@ -28,7 +28,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `pytest.ini` | `testpaths = tests` |
 | `dashboard/index.html` `app.js` `style.css` | 정적 대시보드 (섹션 12개, 라이트/다크, 기간 필터) |
 | `dashboard/vendor/uplot.min.{js,css}` | 벤더링된 유일한 프런트 의존성 (외부 네트워크 요청 없음) |
-| `.github/workflows/build-dashboard.yml` | dispatch/수동/push 트리거 → **test → build(+배포 게이트) → deploy** |
+| `.github/workflows/build-dashboard.yml` | dispatch/수동/push 트리거 → **test → build(+배포 게이트) → deploy**. build 잡은 게이트 뒤에 `Build summary` 단계로 시리즈 수·최종 관측일·JSON 수·경고를 `$GITHUB_STEP_SUMMARY` 에 표로 붙인다(`if: always()` — 게이트가 막아 실패한 실행에서도 남는다) |
 | `.github/workflows/tests.yml` | PR·push 에서 pytest 만 (비공개 데이터·Pages 권한 없음) |
 | `.github/dependabot.yml` | `pipeline/`·`tests/` pip + Actions 주간 업그레이드 PR |
 | `docs/SETUP.md` | 토큰·시크릿·Pages 초기 설정 (GitHub 웹에서만 하는 작업) |
@@ -98,7 +98,15 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 
 - 키의 뒷부분은 엑셀 헤더 문자열 **그대로**다 — 한글·`&`·`_` 가 그대로 들어간다(`bb:미국_S&P500_TR`).
   코드에 키를 적을 때 정규화하지 말 것.
-- 같은 시트에 같은 Notation이 두 번 나오면 두 번째는 경고 후 버려진다. 같은 키가 여러 파일에 있으면
+- 같은 시트에 같은 Notation이 두 번 나오면 두 번째는 경고 후 버려진다.
+  **이 경고를 "무해한 중복"으로 읽지 말 것** — 현재 기준선의 경고 7건을 실측한 결과 버려지는 컬럼
+  7개 중 **6개는 값이 서로 다른 별개 시리즈**였다(같은 라벨을 공유할 뿐). 즉 파서는 조용히 실데이터를
+  버리고 있고, 라벨이 겹치는 한 어느 쪽이 채택되는지는 **컬럼 순서**가 정한다. 어떤 라벨이 어떤
+  상품이었는지는 비공개 `../Data` 의 CLAUDE.md 에 실측 표로 적어 두었다(벤더 값이라 여기에는 옮기지
+  않는다). 그중 **하나는 채택되는 컬럼 자체가 오라벨**이라 `catalog.json` 에 나가는 키 이름이 실제
+  내용과 다르다 — 다행히 그 키를 읽는 코드가 없어 게시된 **값**은 영향받지 않지만, **공개 메타데이터가
+  틀린 상태**다. 고치는 자리는 이 저장소가 아니라 **벤더 익스포트 템플릿의 Notation 라벨**이다.
+  같은 키가 여러 파일에 있으면
   **마지막 관측일이 더 늦은 쪽이 겹치는 날짜에서 이긴다**(`add_series`).
 - `.xls` 는 경고만 남기고 스킵, `~$` 임시 파일은 무시.
 - `get(key)` 는 없는 키에 경고를 남기고 `None` 을 돌려준다 → 패널 빌더는 그 항목만 조용히 건너뛴다.
