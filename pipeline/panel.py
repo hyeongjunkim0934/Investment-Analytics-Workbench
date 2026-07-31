@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from common import epoch_seconds
+
 # (id, 표시명, 그룹, 단위, kind, 산출식) — 산출식은 SERIES 키 또는 (연산, 인자들)
 VARS = [
     ("fx_usdkrw", "달러/원", "FX", "원", "price", "bb:달러원"),
@@ -64,11 +66,6 @@ VARS = [
 ]
 
 DEFAULT_VARS = ["fx_usdkrw", "kr_3y", "kr_10y", "us_10y", "kospi"]
-
-
-def epoch_seconds(index: pd.DatetimeIndex) -> list[int]:
-    delta = index - pd.Timestamp("1970-01-01")
-    return [int(x) for x in (delta // pd.Timedelta(seconds=1))]
 
 
 def resolve(spec, S: dict, warn) -> pd.Series | None:

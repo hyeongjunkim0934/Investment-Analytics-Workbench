@@ -29,6 +29,9 @@ import pandas as pd
 import hedge
 import panel
 import risk
+# 재수출(re-export): 예전 process.epoch_seconds 를 쓰던 호출부를 그대로 두면서
+# 정의는 common 한 곳만 남긴다. tests/test_formulas.py 가 동일성을 단정한다.
+from common import epoch_seconds
 
 # --------------------------------------------------------------------------
 # series store
@@ -270,12 +273,6 @@ def asof(s: pd.Series, ts) -> tuple[pd.Timestamp | None, float | None]:
     if len(sub) == 0:
         return None, None
     return sub.index[-1], float(sub.iloc[-1])
-
-
-def epoch_seconds(index: pd.DatetimeIndex) -> list[int]:
-    # 산술로 계산: pandas 버전별 내부 해상도(ns/us) 차이에 영향받지 않는다.
-    delta = index - pd.Timestamp("1970-01-01")
-    return [int(x) for x in (delta // pd.Timedelta(seconds=1))]
 
 
 def pack(s: pd.Series | None, round_to: int = 4,

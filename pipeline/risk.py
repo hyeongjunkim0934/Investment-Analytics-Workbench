@@ -19,6 +19,11 @@ from datetime import timedelta
 import numpy as np
 import pandas as pd
 
+import common
+# spearman/auc 는 이 파일에서 직접 쓰고, epoch_seconds 는 재수출이다 —
+# 정의는 전부 common 에만 있다 (tests/test_formulas.py 가 동일성을 단정).
+from common import auc, epoch_seconds, spearman
+
 MIN_DAILY = 1000      # 일별 지표 최소 관측 (약 4년)
 MIN_MONTHLY = 60      # 월별 지표 최소 관측 (5년)
 EMBARGO_W = 5         # 주 — 학습 시 타깃 겹침 차단
@@ -40,32 +45,8 @@ def grade(score) -> str | None:
     return None
 
 
-def epoch_seconds(index: pd.DatetimeIndex) -> list[int]:
-    delta = index - pd.Timestamp("1970-01-01")
-    return [int(x) for x in (delta // pd.Timedelta(seconds=1))]
-
-
 def pack_series(s: pd.Series, round_to: int = 1) -> dict:
-    s = s.dropna()
-    return {"t": epoch_seconds(s.index),
-            "v": [round(float(v), round_to) for v in s.values]}
-
-
-def spearman(a: pd.Series, b: pd.Series) -> float:
-    j = pd.concat([a, b], axis=1).dropna()
-    if len(j) < 10:
-        return float("nan")
-    return float(j.iloc[:, 0].rank().corr(j.iloc[:, 1].rank()))
-
-
-def auc(score: pd.Series, flag: pd.Series) -> float:
-    j = pd.concat([score, flag], axis=1).dropna()
-    s, f = j.iloc[:, 0], j.iloc[:, 1].astype(bool)
-    pos, neg = int(f.sum()), int((~f).sum())
-    if pos == 0 or neg == 0:
-        return float("nan")
-    r = s.rank()
-    return float((r[f].sum() - pos * (pos + 1) / 2) / (pos * neg))
+    return common.pack_values(s, round_to)
 
 
 # ---------------------------------------------------------------------------
@@ -137,8 +118,21 @@ def step_text(ind_cur: dict, mode: str) -> str:
 # 메인 빌드
 # ---------------------------------------------------------------------------
 
-def build(series_store: dict, warn) -> tuple[dict, dict]:
-    S = {k: v["s"] for k, v in series_store.items()}
+# ---------------------------------------------------------------------------
+# 요인 정의 (모듈 수준) — 배포 코드(build)와 연구 하네스(research/wf_validation)가
+# **같은 정의**를 쓰도록 build() 밖으로 끌어냈다. 예전에는 wf_validation.py 가
+# 요인·지표·부호를 자기 파일에 따로 적어 두어, 한쪽만 고치면 "검증된 방법론"과
+# "실제 게시되는 점수"가 조용히 갈라졌다.
+# ---------------------------------------------------------------------------
+
+def derive_inputs(S: dict, warn=None) -> dict:
+    """{key: Series} -> 요인 계산에 쓰는 원천·파생 시리즈 한 벌.
+
+    S 는 process.SERIES 의 값 부분({key: pd.Series}) 이다.
+    """
+    if warn is None:
+        def warn(_msg):
+            return None
 
     def g(key):
         s = S.get(key)
@@ -164,6 +158,9 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
     disp_k200 = ((kospi / kospi.rolling(200).mean() - 1) * 100).dropna()
     disp_a200 = ((acwi / acwi.rolling(200).mean() - 1) * 100).dropna()
     unemp_us = g("bb:미국_실업률")
+    cds_kr, cds_jp, cds_de = (g("bb:한국_CDS_5년물"),
+                              g("bb:일본_CDS_5년물"),
+                              g("bb:독일_CDS_5년물"))
 
     # 삼 룰 (미국)
     u_m = unemp_us.resample("ME").last().dropna()
@@ -171,6 +168,54 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
     sahm = (u3 - u3.rolling(12).min()).dropna()
     sahm_now = float(sahm.iloc[-1])
     sahm_fired = sahm_now >= 0.5
+
+    return {
+        "kospi": kospi,
+        "acwi": acwi,
+        "usdkrw": usdkrw,
+        "vix": vix,
+        "vkospi": vkospi,
+        "hy": hy,
+        "ig": ig,
+        "kr3y": kr3y,
+        "kr_card": kr_card,
+        "fxvol": fxvol,
+        "dd_acwi": dd_acwi,
+        "dd_kospi": dd_kospi,
+        "us_slope": us_slope,
+        "kr_slope": kr_slope,
+        "disp_k": disp_k,
+        "disp_a": disp_a,
+        "disp_k200": disp_k200,
+        "disp_a200": disp_a200,
+        "unemp_us": unemp_us,
+        "cds_kr": cds_kr,
+        "cds_jp": cds_jp,
+        "cds_de": cds_de,
+        "sahm": sahm,
+        "sahm_now": sahm_now,
+        "sahm_fired": sahm_fired,
+    }
+
+
+def factor_specs(D: dict) -> list[dict]:
+    """derive_inputs() 결과 -> 요인 정의 리스트 (스트레스 6 + 취약성 5).
+
+    각 원소: dict(key, layer, name, sub, question, tags, inds=[Indicator], note?, pending?)
+    연구 하네스는 layer == "stress" 인 요인만 쓴다.
+    """
+    (vix, vkospi, dd_acwi, dd_kospi,
+     hy, ig, kr_card, cds_kr,
+     cds_jp, cds_de, fxvol, usdkrw,
+     us_slope, kr_slope, disp_k, disp_a,
+     disp_k200, disp_a200, unemp_us, sahm_now,
+     sahm_fired) = (
+        D["vix"], D["vkospi"], D["dd_acwi"], D["dd_kospi"],
+        D["hy"], D["ig"], D["kr_card"], D["cds_kr"],
+        D["cds_jp"], D["cds_de"], D["fxvol"], D["usdkrw"],
+        D["us_slope"], D["kr_slope"], D["disp_k"], D["disp_a"],
+        D["disp_k200"], D["disp_a200"], D["unemp_us"], D["sahm_now"],
+        D["sahm_fired"])
 
     FACTORS = [
         # ----- 현재 위험 (스트레스) -----
@@ -192,9 +237,9 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
         dict(key="cds", layer="stress", name="국가신용 (CDS)",
              sub="국가 부도 보험료가 오르고 있나", question="국가신용 위험이 커지고 있는가",
              tags=["cds"],
-             inds=[Indicator("한국 CDS 5년", g("bb:한국_CDS_5년물"), "hi", "{:.0f}", "bp"),
-                   Indicator("일본 CDS 5년", g("bb:일본_CDS_5년물"), "hi", "{:.0f}", "bp"),
-                   Indicator("독일 CDS 5년", g("bb:독일_CDS_5년물"), "hi", "{:.0f}", "bp")]),
+             inds=[Indicator("한국 CDS 5년", cds_kr, "hi", "{:.0f}", "bp"),
+                   Indicator("일본 CDS 5년", cds_jp, "hi", "{:.0f}", "bp"),
+                   Indicator("독일 CDS 5년", cds_de, "hi", "{:.0f}", "bp")]),
         dict(key="fx", layer="stress", name="환율",
              sub="원화가 얼마나 불안한가", question="원화 환율이 얼마나 불안정한가",
              tags=["fx"],
@@ -235,6 +280,17 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
              note=(f"실업률 저점권 = 사이클 후반. 삼 룰(침체 판별): 현재 {sahm_now:+.2f}%p — "
                    f"{'발동' if sahm_fired else '미발동'} (기준 +0.50%p). 한국 실업률 업로드 시 확장.")),
     ]
+    return FACTORS
+
+
+def build(series_store: dict, warn) -> tuple[dict, dict]:
+    S = {k: v["s"] for k, v in series_store.items()}
+    D = derive_inputs(S, warn)
+    FACTORS = factor_specs(D)
+    kospi, acwi, usdkrw = D["kospi"], D["acwi"], D["usdkrw"]
+    vix, vkospi, hy = D["vix"], D["vkospi"], D["hy"]
+    fxvol, us_slope, kr_slope, sahm = D["fxvol"], D["us_slope"], D["kr_slope"], D["sahm"]
+
 
     # ----- 요인 점수 계산 -----
     factors_out = []

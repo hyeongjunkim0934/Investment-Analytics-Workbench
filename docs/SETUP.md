@@ -120,15 +120,30 @@ A는 데이터를 건드리지 않고 배선만 점검하고 싶을 때 쓰세�
 
 ## 참고 — 브랜치 관련
 
-- 두 저장소 모두 처음 푸시된 브랜치(`claude/data-repo-dashboard-automation-cj8y59`)가
-  **기본 브랜치**가 됩니다. 자동화는 기본 브랜치 기준으로 동작하므로 그대로 써도 되고,
-  원한다면 기본 브랜치 이름을 `main`으로 바꿔도 됩니다
-  (저장소 → Settings → General → Default branch, 또는 Branches에서 rename).
-- **기본 브랜치 이름을 바꾼 경우 한 가지 추가 확인**: workbench 저장소 →
-  **Settings → Environments → github-pages → Deployment branches**에 예전 브랜치명이
-  남아 있으면 배포가 `Branch "main" is not allowed to deploy to github-pages …` 오류로
-  실패합니다. 목록에 새 기본 브랜치를 추가(또는 규칙을 수정)하세요.
-- data 저장소에서 엑셀을 업로드할 때는 **기본 브랜치에 직접 커밋**하세요.
+세 저장소의 기본 브랜치는 **아직 기계 생성 세션명**입니다
+(`Investment-Analytics-Workbench`·`Data` = `claude/data-repo-dashboard-automation-cj8y59`,
+`AIs` = `claude/five-independent-agents-s9i539`). `main` 으로 바꾸는 것은 **아직 하지 않았고**,
+아래가 그 절차입니다. GitHub 웹에서만 할 수 있는 작업이라 사람이 직접 해야 합니다.
+
+1. 세 저장소 각각 **Settings → General → Default branch → ✏️ → `main` → Rename**.
+   GitHub이 열린 PR의 base와 브랜치 리다이렉트는 자동으로 옮겨 줍니다.
+2. **여기서 빠뜨리기 쉬운 한 가지** — workbench 저장소 → **Settings → Environments →
+   github-pages → Deployment branches**에 `main`을 추가하세요. 이 목록만은 rename을 따라
+   자동 갱신되지 **않습니다**. 빠뜨리면 build는 성공하는데 deploy만
+   `Branch "main" is not allowed to deploy to github-pages …` 로 실패해, Actions 목록에서는
+   빨간불이 늦게 눈에 띕니다.
+3. 그 **다음에** `build-dashboard.yml`의 `push:` 트리거에서 세션명 한 줄을 지워
+   `branches: [main, master]` 로 정리하는 커밋을 올리세요. 순서가 반대면(rename 전에 먼저
+   지우면) 그 사이 기본 브랜치 push가 아무 워크플로도 트리거하지 않는 잠복 구간이 생깁니다.
+   지금은 세 이름이 모두 들어 있어 rename 전후 어느 쪽에서도 트리거가 끊기지 않습니다.
+4. 마지막으로 **Actions → Build & deploy dashboard → Run workflow**를 한 번 돌려
+   test → build(배포 게이트) → deploy가 끝까지 초록인지 확인하세요.
+5. 열려 있는 dependabot PR들의 base가 `main`으로 옮겨졌는지 눈으로 확인하세요.
+
+`Data`의 `notify-workbench.yml`과 `AIs`에는 브랜치명이 하드코딩되어 있지 않아
+(발신측은 `github.event.repository.default_branch`와 비교) 고칠 파일이 없습니다.
+
+- data 저장소에서 엑셀을 갱신할 때는 **기본 브랜치에 직접 커밋**하세요.
   "Create a new branch … and start a pull request"를 선택하면 병합 전까지
   대시보드가 갱신되지 않습니다(기본 브랜치 푸시만 트리거됨).
 
@@ -154,3 +169,6 @@ A는 데이터를 건드리지 않고 배선만 점검하고 싶을 때 쓰세�
 | deploy 단계에서 `Branch "…" is not allowed to deploy to github-pages` 오류 | 기본 브랜치 이름을 바꾼 뒤 발생 — Settings → Environments → github-pages → Deployment branches에 새 기본 브랜치 추가 |
 | 빌드는 성공했는데 일부 차트가 "데이터 없음" | 엑셀에서 해당 시리즈(Notation)가 빠졌거나 이름이 바뀐 경우 — Actions 로그와 대시보드 하단 경고 수, 브라우저 콘솔의 `pipeline warnings` 확인 |
 | 토큰 만료(1년) | 1단계로 새 토큰 발급 → 2·3단계 시크릿 값만 교체 |
+| build가 **Deploy gate — JSON 계약 검사**에서 실패 | 의도된 차단입니다. 로그의 `::error::배포 게이트:` 줄이 원인(JSON 누락/경고 초과/시리즈 부족)을 말해 줍니다. JSON 누락이면 그 위 **Build dashboard data** 로그에 risk/hedge traceback이 있습니다 |
+| build가 **Verify data files are real workbooks**에서 실패 | 체크아웃된 xlsx가 ZIP(`PK`)이 아닙니다 — 업로드가 잘렸거나, 엑셀이 아닌 파일이 `.xlsx` 이름으로 올라갔거나, (data가 LFS로 전환된 뒤라면) 포인터 상태입니다. `DATA_REPO_TOKEN`이 유효한지, 체크아웃에 `lfs: true`가 있는지 확인 |
+| **test** 잡이 실패 | 파이프라인 계약이 깨졌습니다. 로컬에서 `python -m pytest`로 재현됩니다(비공개 데이터 불필요) |

@@ -15,6 +15,15 @@ updates:
     commit-message:
       prefix: "deps"
 
+  # 테스트 전용 의존성 — pytest 는 런타임이 아니라 tests/requirements.txt 에 따로 있다.
+  - package-ecosystem: pip
+    directory: /tests
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "deps"
+
   # GitHub Actions — 워크플로는 .github/workflows/ 에 있고, 이 생태계의 directory 는 "/" 로 둔다.
   - package-ecosystem: github-actions
     directory: /

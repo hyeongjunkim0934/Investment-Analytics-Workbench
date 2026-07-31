@@ -1,0 +1,6 @@
+# 테스트 전용 의존성.
+# pipeline/requirements.txt 와 **분리**되어 있다: 그쪽은 파이프라인이 직접 import 하는
+# 3개(pandas/numpy/openpyxl)만 담는 런타임 계약이고, pytest 는 런타임에 필요 없다.
+# 여기에 pandas/numpy/openpyxl 을 다시 적지 말 것 — 버전이 두 곳에서 갈라진다.
+# 올릴 때는 손으로 고치지 말고 .github/dependabot.yml 이 여는 주간 PR 로 올린다.
+pytest==9.1.1
