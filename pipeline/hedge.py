@@ -20,6 +20,10 @@ import math
 import numpy as np
 import pandas as pd
 
+import common
+# 재수출 — 정의는 common 에만 있다 (tests/test_formulas.py 가 동일성을 단정).
+from common import epoch_seconds
+
 CURRENCIES = ["USD", "EUR", "JPY", "CNY", "AUD", "CAD", "GBP"]
 NAME = {"USD": "달러", "EUR": "유로", "JPY": "엔", "CNY": "위안",
         "AUD": "호주달러", "CAD": "캐나다달러", "GBP": "파운드"}
@@ -45,14 +49,8 @@ def synth_bond_tr(y_series: pd.Series, T: int = 5) -> pd.Series:
     return (y.shift(1) / 12 - D.shift(1) * y.diff()).dropna()
 
 
-def epoch_seconds(index: pd.DatetimeIndex) -> list[int]:
-    delta = index - pd.Timestamp("1970-01-01")
-    return [int(x) for x in (delta // pd.Timedelta(seconds=1))]
-
-
 def pack(s: pd.Series, r: int = 2) -> dict:
-    s = s.dropna()
-    return {"t": epoch_seconds(s.index), "v": [round(float(v), r) for v in s.values]}
+    return common.pack_values(s, r)
 
 
 def build(series_store: dict, warn) -> dict:

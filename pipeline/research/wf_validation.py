@@ -10,6 +10,14 @@ CI 빌드에는 포함되지 않으며, 데이터 갱신 후 수동으로 재검
 평가: 표본 외(2010~) — 향후 1개월 실현변동성 순위상관(IC), 위기 판별 AUC(−5%/−10%),
 기간 반분 안정성, 비중첩 월별 강건성. 모든 학습·정규화는 각 시점 이전 데이터만 사용.
 
+**요인 정의는 이 파일에 없다.** 요인·지표·부호·백분위 산식은 전부 배포 코드
+(`risk.derive_inputs` + `risk.factor_specs` 의 layer=="stress")에서 가져온다 —
+예전처럼 여기에 STRESS 딕셔너리를 따로 적어 두면 한쪽만 고쳤을 때 "검증된
+방법론"과 "실제 게시되는 점수"가 조용히 갈라진다. 상수(EMBARGO/REFIT/TRAIN/FLOOR)와
+순위상관·AUC 산식도 각각 `risk`·`common` 에서 가져온다.
+여기서 정하는 것은 **평가 설계**뿐이다: 합성 가중 방식, 타깃(향후 1개월 최저수익률·
+실현변동성), 표본 외 구간, 반분 안정성.
+
 주요 결과 (2026-07-27 기준 데이터):
     동일가중     IC +0.512  AUC5 0.602  AUC10 0.621
     IC가중(WF)  IC +0.604  AUC5 0.607  AUC10 0.638   (반분: +0.68 / +0.41)
@@ -28,24 +36,14 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import common  # noqa: E402
 import process as P  # noqa: E402
+import risk as R  # noqa: E402
 
-EMBARGO_W, REFIT_W, TRAIN_MIN_W, FLOOR = 5, 4, 156, 0.08
-
-
-def spearman(a, b):
-    j = pd.concat([a, b], axis=1).dropna()
-    return float(j.iloc[:, 0].rank().corr(j.iloc[:, 1].rank())) if len(j) >= 10 else float("nan")
-
-
-def auc(score, flag):
-    j = pd.concat([score, flag], axis=1).dropna()
-    s, f = j.iloc[:, 0], j.iloc[:, 1].astype(bool)
-    pos, neg = int(f.sum()), int((~f).sum())
-    if pos == 0 or neg == 0:
-        return float("nan")
-    r = s.rank()
-    return float((r[f].sum() - pos * (pos + 1) / 2) / (pos * neg))
+spearman, auc = common.spearman, common.auc
+# 배포 코드와 같은 상수를 쓴다 (risk.py 가 정본).
+EMBARGO_W, REFIT_W = R.EMBARGO_W, R.REFIT_EVERY_W
+TRAIN_MIN_W, FLOOR = R.TRAIN_MIN_W, R.FLOOR
 
 
 def main():
@@ -55,27 +53,18 @@ def main():
     P.load_data_dir(args.data_dir)
     S = {k: v["s"] for k, v in P.SERIES.items()}
 
-    kospi, acwi, usdkrw = S["bb:한국_KOSPI_TR"], S["idx:ACWI"], S["bb:달러원"]
-    hy = S["bb:미국_하이일드_스프레드"]
-    kr_card = ((S["info:Card_AA_plus_3y"] - S["info:한국_3y"]) * 100).dropna()
-    fxvol = (usdkrw.pct_change().rolling(20).std() * math.sqrt(252) * 100).dropna()
-    STRESS = {
-        "변동성": [(S["info:VIX"], 1), (S["info:VKOSPI"], 1)],
-        "주식낙폭": [((acwi / acwi.cummax() - 1) * 100, -1), ((kospi / kospi.cummax() - 1) * 100, -1)],
-        "스프레드": [(hy, 1), (kr_card, 1)],
-        "국가신용": [(S["bb:한국_CDS_5년물"], 1), (S["bb:일본_CDS_5년물"], 1), (S["bb:독일_CDS_5년물"], 1)],
-        "환율": [(fxvol, 1), (usdkrw, 1)],
-        "커브": [(((S["info:UST10y"] - S["info:UST2y"]) * 100).dropna(), -1),
-                (((S["info:한국_10y"] - S["info:한국_3y"]) * 100).dropna(), -1)],
-    }
+    # ----- 요인 정의: 배포 코드에서 그대로 가져온다 -----
+    D = R.derive_inputs(S)
+    stress = [f for f in R.factor_specs(D) if f["layer"] == "stress"]
+    kospi, acwi = D["kospi"], D["acwi"]
+    print("요인(risk.factor_specs 에서 로드): "
+          + " / ".join(f"{f['name']}({len(f['inds'])})" for f in stress))
 
-    def weekly_score(s, sign):
-        p = s.dropna().expanding(min_periods=1000).rank(pct=True) * 100
-        p = p.resample("W-FRI").last()
-        return p if sign > 0 else 100 - p
-
-    F = pd.DataFrame({name: pd.concat([weekly_score(s, sg) for s, sg in inds], axis=1).mean(axis=1)
-                      for name, inds in STRESS.items()}).dropna()
+    # Indicator.weekly() = transform(expanding_pctl(raw, MIN_DAILY), mode) 의 주별 마지막값.
+    # 예전 이 파일에 있던 weekly_score() 와 같은 산식이며, 이제 정의는 한 곳뿐이다.
+    F = pd.DataFrame({f["name"]: pd.concat([i.weekly() for i in f["inds"]], axis=1).mean(axis=1)
+                      for f in stress}).dropna()
+    keys = [f["name"] for f in stress]
     print(f"주별 요인 점수: {F.index[0].date()} ~ {F.index[-1].date()} ({len(F)}주)")
 
     def fwd(price):
@@ -94,7 +83,7 @@ def main():
     mnK, volK = fwd(kospi)
     data = F.join(pd.concat([mnA, mnK], axis=1).mean(axis=1).rename("fwd_min")) \
             .join(pd.concat([volA, volK], axis=1).mean(axis=1).rename("fwd_vol")).dropna()
-    Fs, keys = data[list(STRESS)], list(STRESS)
+    Fs = data[keys]
     refits = set(data.index[::REFIT_W])
 
     def ic_w(train):
