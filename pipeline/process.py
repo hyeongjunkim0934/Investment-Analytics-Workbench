@@ -27,7 +27,11 @@ import openpyxl
 import pandas as pd
 
 import hedge
+import panel
 import risk
+# 재수출(re-export): 예전 process.epoch_seconds 를 쓰던 호출부를 그대로 두면서
+# 정의는 common 한 곳만 남긴다. tests/test_formulas.py 가 동일성을 단정한다.
+from common import epoch_seconds
 
 # --------------------------------------------------------------------------
 # series store
@@ -269,12 +273,6 @@ def asof(s: pd.Series, ts) -> tuple[pd.Timestamp | None, float | None]:
     if len(sub) == 0:
         return None, None
     return sub.index[-1], float(sub.iloc[-1])
-
-
-def epoch_seconds(index: pd.DatetimeIndex) -> list[int]:
-    # 산술로 계산: pandas 버전별 내부 해상도(ns/us) 차이에 영향받지 않는다.
-    delta = index - pd.Timestamp("1970-01-01")
-    return [int(x) for x in (delta // pd.Timedelta(seconds=1))]
 
 
 def pack(s: pd.Series | None, round_to: int = 4,
@@ -689,9 +687,15 @@ def main() -> None:
 
     # 리스크 스코어보드 — 계산 실패가 대시보드 전체 빌드를 막지 않도록 격리
     try:
-        risk_payload, events_payload = risk.build(SERIES, warn)
+        risk_payload, events_payload, risk_weekly = risk.build(SERIES, warn)
         payloads["risk.json"] = risk_payload
         payloads["events.json"] = events_payload
+        try:
+            payloads["panel.json"] = panel.build(SERIES, risk_weekly, warn)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            warn("panel: 관계분석 패널 계산 실패 — 해당 화면 없이 배포됩니다")
     except Exception:
         import traceback
         traceback.print_exc()
