@@ -2,8 +2,11 @@
 """출력 JSON 계약 + 배포 게이트.
 
 여기서 지키는 계약: `process.py` 의 `payloads` = `dashboard/app.js` 의 `FILES`
-= `pipeline/check_output.py` 의 `EXPECTED` = **같은 13개**. 셋 중 하나만 고치면
+= `pipeline/check_output.py` 의 `EXPECTED` = **같은 14개**. 셋 중 하나만 고치면
 대시보드의 한 섹션이 조용히 사라진다.
+
+개수 assert 는 교차 대조와 별개로 남겨 둔다 — 세 곳을 일관되게 고치면 교차 대조는
+통과하므로, 계약 크기가 바뀌었다는 사실 자체를 사람이 의식하게 만드는 것이 목적이다.
 """
 
 from __future__ import annotations
@@ -34,9 +37,9 @@ def _app_js_files() -> list[str]:
     return re.findall(r'["\']([A-Za-z_]+)["\']', m.group(1))
 
 
-def test_contract_is_thirteen():
-    assert len(check_output.EXPECTED) == 13
-    assert len(set(check_output.EXPECTED)) == 13
+def test_contract_is_fourteen():
+    assert len(check_output.EXPECTED) == 14
+    assert len(set(check_output.EXPECTED)) == 14
 
 
 def test_app_js_files_match_contract():
@@ -69,11 +72,11 @@ def built(synth_dir, tmp_path_factory):
     return out, r
 
 
-def test_pipeline_writes_exactly_thirteen(built):
+def test_pipeline_writes_exactly_fourteen(built):
     out, r = built
     written = sorted(p.stem for p in out.glob("*.json"))
     assert written == sorted(check_output.EXPECTED), r.stdout[-2000:]
-    assert r.stdout.count("wrote ") == 13
+    assert r.stdout.count("wrote ") == 14
 
 
 def test_risk_and_hedge_actually_ran(built):

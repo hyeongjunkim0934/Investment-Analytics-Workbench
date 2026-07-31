@@ -32,8 +32,8 @@ function destroyAllCharts() {
   uplots = [];
 }
 
-const FILES = ["meta", "overview", "risk", "events", "hedge", "rates", "irs",
-               "credit", "fx", "inflation", "acwi", "macro", "catalog"];
+const FILES = ["meta", "overview", "risk", "events", "panel", "hedge", "rates",
+               "irs", "credit", "fx", "inflation", "acwi", "macro", "catalog"];
 
 /* ---------------- theme & palette ---------------- */
 
@@ -1088,6 +1088,641 @@ function handleHash() {
   else hideDetail();
 }
 
+/* ---------------- 통계 엔진 (관계분석) ---------------- */
+
+function statMean(a) { let s = 0; for (const x of a) s += x; return s / a.length; }
+
+function pairwise(x, y) {
+  const ax = [], ay = [];
+  for (let i = 0; i < x.length; i++) {
+    if (x[i] == null || y[i] == null || !isFinite(x[i]) || !isFinite(y[i])) continue;
+    ax.push(x[i]); ay.push(y[i]);
+  }
+  return [ax, ay];
+}
+
+function pearson(x, y) {
+  const [a, b] = pairwise(x, y);
+  const n = a.length;
+  if (n < 10) return { r: null, n };
+  const ma = statMean(a), mb = statMean(b);
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = a[i] - ma, dy = b[i] - mb;
+    sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+  }
+  const d = Math.sqrt(sxx * syy);
+  return { r: d > 0 ? sxy / d : null, n };
+}
+
+function ranks(a) {
+  const idx = a.map((v, i) => [v, i]).sort((p, q) => p[0] - q[0]);
+  const r = new Array(a.length);
+  let i = 0;
+  while (i < idx.length) {
+    let j = i;
+    while (j + 1 < idx.length && idx[j + 1][0] === idx[i][0]) j++;
+    const avg = (i + j) / 2 + 1;
+    for (let k = i; k <= j; k++) r[idx[k][1]] = avg;
+    i = j + 1;
+  }
+  return r;
+}
+
+function spearman(x, y) {
+  const [a, b] = pairwise(x, y);
+  if (a.length < 10) return { r: null, n: a.length };
+  return { r: pearson(ranks(a), ranks(b)).r, n: a.length };
+}
+
+/* corr(x_{t-k}, y_t): k>0 이면 x가 y를 k기 선행 */
+function crossCorr(x, y, maxLag) {
+  const out = [];
+  for (let k = -maxLag; k <= maxLag; k++) {
+    const xs = [], ys = [];
+    for (let t = 0; t < y.length; t++) {
+      const s = t - k;
+      if (s < 0 || s >= x.length) continue;
+      xs.push(x[s]); ys.push(y[t]);
+    }
+    const { r, n } = pearson(xs, ys);
+    out.push({ k, r, n });
+  }
+  return out;
+}
+
+/* --- 선형대수 --- */
+function matSolve(A, b) {           // 가우스-조던 (k×k, k ≤ 8)
+  const n = A.length;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    if (Math.abs(M[p][c]) < 1e-12) return null;
+    [M[c], M[p]] = [M[p], M[c]];
+    const pv = M[c][c];
+    for (let j = c; j <= n; j++) M[c][j] /= pv;
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = M[r][c];
+      if (!f) continue;
+      for (let j = c; j <= n; j++) M[r][j] -= f * M[c][j];
+    }
+  }
+  return M.map((row) => row[n]);
+}
+
+function matInv(A) {
+  const n = A.length;
+  const inv = [];
+  for (let j = 0; j < n; j++) {
+    const e = new Array(n).fill(0); e[j] = 1;
+    const col = matSolve(A, e);
+    if (!col) return null;
+    inv.push(col);
+  }
+  // inv[j] = j번째 열 → 전치
+  return inv[0].map((_, i) => inv.map((col) => col[i]));
+}
+
+function erf(z) {                   // Abramowitz-Stegun 7.1.26 (|오차| < 1.5e-7)
+  const s = z < 0 ? -1 : 1;
+  z = Math.abs(z);
+  const t = 1 / (1 + 0.3275911 * z);
+  const poly = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t;
+  return s * (1 - poly * Math.exp(-z * z));
+}
+const pValue = (t) => 2 * (1 - 0.5 * (1 + erf(Math.abs(t) / Math.SQRT2)));
+
+/* 표준정규 분위수 (Acklam 근사) — 다중검정 보정 임계값 산출용 */
+function normInv(p) {
+  const a = [-3.969683028665376e+1, 2.209460984245205e+2, -2.759285104469687e+2,
+             1.383577518672690e+2, -3.066479806614716e+1, 2.506628277459239];
+  const b = [-5.447609879822406e+1, 1.615858368580409e+2, -1.556989798598866e+2,
+             6.680131188771972e+1, -1.328068155288572e+1];
+  const c = [-7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838,
+             -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996, 3.754408661907416];
+  const pl = 0.02425;
+  if (p <= 0) return -Infinity;
+  if (p >= 1) return Infinity;
+  let q, r;
+  if (p < pl) {
+    q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
+         / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  if (p <= 1 - pl) {
+    q = p - 0.5; r = q * q;
+    return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q
+         / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+  }
+  q = Math.sqrt(-2 * Math.log(1 - p));
+  return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
+        / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+}
+
+/* OLS + Newey-West HAC 표준오차. X는 상수항 제외한 열 배열 */
+function ols(y, Xcols, hacLag) {
+  const k = Xcols.length + 1;
+  const rows = [];
+  for (let i = 0; i < y.length; i++) {
+    if (y[i] == null || !isFinite(y[i])) continue;
+    const xr = [1];
+    let ok = true;
+    for (const c of Xcols) {
+      const v = c[i];
+      if (v == null || !isFinite(v)) { ok = false; break; }
+      xr.push(v);
+    }
+    if (ok) rows.push({ x: xr, y: y[i] });
+  }
+  const n = rows.length;
+  if (n < k + 10) return { error: `표본 부족 (n=${n})` };
+  const XtX = Array.from({ length: k }, () => new Array(k).fill(0));
+  const Xty = new Array(k).fill(0);
+  for (const { x, y: yy } of rows) {
+    for (let a = 0; a < k; a++) {
+      Xty[a] += x[a] * yy;
+      for (let b = 0; b < k; b++) XtX[a][b] += x[a] * x[b];
+    }
+  }
+  const beta = matSolve(XtX.map((r) => [...r]), [...Xty]);
+  if (!beta) return { error: "설명변수가 서로 중복(공선성)되어 추정할 수 없습니다" };
+  const u = rows.map(({ x, y: yy }) => yy - x.reduce((s, v, j) => s + v * beta[j], 0));
+  const my = statMean(rows.map((r) => r.y));
+  let ssr = 0, sst = 0;
+  rows.forEach((r, i) => { ssr += u[i] * u[i]; sst += (r.y - my) ** 2; });
+  const r2 = sst > 0 ? 1 - ssr / sst : null;
+  const adj = r2 == null ? null : 1 - (1 - r2) * (n - 1) / (n - k);
+
+  const L = Math.max(0, Math.min(hacLag, n - 2));
+  const S = Array.from({ length: k }, () => new Array(k).fill(0));
+  for (let t = 0; t < n; t++) {
+    const x = rows[t].x, w = u[t] * u[t];
+    for (let a = 0; a < k; a++) for (let b = 0; b < k; b++) S[a][b] += w * x[a] * x[b];
+  }
+  for (let l = 1; l <= L; l++) {
+    const wl = 1 - l / (L + 1);
+    for (let t = l; t < n; t++) {
+      const x = rows[t].x, xl = rows[t - l].x, uu = u[t] * u[t - l];
+      for (let a = 0; a < k; a++) {
+        for (let b = 0; b < k; b++) S[a][b] += wl * uu * (x[a] * xl[b] + xl[a] * x[b]);
+      }
+    }
+  }
+  const XtXinv = matInv(XtX);
+  if (!XtXinv) return { error: "행렬 역산 실패" };
+  const V = Array.from({ length: k }, () => new Array(k).fill(0));
+  for (let a = 0; a < k; a++) {
+    for (let b = 0; b < k; b++) {
+      let s = 0;
+      for (let i = 0; i < k; i++) for (let j = 0; j < k; j++) s += XtXinv[a][i] * S[i][j] * XtXinv[j][b];
+      V[a][b] = s;
+    }
+  }
+  const se = V.map((row, i) => Math.sqrt(Math.max(row[i], 0)));
+  const coef = beta.map((b, i) => ({
+    b, se: se[i], t: se[i] > 0 ? b / se[i] : null,
+    p: se[i] > 0 ? pValue(b / se[i]) : null,
+  }));
+  return { coef, n, k, r2, adj, hacLag: L };
+}
+
+/* ---------------- 관계분석 화면 ---------------- */
+
+const pnl = {
+  risk: "stress", freq: "W", mode: "diff", years: 0,
+  vars: null, tab: "corr", maxLag: 26,
+  dep: null, regMode: "sync", h: 4, regressors: null,
+};
+
+function pnlVarMap() {
+  return Object.fromEntries(DATA.panel.vars.map((v) => [v.id, v]));
+}
+
+/* 현재 설정의 정렬된 표본: {t, risk:{key:[...]}, vars:{id:[...]}} (수준값) */
+function pnlSample() {
+  const P = DATA.panel;
+  let idx = P.t.map((_, i) => i);
+  if (pnl.freq === "M") {
+    const keep = [];
+    for (let i = 0; i < P.t.length; i++) {
+      const cur = new Date(P.t[i] * 1000).getUTCMonth();
+      const nxt = i + 1 < P.t.length ? new Date(P.t[i + 1] * 1000).getUTCMonth() : -1;
+      if (cur !== nxt) keep.push(i);
+    }
+    idx = keep;
+  }
+  if (pnl.years > 0) {
+    const cut = P.t[P.t.length - 1] - pnl.years * 31557600;
+    idx = idx.filter((i) => P.t[i] >= cut);
+  }
+  return {
+    t: idx.map((i) => P.t[i]),
+    pick: (arr) => idx.map((i) => (arr && arr[i] != null ? arr[i] : null)),
+  };
+}
+
+function transformVals(vals, kind, mode) {
+  if (mode === "level") return vals.slice();
+  const out = new Array(vals.length).fill(null);
+  for (let i = 1; i < vals.length; i++) {
+    const a = vals[i - 1], b = vals[i];
+    if (a == null || b == null) continue;
+    out[i] = kind === "price" ? (a !== 0 ? (b / a - 1) * 100 : null)
+           : kind === "rate" ? (b - a) * 100 : b - a;
+  }
+  return out;
+}
+
+function forwardChange(vals, kind, h) {
+  const out = new Array(vals.length).fill(null);
+  for (let i = 0; i + h < vals.length; i++) {
+    const a = vals[i], b = vals[i + h];
+    if (a == null || b == null) continue;
+    out[i] = kind === "price" ? (a !== 0 ? (b / a - 1) * 100 : null)
+           : kind === "rate" ? (b - a) * 100 : b - a;
+  }
+  return out;
+}
+
+const UNIT_OF = (v) => v.kind === "price" ? "%" : v.kind === "rate" ? "bp" : "pt";
+const FREQ_LABEL = () => (pnl.freq === "W" ? "주" : "개월");
+
+function pnlSeries(sample, id) {
+  const P = DATA.panel;
+  if (P.risk[id]) return { vals: sample.pick(P.risk[id]), kind: "score", name: (P.risk_meta.find((m) => m.key === id) || {}).name || id, unit: "점" };
+  const v = pnlVarMap()[id];
+  if (!v) return null;
+  return { vals: sample.pick(v.v), kind: v.kind, name: v.name, unit: UNIT_OF(v) };
+}
+
+function renderPanelControls() {
+  const P = DATA.panel;
+  const c = $("#pnl-controls");
+  c.textContent = "";
+  const sel = (label, opts, cur, onchange) => {
+    const s = el("select", { onchange: (e) => onchange(e.target.value) });
+    opts.forEach(([v, t]) => {
+      const o = el("option", { value: v }, t);
+      if (String(v) === String(cur)) o.selected = true;
+      s.append(o);
+    });
+    return el("div", { class: "grp" }, el("b", {}, label), s);
+  };
+  c.append(sel("위험지표", P.risk_meta.map((m) => [m.key, m.name]), pnl.risk,
+    (v) => { pnl.risk = v; renderPanelBody(); }));
+  c.append(sel("빈도", [["W", "주간"], ["M", "월간"]], pnl.freq,
+    (v) => { pnl.freq = v; pnl.maxLag = v === "W" ? 26 : 12; renderPanelBody(); }));
+  c.append(sel("분석 기준", [["diff", "변화 (권장)"], ["level", "수준"]], pnl.mode,
+    (v) => { pnl.mode = v; renderPanelBody(); }));
+  c.append(sel("기간", [[0, "전체"], [10, "최근 10년"], [5, "최근 5년"], [3, "최근 3년"]], pnl.years,
+    (v) => { pnl.years = +v; renderPanelBody(); }));
+}
+
+function renderPanelVars() {
+  const P = DATA.panel;
+  const vmap = pnlVarMap();
+  const wrap = $("#pnl-vars");
+  wrap.textContent = "";
+  const pal = palette();
+  pnl.vars.forEach((id, i) => {
+    const v = vmap[id];
+    if (!v) return;
+    const chip = el("span", { class: "vchip" });
+    chip.append(el("i", { style: `background:${pal.series[i % 8]}` }), v.name);
+    chip.append(el("button", {
+      title: "제외", onclick: () => {
+        pnl.vars = pnl.vars.filter((x) => x !== id);
+        if (pnl.dep === id) pnl.dep = pnl.vars[0] || null;
+        pnl.regressors = null;
+        renderPanelVars(); renderPanelBody();
+      },
+    }, "×"));
+    wrap.append(chip);
+  });
+  const det = el("details", { class: "vadd" });
+  det.append(el("summary", {}, "＋ 변수 추가"));
+  const pick = el("div", { class: "vpick" });
+  const groups = [...new Set(P.vars.map((v) => v.group))];
+  groups.forEach((gname) => {
+    pick.append(el("h4", {}, gname));
+    P.vars.filter((v) => v.group === gname).forEach((v) => {
+      const lb = el("label", {});
+      const cb = el("input", { type: "checkbox" });
+      cb.checked = pnl.vars.includes(v.id);
+      cb.addEventListener("change", () => {
+        if (cb.checked) { if (!pnl.vars.includes(v.id)) pnl.vars.push(v.id); }
+        else pnl.vars = pnl.vars.filter((x) => x !== v.id);
+        pnl.regressors = null;
+        if (!pnl.vars.includes(pnl.dep)) pnl.dep = pnl.vars[0] || null;
+        renderPanelVars(); renderPanelBody();
+        det.open = true;
+      });
+      lb.append(cb, `${v.name} `, el("span", { style: "color:var(--ink-3);font-size:11px" }, `(${v.first}~)`));
+      pick.append(lb);
+    });
+  });
+  det.append(pick);
+  wrap.append(det);
+}
+
+function renderPanelTabs() {
+  const t = $("#pnl-tabs");
+  t.textContent = "";
+  [["corr", "상관"], ["lead", "선행·후행"], ["reg", "회귀"]].forEach(([k, label]) => {
+    t.append(el("button", { class: pnl.tab === k ? "active" : "",
+      onclick: () => { pnl.tab = k; renderPanelTabs(); renderPanelBody(); } }, label));
+  });
+}
+
+function corrBar(r) {
+  const box = el("div", { class: "corrbar" });
+  box.append(el("u", {}));
+  if (r != null) {
+    const w = Math.abs(r) * 50;
+    const left = r >= 0 ? 50 : 50 - w;
+    box.append(el("i", { style: `left:${left}%;width:${w}%;background:${r >= 0 ? "var(--up)" : "var(--down)"}` }));
+  }
+  return box;
+}
+
+function renderPanelBody() {
+  const body = $("#pnl-body");
+  body.textContent = "";
+  overlayCharts.filter((e) => e.panel).forEach(destroyChart);
+  const P = DATA.panel;
+  const sample = pnlSample();
+  const risk = pnlSeries(sample, pnl.risk);
+  const rvals = transformVals(risk.vals, "score", pnl.mode);
+  const pal = palette();
+  const modeLabel = pnl.mode === "diff" ? "변화" : "수준";
+
+  if (pnl.tab === "corr") {
+    const rows = pnl.vars.map((id, i) => {
+      const v = pnlSeries(sample, id);
+      const vv = transformVals(v.vals, v.kind, pnl.mode);
+      const p = pearson(rvals, vv), s = spearman(rvals, vv);
+      return { id, name: v.name, unit: v.unit, p, s, color: pal.series[i % 8] };
+    });
+    const card = el("div", { class: "card" });
+    card.append(el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, `${risk.name}와의 동행 상관`),
+      el("span", { class: "card-sub" },
+        `${modeLabel} 기준 · ${pnl.freq === "W" ? "주간" : "월간"} · ${pnl.years ? `최근 ${pnl.years}년` : "전체 기간"}`)));
+    const tbl = el("table", { class: "mini-table" },
+      el("tr", {}, ...["변수", "상관계수(Pearson)", "순위상관(Spearman)", "표본 n", ""].map((h, i) =>
+        el("th", { style: i === 0 || i === 4 ? "text-align:left" : "" }, h))));
+    rows.sort((a, b) => Math.abs((b.p.r ?? 0)) - Math.abs((a.p.r ?? 0)));
+    rows.forEach((r) => {
+      tbl.append(el("tr", {},
+        el("td", {}, el("span", { style: `display:inline-block;width:9px;height:9px;border-radius:50%;background:${r.color};margin-right:7px` }), r.name),
+        el("td", { class: "num" }, r.p.r == null ? "–" : fmtNum(r.p.r, 2)),
+        el("td", { class: "num" }, r.s.r == null ? "–" : fmtNum(r.s.r, 2)),
+        el("td", { class: "num" }, String(r.p.n)),
+        el("td", {}, corrBar(r.p.r))));
+    });
+    card.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, tbl));
+    body.append(card);
+
+    const top = rows[0];
+    if (top && top.p.r != null) {
+      body.append(el("div", { class: "pnl-note" },
+        el("b", {}, "읽기"),
+        ` — 가장 강한 동행 관계는 ${top.name}(${fmtNum(top.p.r, 2)})입니다. 양수면 위험지표가 오를 때 그 변수도 같이 오르는 관계, 음수면 반대입니다. `,
+        "여기 상관은 ", el("b", {}, "같은 시점"), "의 관계만 봅니다 — 어느 쪽이 먼저 움직이는지는 '선행·후행' 탭에서 확인하세요."));
+    }
+    if (pnl.mode === "level") {
+      body.append(el("div", { class: "warnbox" },
+        el("b", {}, "주의"),
+        " — '수준' 기준 상관은 두 시계열이 각자 추세를 갖기만 해도 높게 나오는 허구적 상관일 수 있습니다. 판단은 '변화' 기준을 우선하세요."));
+    }
+  }
+
+  if (pnl.tab === "lead") {
+    const maxLag = pnl.maxLag;
+    const defs = [];
+    const summary = [];
+    pnl.vars.forEach((id, i) => {
+      const v = pnlSeries(sample, id);
+      const vv = transformVals(v.vals, v.kind, pnl.mode);
+      const cc = crossCorr(rvals, vv, maxLag);
+      defs.push({ label: v.name, color: pal.series[i % 8],
+                  x: cc.map((d) => d.k), v: cc.map((d) => d.r) });
+      let best = null;
+      cc.forEach((d) => { if (d.r != null && (!best || Math.abs(d.r) > Math.abs(best.r))) best = d; });
+      const n0 = (cc.find((d) => d.k === 0) || {}).n || 0;
+      summary.push({ name: v.name, best, n0, color: pal.series[i % 8] });
+    });
+    const card = el("div", { class: "card" });
+    card.append(el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, `교차상관 — ${risk.name}가 선행하는가`),
+      el("span", { class: "card-sub" },
+        `가로축 = 시차(${FREQ_LABEL()}) · 오른쪽(양수)에서 최대면 위험지표가 선행 · ${modeLabel} 기준`)));
+    const box = el("div", { class: "chart-box" });
+    card.append(box);
+    body.append(card);
+    const n0 = summary[0] ? summary[0].n0 : 0;
+    const band = n0 > 0 ? 1.96 / Math.sqrt(n0) : null;
+    // 시차 53개 중 최대값을 고르는 구조이므로 단일시차 임계값을 그대로 쓰면
+    // 우연한 최대치가 '유의'로 오판된다 — 본페로니 보정 임계값을 병기한다.
+    const nLags = 2 * maxLag + 1;
+    const bandPeak = n0 > 0 ? normInv(1 - 0.025 / nLags) / Math.sqrt(n0) : null;
+    const entry = makeRatioChart(box, {
+      seriesDefs: defs, height: 300, unit: "", xLabel: `시차 (${FREQ_LABEL()})`,
+      xRange: [-maxLag, maxLag], yRange: [-1, 1], band, zeroLine: true,
+    });
+    entry.panel = true;
+
+    const tbl = el("table", { class: "mini-table" },
+      el("tr", {}, ...["변수", "최대 상관 시차", "그때 상관계수", "해석"].map((h, i) =>
+        el("th", { style: i === 0 || i === 3 ? "text-align:left" : "" }, h))));
+    summary.forEach((s) => {
+      const k = s.best ? s.best.k : null;
+      const interp = k == null ? "–"
+        : k > 0 ? `위험지표가 ${k}${FREQ_LABEL()} 선행`
+        : k < 0 ? `위험지표가 ${-k}${FREQ_LABEL()} 후행`
+        : "동행 (시차 없음)";
+      const sig = s.best && bandPeak && Math.abs(s.best.r) > bandPeak;
+      tbl.append(el("tr", {},
+        el("td", {}, el("span", { style: `display:inline-block;width:9px;height:9px;border-radius:50%;background:${s.color};margin-right:7px` }), s.name),
+        el("td", { class: "num" }, k == null ? "–" : `${k > 0 ? "+" : ""}${k}`),
+        el("td", { class: "num" }, s.best && s.best.r != null ? fmtNum(s.best.r, 2) : "–"),
+        el("td", {}, interp,
+          sig ? el("span", { class: "stars" }, " ✓유의")
+              : el("span", { style: "color:var(--ink-3)" }, " (우연과 구별 안 됨)"))));
+    });
+    body.append(el("div", { class: "card", style: "margin-top:14px" },
+      el("div", { class: "card-head" }, el("span", { class: "card-title" }, "최대 상관 시차 요약")),
+      el("div", { class: "table-wrap", style: "max-height:none;border:0" }, tbl)));
+    body.append(el("div", { class: "pnl-note" },
+      el("b", {}, "읽는 법"),
+      ` — corr(위험지표_{t−k}, 변수_t)를 k = −${maxLag}~+${maxLag}${FREQ_LABEL()}에서 계산합니다. `,
+      "최대 상관이 ", el("b", {}, "양(+)의 시차"), "에서 나오면 위험지표가 그만큼 먼저 움직인 것(선행), ",
+      el("b", {}, "음(−)의 시차"), "면 뒤따라 움직인 것(후행)입니다. 차트의 점선은 ",
+      el("b", {}, "단일 시차"), ` 기준 95% 신뢰구간(±${band ? fmtNum(band, 2) : "–"})입니다. `,
+      "다만 표의 '최대 상관'은 ", el("b", {}, `시차 ${nLags}개 중 가장 큰 값을 고른 것`),
+      `이라 우연히 커지기 쉬워, ✓유의 판정에는 다중검정을 보정한 더 엄격한 임계값(±${bandPeak ? fmtNum(bandPeak, 2) : "–"})을 적용했습니다.`));
+  }
+
+  if (pnl.tab === "reg") renderRegression(body, sample, risk, rvals);
+
+  const mth = $("#pnl-method");
+  mth.textContent = "";
+  mth.append(el("summary", {}, "산식 · 통계 처리 · 한계 (방법론)"));
+  mth.append(el("p", {}, el("b", {}, "변환"), ` — ${P.method.transform}`));
+  mth.append(el("p", {}, el("b", {}, "선행·후행"), ` — ${P.method.leadlag}`));
+  mth.append(el("p", {}, el("b", {}, "회귀"), ` — ${P.method.regression}`));
+  mth.append(el("p", {}, el("b", {}, "한계"),
+    " — 상관·회귀는 관계의 크기를 재는 도구이지 인과관계의 증거가 아닙니다. 표본 내 적합도이며, "
+    + "구조 변화(레짐 전환)가 있으면 기간별로 결과가 크게 달라질 수 있으니 기간 필터로 안정성을 확인하세요. "
+    + "변수를 늘릴수록 우연히 유의해 보이는 관계가 생깁니다(다중검정)."));
+}
+
+function renderRegression(body, sample, risk, rvals) {
+  const P = DATA.panel;
+  const vmap = pnlVarMap();
+  if (!pnl.dep || !pnl.vars.includes(pnl.dep)) pnl.dep = pnl.vars[0] || null;
+  if (!pnl.regressors) pnl.regressors = [pnl.risk];
+
+  const ctl = el("div", { class: "pnl-controls" });
+  const mkSel = (label, opts, cur, on) => {
+    const s = el("select", { onchange: (e) => on(e.target.value) });
+    opts.forEach(([v, t]) => {
+      const o = el("option", { value: v }, t);
+      if (String(v) === String(cur)) o.selected = true;
+      s.append(o);
+    });
+    return el("div", { class: "grp" }, el("b", {}, label), s);
+  };
+  ctl.append(mkSel("종속변수", pnl.vars.map((id) => [id, vmap[id] ? vmap[id].name : id]), pnl.dep,
+    (v) => { pnl.dep = v; renderPanelBody(); }));
+  ctl.append(mkSel("모형", [["sync", "동행 (같은 시점)"], ["pred", "예측 (h기 후 변화)"]], pnl.regMode,
+    (v) => { pnl.regMode = v; renderPanelBody(); }));
+  if (pnl.regMode === "pred") {
+    const inp = el("input", { type: "number", min: "1", max: "52", value: String(pnl.h) });
+    inp.addEventListener("change", () => {
+      pnl.h = Math.max(1, Math.min(52, +inp.value || 4));
+      renderPanelBody();
+    });
+    ctl.append(el("div", { class: "grp" }, el("b", {}, "예측 지평 h"), inp, `${FREQ_LABEL()} 후`));
+  }
+  body.append(ctl);
+
+  // 설명변수 선택 (위험지표들 + 선택된 시장변수)
+  const pickWrap = el("div", { class: "pnl-vars" });
+  pickWrap.append(el("span", { style: "font-size:12.5px;color:var(--ink-2);font-weight:600" }, "설명변수"));
+  const cand = [...P.risk_meta.map((m) => ({ id: m.key, name: m.name, isRisk: true })),
+                ...pnl.vars.filter((id) => id !== pnl.dep).map((id) => ({ id, name: vmap[id].name, isRisk: false }))];
+  cand.forEach((c) => {
+    const on = pnl.regressors.includes(c.id);
+    pickWrap.append(el("span", {
+      class: "vchip", style: on ? "border-color:var(--accent);color:var(--ink-1)" : "opacity:.6;cursor:pointer",
+      onclick: () => {
+        pnl.regressors = on ? pnl.regressors.filter((x) => x !== c.id) : [...pnl.regressors, c.id];
+        renderPanelBody();
+      },
+    }, (on ? "✓ " : "+ ") + c.name));
+  });
+  body.append(pickWrap);
+
+  if (!pnl.dep) { body.append(el("div", { class: "chart-empty" }, "변수를 하나 이상 선택하세요.")); return; }
+  if (!pnl.regressors.length) { body.append(el("div", { class: "chart-empty" }, "설명변수를 하나 이상 선택하세요.")); return; }
+
+  const depV = pnlSeries(sample, pnl.dep);
+  const h = pnl.h;
+  const y = pnl.regMode === "pred"
+    ? forwardChange(depV.vals, depV.kind, h)
+    : transformVals(depV.vals, depV.kind, "diff");
+
+  const names = [], forms = [], Xcols = [];
+  pnl.regressors.forEach((id) => {
+    const s = pnlSeries(sample, id);
+    if (!s) return;
+    const isRisk = !!P.risk[id];
+    const useLevel = pnl.regMode === "pred" && isRisk;
+    Xcols.push(transformVals(s.vals, s.kind, useLevel ? "level" : "diff"));
+    names.push(s.name);
+    forms.push(useLevel ? "수준(점)" : (isRisk ? "Δ점" : `Δ${s.unit}`));
+  });
+
+  const hacLag = pnl.regMode === "pred" ? Math.max(h - 1, Math.floor(4 * Math.pow(y.filter((v) => v != null).length / 100, 2 / 9)))
+                                        : Math.floor(4 * Math.pow(y.filter((v) => v != null).length / 100, 2 / 9));
+  const res = ols(y, Xcols, hacLag);
+
+  const card = el("div", { class: "card", style: "margin-top:4px" });
+  const depLabel = pnl.regMode === "pred"
+    ? `${depV.name}의 향후 ${h}${FREQ_LABEL()} 변화 (${depV.unit})`
+    : `${depV.name} 변화 (${depV.unit})`;
+  card.append(el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, `회귀: ${depLabel}`),
+    el("span", { class: "card-sub" },
+      `${pnl.freq === "W" ? "주간" : "월간"} · ${pnl.years ? `최근 ${pnl.years}년` : "전체 기간"} · Newey-West HAC 표준오차`)));
+  if (res.error) {
+    card.append(el("div", { class: "chart-empty" }, res.error));
+    body.append(card);
+    return;
+  }
+  const tbl = el("table", { class: "mini-table regtable" },
+    el("tr", {}, ...["설명변수", "형태", "계수 β", "표준오차", "t값", "p값", ""].map((hh, i) =>
+      el("th", { style: i <= 1 || i === 6 ? "text-align:left" : "" }, hh))));
+  res.coef.forEach((c, i) => {
+    const isConst = i === 0;
+    const star = c.p == null ? "" : c.p < 0.01 ? "***" : c.p < 0.05 ? "**" : c.p < 0.1 ? "*" : "";
+    tbl.append(el("tr", {},
+      el("td", {}, isConst ? "상수항" : names[i - 1]),
+      el("td", { style: "color:var(--ink-3);font-size:11.5px" }, isConst ? "" : forms[i - 1]),
+      el("td", { class: "num sig" }, fmtNum(c.b, Math.abs(c.b) < 1 ? 4 : 3)),
+      el("td", { class: "num" }, fmtNum(c.se, Math.abs(c.se) < 1 ? 4 : 3)),
+      el("td", { class: "num" }, c.t == null ? "–" : fmtNum(c.t, 2)),
+      el("td", { class: "num" }, c.p == null ? "–" : (c.p < 0.001 ? "<0.001" : fmtNum(c.p, 3))),
+      el("td", { class: "stars" }, star)));
+  });
+  card.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, tbl));
+  card.append(el("div", { class: "card-sub", style: "margin-top:8px" },
+    `R² ${fmtNum(res.r2 * 100, 1)}% · 조정 R² ${fmtNum(res.adj * 100, 1)}% · 표본 n=${res.n} · HAC 시차 ${res.hacLag} · 유의수준 *** 1% ** 5% * 10%`));
+  body.append(card);
+
+  const main = res.coef[1];
+  if (main) {
+    const unit = forms[0] === "수준(점)" ? "위험지표 1점 상승" : "위험지표 1점 변화";
+    const dir = main.b >= 0 ? "상승" : "하락";
+    body.append(el("div", { class: "pnl-note" },
+      el("b", {}, "읽기"),
+      ` — ${unit} 시 ${depLabel}가 평균 ${fmtNum(Math.abs(main.b), 3)}${depV.unit} ${dir}하는 관계입니다`,
+      main.p != null && main.p < 0.05
+        ? " (통계적으로 유의). "
+        : " (다만 통계적으로 유의하지 않아 우연과 구별되지 않습니다). ",
+      `이 모형이 ${depLabel}의 변동 중 설명하는 비중은 ${fmtNum(res.r2 * 100, 1)}%입니다.`));
+  }
+  if (pnl.regMode === "pred") {
+    body.append(el("div", { class: "warnbox" },
+      el("b", {}, "중첩 표본 주의"),
+      ` — 향후 ${h}${FREQ_LABEL()} 변화는 이웃한 관측끼리 구간이 겹칩니다. 표준오차는 이를 보정한 Newey-West HAC(시차 ${res.hacLag})를 사용했지만, `,
+      "그래도 유의성은 보수적으로 해석하는 것이 안전합니다."));
+  }
+}
+
+function renderPanel() {
+  if (!$("#panel")) return;
+  const P = DATA.panel;
+  if (!P || !P.vars) {
+    $("#pnl-headline").textContent = "관계분석 데이터를 불러오지 못했습니다.";
+    return;
+  }
+  if (!pnl.vars) pnl.vars = [...P.defaults];
+  const hl = $("#pnl-headline");
+  hl.textContent = "";
+  hl.append(el("div", { class: "q" }, "이 화면이 답하는 질문"));
+  hl.append(el("div", { class: "a" }, "내 위험지표는 시장 변수와 어떤 관계인가 — 그리고 먼저 움직이는가 ",
+    el("small", {}, `주간 ${P.n_weeks}주 패널 · 상관 → 선행·후행 → 회귀 순으로 확인`)));
+  renderPanelControls();
+  renderPanelVars();
+  renderPanelTabs();
+  renderPanelBody();
+}
+
 /* ---------------- 환헤지 ---------------- */
 
 function fmtCost(x) {
@@ -1095,28 +1730,55 @@ function fmtCost(x) {
   return el("span", { class: x < 0 ? "neg" : "pos" }, `${x > 0 ? "+" : ""}${fmtNum(x, 2)}%`);
 }
 
-/* 숫자 x축(헤지비율) 차트 */
-function makeRatioChart(box, { seriesDefs, height = 280, unit = "%" }) {
+/* 숫자 x축 차트 (헤지비율 곡선 · 교차상관 등) */
+function makeRatioChart(box, opts) {
+  const { seriesDefs, height = 280, unit = "%", xLabel = "헤지비율",
+          xRange = [0, 100], yRange = null, band = null, zeroLine = false,
+          xSuffix = xLabel === "헤지비율" ? "%" : "" } = opts;
   const pal = palette();
   const xs = seriesDefs[0].x;
-  const series = [{ label: "헤지비율", value: (u, v) => v == null ? "–" : v + "%" }];
+  const series = [{ label: xLabel, value: (u, v) => v == null ? "–" : v + xSuffix }];
   seriesDefs.forEach((sd) => series.push({
     label: sd.label, stroke: sd.color, width: 2.5, spanGaps: true,
     points: { show: false },
-    value: (u, v) => v == null ? "–" : fmtNum(v, 1) + unit,
+    value: (u, v) => v == null ? "–" : fmtNum(v, unit === "" ? 2 : 1) + unit,
   }));
-  const u = new uPlot({
+  const cfg = {
     width: Math.max(280, box.clientWidth), height,
     cursor: { points: { size: 8 }, y: false },
-    scales: { x: { time: false, range: [0, 100] } },
+    scales: { x: { time: false, range: xRange } },
     series,
     axes: [
       { stroke: pal.ink3, font: AXIS_FONT, grid: { stroke: pal.grid, width: 1 },
-        ticks: { show: false }, values: (u2, vals) => vals.map((v) => v + "%") },
-      baseAxes(pal, (v) => fmtNum(v, 0) + unit)[1],
+        ticks: { show: false }, values: (u2, vals) => vals.map((v) => v + xSuffix) },
+      baseAxes(pal, (v) => fmtNum(v, unit === "" ? 1 : 0) + unit)[1],
     ],
     legend: { live: true },
-  }, [xs, ...seriesDefs.map((sd) => sd.v)], box);
+  };
+  if (yRange) cfg.scales.y = { range: () => yRange };
+  if (band != null || zeroLine) {
+    cfg.hooks = { drawClear: [(u) => {
+      const { ctx, bbox } = u;
+      ctx.save();
+      if (zeroLine) {
+        const y0 = u.valToPos(0, "y", true), x0 = u.valToPos(0, "x", true);
+        ctx.strokeStyle = pal.baseline; ctx.lineWidth = 1 * devicePixelRatio;
+        ctx.beginPath(); ctx.moveTo(bbox.left, y0); ctx.lineTo(bbox.left + bbox.width, y0); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x0, bbox.top); ctx.lineTo(x0, bbox.top + bbox.height); ctx.stroke();
+      }
+      if (band != null) {
+        ctx.strokeStyle = pal.ink3; ctx.lineWidth = 1 * devicePixelRatio;
+        ctx.setLineDash([4 * devicePixelRatio, 4 * devicePixelRatio]);
+        [band, -band].forEach((b) => {
+          const yy = u.valToPos(b, "y", true);
+          ctx.beginPath(); ctx.moveTo(bbox.left, yy); ctx.lineTo(bbox.left + bbox.width, yy); ctx.stroke();
+        });
+        ctx.setLineDash([]);
+      }
+      ctx.restore();
+    }] };
+  }
+  const u = new uPlot(cfg, [xs, ...seriesDefs.map((sd) => sd.v)], box);
   const ro = new ResizeObserver(() => u.setSize({ width: Math.max(280, box.clientWidth), height }));
   ro.observe(box);
   return trackChart(u, ro);
@@ -1434,6 +2096,7 @@ function renderAll() {
   renderOverview();
   renderRisk();
   renderEvents();
+  renderPanel();
   renderHedge();
   renderRates();
   renderIRS();

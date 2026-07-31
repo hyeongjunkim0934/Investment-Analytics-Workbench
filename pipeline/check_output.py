@@ -34,7 +34,7 @@ from pathlib import Path
 # process.py 의 payloads 딕셔너리 = dashboard/app.js 의 FILES 상수 = 이 목록.
 # 셋 중 하나만 고치면 안 된다.
 EXPECTED = [
-    "meta", "overview", "risk", "events", "hedge", "rates", "irs",
+    "meta", "overview", "risk", "events", "panel", "hedge", "rates", "irs",
     "credit", "fx", "inflation", "acwi", "macro", "catalog",
 ]
 META_FIELDS = ["built_at_utc", "last_observation", "series_count", "files", "warnings"]

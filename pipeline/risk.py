@@ -483,7 +483,15 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
         S, asof, dict(usdkrw=usdkrw, fxvol=fxvol, hy=hy, vix=vix, vkospi=vkospi,
                       kospi=kospi, acwi=acwi, us_slope=us_slope, kr_slope=kr_slope,
                       sahm=sahm))
-    return risk_payload, events_payload
+    # 관계분석 패널용 주간 시계열 (게시 구간보다 긴 전체 이력)
+    weekly_frame = pd.DataFrame({
+        "stress": comp_ic, "vuln": vuln_weekly,
+        **{k: weekly_by_key[k] for k in weekly_by_key},
+    })
+    factor_meta = [{"key": f["key"], "name": f["name"], "layer": f["layer"]}
+                   for f in factors_out if f.get("score") is not None]
+
+    return risk_payload, events_payload, {"weekly": weekly_frame, "factors": factor_meta}
 
 
 # ---------------------------------------------------------------------------
