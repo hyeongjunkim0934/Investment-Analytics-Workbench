@@ -144,6 +144,49 @@ jobs:
             --min-series "$GATE_MIN_SERIES" \
             --dashboard dashboard/app.js
 
+      # ── 관측성 ────────────────────────────────────────────────────────────
+      # 빌드 요약을 Actions 실행 화면 상단에 표로 띄운다. 게이트가 막아 실패한
+      # 실행에서도 "무엇이 몇 개였는지"를 로그를 뒤지지 않고 보기 위해
+      # if: always() 로 둔다. meta.json 이 없으면(=파이프라인이 exit 1) 그 사실만 적는다.
+      # 여기 실려 나가는 값은 시리즈 **개수와 이름**뿐이며 관측치 값은 넣지 않는다
+      # (시리즈 이름은 이미 공개 catalog.json 에 실린다).
+      # 이 단계만 `python3` 를 쓰는 이유: if: always() 라서 "Set up Python" 이 죽은
+      # 실행에서도 돌아야 하는데, 그 상황에서 bare `python` 은 PATH 에 없을 수 있다.
+      # (게이트가 막은 정상 실패 경로에서는 어느 쪽이든 동작한다.)
+      - name: Build summary
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os, pathlib
+          p = pathlib.Path("_site/data/meta.json")
+          if not p.exists():
+              print("## 빌드 요약\n\n`_site/data/meta.json` 이 없습니다 — 파이프라인이 JSON 을 쓰기 전에 실패했습니다.")
+              raise SystemExit(0)
+          m = json.loads(p.read_text(encoding="utf-8"))
+          n_json = len(list(p.parent.glob("*.json")))
+          print("## 빌드 요약\n")
+          print("| 항목 | 값 |")
+          print("|---|---|")
+          print(f"| 빌드 시각(UTC) | {m.get('built_at_utc','?')} |")
+          print(f"| 최종 관측일 | {m.get('last_observation','?')} |")
+          print(f"| 시리즈 수 | {m.get('series_count','?')} |")
+          print(f"| JSON 파일 수 | {n_json} (계약 14) |")
+          print(f"| 경고 | {len(m.get('warnings', []))}건 (상한 {os.environ.get('GATE_MAX_WARNINGS','?')}) |")
+          files = m.get("files") or []          # 리스트[dict] 이다 — dict 아님
+          if files:
+              print("\n### 파일별 파싱 결과\n")
+              print("| 파일 | 종류 | 시리즈 |")
+              print("|---|---|---|")
+              for f in files:
+                  print(f"| `{f.get('file','?')}` | {f.get('kind','?')} | {f.get('series','?')} |")
+          w = m.get("warnings") or []
+          if w:
+              print("\n<details><summary>경고 %d건</summary>\n" % len(w))
+              for line in w:
+                  print(f"- `{line}`")
+              print("\n</details>")
+          PY
+
       # 이 단계에서 "Get Pages site failed … Not Found"로 실패하면
       # Settings → Pages → Source가 "GitHub Actions"로 설정되지 않은 것이다.
       - name: Setup Pages
