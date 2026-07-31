@@ -87,15 +87,33 @@
 2. 왼쪽 **Build & deploy dashboard** 워크플로우 선택 → **Run workflow** → 초록 버튼 클릭
 3. 1–2분 후 초록 체크가 뜨면 `https://hyeongjunkim0934.github.io/Investment-Analytics-Workbench/` 접속
 
-## 6단계 — 자동화 동작 확인 (엑셀 업로드 테스트)
+## 6단계 — 자동화 동작 확인
+
+두 저장소를 잇는 체인이 실제로 완주하는지 한 번 확인합니다.
+경로가 둘 있고, 처음 확인할 때는 **A가 훨씬 빠릅니다**(엑셀을 다시 올릴 필요가 없습니다).
+
+### A. 버튼으로 확인 (권장)
+
+1. `data` 저장소 → **Actions** 탭 → 왼쪽 **Notify workbench** 선택
+2. **Run workflow** → 브랜치는 **기본 브랜치**를 고르고 초록 버튼 클릭
+3. 로그에 `dispatched data-updated (ref=… sha=…)`가 찍히면 발신 성공입니다
+4. 잠시 후 `Investment-Analytics-Workbench` Actions 탭에서
+   **Build & deploy dashboard**가 자동 실행되고, 완료되면 대시보드가 갱신됩니다
+
+> 기본 브랜치가 아닌 브랜치를 고르면 job이 실패가 아니라 **skip**으로 끝납니다
+> (실험용 브랜치의 데이터가 프로덕션에 나가는 것을 막는 가드입니다).
+> 2단계의 시크릿을 빠뜨렸다면
+> `WORKBENCH_DISPATCH_TOKEN 시크릿이 설정되지 않았습니다`로 명확히 실패합니다.
+
+### B. 실제 엑셀 업로드로 확인
 
 1. `data` 저장소 → `raw/` 폴더 → **Add file → Upload files**
 2. 갱신된 엑셀 파일을 끌어다 놓고 **Commit changes**
 3. `data` 저장소 Actions 탭에서 **Notify workbench** 실행 확인
-4. 잠시 후 `Investment-Analytics-Workbench` Actions 탭에서
-   **Build & deploy dashboard**가 자동 실행되고, 완료되면 대시보드가 갱신됩니다
+4. 위 A의 4와 동일
 
-이후에는 **엑셀을 업로드하기만 하면** 3–4가 자동으로 반복됩니다.
+평소 운영에서는 **엑셀을 업로드하기만 하면** B의 3–4가 자동으로 반복됩니다.
+A는 데이터를 건드리지 않고 배선만 점검하고 싶을 때 쓰세요.
 
 ---
 

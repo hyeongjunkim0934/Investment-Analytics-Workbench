@@ -1,0 +1,25 @@
+# 의존성 자동 업그레이드 채널.
+# pipeline/requirements.txt 를 == 로 고정했으므로, 올리는 경로를 따로 만들어 둔다.
+# Actions 버전도 함께 감시한다 — 커밋 7183ba9 에서 Node 20 지원 종료 때문에
+# 손으로 올린 적이 있는데, 그 수작업을 없애는 것이 목적이다.
+version: 2
+updates:
+  # target-branch 는 일부러 적지 않는다: dependabot 이 기본 브랜치를 자동으로 잡으므로
+  # 나중에 기본 브랜치 이름이 바뀌어도 이 파일은 그대로 동작한다.
+  # 파이프라인 파이썬 의존성 — requirements.txt 는 저장소 루트가 아니라 pipeline/ 에 있다.
+  - package-ecosystem: pip
+    directory: /pipeline
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps"
+
+  # GitHub Actions — 워크플로는 .github/workflows/ 에 있고, 이 생태계의 directory 는 "/" 로 둔다.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
