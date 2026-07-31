@@ -1,5 +1,9 @@
 # CLAUDE.md — Investment Analytics Workbench
 
+> 이 문서는 **코드가 어떻게 생겼나**를 다룬다. **무엇을 왜 이렇게 만들기로 했고 다음에 뭘 할
+> 차례인가**(사용자와의 합의 사항·거부된 시도·미해결 데이터 요청·로드맵)는
+> **`docs/HANDOVER.md`** 에 있다. 새 세션은 둘 다 읽고 시작할 것.
+
 이 저장소는 **공개** 저장소이며, 비공개 데이터에서 공개 대시보드를 만들어내는 사슬의 가운데 토막이다.
 비공개 저장소 `hyeongjunkim0934/data`(로컬 체크아웃 `../Data`)의 `raw/*.xlsx` 가 갱신되면 그쪽
 `notify-workbench.yml` 이 `repository_dispatch(data-updated)` 를 이 저장소로 쏘고, 여기 CI가 그 비공개
@@ -28,6 +32,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `.github/workflows/tests.yml` | PR·push 에서 pytest 만 (비공개 데이터·Pages 권한 없음) |
 | `.github/dependabot.yml` | `pipeline/`·`tests/` pip + Actions 주간 업그레이드 PR |
 | `docs/SETUP.md` | 토큰·시크릿·Pages 초기 설정 (GitHub 웹에서만 하는 작업) |
+| `docs/HANDOVER.md` | 설계 합의·거부된 시도·미해결 데이터 요청·다음 작업 (세션 인수인계) |
 
 ## 자주 쓰는 명령 (아래 여섯은 모두 실제 실행으로 확인함)
 
