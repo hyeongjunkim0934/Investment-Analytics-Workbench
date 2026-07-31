@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout workbench
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -82,10 +82,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout workbench
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Checkout private data repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: hyeongjunkim0934/data
           token: ${{ secrets.DATA_REPO_TOKEN }}
