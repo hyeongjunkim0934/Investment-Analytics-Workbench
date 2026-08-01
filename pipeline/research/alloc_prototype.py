@@ -11,11 +11,20 @@ CI 빌드에 포함되지 않는다. `wf_validation.py` 와 같은 위치·같�
 
 1. **기대수익은 관측된 것과 가정한 것을 섞지 않고 나눠 적는다.**
    채권·현금은 현재 시장금리에서 그대로 온다(관측). 주식은 시장이 값을 주지 않으므로
-   **ERP 를 명시적 입력**으로 두고, 역사적 실현치는 참고로 병기하되 그것을 기대수익으로
-   쓰지는 않는다 — 19년 표본의 산술평균을 기대수익으로 삼으면 표본 구간을 고른 사람이
-   답을 고른 것이 된다(HANDOVER §4 자의성 금지). 대신 ERP 를 흔들어 **민감도**를 보여준다.
+   가정이 필요한데, 역사적 실현 평균은 쓰지 않는다 — 19년 표본의 산술평균을 기대수익으로
+   삼으면 표본 구간을 고른 사람이 답을 고른 것이 된다(HANDOVER §4 자의성 금지).
+   대신 **동일 샤프 앵커**를 쓴다: 현재 채권 시장이 주는 위험 1단위당 보상(국내·해외
+   채권의 (YTM−단기금리)/변동성 평균 = 0.331)을 뽑아, 주식 ERP = 그 샤프 × 각자의
+   변동성으로 도출한다. 자유 모수가 2개(국내·해외 ERP)에서 1개로 줄고, 그 1개마저
+   가정이 아니라 관측된다. **어느 시장이 더 좋다는 판단을 모형에 넣지 않는 것이 요점**이다.
    KOSPI·ACWI 12M 포워드 PER 이 확보되면(§6 높음) 주식도 관측값으로 옮겨간다 —
    그때 바뀌는 것은 `expected_returns()` 한 함수뿐이다.
+
+   왜 이렇게 바꿨는지: 처음에는 국내·해외 ERP 를 똑같이 5%p 로 뒀는데, 그러면
+   **모든 시나리오에서 국내주식 비중이 0** 이 됐다. 동일 ERP 는 중립처럼 보이지만
+   중립이 아니다 — 변동성 22%인 국내주식과 15%인 해외주식에 같은 대가를 준다고
+   가정하는 것이라, 평균-분산 최적화기 안에서 국내주식이 구조적으로 진다.
+   동일 샤프로 바꾸자 국내 ERP +7.34%p / 해외 +5.11%p 가 도출되고 비중도 0 을 벗어난다.
 2. **프록시는 ETF 가 아니라 지수·금리 계열.** ETF 계열은 시작일이 제각각이라
    공통 구간이 8년으로 줄고, `미국*` 계열은 원화 환산이라 FX 가 이미 들어 있어
    헤지비율 슬라이더와 이중계상된다(HANDOVER §6.1). 국내채권은 `hedge.py` 가 이미
@@ -149,27 +158,57 @@ def acct_assets(X):
 # ---------------------------------------------------------------------------
 # 3) 기대수익 — 관측(채권·현금) / 가정(주식·대체)을 분리해 적는다
 # ---------------------------------------------------------------------------
-def expected_returns(S, erp_kr=ERP_KR, erp_gl=ERP_GL):
-    now = {k: float(S[v].dropna().iloc[-1]) for k, v in {
+def market_rates(S):
+    return {k: float(S[v].dropna().iloc[-1]) for k, v in {
         "kr3m": "info:한국_3m", "kr5y": "bb:한국_5y", "us_ytm": "info:UST_ALL_YTM",
         "us3m": "bb:미국_3m", "swap": "info:SMB_USDKRW_3M",
         "cpi": "bb:한국_core_CPI_yoy"}.items()}
+
+
+def sharpe_anchor(now, vols):
+    """채권 시장이 지금 위험 1단위에 얼마를 주는지 — 관측값에서 뽑는다.
+
+    주식 ERP 를 손으로 정하는 대신 이 값을 앵커로 쓴다. 자유 모수가 2개(국내·해외
+    ERP)에서 1개(샤프비율)로 줄고, 그 1개마저 가정이 아니라 현재 채권 시장에서
+    관측된다. '어느 시장이 더 좋다'는 판단을 모형에 넣지 않는 것이 요점이다.
+    """
+    prem = [(now["kr5y"] - now["kr3m"]) / vols["국내채권"],
+            (now["us_ytm"] + HEDGE_RATIO * now["swap"] - now["kr3m"]) / vols["해외채권"]]
+    return float(np.mean(prem))
+
+
+def expected_returns(S, vols, mode="sharpe", erp_kr=ERP_KR, erp_gl=ERP_GL, sr=None):
+    """mode='sharpe' — 위험비례 ERP (기본).  mode='equal' — 국내·해외 동일 ERP (비교용).
+
+    'equal' 은 더 위험한 시장이 같은 대가를 준다고 가정하는 것이라 중립이 아니다.
+    국내주식(변동성 22%)이 해외주식(15%)에 구조적으로 지고, 실제로 모든 시나리오에서
+    비중 0 이 나왔다. 그래서 기본값을 'sharpe' 로 둔다.
+    """
+    now = market_rates(S)
     carry = HEDGE_RATIO * now["swap"]      # 헤지분에 붙는 스왑레이트 (음수면 비용)
+    if mode == "sharpe":
+        sr = sharpe_anchor(now, vols) if sr is None else sr
+        erp_kr, erp_gl = sr * vols["국내주식"], sr * vols["해외주식"]
     mu = {"국내채권": now["kr5y"], "해외채권": now["us_ytm"] + carry,
           "국내주식": now["kr3m"] + erp_kr,
           "해외주식": now["us3m"] + erp_gl + carry,
           "대체투자": now["cpi"] + ALT_ALPHA, "단기자금": now["kr3m"]}
     mu.update({"장부가 국내채권": mu["국내채권"], "시가 국내채권": mu["국내채권"],
                "장부가 해외채권": mu["해외채권"], "시가 해외채권": mu["해외채권"]})
-    return mu, now
+    return mu, now, dict(erp_kr=erp_kr, erp_gl=erp_gl, sr=sr)
+
+
+def annual_vols(rets):
+    return {k: float(v.std()) * math.sqrt(12) * 100 for k, v in rets.items()}
 
 
 # ---------------------------------------------------------------------------
 # 4) 최적화 — 밴드 제약 하 최소분산 / 목표수익. 브라우저에 그대로 옮길 방식.
 # ---------------------------------------------------------------------------
 def project(w, lo, hi, total):
+    # 이분 40회면 구간 폭 4 → 4e-12. 브라우저에서 슬라이더에 물릴 것이라 반복을 아낀다.
     a, b = -2.0, 2.0
-    for _ in range(200):
+    for _ in range(40):
         m = (a + b) / 2
         if np.clip(w + m, lo, hi).sum() > total:
             b = m
@@ -178,7 +217,7 @@ def project(w, lo, hi, total):
     return np.clip(w + (a + b) / 2, lo, hi)
 
 
-def optimize(mu, cov, lo, hi, total, target=None, iters=8000):
+def optimize(mu, cov, lo, hi, total, target=None, iters=3000):
     """투영 경사법. scipy 없이 numpy 만으로 — 같은 알고리즘을 app.js 로 옮긴다."""
     w = project(np.full(len(mu), total / len(mu)), lo, hi, total)
     lam = 0.0
@@ -249,7 +288,9 @@ def main():
     P.load_data_dir(args.data_dir)
     S = {k: v["s"] for k, v in P.SERIES.items()}
     X = blocks(S, P.warn)
-    mu_map, now = expected_returns(S)
+    econ = econ_assets(X)
+    vols = annual_vols(econ)
+    mu_map, now, erp = expected_returns(S, vols, mode="sharpe")
 
     print(f"\n{'='*98}\n기대수익 재료 — 관측된 것과 가정한 것을 구분한다\n{'='*98}")
     print(f"  [관측] 한국 3개월 {now['kr3m']:.2f}%  한국 5년 {now['kr5y']:.2f}%  "
@@ -257,15 +298,20 @@ def main():
     print(f"  [관측] 달러원 스왑레이트(3M) {now['swap']:+.2f}% → 헤지 {HEDGE_RATIO*100:.0f}% 적용 시 "
           f"{HEDGE_RATIO*now['swap']:+.2f}%p")
     print(f"  [관측] 한국 근원 CPI {now['cpi']:.2f}%")
-    print(f"  [가정] ERP 국내 {ERP_KR:+.1f}%p · 해외 {ERP_GL:+.1f}%p, "
-          f"대체 α {ALT_ALPHA:+.1f}%p(위험 {ALT_VOL:.0f}%), 대출금 {LOAN_YIELD:.1f}%(비중 {LOAN_WEIGHT:.0f}% 고정)")
-    e = {"kospi": X["kospi"], "acwi": X["acwi"], "cash": X["cash"]}
+    print(f"  [관측→앵커] 채권이 지금 주는 위험 1단위당 보상(샤프) = {erp['sr']:.3f}")
+    print(f"             국내채권 ({now['kr5y']-now['kr3m']:+.2f}%p ÷ {vols['국내채권']:.2f}%) · "
+          f"해외채권 ({now['us_ytm']+HEDGE_RATIO*now['swap']-now['kr3m']:+.2f}%p ÷ {vols['해외채권']:.2f}%) 평균")
+    print(f"  [도출] 주식 ERP = 샤프 × 각자의 변동성 → "
+          f"국내 {erp['erp_kr']:+.2f}%p(σ {vols['국내주식']:.1f}%) · "
+          f"해외 {erp['erp_gl']:+.2f}%p(σ {vols['해외주식']:.1f}%)")
+    print(f"  [가정] 대체 α {ALT_ALPHA:+.1f}%p(위험 {ALT_VOL:.0f}%) · "
+          f"대출금 {LOAN_YIELD:.1f}%(비중 {LOAN_WEIGHT:.0f}% 고정) · 헤지비율 {HEDGE_RATIO*100:.0f}%")
     print(f"  [참고·기대수익에 쓰지 않음] 실현 초과수익 산술평균 "
-          f"국내 {(e['kospi'].mean()-e['cash'].mean())*1200:+.1f}%p · "
-          f"해외 {(e['acwi'].mean()-e['cash'].mean())*1200:+.1f}%p "
+          f"국내 {(X['kospi'].mean()-X['cash'].mean())*1200:+.1f}%p · "
+          f"해외 {(X['acwi'].mean()-X['cash'].mean())*1200:+.1f}%p "
           f"— 19년 표본이고 ACWI 는 아직 PR 이라 배당이 빠져 있다")
 
-    analyze("경제(시가) 관점", econ_assets(X), MIX_ECON, mu_map,
+    analyze("경제(시가) 관점", econ, MIX_ECON, mu_map,
             "  전 자산 시가평가. 장부가/시가 구분이 없다 — 같은 채권의 경제적 가치 변동은 회계처리와 무관하다.\n"
             f"  대출금 {LOAN_WEIGHT:.0f}%(준고정)는 최적화에서 제외. 나머지 {sum(MIX_ECON.values()):.0f}%만 배분한다.")
 
@@ -273,16 +319,27 @@ def main():
             "  장부가 채권은 가격 변동이 손익에 안 잡힌다 → 변동성이 0(국내)·환율만(해외) 남는다.\n"
             "  이 관점만 보고 최적화하면 장부가로 쏠린다. 두 관점을 함께 봐야 하는 이유가 이것이다.")
 
-    # ----- ERP 가정 민감도 — 가정이 답을 얼마나 흔드는지 -----
-    print(f"\n{'='*98}\nERP 가정 민감도 (경제 관점, ② 수익 유지 해) — 가정이 답을 얼마나 흔드나\n{'='*98}")
-    print(f"{'ERP(국내=해외)':<16}" + "".join(f"{k[:6]:>10}" for k in MIX_ECON) + f"{'기대수익':>10}{'위험':>8}")
-    for erp in [3.0, 4.0, 5.0, 6.0, 7.0]:
-        mu2, _ = expected_returns(S, erp, erp)
-        w, r0, s0, ss = analyze("", econ_assets(X), MIX_ECON, mu2, "", show=False)
-        print(f"{erp:>6.1f}%p        " + "".join(f"{v*100:>10.1f}" for v in w) + f"{r0:>10.2f}{ss:>8.2f}")
-    print("\n  국내·해외 ERP 를 같게 두면 배분이 ERP 수준에 거의 반응하지 않는다 —")
-    print("  주식 비중을 움직이는 것은 ERP 의 절대 수준이 아니라 국내 대 해외의 '차이'다.")
-    print("  즉 논쟁해야 할 가정은 '주식이 몇 % 벌까'가 아니라 '국내와 해외 중 어느 쪽이 나은가'다.")
+    # ----- 방식 비교 — 동일 ERP 가 왜 중립이 아닌지 -----
+    print(f"\n{'='*98}\nERP 산정 방식 비교 (경제 관점, ② 수익 유지 해)\n{'='*98}")
+    print(f"{'방식':<26}" + "".join(f"{k[:6]:>9}" for k in MIX_ECON) + f"{'기대수익':>9}{'위험':>7}")
+    rows = [("동일 ERP 5%p (구방식)", dict(mode="equal", erp_kr=5.0, erp_gl=5.0)),
+            ("동일 샤프 (앵커 = 채권)", dict(mode="sharpe"))]
+    for label, kw in rows:
+        mu2, _, _ = expected_returns(S, vols, **kw)
+        w, r0, _, ss = analyze("", econ, MIX_ECON, mu2, "", show=False)
+        print(f"{label:<26}" + "".join(f"{v*100:>9.1f}" for v in w) + f"{r0:>9.2f}{ss:>7.2f}")
+    print("\n  동일 ERP 는 중립이 아니다 — 변동성 22%인 국내주식과 15%인 해외주식에 같은 대가를")
+    print("  준다고 가정하는 것이라 국내주식이 구조적으로 진다(모든 시나리오에서 비중 0).")
+    print("  동일 샤프는 '어느 시장이 더 좋다'를 가정하지 않고, 위험 1단위당 보상만 같다고 둔다.")
+
+    # ----- 샤프 앵커 민감도 -----
+    print(f"\n{'='*98}\n샤프 앵커 민감도 — 자유 모수가 이제 이것 하나뿐이다\n{'='*98}")
+    print(f"{'샤프':<26}" + "".join(f"{k[:6]:>9}" for k in MIX_ECON) + f"{'기대수익':>9}{'위험':>7}")
+    for sr in [0.20, erp["sr"], 0.45, 0.60]:
+        mu2, _, e2 = expected_returns(S, vols, mode="sharpe", sr=sr)
+        w, r0, _, ss = analyze("", econ, MIX_ECON, mu2, "", show=False)
+        tag = f"{sr:.3f}" + ("  ← 관측 앵커" if abs(sr - erp["sr"]) < 1e-9 else "")
+        print(f"{tag:<26}" + "".join(f"{v*100:>9.1f}" for v in w) + f"{r0:>9.2f}{ss:>7.2f}")
 
 
 if __name__ == "__main__":
