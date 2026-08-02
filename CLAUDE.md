@@ -15,9 +15,10 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 
 | 경로 | 역할 |
 |---|---|
-| `pipeline/process.py` | CLI 진입점. 엑셀 파싱 → 시리즈 저장소(`SERIES`) → 패널 빌더 → JSON 14개 출력 |
+| `pipeline/process.py` | CLI 진입점. 엑셀 파싱 → 시리즈 저장소(`SERIES`) → 패널 빌더 → JSON 15개 출력 |
 | `pipeline/risk.py` | `build(SERIES, warn)` → `risk.json` + `events.json` + 관계분석용 주간 프레임 (요인 점수·IC가중 합성·이벤트 검출) |
 | `pipeline/hedge.py` | `build(SERIES, warn)` → `hedge.json` (7통화 헤지 매트릭스·백테스트·시뮬레이터 공분산) |
+| `pipeline/alloc.py` | `build(SERIES, warn)` → `alloc.json` (자산배분 원천 10개 공분산·현재 금리·동일 샤프 앵커·블록 부트스트랩 사전계산. **원본 수익률 미게시** — 공분산·평균·분위수만) |
 | `pipeline/panel.py` | `build(SERIES, risk_weekly, warn)` → `panel.json` (관계분석용 주간 정렬 패널. 공개 변수는 `VARS` 화이트리스트로만 통제) |
 | `pipeline/common.py` | 공용 산식 한 벌 — `epoch_seconds`/`pack_values`/`spearman`/`auc`. 위 넷과 연구 하네스가 전부 여기서 가져온다 |
 | `pipeline/check_output.py` | **배포 게이트**. 산출물이 JSON 계약을 지키는지 보고 아니면 exit 1. 표준 라이브러리만 씀 |
@@ -40,7 +41,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 35초)
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 50초)
 python -m pytest
 
 # 배포 게이트 — 파이프라인 출력이 JSON 계약을 지키는지. 실패하면 exit 1
@@ -58,9 +59,9 @@ cd _site && python -m http.server 8000     # http://localhost:8000
 python pipeline/research/wf_validation.py --data-dir ../Data
 ```
 
-- 파이프라인 정상 출력: 약 **30~40초**, exit 0, `parsed N series from M files` 뒤에 `wrote …` **14줄**
+- 파이프라인 정상 출력: 약 **40~55초**(자산배분 표본 재추출 사전계산 포함), exit 0, `parsed N series from M files` 뒤에 `wrote …` **15줄**
   (합계 약 2.1MB), 마지막 줄 `N warning(s) — see meta.json`.
-- **14는 코드가 정한 수**(아래 JSON 계약)라 달라지면 그 자체가 버그다. 반대로 `N`·`M`·경고 건수는
+- **15는 코드가 정한 수**(아래 JSON 계약)라 달라지면 그 자체가 버그다. 반대로 `N`·`M`·경고 건수는
   `--data-dir` 의 엑셀에서 오는 수라 데이터를 갱신하면 정상적으로 바뀐다 — 현재 `../Data` 기준선은
   **444 시리즈 / 4 파일 / 경고 7건**(전부 stderr의 `data_bb.xlsx/D: duplicate column …`)이며, 이 기준선의
   정본은 Data 저장소 쪽(`../Data/CLAUDE.md`)이다. 급감이나 경고 성격 변화만 신호로 볼 것.
@@ -70,8 +71,8 @@ python pipeline/research/wf_validation.py --data-dir ../Data
 
 ## 출력 JSON 계약
 
-`process.py` 의 `payloads` 딕셔너리와 `dashboard/app.js` 의 `FILES` 상수가 **같은 14개**로 1:1 대응한다:
-`meta` `overview` `risk` `events` `panel` `hedge` `rates` `irs` `credit` `fx` `inflation` `acwi` `macro` `catalog`.
+`process.py` 의 `payloads` 딕셔너리와 `dashboard/app.js` 의 `FILES` 상수가 **같은 15개**로 1:1 대응한다:
+`meta` `overview` `risk` `events` `panel` `hedge` `alloc` `rates` `irs` `credit` `fx` `inflation` `acwi` `macro` `catalog`.
 JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 
 - 대시보드는 `fetch("data/<이름>.json")` 상대경로로 읽는다 → `--out` 은 항상 `index.html` 옆 `data/` 여야 하고,
@@ -119,7 +120,8 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   `build_irs` / `build_credit` / `build_fx` / `build_inflation` 안에 **인라인으로 박힌 `series_group([...])`
   리스트**(451·455·507·538·542·551·570·578·583행)에 절반씩 흩어져 있다. 여기에 더해 `risk.py` 의
   `Indicator` `spark` 와 `hedge.py` 의 `cost_hist_usd`, 그리고 **`panel.py` 의 `VARS`** (관계분석용 30개
-  변수의 주간 수준값 전 구간)도 원본 값을 그대로 싣는다.
+  변수의 주간 수준값 전 구간)도 원본 값을 그대로 싣는다. `alloc.py` 는 예외적으로 **원본 값을 싣지 않는다**
+  — 게시물은 원천 10개의 공분산·평균·부트스트랩 분위수뿐이다(`tests/test_contract.py` 의 유출 가드가 이를 강제).
   어느 경로든 넣은 시리즈의 **값이 Pages로 나간다** — 상수만 훑고 공개 범위를 판단하면 크게 과소평가한다.
 - **리스크 요인 구성·가중** = `risk.py` 의 **모듈 수준** `derive_inputs()`(원천·파생 시리즈)와
   `factor_specs()`(요인 11개 = 스트레스 6 + 취약성 5, 각 `Indicator` 모드 `hi`/`lo`/`up`),
@@ -135,7 +137,7 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 - `wf_validation.py` 는 `process.load_data_dir()` + `risk.derive_inputs`/`risk.factor_specs` +
   `risk` 의 상수 + `common.spearman`/`common.auc` 를 import 한다. 이 파일이 스스로 정하는 것은
   **평가 설계**(가중 방식·타깃·표본 외 구간)뿐이다.
-- **JSON 14개 계약은 세 곳에 적혀 있다**: `process.py` 의 `payloads`, `dashboard/app.js` 의 `FILES`,
+- **JSON 15개 계약은 세 곳에 적혀 있다**: `process.py` 의 `payloads`, `dashboard/app.js` 의 `FILES`,
   `pipeline/check_output.py` 의 `EXPECTED`. 하나만 고치면 `tests/test_contract.py` 가 잡는다.
 
 ## 실패 처리 규약 (새 계산 블록도 이 패턴을 따를 것)
@@ -153,7 +155,7 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 
 - **테스트는 합성 픽스처로만 돈다.** `tests/synth.py` 가 만드는 워크북에는 벤더 값이 한 톨도 없다 —
   공개 저장소이므로 `../Data` 의 값이나 그 파생물을 픽스처로 커밋하지 말 것. 실데이터 회귀는 여전히
-  파이프라인을 완주시켜 시리즈 수·JSON 14개·경고 건수를 변경 전과 비교하는 방식으로 한다.
+  파이프라인을 완주시켜 시리즈 수·JSON 15개·경고 건수를 변경 전과 비교하는 방식으로 한다.
 - **기본 브랜치는 아직 기계 생성 세션명**(`claude/data-repo-dashboard-automation-cj8y59`)이다.
   `main` 으로의 rename 은 **아직 하지 않았다** — GitHub 웹 Settings 작업이라 사람이 해야 한다.
   `build-dashboard.yml` 의 `push:` 트리거는 `[main, master, "claude/…cj8y59"]` 세 이름을 모두 담고

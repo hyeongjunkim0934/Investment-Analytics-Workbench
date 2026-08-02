@@ -26,6 +26,7 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 
+import alloc
 import hedge
 import panel
 import risk
@@ -707,6 +708,13 @@ def main() -> None:
         import traceback
         traceback.print_exc()
         warn("hedge: 환헤지 계산 실패 — 해당 섹션 없이 배포됩니다")
+
+    try:
+        payloads["alloc.json"] = alloc.build(SERIES, warn)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        warn("alloc: 자산배분 계산 실패 — 해당 섹션 없이 배포됩니다")
 
     payloads.update({
         "rates.json": build_rates(),

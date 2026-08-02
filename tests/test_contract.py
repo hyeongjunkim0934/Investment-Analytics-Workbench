@@ -37,9 +37,9 @@ def _app_js_files() -> list[str]:
     return re.findall(r'["\']([A-Za-z_]+)["\']', m.group(1))
 
 
-def test_contract_is_fourteen():
-    assert len(check_output.EXPECTED) == 14
-    assert len(set(check_output.EXPECTED)) == 14
+def test_contract_is_fifteen():
+    assert len(check_output.EXPECTED) == 15
+    assert len(set(check_output.EXPECTED)) == 15
 
 
 def test_app_js_files_match_contract():
@@ -72,11 +72,11 @@ def built(synth_dir, tmp_path_factory):
     return out, r
 
 
-def test_pipeline_writes_exactly_fourteen(built):
+def test_pipeline_writes_exactly_fifteen(built):
     out, r = built
     written = sorted(p.stem for p in out.glob("*.json"))
     assert written == sorted(check_output.EXPECTED), r.stdout[-2000:]
-    assert r.stdout.count("wrote ") == 14
+    assert r.stdout.count("wrote ") == 15
 
 
 def test_risk_and_hedge_actually_ran(built):
@@ -91,6 +91,70 @@ def test_risk_and_hedge_actually_ran(built):
     assert "계산 실패" not in r.stderr
     risk = json.loads((out / "risk.json").read_text(encoding="utf-8"))
     assert risk, "risk.json 이 비어 있습니다"
+
+
+def test_alloc_publishes_covariance_not_returns(built):
+    """alloc.json 공개 범위: 원천 공분산·평균·분위수만 — 원본 수익률 시계열 금지.
+
+    수치 리스트 길이가 원천 개수(10)·격자(21)를 넘으면 시계열이 샌 것이다.
+    """
+    out, _ = built
+    A = json.loads((out / "alloc.json").read_text(encoding="utf-8"))
+    for top in ["sources", "sets", "rates", "cost_options", "anchor_ref",
+                "defaults", "boot", "checks", "acct_model", "limits"]:
+        assert top in A, f"alloc.json 필수 키 없음 — {top}"
+    n_src = len(A["sources"]["labels"])
+    assert n_src == 10
+
+    def walk(o, path="alloc"):
+        if isinstance(o, list):
+            if o and all(isinstance(x, (int, float)) for x in o):
+                assert len(o) <= max(n_src, 25), f"{path}: 수치 배열 길이 {len(o)} — 시계열 유출 의심"
+            for i, v in enumerate(o):
+                walk(v, f"{path}[{i}]")
+        elif isinstance(o, dict):
+            assert "t" not in o or not isinstance(o.get("t"), list), f"{path}: 시계열 페이로드 금지"
+            for k, v in o.items():
+                walk(v, f"{path}.{k}")
+    walk(A)
+
+    for s in A["sets"]:
+        C = s["cov"]
+        assert len(C) == n_src and all(len(row) == n_src for row in C)
+        for i in range(n_src):
+            assert C[i][i] >= 0
+            for j in range(n_src):
+                assert abs(C[i][j] - C[j][i]) < 1e-12, "공분산 비대칭"
+        assert s["n_months"] >= 60
+
+
+def test_alloc_sets_psd_and_boot_quantiles_monotone(built):
+    """게시된 공분산은 전부 양반정치(PSD), 부트스트랩 분위수는 단조여야 한다.
+
+    (대각·대칭 검사는 위에서 — 여기는 고유값을 직접 재계산한다. min_eig 필드가
+    아니라 게시물 자체에서. spx02 세트는 ACWI 행·열이 0이라 고유값 0이 정상.)
+    """
+    import numpy as np
+    out, _ = built
+    A = json.loads((out / "alloc.json").read_text(encoding="utf-8"))
+    for s in A["sets"]:
+        C = np.array(s["cov"])
+        eig = float(np.linalg.eigvalsh(C)[0])
+        assert eig > -1e-8, f"{s['key']}: 비양반정치 (min eig {eig:.3g})"
+    for r in A["boot"]["rows"]:
+        for k in ["anchor", "d1", "d2", "hb_star", "he_star"]:
+            q = r[k]
+            vals = [q["q05"], q["q25"], q["q50"], q["q75"], q["q95"]]
+            assert vals == sorted(vals), f"boot {r['block_len']}/{k}: 분위수 비단조"
+    # 최장 표본(spx02) — ACWI 를 뺀 S&P500 TR 전용 세트의 구조 계약
+    sp = next((s for s in A["sets"] if s["key"] == "spx02"), None)
+    assert sp is not None, "spx02 세트 없음"
+    assert sp.get("proxy_only") == "spx"
+    ia = A["sources"]["labels"].index("acwi")
+    assert all(abs(v) < 1e-15 for v in sp["cov"][ia]), "spx02: acwi 행이 0 이 아님"
+    assert all(abs(row[ia]) < 1e-15 for row in sp["cov"]), "spx02: acwi 열이 0 이 아님"
+    full = next(s for s in A["sets"] if s["key"] == "full")
+    assert sp["n_months"] >= full["n_months"], "spx02 는 공통 표본 이상이어야 한다"
 
 
 def test_catalog_has_metadata_only(built):
@@ -164,7 +228,7 @@ def test_gate_passes_on_good_build(built):
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-@pytest.mark.parametrize("victim", ["hedge", "risk", "events", "macro"])
+@pytest.mark.parametrize("victim", ["hedge", "risk", "events", "macro", "alloc"])
 def test_gate_blocks_when_a_json_is_missing(built, tmp_path, victim):
     """게이트의 존재 이유: risk/hedge 가 죽어 JSON 이 빠진 채 배포되는 것을 막는다."""
     out, _ = built

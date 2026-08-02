@@ -261,3 +261,184 @@ def test_despike_removes_single_day_spike_and_reversal():
     out = hedge.despike(s, thr=0.10)
     assert idx[2] not in out.index
     assert len(out) == 5
+
+
+# --------------------------------------------------------------------------
+# alloc — 투영·최적화·헤지 격자·앵커. 전부 정의로부터 독립 검산.
+# --------------------------------------------------------------------------
+
+import alloc
+
+
+def test_alloc_project_is_euclidean_projection():
+    """투영 정의: 박스 ∩ {합=total} 안에서 w 와의 거리 최소점. 촘촘한 격자와 대조."""
+    rng = np.random.default_rng(7)
+    lo = np.array([0.1, 0.0, 0.2])
+    hi = np.array([0.6, 0.5, 0.7])
+    total = 1.0
+    for _ in range(5):
+        w = rng.uniform(-0.5, 1.2, 3)
+        p = alloc.project(w, lo, hi, total)
+        # 제약 충족
+        assert (p >= lo - 1e-9).all() and (p <= hi + 1e-9).all()
+        assert abs(p.sum() - total) < 1e-6
+        # 격자 전수조사보다 거리가 크지 않다
+        g1 = np.arange(lo[0], hi[0] + 1e-12, 0.004)
+        g2 = np.arange(lo[1], hi[1] + 1e-12, 0.004)
+        G1, G2 = np.meshgrid(g1, g2, indexing="ij")
+        G3 = total - G1 - G2
+        ok = (G3 >= lo[2] - 1e-12) & (G3 <= hi[2] + 1e-12)
+        d2 = (G1 - w[0]) ** 2 + (G2 - w[1]) ** 2 + (G3 - w[2]) ** 2
+        best = d2[ok].min()
+        mine = ((p - w) ** 2).sum()
+        assert mine <= best + 1e-4
+
+
+def _feasible_grid(lo, hi, total, step=0.005):
+    g1 = np.arange(lo[0], hi[0] + 1e-12, step)
+    g2 = np.arange(lo[1], hi[1] + 1e-12, step)
+    G1, G2 = np.meshgrid(g1, g2, indexing="ij")
+    G3 = total - G1 - G2
+    ok = (G3 >= lo[2] - 1e-12) & (G3 <= hi[2] + 1e-12)
+    return np.stack([G1[ok], G2[ok], G3[ok]], axis=1)
+
+
+def test_alloc_optimize_minvar_matches_gridsearch():
+    rng = np.random.default_rng(11)
+    A = rng.normal(size=(3, 3))
+    cov = A @ A.T + np.eye(3) * 0.1
+    mu = np.array([3.0, 5.0, 7.0])
+    lo, hi, total = np.array([0.1, 0.0, 0.2]), np.array([0.6, 0.5, 0.7]), 1.0
+    w = alloc.optimize(mu, cov, lo, hi, total)
+    W = _feasible_grid(lo, hi, total)
+    grid_min = np.einsum("ki,ij,kj->k", W, cov, W).min()
+    assert float(w @ cov @ w) <= grid_min + 1e-3
+
+
+def test_alloc_optimize_target_return_holds_and_is_efficient():
+    rng = np.random.default_rng(13)
+    A = rng.normal(size=(3, 3))
+    cov = A @ A.T + np.eye(3) * 0.1
+    mu = np.array([3.0, 5.0, 7.0])
+    lo, hi, total = np.array([0.1, 0.0, 0.2]), np.array([0.6, 0.5, 0.7]), 1.0
+    target = 5.2
+    w = alloc.optimize(mu, cov, lo, hi, total, target=target)
+    assert float(mu @ w) >= target - 0.02
+    W = _feasible_grid(lo, hi, total)
+    keep = W[np.einsum("ki,i->k", W, mu) >= target - 1e-9]
+    grid_min = np.einsum("ki,ij,kj->k", keep, cov, keep).min()
+    assert float(w @ cov @ w) <= grid_min + 1e-3
+
+
+def test_alloc_hedge_grid_min_matches_direct_loadings():
+    """닫힌꼴 2차식 격자 = 로딩을 직접 만들어 계산한 값 (정의 대조)."""
+    rng = np.random.default_rng(17)
+    n = len(alloc.SOURCE_LABELS)
+    A = rng.normal(size=(n, n)) * 0.01
+    covS = A @ A.T
+    w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
+    k = 0.7
+    hb, he, smin = alloc.hedge_grid_min(covS, w, k)
+    direct = math.inf
+    for hbx in np.arange(0, 101, 5) / 100:
+        for hex_ in np.arange(0, 101, 5) / 100:
+            x = w @ alloc.loadings(hbx, hex_, k)
+            direct = min(direct, math.sqrt(max(float(x @ covS @ x), 0)) * 100)
+    assert abs(smin - direct) < 1e-9
+    x = w @ alloc.loadings(hb / 100, he / 100, k)
+    assert abs(math.sqrt(float(x @ covS @ x)) * 100 - smin) < 1e-9
+
+
+def test_alloc_anchor_definition():
+    """앵커 = 국내·해외 채권의 자국통화 (초과보상 ÷ σ) 평균 (승인 ⑤-ⓑ) — 손 재계산 대조.
+
+    자국통화 기준이므로 환율·스왑 분산이 아무리 커도 앵커에 못 들어온다 —
+    e_usd 에 큰 분산을 심어 두고 그 무관성까지 함께 단정한다.
+    """
+    n = len(alloc.SOURCE_LABELS)
+    covS = np.zeros((n, n))
+    i_kr, i_us, i_e = alloc.IX["kr_bond"], alloc.IX["us_bond"], alloc.IX["e_usd"]
+    covS[i_kr, i_kr] = (0.04) ** 2
+    covS[i_us, i_us] = (0.05) ** 2
+    covS[i_e, i_e] = (0.50) ** 2          # 일부러 크게 — 앵커에 새면 아래 단정이 깨진다
+    rates = {"kr3m": {"v": 2.0}, "kr5y": {"v": 4.0},
+             "us_ytm": {"v": 5.0}, "us3m": {"v": 3.0}}
+    a = alloc.anchor_of(covS, rates)
+    expected = ((4.0 - 2.0) / 4.0 + (5.0 - 3.0) / 5.0) / 2
+    assert abs(a["value"] - expected) < 1e-12
+    assert a["us"]["sigma"] == 5.0        # 달러표시 σ 그대로 — 환노출 미포함
+
+
+def test_alloc_hp_interpolation():
+    """HP 곡선 보간 — 격자점 재현·중간 선형·12M 초과 고정(구현 산식과 독립 판정)."""
+    curve = {"3M": -0.60, "6M": -0.90, "12M": -1.50}
+    assert alloc.hp_cost_at(curve, 3) == -0.60
+    assert alloc.hp_cost_at(curve, 6) == -0.90
+    assert alloc.hp_cost_at(curve, 12) == -1.50
+    assert abs(alloc.hp_cost_at(curve, 9) - (-1.20)) < 1e-12    # 6M·12M 중점
+    assert alloc.hp_cost_at(curve, 24) == -1.50                 # 12M 초과 → 12M 고정
+    assert alloc.hp_cost_at(curve, 1) == -0.60                  # 3M 미만 → 3M 고정
+
+
+def _rand_problem(rng, n=6):
+    """임의의 양정치 문제 — KKT·다중시작 검증용 (구현을 베끼지 않은 독립 판정)."""
+    G = rng.normal(size=(n, n))
+    cov = G @ G.T + n * np.eye(n)
+    mu = rng.uniform(2, 10, n)
+    lo = np.zeros(n)
+    hi = rng.uniform(0.3, 0.8, n)
+    total = 0.9 * float(hi.sum()) / 2
+    return mu, cov, lo, hi, total
+
+
+def _kkt_ok(w, mu, cov, lo, hi, lam, tol=1e-3):
+    """정지 조건: 내부점은 잔차 0, 하한 활성은 잔차 ≥ 0, 상한 활성은 ≤ 0."""
+    g = cov @ w - lam * mu
+    interior = (w > lo + 1e-7) & (w < hi - 1e-7)
+    if interior.sum() == 0:
+        return True
+    nu = float(g[interior].mean())          # 예산 제약의 승수
+    r = g - nu
+    for i in range(len(w)):
+        if interior[i] and abs(r[i]) > tol:
+            return False
+        if w[i] <= lo[i] + 1e-7 and r[i] < -tol:
+            return False
+        if w[i] >= hi[i] - 1e-7 and r[i] > tol:
+            return False
+    return True
+
+
+def test_alloc_optimize_minvar_kkt_and_multistart():
+    """격자 전수조사(3자산)와 별개로, 임의 6자산 문제에서 KKT + 무작위 3000점 대조."""
+    rng = np.random.default_rng(3)
+    for _ in range(3):
+        mu, cov, lo, hi, total = _rand_problem(rng)
+        w = alloc.optimize(mu, cov, lo, hi, total, iters=3000)
+        assert abs(w.sum() - total) < 1e-6
+        assert (w >= lo - 1e-9).all() and (w <= hi + 1e-9).all()
+        assert _kkt_ok(w, mu, cov, lo, hi, lam=0.0)
+        W0 = rng.dirichlet(np.ones(len(mu)), 3000) * total
+        W = np.array([alloc.project(x, lo, hi, total) for x in W0])
+        risks = np.einsum("bi,ij,bj->b", W, cov, W)
+        assert float(w @ cov @ w) <= risks.min() + 1e-6
+
+
+def test_alloc_optimize_target_binds_and_costs_risk():
+    """최소분산보다 높은 목표수익 → 목표가 묶이고 위험은 그만큼 커진다."""
+    rng = np.random.default_rng(4)
+    mu, cov, lo, hi, total = _rand_problem(rng)
+    wmv = alloc.optimize(mu, cov, lo, hi, total, iters=3000)
+    target = float(mu @ wmv) + 0.5
+    w = alloc.optimize(mu, cov, lo, hi, total, target=target, iters=3000)
+    assert float(mu @ w) >= target - 1e-3
+    assert float(w @ cov @ w) >= float(wmv @ cov @ wmv) - 1e-9
+
+
+def test_alloc_infeasible_bands_raise():
+    """실행 불가능한 밴드는 침묵이 아니라 명시적 ValueError (app.js 와 같은 규칙)."""
+    with pytest.raises(ValueError):
+        alloc.check_feasible(np.array([0.5, 0.5, 0.3]), np.ones(3), 1.0)
+    with pytest.raises(ValueError):
+        alloc.check_feasible(np.zeros(3), np.array([0.2, 0.2, 0.2]), 1.0)
+    alloc.check_feasible(np.zeros(3), np.ones(3), 1.0)   # 정상 — 예외 없음
