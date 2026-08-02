@@ -261,3 +261,107 @@ def test_despike_removes_single_day_spike_and_reversal():
     out = hedge.despike(s, thr=0.10)
     assert idx[2] not in out.index
     assert len(out) == 5
+
+
+# --------------------------------------------------------------------------
+# alloc — 투영·최적화·헤지 격자·앵커. 전부 정의로부터 독립 검산.
+# --------------------------------------------------------------------------
+
+import alloc
+
+
+def test_alloc_project_is_euclidean_projection():
+    """투영 정의: 박스 ∩ {합=total} 안에서 w 와의 거리 최소점. 촘촘한 격자와 대조."""
+    rng = np.random.default_rng(7)
+    lo = np.array([0.1, 0.0, 0.2])
+    hi = np.array([0.6, 0.5, 0.7])
+    total = 1.0
+    for _ in range(5):
+        w = rng.uniform(-0.5, 1.2, 3)
+        p = alloc.project(w, lo, hi, total)
+        # 제약 충족
+        assert (p >= lo - 1e-9).all() and (p <= hi + 1e-9).all()
+        assert abs(p.sum() - total) < 1e-6
+        # 격자 전수조사보다 거리가 크지 않다
+        g1 = np.arange(lo[0], hi[0] + 1e-12, 0.004)
+        g2 = np.arange(lo[1], hi[1] + 1e-12, 0.004)
+        G1, G2 = np.meshgrid(g1, g2, indexing="ij")
+        G3 = total - G1 - G2
+        ok = (G3 >= lo[2] - 1e-12) & (G3 <= hi[2] + 1e-12)
+        d2 = (G1 - w[0]) ** 2 + (G2 - w[1]) ** 2 + (G3 - w[2]) ** 2
+        best = d2[ok].min()
+        mine = ((p - w) ** 2).sum()
+        assert mine <= best + 1e-4
+
+
+def _feasible_grid(lo, hi, total, step=0.005):
+    g1 = np.arange(lo[0], hi[0] + 1e-12, step)
+    g2 = np.arange(lo[1], hi[1] + 1e-12, step)
+    G1, G2 = np.meshgrid(g1, g2, indexing="ij")
+    G3 = total - G1 - G2
+    ok = (G3 >= lo[2] - 1e-12) & (G3 <= hi[2] + 1e-12)
+    return np.stack([G1[ok], G2[ok], G3[ok]], axis=1)
+
+
+def test_alloc_optimize_minvar_matches_gridsearch():
+    rng = np.random.default_rng(11)
+    A = rng.normal(size=(3, 3))
+    cov = A @ A.T + np.eye(3) * 0.1
+    mu = np.array([3.0, 5.0, 7.0])
+    lo, hi, total = np.array([0.1, 0.0, 0.2]), np.array([0.6, 0.5, 0.7]), 1.0
+    w = alloc.optimize(mu, cov, lo, hi, total)
+    W = _feasible_grid(lo, hi, total)
+    grid_min = np.einsum("ki,ij,kj->k", W, cov, W).min()
+    assert float(w @ cov @ w) <= grid_min + 1e-3
+
+
+def test_alloc_optimize_target_return_holds_and_is_efficient():
+    rng = np.random.default_rng(13)
+    A = rng.normal(size=(3, 3))
+    cov = A @ A.T + np.eye(3) * 0.1
+    mu = np.array([3.0, 5.0, 7.0])
+    lo, hi, total = np.array([0.1, 0.0, 0.2]), np.array([0.6, 0.5, 0.7]), 1.0
+    target = 5.2
+    w = alloc.optimize(mu, cov, lo, hi, total, target=target)
+    assert float(mu @ w) >= target - 0.02
+    W = _feasible_grid(lo, hi, total)
+    keep = W[np.einsum("ki,i->k", W, mu) >= target - 1e-9]
+    grid_min = np.einsum("ki,ij,kj->k", keep, cov, keep).min()
+    assert float(w @ cov @ w) <= grid_min + 1e-3
+
+
+def test_alloc_hedge_grid_min_matches_direct_loadings():
+    """닫힌꼴 2차식 격자 = 로딩을 직접 만들어 계산한 값 (정의 대조)."""
+    rng = np.random.default_rng(17)
+    n = len(alloc.SOURCE_LABELS)
+    A = rng.normal(size=(n, n)) * 0.01
+    covS = A @ A.T
+    w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
+    k = 0.7
+    hb, he, smin = alloc.hedge_grid_min(covS, w, k)
+    direct = math.inf
+    for hbx in np.arange(0, 101, 5) / 100:
+        for hex_ in np.arange(0, 101, 5) / 100:
+            x = w @ alloc.loadings(hbx, hex_, k)
+            direct = min(direct, math.sqrt(max(float(x @ covS @ x), 0)) * 100)
+    assert abs(smin - direct) < 1e-9
+    x = w @ alloc.loadings(hb / 100, he / 100, k)
+    assert abs(math.sqrt(float(x @ covS @ x)) * 100 - smin) < 1e-9
+
+
+def test_alloc_anchor_definition():
+    """앵커 = 국내·해외 채권의 (초과보상 ÷ σ) 평균 — 손으로 재계산해 대조."""
+    n = len(alloc.SOURCE_LABELS)
+    covS = np.zeros((n, n))
+    i_kr, i_us, i_e, i_sw = (alloc.IX["kr_bond"], alloc.IX["us_bond"],
+                             alloc.IX["e_usd"], alloc.IX["swap"])
+    covS[i_kr, i_kr] = (0.04) ** 2
+    covS[i_us, i_us] = (0.05) ** 2
+    covS[i_e, i_e] = (0.10) ** 2
+    rates = {"kr3m": {"v": 2.0}, "kr5y": {"v": 4.0}, "us_ytm": {"v": 5.0}}
+    a = alloc.anchor_of(covS, rates, h_bond=0.8, cost=-0.5)
+    sig_kr = 4.0
+    x = np.zeros(n); x[i_us], x[i_e], x[i_sw] = 1, 0.2, 0.8
+    sig_us = math.sqrt(float(x @ covS @ x)) * 100
+    expected = ((4.0 - 2.0) / sig_kr + (5.0 + 0.8 * -0.5 - 2.0) / sig_us) / 2
+    assert abs(a["value"] - expected) < 1e-12
