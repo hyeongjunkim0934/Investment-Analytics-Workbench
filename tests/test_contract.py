@@ -128,6 +128,35 @@ def test_alloc_publishes_covariance_not_returns(built):
         assert s["n_months"] >= 60
 
 
+def test_alloc_sets_psd_and_boot_quantiles_monotone(built):
+    """게시된 공분산은 전부 양반정치(PSD), 부트스트랩 분위수는 단조여야 한다.
+
+    (대각·대칭 검사는 위에서 — 여기는 고유값을 직접 재계산한다. min_eig 필드가
+    아니라 게시물 자체에서. spx02 세트는 ACWI 행·열이 0이라 고유값 0이 정상.)
+    """
+    import numpy as np
+    out, _ = built
+    A = json.loads((out / "alloc.json").read_text(encoding="utf-8"))
+    for s in A["sets"]:
+        C = np.array(s["cov"])
+        eig = float(np.linalg.eigvalsh(C)[0])
+        assert eig > -1e-8, f"{s['key']}: 비양반정치 (min eig {eig:.3g})"
+    for r in A["boot"]["rows"]:
+        for k in ["anchor", "d1", "d2", "hb_star", "he_star"]:
+            q = r[k]
+            vals = [q["q05"], q["q25"], q["q50"], q["q75"], q["q95"]]
+            assert vals == sorted(vals), f"boot {r['block_len']}/{k}: 분위수 비단조"
+    # 최장 표본(spx02) — ACWI 를 뺀 S&P500 TR 전용 세트의 구조 계약
+    sp = next((s for s in A["sets"] if s["key"] == "spx02"), None)
+    assert sp is not None, "spx02 세트 없음"
+    assert sp.get("proxy_only") == "spx"
+    ia = A["sources"]["labels"].index("acwi")
+    assert all(abs(v) < 1e-15 for v in sp["cov"][ia]), "spx02: acwi 행이 0 이 아님"
+    assert all(abs(row[ia]) < 1e-15 for row in sp["cov"]), "spx02: acwi 열이 0 이 아님"
+    full = next(s for s in A["sets"] if s["key"] == "full")
+    assert sp["n_months"] >= full["n_months"], "spx02 는 공통 표본 이상이어야 한다"
+
+
 def test_catalog_has_metadata_only(built):
     """카탈로그는 값 없이 메타데이터만 (공개 범위 규약)."""
     out, _ = built

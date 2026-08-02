@@ -365,3 +365,67 @@ def test_alloc_anchor_definition():
     sig_us = math.sqrt(float(x @ covS @ x)) * 100
     expected = ((4.0 - 2.0) / sig_kr + (5.0 + 0.8 * -0.5 - 2.0) / sig_us) / 2
     assert abs(a["value"] - expected) < 1e-12
+
+
+def _rand_problem(rng, n=6):
+    """임의의 양정치 문제 — KKT·다중시작 검증용 (구현을 베끼지 않은 독립 판정)."""
+    G = rng.normal(size=(n, n))
+    cov = G @ G.T + n * np.eye(n)
+    mu = rng.uniform(2, 10, n)
+    lo = np.zeros(n)
+    hi = rng.uniform(0.3, 0.8, n)
+    total = 0.9 * float(hi.sum()) / 2
+    return mu, cov, lo, hi, total
+
+
+def _kkt_ok(w, mu, cov, lo, hi, lam, tol=1e-3):
+    """정지 조건: 내부점은 잔차 0, 하한 활성은 잔차 ≥ 0, 상한 활성은 ≤ 0."""
+    g = cov @ w - lam * mu
+    interior = (w > lo + 1e-7) & (w < hi - 1e-7)
+    if interior.sum() == 0:
+        return True
+    nu = float(g[interior].mean())          # 예산 제약의 승수
+    r = g - nu
+    for i in range(len(w)):
+        if interior[i] and abs(r[i]) > tol:
+            return False
+        if w[i] <= lo[i] + 1e-7 and r[i] < -tol:
+            return False
+        if w[i] >= hi[i] - 1e-7 and r[i] > tol:
+            return False
+    return True
+
+
+def test_alloc_optimize_minvar_kkt_and_multistart():
+    """격자 전수조사(3자산)와 별개로, 임의 6자산 문제에서 KKT + 무작위 3000점 대조."""
+    rng = np.random.default_rng(3)
+    for _ in range(3):
+        mu, cov, lo, hi, total = _rand_problem(rng)
+        w = alloc.optimize(mu, cov, lo, hi, total, iters=3000)
+        assert abs(w.sum() - total) < 1e-6
+        assert (w >= lo - 1e-9).all() and (w <= hi + 1e-9).all()
+        assert _kkt_ok(w, mu, cov, lo, hi, lam=0.0)
+        W0 = rng.dirichlet(np.ones(len(mu)), 3000) * total
+        W = np.array([alloc.project(x, lo, hi, total) for x in W0])
+        risks = np.einsum("bi,ij,bj->b", W, cov, W)
+        assert float(w @ cov @ w) <= risks.min() + 1e-6
+
+
+def test_alloc_optimize_target_binds_and_costs_risk():
+    """최소분산보다 높은 목표수익 → 목표가 묶이고 위험은 그만큼 커진다."""
+    rng = np.random.default_rng(4)
+    mu, cov, lo, hi, total = _rand_problem(rng)
+    wmv = alloc.optimize(mu, cov, lo, hi, total, iters=3000)
+    target = float(mu @ wmv) + 0.5
+    w = alloc.optimize(mu, cov, lo, hi, total, target=target, iters=3000)
+    assert float(mu @ w) >= target - 1e-3
+    assert float(w @ cov @ w) >= float(wmv @ cov @ wmv) - 1e-9
+
+
+def test_alloc_infeasible_bands_raise():
+    """실행 불가능한 밴드는 침묵이 아니라 명시적 ValueError (app.js 와 같은 규칙)."""
+    with pytest.raises(ValueError):
+        alloc.check_feasible(np.array([0.5, 0.5, 0.3]), np.ones(3), 1.0)
+    with pytest.raises(ValueError):
+        alloc.check_feasible(np.zeros(3), np.array([0.2, 0.2, 0.2]), 1.0)
+    alloc.check_feasible(np.zeros(3), np.ones(3), 1.0)   # 정상 — 예외 없음

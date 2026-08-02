@@ -112,7 +112,9 @@ def sources_frame(S, warn) -> pd.DataFrame:
         "swap":    cut((smb / 100 / 12).dropna()),
         "d_swap":  cut((smb / 100).diff().dropna()),
     }
-    return pd.DataFrame(cols)[SOURCE_LABELS].dropna()
+    # dropna 는 build() 쪽에서 — ACWI(2006-12 시작)를 뺀 최장 표본(spx02)도
+    # 같은 프레임에서 만들어야 하므로 여기서는 결측을 남겨 둔다.
+    return pd.DataFrame(cols)[SOURCE_LABELS]
 
 
 def market_rates(S, warn) -> dict:
@@ -175,6 +177,19 @@ def loadings(h_bond: float, h_eq: float, alt_scale: float, proxy: str = "acwi") 
     B[4, IX["alt"]] = alt_scale
     B[5, IX["cash"]] = 1
     return B
+
+
+def check_feasible(lo, hi, total):
+    """실행 불가능한 밴드 입력을 침묵 속에 흡수하지 않는다 — 명시적 오류.
+
+    (하한 합 > 합계, 상한 합 < 합계 어느 쪽이든 투영이 임의의 점을 돌려주게 되므로
+    최적화 전에 반드시 검사한다. app.js 의 allocFeasibility 와 같은 규칙.)
+    """
+    lo_sum, hi_sum = float(np.sum(lo)), float(np.sum(hi))
+    if lo_sum > total + 1e-9:
+        raise ValueError(f"alloc: 밴드 하한 합 {lo_sum:.4f} > 투자 합계 {total:.4f} — 실행 불가능한 제약")
+    if hi_sum < total - 1e-9:
+        raise ValueError(f"alloc: 밴드 상한 합 {hi_sum:.4f} < 투자 합계 {total:.4f} — 실행 불가능한 제약")
 
 
 def project(w, lo, hi, total):
@@ -295,6 +310,7 @@ def bootstrap(M: pd.DataFrame, rates, d, cost) -> list[dict]:
     lo = np.array([d["bands"][k][0] for k in keys]) / 100
     hi = np.array([d["bands"][k][1] for k in keys]) / 100
     total = float(w0.sum())
+    check_feasible(lo, hi, total)
     rng = np.random.default_rng(BOOT_SEED)
     out = []
     for L in BOOT_BLOCKS:
@@ -343,7 +359,8 @@ def bootstrap(M: pd.DataFrame, rates, d, cost) -> list[dict]:
 # ---------------------------------------------------------------------------
 def build(series_store: dict, warn) -> dict:
     S = {k: v["s"] for k, v in series_store.items()}
-    M = sources_frame(S, warn)
+    raw = sources_frame(S, warn)
+    M = raw.dropna()
     if len(M) < 120:
         raise ValueError(f"alloc: 공통 표본 {len(M)}개월 < 120 — 원천 시리즈 확인 필요")
     rates = market_rates(S, warn)
@@ -362,6 +379,28 @@ def build(series_store: dict, warn) -> dict:
                      "n_months": int(len(sub)),
                      "mean": [round(float(x) * 12 * 100, 4) for x in sub.mean().values],
                      "cov": [[round(float(v), 10) for v in row] for row in covS]})
+
+    # 최장 표본 — ACWI(공통 표본의 병목, 2006-12 시작)를 빼고 S&P500 TR 전용으로.
+    # §7.2-4 의 취지(지수 계열로 25년 공분산)를 표본 선택지로 노출한다.
+    # ACWI 행·열은 0 — 이 세트에서는 proxy_only 로 spx 가 강제되어 참조되지 않는다.
+    M_spx = raw.drop(columns=["acwi"]).dropna()
+    if len(M_spx) >= 60:
+        cov9 = M_spx.cov().values * 12
+        mean9 = M_spx.mean().values * 12 * 100
+        n = len(SOURCE_LABELS)
+        cov10 = np.zeros((n, n))
+        mean10 = np.zeros(n)
+        idx9 = [i for i, k in enumerate(SOURCE_LABELS) if k != "acwi"]
+        for a, ia in enumerate(idx9):
+            mean10[ia] = round(float(mean9[a]), 4)
+            for b, ib in enumerate(idx9):
+                cov10[ia, ib] = cov9[a, b]
+        sets.append({"key": "spx02", "label": "최장 표본 — S&P500 TR 전용 (ACWI 표본 밖 구간 포함)",
+                     "proxy_only": "spx",
+                     "start": f"{M_spx.index[0]:%Y-%m}", "end": f"{M_spx.index[-1]:%Y-%m}",
+                     "n_months": int(len(M_spx)),
+                     "mean": [float(x) for x in mean10],
+                     "cov": [[round(float(v), 10) for v in row] for row in cov10]})
 
     covS = M.cov().values * 12
     k0 = alt_scale_of(covS, d["alt_vol"])
@@ -386,6 +425,7 @@ def build(series_store: dict, warn) -> dict:
     w0 = np.array([d["mix"][kk] for kk in keys]) / 100
     lo = np.array([d["bands"][kk][0] for kk in keys]) / 100
     hi = np.array([d["bands"][kk][1] for kk in keys]) / 100
+    check_feasible(lo, hi, float(w0.sum()))
     B0 = loadings(d["h_bond"] / 100, d["h_eq"] / 100, k0, d["proxy"])
     C0 = B0 @ covS @ B0.T * 10000
     tgt = float(mu0 @ w0)

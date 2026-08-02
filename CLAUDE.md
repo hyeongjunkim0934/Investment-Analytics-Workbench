@@ -41,7 +41,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 45초)
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 50초)
 python -m pytest
 
 # 배포 게이트 — 파이프라인 출력이 JSON 계약을 지키는지. 실패하면 exit 1
