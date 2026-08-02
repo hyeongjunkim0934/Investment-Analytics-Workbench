@@ -2166,6 +2166,17 @@ const ALLOC_ACCT = ["장부가 국내채권", "시가 국내채권", "장부가 
                     "국내주식", "해외주식", "대체투자", "단기자금"];
 
 /* 상태 + alloc.json → 그 자리에서 계산 가능한 엔진 객체 */
+/* 실측 HP 곡선(3/6/12M)을 가중평균 스왑 만기(개월)로 선형 보간.
+   12M 초과는 12M 값 고정(호가 없음 — 화면 명시). pipeline/alloc.py 의 hp_cost_at 과 동일 산식. */
+function allocHpAt(curve, tenorM) {
+  const xs = [3, 6, 12], ys = [curve["3M"], curve["6M"], curve["12M"]];
+  const t = Math.min(12, Math.max(3, +tenorM || 9));
+  let i = 0;
+  while (i < xs.length - 2 && t > xs[i + 1]) i++;
+  const w = (t - xs[i]) / (xs[i + 1] - xs[i]);
+  return +(ys[i] + w * (ys[i + 1] - ys[i])).toFixed(3);
+}
+
 function allocEngine(A, st) {
   const set = A.sets.find((s) => s.key === st.start_key) || A.sets[0];
   const L = A.sources.labels;
@@ -2175,7 +2186,8 @@ function allocEngine(A, st) {
   const n = L.length;
   const R = A.rates;
   const costOpt = A.cost_options.find((o) => o.key === st.cost_key) || A.cost_options[0];
-  const cost = costOpt.v;
+  /* HP 옵션은 곡선(3/6/12M)을 가중평균 만기로 보간 — 12M 초과는 12M 값 고정(호가 없음) */
+  const cost = costOpt.curve ? allocHpAt(costOpt.curve, st.tenor_m) : costOpt.v;
   const hb = st.h_bond / 100, he = st.h_eq / 100, tau = st.tenor_m / 24;
   const sigAlt = Math.sqrt(S[ix.alt][ix.alt]) * 100;
   const kAlt = sigAlt > 0 ? st.alt_vol / sigAlt : 0;
@@ -2193,21 +2205,24 @@ function allocEngine(A, st) {
 
   const sigOf = (row) => Math.sqrt(Math.max(amQuad(row, S), 0)) * 100;
 
-  /* 앵커 — 헤지비율 h 의 함수 (화면 명시 · #alloc-anchor 에 민감도) */
-  function anchorAt(h) {
+  /* 앵커 — 각 시장 자국통화 기준(승인 ⑤-ⓑ). 헤지 슬라이더와 완전히 무관 —
+     헤지비율은 기대수익에 비용항(h×cost)으로만, 위험에 환노출(1−h)로만 들어간다 */
+  const rowUsbLoc = zero(); rowUsbLoc[ix.us_bond] = 1;
+  const rowEqLoc = zero(); rowEqLoc[ix[proxy]] = 1;
+  function anchorLocal() {
     const premKr = R.kr5y.v - R.kr3m.v;
-    const premUs = R.us_ytm.v + h * cost - R.kr3m.v;
-    const sKr = sigOf(rowKr), sUs = sigOf(rowUsb(h));
+    const premUs = R.us_ytm.v - R.us3m.v;
+    const sKr = sigOf(rowKr), sUs = sigOf(rowUsbLoc);
     return { value: (premKr / sKr + premUs / sUs) / 2,
              kr: { prem: premKr, sigma: sKr }, us: { prem: premUs, sigma: sUs } };
   }
 
   function muEconAt(hbX, heX, anchor) {
-    const a = anchor || anchorAt(hbX);
+    const a = anchor || anchorLocal();
     return [R.kr5y.v,
             R.us_ytm.v + hbX * cost,
             R.kr3m.v + a.value * sigOf(rowKospi),
-            R.us3m.v + a.value * sigOf(rowEq(heX)) + heX * cost,
+            R.us3m.v + a.value * sigOf(rowEqLoc) + heX * cost,
             R.cpi.v + st.alt_alpha,
             R.kr3m.v];
   }
@@ -2216,7 +2231,7 @@ function allocEngine(A, st) {
   const byFx = st.by_fx != null ? st.by_fx : R.us_ytm.v;
 
   function build(view, hbX, heX) {
-    const anchor = anchorAt(hbX);
+    const anchor = anchorLocal();   // 슬라이더 무관 — hbX 는 비용항·로딩에만 쓰인다
     const muE = muEconAt(hbX, heX, anchor);
     let keys, rows, mu;
     if (view === "acct") {
@@ -2275,7 +2290,7 @@ function allocEngine(A, st) {
     A, st, set, ix, S, cost, costOpt, view, V, mix, mixEcon, w0, lo, hi, total, groups,
     byKr, byFx, kAlt, tau, proxy,
     n_months: set.n_months,
-    anchorAt, muEconAt, build, sigOf, rowUsb, rowEq, rowKospi, rowKr,
+    anchorLocal, muEconAt, build, sigOf, rowUsb, rowEq, rowKospi, rowKr,
     sigmaW, eulerRC,
     seOf(sig) { return sig / Math.sqrt(2 * set.n_months); },
     /* 배분 고정 · 헤지 (hbX,heX) 이동 시 총위험(현재 관점 기준) */
@@ -2596,10 +2611,14 @@ function renderAlloc() {
         sel.addEventListener("change", () => { st.cost_key = sel.value; allocSaveState(st); recalc(true); });
         return sel;
       })(),
+      (E.costOpt.curve
+        ? el("span", { style: "color:var(--ink-3);font-size:11.5px" },
+            ` → 적용 ${E.cost > 0 ? "+" : ""}${fmtNum(E.cost, 2)}% (가중평균 만기 ${st.tenor_m}개월 보간${st.tenor_m > 12 ? " — 12M 값 고정" : ""})`)
+        : ""),
       el("a", { href: "#alloc-cost", style: "margin-left:6px" }, "선택이 결과를 얼마나 바꾸나 ›"), el("br"),
-      `· [관측→앵커] 채권 샤프 ${fmtNum(V.anchor.value, 3)} — 국내 (${fmtNum(V.anchor.kr.prem, 2)}%p ÷ σ${fmtNum(V.anchor.kr.sigma, 2)}%) · 해외 (${fmtNum(V.anchor.us.prem, 2)}%p ÷ σ${fmtNum(V.anchor.us.sigma, 2)}%) 평균. `,
-      el("b", {}, "이 앵커는 헤지 슬라이더의 함수입니다 — 슬라이더를 움직이면 주식 기대수익도 함께 변합니다."),
-      el("a", { href: "#alloc-anchor", style: "margin-left:6px" }, "도출·민감도 ›"), el("br"),
+      `· [관측→앵커] 채권 샤프 ${fmtNum(V.anchor.value, 3)} — 국내 (${fmtNum(V.anchor.kr.prem, 2)}%p ÷ σ${fmtNum(V.anchor.kr.sigma, 2)}%) · 해외 (${fmtNum(V.anchor.us.prem, 2)}%p ÷ σ${fmtNum(V.anchor.us.sigma, 2)}%, 각자 자국통화 기준) 평균. `,
+      el("b", {}, "앵커는 헤지 슬라이더와 무관합니다 — 헤지비율은 기대수익에 비용으로만, 위험에 환노출로만 들어갑니다."),
+      el("a", { href: "#alloc-anchor", style: "margin-left:6px" }, "도출·검증 ›"), el("br"),
       "· [선택] 해외주식 프록시 ", (() => {
         const sel = el("select", {});
         [["acwi", "ACWI (현재 PR — 배당 미포함)"], ["spx", "S&P500 TR"]].forEach(([v, lbl]) => {
@@ -2625,7 +2644,7 @@ function renderAlloc() {
         sel.addEventListener("change", () => { st.start_key = sel.value; allocSaveState(st); recalc(true); });
         return sel;
       })(), el("br"),
-      `· [가정] 대체투자 α +${fmtNum(st.alt_alpha, 1)}%p·위험 ${fmtNum(st.alt_vol, 0)}% (평가 스무딩 탓에 실측 σ는 과소평가) · 스왑 만기 ${st.tenor_m}개월 · 북일드 ${st.by_kr != null ? "입력값" : "미입력 — 시장금리 대체"} — 전부 수기 입력에서 바꿀 수 있습니다`);
+      `· [가정] 대체투자 α +${fmtNum(st.alt_alpha, 1)}%p·위험 ${fmtNum(st.alt_vol, 0)}% (평가 스무딩 탓에 실측 σ는 과소평가) · 가중평균 스왑 만기 ${st.tenor_m}개월(3·6·12·12M+ 혼합의 금액가중 — 비용 보간과 MTM 잔존만기에 사용) · 북일드 ${st.by_kr != null ? "입력값" : "미입력 — 시장금리 대체"} — 전부 수기 입력에서 바꿀 수 있습니다`);
 
     /* ----- 차트 2개 (드래그 중에는 미루고 놓으면 갱신) ----- */
     if (!doOpt) {
@@ -2800,10 +2819,12 @@ function openAllocDetail(topic) {
     form.append(el("div", { class: "tenor-row" },
       "해외채권 헤지 %", numIn("h_bond", st.h_bond, 5),
       " 해외주식 헤지 %", numIn("h_eq", st.h_eq, 5),
-      " 스왑 만기(월)", numIn("tenor_m", st.tenor_m, 1),
+      " 가중평균 스왑 만기(월)", numIn("tenor_m", st.tenor_m, 1, "예: 9"),
       " 대체 α %p", numIn("alt_alpha", st.alt_alpha, 0.1),
       " 대체 위험 %", numIn("alt_vol", st.alt_vol, 0.5)));
     form.append(el("div", { class: "section-note" },
+      "스왑 만기는 3·6·12·12개월 초과 계약을 섞어 쓰는 실무를 반영해 금액가중평균 하나로 입력합니다 — " +
+      "헤지비용(HP 곡선 보간, 12개월 초과는 12M 값 고정)과 스왑 MTM 잔존만기(만기/2) 계산에 쓰입니다. " +
       "통화별(유로·엔 등) 구성 분해는 차기 확장입니다 — 현재 해외자산은 달러 프록시 기준이며, 통화별 헤지 판단은 환헤지 시뮬레이터를 함께 쓰십시오."));
 
     const btnRow = el("div", { style: "margin-top:12px;display:flex;gap:10px" });
@@ -2850,30 +2871,33 @@ function openAllocDetail(topic) {
     const R = A.rates;
     [
       `국내: (한국 5년 ${R.kr5y.v}% − 한국 3개월 ${R.kr3m.v}%) ÷ 국내채권 σ ${fmtNum(a.kr.sigma, 3)}% = ${fmtNum(a.kr.prem / a.kr.sigma, 4)}`,
-      `해외: (미 종합 YTM ${R.us_ytm.v}% + 헤지 ${st.h_bond}%×비용 ${E.cost}% − 한국 3개월 ${R.kr3m.v}%) ÷ 해외채권 σ ${fmtNum(a.us.sigma, 3)}% = ${fmtNum(a.us.prem / a.us.sigma, 4)}`,
-      `앵커 = 두 값의 평균 = ${fmtNum(a.value, 4)} → 주식 ERP = 앵커 × 각 주식의 σ`,
+      `해외: (미 종합 YTM ${R.us_ytm.v}% − 미국 3개월 ${R.us3m.v}%) ÷ 미국종합 σ(달러표시) ${fmtNum(a.us.sigma, 3)}% = ${fmtNum(a.us.prem / a.us.sigma, 4)}`,
+      `앵커 = 두 값의 평균 = ${fmtNum(a.value, 4)} → 주식 ERP = 앵커 × 각 주식의 자국통화 σ`,
+      `두 다리 모두 자국통화 기준(환율·헤지 개입 전)이라 앵커는 헤지 슬라이더와 무관합니다.`,
     ].forEach((s) => c1.append(el("div", { style: "font-size:12.5px;padding:2px 0" }, s)));
     inner.append(c1);
     const c2 = el("div", { class: "card", style: "margin-top:12px" });
     c2.append(el("div", { class: "card-head" },
-      el("span", { class: "card-title" }, "감사 지적 — 앵커는 채권 헤지비율의 함수입니다"),
-      el("span", { class: "card-sub" }, "처리 방식 ⓐ(화면 명시·현행) ⓑ(현지통화 σ 분리) ⓒ(고정 입력) 중 사용자 확인 대기")));
+      el("span", { class: "card-title" }, "검증 — 헤지비율을 움직여도 앵커·주식 기대수익이 흔들리지 않는가"),
+      el("span", { class: "card-sub" }, "기대수익이 변하는 것은 해외자산의 비용항(헤지비율 × 스왑레이트)뿐이어야 합니다")));
     const t2 = el("table", { class: "mini-table" },
-      el("tr", {}, ...["채권헤지", "앵커", "국내주식 μ%", "해외주식 μ%"].map((h) => el("th", {}, h))));
+      el("tr", {}, ...["채권헤지", "앵커", "국내주식 μ%", "해외주식 μ%", "해외채권 μ%"].map((h) => el("th", {}, h))));
     [0, 25, 50, 75, 90, 100].forEach((h) => {
       const stx = { ...st, h_bond: h };
       const Ex = allocEngine(A, stx);
-      const B = Ex.build(E.view === "acct" ? "acct" : "econ", h / 100, st.h_eq / 100);
-      const kI = B.keys.indexOf("국내주식"), gI = B.keys.indexOf("해외주식");
+      const B = Ex.build("econ", h / 100, st.h_eq / 100);
+      const kI = B.keys.indexOf("국내주식"), gI = B.keys.indexOf("해외주식"), bI = B.keys.indexOf("해외채권");
       t2.append(el("tr", { style: h === st.h_bond ? "font-weight:700" : "" },
         el("td", {}, `${h}%${h === st.h_bond ? " (현재)" : ""}`),
         el("td", { class: "num" }, fmtNum(B.anchor.value, 4)),
         el("td", { class: "num" }, fmtNum(B.mu[kI], 2)),
-        el("td", { class: "num" }, fmtNum(B.mu[gI], 2))));
+        el("td", { class: "num" }, fmtNum(B.mu[gI], 2)),
+        el("td", { class: "num" }, fmtNum(B.mu[bI], 2))));
     });
     c2.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, t2),
       el("div", { class: "card-sub", style: "margin-top:6px" },
-        "헤지를 올리면 해외채권 σ가 줄어 앵커가 커지고, 국내주식 기대수익까지 올라갑니다. 이 연결이 싫으면 ⓑ 또는 ⓒ를 선택해야 하며, 그 결정은 사용자 몫입니다(승인 대기 ⑤)."));
+        "앵커·국내주식·해외주식 열은 채권 헤지비율과 무관하게 일정하고, 해외채권 열만 비용항(헤지비율×스왑레이트)만큼 움직입니다. " +
+        "구버전은 앵커의 해외 다리를 원화 헤지 기준으로 재서 채권 헤지를 만지면 국내주식 기대수익까지 흔들렸습니다 — 검증에서 지적되어 자국통화 기준으로 교체(승인 ⑤-ⓑ 확정)."));
     inner.append(c2);
     $("#detail-overlay").scrollTop = 0;
     return;
@@ -2925,7 +2949,7 @@ function openAllocDetail(topic) {
     const inner = allocOverlayShell("헤지비용 읽는 법 — 선택이 결과를 얼마나 바꾸나");
     inner.append(el("div", { class: "qa" },
       el("div", { class: "q" }, "헤지비용은 하나의 숫자가 아닙니다 — 네 가지 읽기를 모두 보여드립니다"),
-      el("div", { class: "a" }, "선택은 사용자 몫 ", el("small", {}, "기본값은 3M 스왑레이트 최근값이며, 어느 것을 골라도 아래 표처럼 결과 차이를 확인할 수 있습니다"))));
+      el("div", { class: "a" }, "선택은 사용자 몫 ", el("small", {}, "기본값은 실측 헤지 포인트(HP)를 귀 기관의 가중평균 스왑 만기로 보간한 값 — 실무 데스크 기준(사용자 확정). 이력(공분산의 스왑레이트 요인)은 HP가 2024-10 시작이라 짧아 SMB 3M(2001~)을 씁니다"))));
     const c = el("div", { class: "card" });
     c.append(el("div", { class: "card-head" }, el("span", { class: "card-title" }, "네 가지 읽기 (전부 [관측]) — 그리고 각 선택에서의 ② 참고치")));
     const t = el("table", { class: "mini-table" },
@@ -2935,9 +2959,10 @@ function openAllocDetail(topic) {
       const Ex = allocEngine(A, stx);
       const tgt = amDot(Ex.V.mu, Ex.w0);
       const w = Ex.optimize(Ex.V.mu, Ex.V.C, tgt);
+      const shown = o.curve ? allocHpAt(o.curve, st.tenor_m) : o.v;
       t.append(el("tr", { style: o.key === st.cost_key ? "font-weight:700" : "" },
-        el("td", {}, `${o.label}${o.key === st.cost_key ? " (선택됨)" : ""}`),
-        el("td", { class: "num" }, `${o.v > 0 ? "+" : ""}${o.v}%`),
+        el("td", {}, `${o.label}${o.curve ? ` [3M ${o.curve["3M"]} · 6M ${o.curve["6M"]} · 12M ${o.curve["12M"]} → ${st.tenor_m}개월 보간]` : ""}${o.key === st.cost_key ? " (선택됨)" : ""}`),
+        el("td", { class: "num" }, `${shown > 0 ? "+" : ""}${shown}%`),
         el("td", { style: "text-align:left;font-size:11px;color:var(--ink-3)" }, o.src),
         ...w.map((x) => el("td", { class: "num" }, fmtNum(x * 100, 1))),
         el("td", { class: "num" }, fmtNum(Ex.sigmaW(w, Ex.V.C), 2))));

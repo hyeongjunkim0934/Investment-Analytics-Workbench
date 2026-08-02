@@ -350,21 +350,34 @@ def test_alloc_hedge_grid_min_matches_direct_loadings():
 
 
 def test_alloc_anchor_definition():
-    """앵커 = 국내·해외 채권의 (초과보상 ÷ σ) 평균 — 손으로 재계산해 대조."""
+    """앵커 = 국내·해외 채권의 자국통화 (초과보상 ÷ σ) 평균 (승인 ⑤-ⓑ) — 손 재계산 대조.
+
+    자국통화 기준이므로 환율·스왑 분산이 아무리 커도 앵커에 못 들어온다 —
+    e_usd 에 큰 분산을 심어 두고 그 무관성까지 함께 단정한다.
+    """
     n = len(alloc.SOURCE_LABELS)
     covS = np.zeros((n, n))
-    i_kr, i_us, i_e, i_sw = (alloc.IX["kr_bond"], alloc.IX["us_bond"],
-                             alloc.IX["e_usd"], alloc.IX["swap"])
+    i_kr, i_us, i_e = alloc.IX["kr_bond"], alloc.IX["us_bond"], alloc.IX["e_usd"]
     covS[i_kr, i_kr] = (0.04) ** 2
     covS[i_us, i_us] = (0.05) ** 2
-    covS[i_e, i_e] = (0.10) ** 2
-    rates = {"kr3m": {"v": 2.0}, "kr5y": {"v": 4.0}, "us_ytm": {"v": 5.0}}
-    a = alloc.anchor_of(covS, rates, h_bond=0.8, cost=-0.5)
-    sig_kr = 4.0
-    x = np.zeros(n); x[i_us], x[i_e], x[i_sw] = 1, 0.2, 0.8
-    sig_us = math.sqrt(float(x @ covS @ x)) * 100
-    expected = ((4.0 - 2.0) / sig_kr + (5.0 + 0.8 * -0.5 - 2.0) / sig_us) / 2
+    covS[i_e, i_e] = (0.50) ** 2          # 일부러 크게 — 앵커에 새면 아래 단정이 깨진다
+    rates = {"kr3m": {"v": 2.0}, "kr5y": {"v": 4.0},
+             "us_ytm": {"v": 5.0}, "us3m": {"v": 3.0}}
+    a = alloc.anchor_of(covS, rates)
+    expected = ((4.0 - 2.0) / 4.0 + (5.0 - 3.0) / 5.0) / 2
     assert abs(a["value"] - expected) < 1e-12
+    assert a["us"]["sigma"] == 5.0        # 달러표시 σ 그대로 — 환노출 미포함
+
+
+def test_alloc_hp_interpolation():
+    """HP 곡선 보간 — 격자점 재현·중간 선형·12M 초과 고정(구현 산식과 독립 판정)."""
+    curve = {"3M": -0.60, "6M": -0.90, "12M": -1.50}
+    assert alloc.hp_cost_at(curve, 3) == -0.60
+    assert alloc.hp_cost_at(curve, 6) == -0.90
+    assert alloc.hp_cost_at(curve, 12) == -1.50
+    assert abs(alloc.hp_cost_at(curve, 9) - (-1.20)) < 1e-12    # 6M·12M 중점
+    assert alloc.hp_cost_at(curve, 24) == -1.50                 # 12M 초과 → 12M 고정
+    assert alloc.hp_cost_at(curve, 1) == -0.60                  # 3M 미만 → 3M 고정
 
 
 def _rand_problem(rng, n=6):

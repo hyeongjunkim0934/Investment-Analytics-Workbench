@@ -10,8 +10,14 @@
   회계 관점의 장부가 채권은 분산 0이라 공분산이 특이행렬이다).
 - 기대수익: 채권·현금은 현재 시장금리 [관측]. 주식 ERP 는 **동일 샤프 앵커** —
   채권 시장이 지금 위험 1단위에 주는 보상 (YTM−단기금리)/σ 를 국내·해외 채권에서
-  관측해 평균한 값 × 각 주식의 σ. 자유 모수가 0개다(앵커 자체가 관측값).
-  역사적 실현 평균은 기대수익으로 쓰지 않는다(표본 구간 선택 = 답 선택).
+  **각 시장 자국통화 기준**으로 관측해 평균한 값 × 각 주식의 자국통화 σ.
+  자유 모수가 0개고(앵커 자체가 관측값), 앵커·ERP 가 헤지 슬라이더와 무관하다 —
+  헤지비율은 기대수익에 비용항(h×스왑레이트)으로만, 위험에 환노출(1−h)로만
+  들어간다(승인 ⑤-ⓑ, 사용자 확정). 역사적 실현 평균은 기대수익으로 쓰지
+  않는다(표본 구간 선택 = 답 선택).
+- 헤지비용: 현재 수준 = 실측 HP 곡선(3/6/12M)을 **가중평균 스왑 만기**(수기 입력,
+  3·6·12·12M+ 혼합의 금액가중)로 보간 [관측, 사용자 확정 정본]. 이력(공분산의
+  스왑레이트 요인) = SMB 3M(2001~) — HP 는 2024-10 시작이라 이력용으로는 짧다.
 - 환율 기대변동 0 (랜덤워크 가정 — 방향 전망은 모델 랩에서 주입 예정).
 - 회계(손익) 관점 = hedge.py 의 §5.3 5항 모형 재사용 (동일 산식·동일 τ 규약).
 - 표본 재추출: 순환 블록 부트스트랩 (Künsch 1989; 자기상관 보존), 복제마다
@@ -70,9 +76,9 @@ DEFAULTS = {
                    "대체투자": [5, 25], "단기자금": [2, 15]},
     "loan_w": 12.0, "loan_y": 4.0,          # 대출금 — 준고정, 최적화 제외 (§7.1)
     "alt_alpha": 3.0, "alt_vol": 8.0,       # 대체 기대 CPI+α, 위험(스무딩 보정 가정)
-    "tenor_m": H.DEFAULT_TENOR_M,           # 스왑 만기 9개월 (실무 금액가중평균)
+    "tenor_m": H.DEFAULT_TENOR_M,           # 가중평균 스왑 만기(월) — 3·6·12·12M+ 혼합의 금액가중, 수기 입력
     "h_bond": 90, "h_eq": 90,               # 헤지비율 % — 사용자의 현재 상태로 대체됨
-    "start_key": "full", "proxy": "acwi", "cost_key": "smb_last",
+    "start_key": "full", "proxy": "acwi", "cost_key": "hp",   # 비용 정본 = 실측 HP (사용자 확정)
     "block_len": 24,
 }
 
@@ -132,27 +138,47 @@ def market_rates(S, warn) -> dict:
     return out
 
 
-def cost_options(S, rates) -> list[dict]:
+def hp_cost_at(curve: dict, tenor_m: float) -> float:
+    """실측 HP 곡선(3/6/12M)을 가중평균 만기(개월)로 선형 보간.
+
+    사용자 실무는 3·6·12·12M 초과 스왑을 섞어 쓰므로 만기를 수기 입력(금액가중
+    평균)받아 그 지점의 비용을 읽는다. 12M 초과는 시장 호가가 없어 12M 값으로
+    고정한다 — 화면에 그대로 명시. app.js 의 allocHpAt 과 같은 산식.
+    """
+    xs = [3.0, 6.0, 12.0]
+    ys = [curve["3M"], curve["6M"], curve["12M"]]
+    t = min(max(float(tenor_m), xs[0]), xs[-1])
+    return round(float(np.interp(t, xs, ys)), 3)
+
+
+def cost_options(S, rates, tenor_m) -> list[dict]:
     """헤지비용 읽는 법 — 전부 [관측]이며 사용자가 드롭다운으로 고른다.
 
+    기본값은 실측 HP(사용자 확정, 2026-08 — 실무 데스크 기준과 일치). 단 HP 는
+    2024-10 시작이라 이력이 없어 **공분산의 스왑레이트 요인은 SMB(2001~)** 를
+    유지한다 — 수준은 HP, 이력은 SMB 로 역할이 나뉜다(화면 명시).
     CIP 항의는 §5.3 에서 폐기된 것(스왑레이트 '변화'의 프록시)과 다르다 —
     여기서는 비용 '수준'의 대안 읽기로만 제시한다(달러 실측과 상관 0.89 검증).
     """
+    opts = []
+    hp = {m: S.get(f"info:USDKRW_HP_{m}") for m in ("3M", "6M", "12M")}
+    if all(v is not None and len(v.dropna()) for v in hp.values()):
+        hp = {m: v.dropna() for m, v in hp.items()}
+        curve = {m: round(float(v.iloc[-1]), 2) for m, v in hp.items()}
+        last = max(v.index[-1] for v in hp.values())
+        opts.append({"key": "hp", "label": "실측 헤지 포인트(HP) — 가중평균 만기로 보간",
+                     "v": hp_cost_at(curve, tenor_m), "curve": curve,
+                     "src": (f"info:USDKRW_HP_3M/6M/12M ({last:%Y-%m-%d}) · "
+                             "12개월 초과 만기는 12M 값 고정(호가 없음)")})
     smb_m = S["info:SMB_USDKRW_3M"].dropna().resample("ME").last().dropna()
-    opts = [
-        {"key": "smb_last", "label": "3M 스왑레이트 — 최근값",
+    opts += [
+        {"key": "smb_last", "label": "3M 스왑레이트(SMB) — 최근값",
          "v": round(float(smb_m.iloc[-1]), 2),
          "src": f"info:SMB_USDKRW_3M ({smb_m.index[-1]:%Y-%m})"},
-        {"key": "smb_median", "label": f"3M 스왑레이트 — 장기 중앙값 ({len(smb_m)}개월)",
+        {"key": "smb_median", "label": f"3M 스왑레이트(SMB) — 장기 중앙값 ({len(smb_m)}개월)",
          "v": round(float(smb_m.median()), 2),
          "src": f"info:SMB_USDKRW_3M {smb_m.index[0]:%Y-%m}~{smb_m.index[-1]:%Y-%m}"},
     ]
-    hp = S.get("info:USDKRW_HP_12M")
-    if hp is not None and len(hp.dropna()):
-        hp = hp.dropna()
-        opts.append({"key": "hp12m", "label": "헤지 포인트 12M — 실측 최근값",
-                     "v": round(float(hp.iloc[-1]), 2),
-                     "src": f"info:USDKRW_HP_12M ({hp.index[-1]:%Y-%m-%d})"})
     if "kr3m" in rates and "us3m" in rates:
         opts.append({"key": "cip", "label": "금리차(CIP) 함의 — 한국 3m − 미국 3m",
                      "v": round(rates["kr3m"]["v"] - rates["us3m"]["v"], 2),
@@ -265,29 +291,42 @@ def hedge_grid_min(covS, w, alt_scale, proxy="acwi"):
     return float(_GRID_H[i]) * 100, float(_GRID_H[j]) * 100, math.sqrt(max(float(var[i, j]), 0)) * 100
 
 
-def anchor_of(covS, rates, h_bond, cost):
+def anchor_of(covS, rates):
+    """동일 샤프 앵커 — 각 시장의 **자국통화 기준** (승인 ⑤-ⓑ, 사용자 확정 2026-08).
+
+    분자·분모 모두 환율·헤지 개입 전이다: 국내 (5y − 3m) ÷ σ(국내채권),
+    해외 (미 종합 YTM − 미 3m) ÷ σ(미국종합, 달러표시). 따라서 앵커는 헤지
+    슬라이더와 **완전히 무관**하고, 헤지비율은 기대수익에 비용항(h × 스왑레이트)
+    으로만 들어간다 — "얼마 헤지했고, 비용이 얼마고, 그걸 다 계산한 수익"이라는
+    실무 관점과 인과가 일치한다. (구버전은 해외 다리를 원화 헤지 기준으로 재서
+    채권 헤지 슬라이더가 국내주식 기대수익까지 움직였다 — 감사 지적으로 교체.)
+    """
     sig_krb = math.sqrt(covS[IX["kr_bond"], IX["kr_bond"]]) * 100
-    x = np.zeros(len(SOURCE_LABELS))
-    x[IX["us_bond"]], x[IX["e_usd"]], x[IX["swap"]] = 1, 1 - h_bond, h_bond
-    sig_usb = math.sqrt(float(x @ covS @ x)) * 100
+    sig_usb = math.sqrt(covS[IX["us_bond"], IX["us_bond"]]) * 100
     prem_kr = rates["kr5y"]["v"] - rates["kr3m"]["v"]
-    prem_us = rates["us_ytm"]["v"] + h_bond * cost - rates["kr3m"]["v"]
+    prem_us = rates["us_ytm"]["v"] - rates["us3m"]["v"]
     return {"value": (prem_kr / sig_krb + prem_us / sig_usb) / 2,
             "kr": {"prem": prem_kr, "sigma": sig_krb},
             "us": {"prem": prem_us, "sigma": sig_usb}}
 
 
 def mu_vector(covS, rates, d, cost):
-    """경제 관점 μ (연 %). 앵커·σ는 covS 에서 — 헤지비율 h 의 함수다(화면에 명시)."""
+    """경제 관점 μ (연 %). ERP = 앵커 × **자국통화 σ** — 둘 다 슬라이더와 무관.
+
+    헤지비율이 기대수익에 미치는 영향은 비용항 h×cost 뿐이고, 위험(σ)에 미치는
+    영향은 환노출 (1−h) 뿐이다. 표시용 σ(원화 기준, 헤지 반영)는 별도로 돌려준다.
+    """
     h_b, h_e = d["h_bond"] / 100, d["h_eq"] / 100
-    a = anchor_of(covS, rates, h_b, cost)
+    a = anchor_of(covS, rates)
     B = loadings(h_b, h_e, 1.0, d["proxy"])
-    sig = np.sqrt(np.einsum("ij,jk,ik->i", B, covS, B)) * 100
+    sig = np.sqrt(np.einsum("ij,jk,ik->i", B, covS, B)) * 100   # 표시용(원화·헤지 반영)
+    sig_kospi = math.sqrt(covS[IX["kospi"], IX["kospi"]]) * 100
+    sig_eq_loc = math.sqrt(covS[IX[d["proxy"]], IX[d["proxy"]]]) * 100
     return np.array([
         rates["kr5y"]["v"],
         rates["us_ytm"]["v"] + h_b * cost,
-        rates["kr3m"]["v"] + a["value"] * sig[2],
-        rates["us3m"]["v"] + a["value"] * sig[3] + h_e * cost,
+        rates["kr3m"]["v"] + a["value"] * sig_kospi,
+        rates["us3m"]["v"] + a["value"] * sig_eq_loc + h_e * cost,
         rates["cpi"]["v"] + d["alt_alpha"],
         rates["kr3m"]["v"],
     ]), a, sig
@@ -364,8 +403,10 @@ def build(series_store: dict, warn) -> dict:
     if len(M) < 120:
         raise ValueError(f"alloc: 공통 표본 {len(M)}개월 < 120 — 원천 시리즈 확인 필요")
     rates = market_rates(S, warn)
-    copts = cost_options(S, rates)
     d = dict(DEFAULTS)
+    copts = cost_options(S, rates, d["tenor_m"])
+    if not any(o["key"] == d["cost_key"] for o in copts):
+        d["cost_key"] = copts[0]["key"]     # HP 시리즈 부재 시 폴백(경고는 cost_options 경로에서)
     cost = next(o["v"] for o in copts if o["key"] == d["cost_key"])
 
     sets = []
@@ -441,7 +482,7 @@ def build(series_store: dict, warn) -> dict:
         "sets": sets,
         "rates": rates,
         "cost_options": copts,
-        "anchor_ref": {"h_bond": d["h_bond"] / 100, "cost_key": d["cost_key"],
+        "anchor_ref": {"basis": "local_ccy",   # 승인 ⑤-ⓑ: 자국통화 기준, 슬라이더 무관
                        "value": round(a0["value"], 6),
                        "kr": {k: round(v, 4) for k, v in a0["kr"].items()},
                        "us": {k: round(v, 4) for k, v in a0["us"].items()}},
@@ -461,8 +502,11 @@ def build(series_store: dict, warn) -> dict:
         "limits": ("기대수익의 채권·현금은 현재 시장금리 [관측], 주식은 동일 샤프 앵커 [관측→도출], "
                    "대체투자 α·위험과 장부가 북일드는 수기 입력 [가정]입니다. 환율 기대변동은 0으로 "
                    "둡니다(랜덤워크 — 방향 전망은 모델 랩에서). ACWI 는 현재 PR 이라 해외주식 실현 "
-                   "수익률이 배당분(연 약 2%p)만큼 과소평가됩니다(§6 TR 확보 시 교체). 앵커·σ는 "
-                   "헤지비율의 함수이므로 슬라이더를 움직이면 기대수익도 함께 변합니다(화면 명시). "
+                   "수익률이 배당분(연 약 2%p)만큼 과소평가됩니다(§6 TR 확보 시 교체). 앵커와 주식 "
+                   "ERP 는 각 시장의 자국통화 기준이라 헤지비율과 무관하며, 헤지비율은 기대수익에 "
+                   "비용항(h×스왑레이트)으로만, 위험에 환노출(1−h)로만 들어갑니다. 헤지비용의 현재 "
+                   "수준은 실측 HP 곡선을 가중평균 만기로 보간한 값(기본), 이력(공분산의 스왑레이트 "
+                   "요인)은 SMB 3M(2001~)입니다 — HP 는 2024-10 시작이라 이력용으로는 짧습니다. "
                    "대체투자는 평가 스무딩으로 실측 변동성이 실제 위험을 과소평가하므로 위험을 "
                    "별도 입력(기본 8%)으로 둡니다. 수기 입력은 이 브라우저(localStorage)에만 저장되며 "
                    "서버로 전송되지 않습니다. K-ICS 요구자본 제약은 미반영 — 모델 참고치이지 권고가 "
