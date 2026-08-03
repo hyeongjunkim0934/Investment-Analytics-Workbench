@@ -353,6 +353,19 @@ def _app_js() -> str:
     return (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
 
 
+def _strip_js_comments(src: str) -> str:
+    """JS 소스에서 주석을 걷어낸다 — 문자열 검사로 "호출이 있다"를 확인하기 전에 쓴다.
+
+    app.js 는 주석이 아주 두꺼운 파일이라, 함수 본문을 통째로 `in` 검사하면 **주석에
+    이름이 적혀 있다는 이유만으로 통과**한다. 실제로 `playThemeTransition` 의 재마운트
+    검사가 그랬다: `mountVillageVideo(frame)` 호출을 지워도 바로 위 주석의 같은 낱말이
+    검사를 만족시켜 테스트가 초록으로 남고, 화면에서는 테마 토글 뒤 배경이 스틸로
+    돌아가 사용자가 처음 지적한 "안 움직이는 마을"이 되돌아왔다.
+    """
+    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+    return re.sub(r"(^|[\s;{}(])//[^\n]*", r"\1", src)
+
+
 def _index_html() -> str:
     return (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
 
@@ -513,10 +526,13 @@ def test_village_idle_video_respects_reduced_motion_and_falls_back():
     for evt in ("error", "playing"):
         assert f'"{evt}"' in fn, f"상시 루프의 {evt} 이벤트 처리가 없습니다"
     rv = js.split("function renderVillage")[1].split("\nfunction ")[0]
-    assert "mountVillageVideo" in rv, "renderVillage 가 상시 루프를 마운트하지 않습니다"
+    assert re.search(r"mountVillageVideo\s*\(", _strip_js_comments(rv)), (
+        "renderVillage 가 상시 루프를 마운트하지 않습니다"
+    )
     tt = js.split("function playThemeTransition")[1].split("\nfunction ")[0]
-    assert "mountVillageVideo" in tt, (
-        "전환 연출이 끝난 뒤 새 테마의 루프를 재마운트하는 경로가 없습니다"
+    assert re.search(r"mountVillageVideo\s*\(", _strip_js_comments(tt)), (
+        "전환 연출이 끝난 뒤 새 테마의 루프를 재마운트하는 경로가 없습니다 — "
+        "주석에 이름만 적혀 있고 실제 호출이 없으면 토글 후 배경이 스틸로 돌아간다"
     )
     route = js.split("function routeView")[1].split("\nfunction ")[0]
     assert "pause" in route, "마을을 떠날 때 상시 루프를 pause 하지 않습니다"
