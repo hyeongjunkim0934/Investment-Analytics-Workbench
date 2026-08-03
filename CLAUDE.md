@@ -25,7 +25,9 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `pipeline/research/wf_validation.py` | 가중치 방식 비교용 수동 연구 하네스. **CI에서 실행되지 않음**. 요인 정의는 `risk.factor_specs` 에서 import |
 | `pipeline/requirements.txt` | 파이프라인이 직접 import 하는 3개를 `==` 로 고정 |
 | `tests/` | pytest 스위트 + 합성 엑셀 픽스처 생성기(`synth.py`). **비공개 데이터 불필요** |
-| `tests/requirements.txt` | 테스트 전용 의존성(pytest). `pipeline/requirements.txt` 와 분리 |
+| `tests/test_dashboard_ux.py` | 대시보드 UI 회귀 — **값을 실제로 계산**해서 본다. 색·크기는 CSS를 파싱해 WCAG 수식으로 직접 계산하고, 동작은 아래 두 파일로 app.js를 실행시켜 확인한다 |
+| `tests/domshim.js` `tests/dashboard_probe.js` | `dashboard/app.js` 를 **node 안에서 실제로 실행**시키는 최소 DOM 셰이드와 측정 하네스. npm 의존성 0(node 표준 라이브러리만). 소스 문자열만 보는 테스트가 "이름은 남기고 동작만 뒤집는" 회귀를 못 잡아서 만든 것이다 — 뮤테이션 18건으로 확인했고 현재 18/18을 잡는다. app.js가 새 DOM API를 쓰면 셰이드가 먼저 터지므로 그때 채워 넣으면 된다 |
+| `tests/requirements.txt` | 테스트 전용 의존성(pytest). `pipeline/requirements.txt` 와 분리. **node 는 여기 없다** — `test_dashboard_ux.py` 가 쓰는 node 는 GitHub 호스팅 러너 기본 탑재분이며, 없으면 skip 이 아니라 **실패**한다(조용히 건너뛰면 막으려던 회귀가 되살아난다) |
 | `pytest.ini` | `testpaths = tests` |
 | `dashboard/index.html` `app.js` `style.css` | 정적 대시보드 (섹션 14개, 라이트/다크, 기간 필터, 마을 홈+관문) |
 | `dashboard/assets/` | 마을 지도 이미지(`village-day.webp`·`village-night.webp`)를 두는 자리. 넣는 법·금지 사항은 같은 폴더 `README.md` |
@@ -42,7 +44,9 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 50초)
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 65초). 현재 127개.
+#   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (1초 미만)
+#   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js
 python -m pytest
 
 # 배포 게이트 — 파이프라인 출력이 JSON 계약을 지키는지. 실패하면 exit 1
@@ -83,8 +87,11 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 - 시계열 페이로드 형식은 전부 `{"t": [unix초], "v": [값]}`. `pack()` 이 최근 5년(`daily_years`)은 일별,
   그 이전은 주별(W-FRI)로 축약한다.
 - `meta.json` 은 빌드 시각·최종 관측일·시리즈 수·파일별 파싱 결과·경고 목록을 담는다. 경고는 페이지
-  **푸터**의 빌드 줄(`#build-line`)에 `경고 N건(콘솔 참조)` 로 붙고, 상세는 브라우저 콘솔
-  (`pipeline warnings:`)에 찍힌다. 헤더(`#meta-line`)에는 기준일·빌드·시리즈 수만 나오고 경고는 없다.
+  **푸터**에서 `#build-line` **바로 다음 형제** `<div id="build-warnings">` 안에 `<details>` 로
+  붙어 화면에서 펼쳐 볼 수 있고, 콘솔(`pipeline warnings:`)에도 그대로 찍힌다.
+  **이 `<details>` 를 `<p id="build-line">` 안으로 옮기지 말 것** — 펼치는 순간 문단 높이가
+  18px→209px 로 늘며 빌드 메타 줄과 설명 문장이 같은 시각적 줄에 겹치고, `<p>` 안의
+  `<ul>`/`<p>` 는 HTML 콘텐츠 모델 위반이다(둘 다 실제 클릭으로 재현함. 회귀 테스트 있음). 헤더(`#meta-line`)에는 기준일·빌드·시리즈 수만 나오고 경고는 없다.
 - `catalog.json` 은 **값 없이 메타데이터만**(키·출처·카테고리·기간·관측 수). 여기에 값을 넣지 말 것.
 
 ## 시리즈 키 규약
