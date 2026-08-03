@@ -1108,7 +1108,8 @@ function fnv1a(str) {
 }
 
 /* 건물 ↔ 화면. x/y 는 지도 이미지 기준 백분율(좌상단 0,0).
-   sections 가 여러 개인 구역은 클릭 시 하위 메뉴를 연다. */
+   target 하나면 바로 그 화면으로, menu 가 있으면 클릭 시 하위 메뉴를 연다.
+   soon 은 아직 없는 화면(눌러도 아무 일 없음). */
 const VILLAGE_ZONES = [
   { key: "watchtower", x: 24.1, y: 16.3, name: "망루", sub: "리스크", target: "risk" },
   { key: "observatory", x: 59.9, y: 22.5, name: "관천대", sub: "관계분석", target: "panel" },
@@ -1191,9 +1192,14 @@ function renderVillage() {
     });
     frame.append(btn);
   });
-  frame.addEventListener("click", () => {
-    frame.querySelectorAll(".vz-menu").forEach((n) => n.remove());
-  });
+  /* 빈 곳을 누르면 열린 하위 메뉴를 닫는다. renderVillage() 는 테마 전환·마을 복귀 때마다
+     다시 도므로 리스너는 한 번만 붙인다(안 그러면 호출 수만큼 쌓인다). */
+  if (!frame.dataset.bound) {
+    frame.dataset.bound = "1";
+    frame.addEventListener("click", () => {
+      frame.querySelectorAll(".vz-menu").forEach((n) => n.remove());
+    });
+  }
 
   /* 대체 목록 — 지도가 없거나 좁은 화면에서도 모든 화면에 도달할 수 있어야 한다 */
   const list = $("#village-list");
