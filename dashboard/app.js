@@ -1254,6 +1254,52 @@ function buildVillageFx(frame) {
   $("#village-map").after(svg);
 }
 
+/* ---- 영상 지도 (선택) — assets/village-{day,night}.mp4 가 있으면 정지 지도 대신 재생 ----
+   업로드만 하면 켜진다: 파일이 없으면 error 이벤트로 조용히 물러나 정지 지도 + SVG 모션이
+   그대로 남는다. 영상이 켜지면 SVG 모션은 CSS(.has-video)가 끈다 — 움직임이 겹치면 어색하다.
+   정지 이미지가 밑에 계속 깔려 있으므로 영상 로딩 중에도 화면이 비지 않는다.
+   요구 조건은 assets/README.md — 특히 구도가 정지 지도와 같아야 클릭 좌표가 맞는다.
+   reduced-motion 사용자는 영상 자체를 시도하지 않는다. */
+/* mp4(H.264, 어디서나 재생) 먼저, 없거나 코덱이 없으면 webm(VP9, 오픈 코덱) — 이미지의
+   VILLAGE_EXTS 와 같은 사다리다. 파일이 없는 것과 코덱이 없는 것 모두 error 로 온다. */
+const VILLAGE_VIDEO_EXTS = ["mp4", "webm"];
+
+function villageVideoUrl(ext) {
+  return `assets/village-${currentTheme() === "dark" ? "night" : "day"}.${ext}`;
+}
+
+function mountVillageVideo(frame) {
+  frame.querySelectorAll(".village-video").forEach((n) => n.remove());
+  frame.classList.remove("has-video");
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const v = document.createElement("video");
+  v.className = "village-video";
+  v.muted = true;
+  v.loop = true;
+  v.autoplay = true;
+  v.playsInline = true;
+  v.setAttribute("muted", "");           // 일부 브라우저는 속성이 있어야 자동재생을 허용한다
+  v.setAttribute("playsinline", "");
+  v.setAttribute("aria-hidden", "true");
+  v.preload = "auto";
+  v.addEventListener("canplay", () => {
+    frame.classList.add("has-video");
+    v.play().catch(() => {});            // 자동재생이 거부되면 정지 지도가 그대로 보인다
+  });
+  let tried = 0;
+  v.addEventListener("error", () => {
+    tried += 1;
+    if (tried < VILLAGE_VIDEO_EXTS.length) {
+      v.src = villageVideoUrl(VILLAGE_VIDEO_EXTS[tried]);
+      return;
+    }
+    v.remove();
+    frame.classList.remove("has-video");
+  });
+  v.src = villageVideoUrl(VILLAGE_VIDEO_EXTS[0]);
+  $("#village-map").after(v);
+}
+
 /* 건물 입장 연출 — 클릭한 건물을 향해 지도를 확대하며 페이드, 끝나면 그 화면으로.
    reduced-motion 이거나 지도가 없으면 연출 없이 바로 이동한다. */
 function enterZone(z, targetHash) {
@@ -1293,11 +1339,13 @@ function renderVillage() {
        겹쳐 얹히고, 지도가 없는 마당에 클릭할 건물도 없다. 아래 대체 목록이 그 역할을
        그대로 대신한다. */
     img.hidden = true;
-    frame.querySelectorAll(".vz, .vz-menu, .village-fx").forEach((n) => n.remove());
+    frame.querySelectorAll(".vz, .vz-menu, .village-fx, .village-video").forEach((n) => n.remove());
+    frame.classList.remove("has-video");
     $("#village-missing").hidden = false;
   };
   img.onload = () => buildVillageFx(frame);
   img.src = villageImgUrl();
+  mountVillageVideo(frame);
 
   VILLAGE_ZONES.forEach((z) => {
     const btn = el("button", {
