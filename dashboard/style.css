@@ -89,7 +89,10 @@ body {
 }
 .brand-title { font-weight: 700; font-size: 15px; white-space: nowrap; }
 .brand-sub { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nav { margin-left: auto; display: flex; gap: 2px; overflow-x: auto; }
+/* min-width:0 이 없으면 flex 항목이 내용 너비 밑으로 줄지 않아 overflow-x 가 동작하지
+   않는다 — 좁은 창에서 마지막 메뉴가 스크롤되지 않고 그냥 잘려 나갔다. */
+.nav { margin-left: auto; min-width: 0; display: flex; gap: 2px; overflow-x: auto; }
+.nav a.home { color: var(--ink-1); font-weight: 600; }
 .nav a {
   color: var(--ink-2); text-decoration: none; font-size: 13px;
   padding: 6px 10px; border-radius: 6px; white-space: nowrap;
