@@ -1217,6 +1217,10 @@ function ensureVillageBack(sec) {
 
 function bindGate() {
   const gate = $("#gate");
+  /* 관문 배경은 마을 지도. renderVillage() 는 JSON 로딩이 끝나야 도는데 관문은 그 전에
+     떠 있으므로 여기서 먼저 변수를 채운다. */
+  document.documentElement.style.setProperty("--village-img", `url("${villageImgUrl()}")`);
+
   if (localStorage.getItem(GATE_KEY) === "1") { gate.hidden = true; return; }
   gate.hidden = false;
   $("#gate-form").addEventListener("submit", (e) => {
