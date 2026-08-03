@@ -451,6 +451,23 @@ def test_village_fx_people_paths_all_exist():
     assert not missing, f"정의되지 않은 도로를 걷는 행인: {sorted(missing)}"
 
 
+def test_village_video_disables_svg_fx_and_respects_reduced_motion():
+    """영상 지도가 켜지면 SVG 모션은 꺼지고, reduced-motion 이면 영상을 시도조차 않는다.
+
+    움직임이 겹치면(영상 속 새 + SVG 새) 어색하고, SMIL 과 달리 영상은 사용자
+    접근성 설정을 코드가 직접 확인해야 한다.
+    """
+    css = (ROOT / "dashboard" / "style.css").read_text(encoding="utf-8")
+    assert re.search(r"\.has-video \.village-fx\s*\{\s*display:\s*none", css), (
+        "영상 재생 중 SVG 모션을 끄는 규칙(.has-video .village-fx)이 없습니다"
+    )
+    js = _app_js()
+    mount = js.split("function mountVillageVideo")[1].split("\nfunction ")[0]
+    assert "prefers-reduced-motion" in mount, (
+        "mountVillageVideo 가 reduced-motion 을 확인하지 않습니다"
+    )
+
+
 def test_hidden_attribute_is_not_defeated_by_display_rules():
     """전역 `[hidden]` 규칙이 있어야 한다 — 실제 브라우저에서 잡은 결함의 회귀 테스트.
 

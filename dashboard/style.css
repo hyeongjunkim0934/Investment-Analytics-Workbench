@@ -568,6 +568,15 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 .village-back a { color: var(--ink-2); text-decoration: none; }
 .village-back a:hover { color: var(--ink-1); }
 
+/* ---- 영상 지도 — mp4 가 있으면 정지 지도 위에 깔린다 (app.js mountVillageVideo) ---- */
+.village-video {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover;                 /* 16:9 영상 vs 1376×768 프레임의 미세한 비율 차 흡수 */
+  display: none; pointer-events: none;
+}
+.village-frame.has-video .village-video { display: block; }
+.village-frame.has-video .village-fx { display: none; }   /* 영상에 이미 모션이 있다 — 겹치면 어색 */
+
 /* ---- 앰비언트 레이어 — 지도 위 SVG 한 장 (viewBox 1376×768 = 지도 원본 픽셀) ---- */
 .village-fx {
   position: absolute; inset: 0; width: 100%; height: 100%;
