@@ -1159,7 +1159,11 @@ function renderVillage() {
       img.src = url;
       return;
     }
+    /* 지도가 없으면 핫스팟도 지운다 — 비율 좌표로 붙어 있어서 안내 문구 위에
+       겹쳐 얹히고, 지도가 없는 마당에 클릭할 건물도 없다. 아래 대체 목록이 그 역할을
+       그대로 대신한다. */
     img.hidden = true;
+    frame.querySelectorAll(".vz, .vz-menu").forEach((n) => n.remove());
     $("#village-missing").hidden = false;
   };
   img.src = villageImgUrl();
