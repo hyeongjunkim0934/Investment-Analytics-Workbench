@@ -1079,7 +1079,161 @@ function openDetail(key) {
   ov.scrollTop = 0;
 }
 
+/* ==========================================================================
+   Post Village — 관문(게이트) + 마을 지도(홈/내비게이션)
+   ==========================================================================
+   설계 규약(docs/HANDOVER.md §3.3):
+   - 은유는 이 층(관문·마을·헤더 여백)에만. 데이터 섹션 14개는 손대지 않는다.
+   - 지도 이미지에는 글자가 없다 — 라벨은 전부 여기서 얹는다(선명·수정·다국어·접근성).
+   - 낮/밤 두 장은 구도가 동일해야 하며, 아래 비율 좌표를 공통으로 쓴다.
+   - 움직임 금지: 호버 강조만, 패럴랙스·카메라·자동 낮밤순환 없음.
+
+   **관문은 접근 차단이 아니다.** 이 사이트는 서버 없는 공개 정적 호스팅이라
+   data/*.json 은 주소만 알면 인증 없이 받아진다 — 암구호를 해시로 두어도 마찬가지다.
+   해시를 쓰는 이유는 소스에서 평문이 바로 눈에 띄지 않게 하는 것뿐이며, 보안이 아니다.
+   진짜 "공유한 사람만"이 필요하면 접근제어 되는 호스팅으로 옮겨야 한다(§3.3).            */
+
+const GATE_KEY = "iaw-gate";
+/* FNV-1a 32bit. 기본 암구호는 "postvillage" — 바꾸려면 아래 값을 새 해시로 교체한다.
+   콘솔에서: __iaw.gateHash("새암구호") */
+const GATE_HASH = 0xc46adc51;
+
+function fnv1a(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/* 건물 ↔ 화면. x/y 는 지도 이미지 기준 백분율(좌상단 0,0).
+   sections 가 여러 개인 구역은 클릭 시 하위 메뉴를 연다. */
+const VILLAGE_ZONES = [
+  { key: "watchtower", x: 24.1, y: 16.3, name: "망루", sub: "리스크", target: "risk" },
+  { key: "observatory", x: 59.9, y: 22.5, name: "관천대", sub: "관계분석", target: "panel" },
+  { key: "castle", x: 48.6, y: 21.9, name: "성채", sub: "이벤트", target: "events" },
+  { key: "post", x: 48.9, y: 40.0, name: "중앙 우체국", sub: "오늘의 개요", target: "overview" },
+  { key: "market", x: 35.4, y: 51.3, name: "저잣거리", sub: "시장 시세 7종", menu: [
+      ["rates", "금리"], ["irs", "IRS"], ["credit", "크레딧"], ["fx", "FX"],
+      ["inflation", "물가"], ["acwi", "ACWI"], ["macro", "매크로"]] },
+  { key: "granary", x: 80.4, y: 35.0, name: "곳간", sub: "자산배분", target: "alloc" },
+  { key: "trading", x: 65.7, y: 75.0, name: "교역소", sub: "환헤지", target: "hedge" },
+  { key: "archive", x: 20.6, y: 68.8, name: "서고", sub: "카탈로그", target: "catalog" },
+  { key: "workshop", x: 11.3, y: 45.6, name: "공방", sub: "모델 랩 — 준비 중", soon: true },
+];
+
+const SECTION_IDS = ["overview", "risk", "events", "panel", "hedge", "alloc", "rates",
+                     "irs", "credit", "fx", "inflation", "acwi", "macro", "catalog"];
+
+/* 오버레이 해시는 그 아래에 어느 섹션이 깔려 있어야 하는지를 정한다 */
+function underlyingSection(hash) {
+  if (hash === "hedge-sim") return "hedge";
+  if (hash.startsWith("alloc-")) return "alloc";
+  if (hash.startsWith("detail-")) return "risk";
+  return SECTION_IDS.includes(hash) ? hash : null;
+}
+
+function villageImgUrl() {
+  return `assets/village-${currentTheme() === "dark" ? "night" : "day"}.webp`;
+}
+
+function renderVillage() {
+  const img = $("#village-map");
+  const frame = $("#village-frame");
+  const url = villageImgUrl();
+  document.documentElement.style.setProperty("--village-img", `url("${url}")`);
+
+  frame.querySelectorAll(".vz, .vz-menu").forEach((n) => n.remove());
+  img.hidden = false;
+  $("#village-missing").hidden = true;
+  img.onerror = () => { img.hidden = true; $("#village-missing").hidden = false; };
+  img.src = url;
+
+  VILLAGE_ZONES.forEach((z) => {
+    const btn = el("button", {
+      class: "vz", type: "button",
+      style: `left:${z.x}%;top:${z.y}%`,
+      "aria-label": z.soon ? `${z.name} — ${z.sub}` : `${z.name} — ${z.sub} 화면으로`,
+    });
+    if (z.soon) btn.setAttribute("data-soon", "1");
+    btn.append(
+      el("span", { class: "vz-dot" }),
+      el("span", { class: "vz-label" }, z.name, el("span", { class: "vz-sub" }, z.sub)),
+    );
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      frame.querySelectorAll(".vz-menu").forEach((n) => n.remove());
+      if (z.soon) return;
+      if (z.target) { location.hash = z.target; return; }
+      const menu = el("div", { class: "vz-menu", style: `left:${z.x}%;top:${z.y}%` });
+      z.menu.forEach(([id, label]) =>
+        menu.append(el("a", { href: `#${id}` }, label)));
+      frame.append(menu);
+    });
+    frame.append(btn);
+  });
+  frame.addEventListener("click", () => {
+    frame.querySelectorAll(".vz-menu").forEach((n) => n.remove());
+  });
+
+  /* 대체 목록 — 지도가 없거나 좁은 화면에서도 모든 화면에 도달할 수 있어야 한다 */
+  const list = $("#village-list");
+  list.textContent = "";
+  VILLAGE_ZONES.forEach((z) => {
+    if (z.soon) return;
+    if (z.target) { list.append(el("a", { href: `#${z.target}` }, `${z.name} · ${z.sub}`)); return; }
+    z.menu.forEach(([id, label]) => list.append(el("a", { href: `#${id}` }, `저잣거리 · ${label}`)));
+  });
+}
+
+/* 마을 ↔ 섹션 화면 전환. 섹션은 한 번에 하나만 보인다(스크롤 길이 문제 해결). */
+function routeView() {
+  const hash = location.hash.replace(/^#/, "");
+  const sec = underlyingSection(hash);
+  const showVillage = !sec;
+
+  $("#village").hidden = !showVillage;
+  const filter = document.querySelector(".filter-row");
+  if (filter) filter.hidden = showVillage;
+  SECTION_IDS.forEach((id) => {
+    const node = document.getElementById(id);
+    if (node) node.hidden = showVillage || id !== sec;
+  });
+  document.querySelectorAll("#nav a").forEach((a) => {
+    a.classList.toggle("active", a.getAttribute("href") === `#${sec}`);
+  });
+  if (showVillage) renderVillage();
+  else ensureVillageBack(sec);
+  window.scrollTo(0, 0);
+}
+
+function ensureVillageBack(sec) {
+  const node = document.getElementById(sec);
+  if (!node || node.querySelector(".village-back")) return;
+  const p = el("p", { class: "village-back" }, el("a", { href: "#village" }, "‹ 마을로 돌아가기"));
+  node.prepend(p);
+}
+
+function bindGate() {
+  const gate = $("#gate");
+  if (localStorage.getItem(GATE_KEY) === "1") { gate.hidden = true; return; }
+  gate.hidden = false;
+  $("#gate-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const val = $("#gate-pw").value.trim();
+    if (fnv1a(val) === GATE_HASH) {
+      localStorage.setItem(GATE_KEY, "1");
+      gate.hidden = true;
+    } else {
+      $("#gate-err").hidden = false;
+      $("#gate-pw").select();
+    }
+  });
+}
+
 function handleHash() {
+  routeView();
   if (location.hash === "#hedge-sim") {
     if (DATA.hedge) openHedgeSim();
     return;
@@ -3126,6 +3280,7 @@ function renderAll() {
   renderInflation();
   renderACWI();
   renderMacro();
+  if (!$("#village").hidden) renderVillage();       // 테마 전환 시 낮/밤 지도 교체
   if (!$("#detail-overlay").hidden) handleHash();   // 테마 전환 시 열린 상세 재구성
 }
 
@@ -3145,6 +3300,7 @@ function bindTheme() {
 }
 
 async function boot() {
+  bindGate();
   bindTheme();
   bindRangeButtons();
   const results = await Promise.allSettled(
@@ -3172,7 +3328,7 @@ async function boot() {
     }
   });
   handleHash();
-  window.__iaw = { registry, state };   // 디버그/테스트 훅
+  window.__iaw = { registry, state, gateHash: fnv1a };   // 디버그/테스트 훅
 }
 
 boot();

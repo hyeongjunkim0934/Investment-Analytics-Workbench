@@ -11,6 +11,26 @@
 </head>
 <body>
 
+<!-- 관문(게이트) — 접근 차단이 아니라 "입장 표식"이다. 화면에 그 사실을 그대로 적는다.
+     진짜 접근제어는 호스팅 계층에서(docs/HANDOVER.md §3.3). -->
+<div class="gate" id="gate" hidden>
+  <div class="gate-card">
+    <div class="gate-emblem" id="gate-emblem" aria-hidden="true">✉</div>
+    <h1 class="gate-title">Post Village</h1>
+    <p class="gate-sub">투자 분석 워크벤치</p>
+    <form class="gate-form" id="gate-form">
+      <label class="gate-label" for="gate-pw">입장 암구호</label>
+      <input type="password" id="gate-pw" autocomplete="current-password" spellcheck="false">
+      <button type="submit">입장</button>
+      <p class="gate-err" id="gate-err" hidden>암구호가 다릅니다.</p>
+    </form>
+    <p class="gate-note">
+      이 관문은 <b>접근 차단이 아니라 입장 표식</b>입니다. 이 페이지는 공개 주소로 서비스되므로
+      데이터 파일은 주소를 아는 누구나 받을 수 있습니다 — 비밀로 지켜야 하는 값은 올리지 마십시오.
+    </p>
+  </div>
+</div>
+
 <header class="topbar">
   <div class="topbar-inner">
     <div class="brand">
@@ -41,6 +61,20 @@
 </header>
 
 <main class="page">
+
+  <!-- 마을(홈) — 지도가 곧 내비게이션. 이미지에는 글자가 없고 라벨은 전부 여기서 얹는다. -->
+  <section id="village" class="village" hidden>
+    <div class="village-frame" id="village-frame">
+      <img class="village-map" id="village-map" alt="마을 지도 — 각 건물이 대시보드 화면으로 이어집니다">
+      <div class="village-missing" id="village-missing" hidden>
+        <p><b>마을 지도 이미지가 아직 없습니다.</b></p>
+        <p>ㅤ<code>dashboard/assets/village-day.webp</code> · <code>village-night.webp</code> 두 장을 넣으면 이 자리에 지도가 뜹니다.
+           넣는 방법은 <code>dashboard/assets/README.md</code> 참조. 아래 목록으로도 모든 화면에 들어갈 수 있습니다.</p>
+      </div>
+    </div>
+    <div class="village-list" id="village-list" aria-label="구역 목록"></div>
+  </section>
+
 
   <div class="filter-row" role="group" aria-label="기간 선택">
     <span class="filter-label">기간</span>
