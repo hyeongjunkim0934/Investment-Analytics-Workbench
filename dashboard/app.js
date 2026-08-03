@@ -1086,7 +1086,9 @@ function openDetail(key) {
    - 은유는 이 층(관문·마을·헤더 여백)에만. 데이터 섹션 14개는 손대지 않는다.
    - 지도 이미지에는 글자가 없다 — 라벨은 전부 여기서 얹는다(선명·수정·다국어·접근성).
    - 낮/밤 두 장은 구도가 동일해야 하며, 아래 비율 좌표를 공통으로 쓴다.
-   - 움직임 금지: 호버 강조만, 패럴랙스·카메라·자동 낮밤순환 없음.
+   - 움직임 규약(2026-08-03 개정): 마을 층에는 앰비언트 모션(물·새·행인·낙엽·구름
+     그림자)과 건물 입장 연출을 허용. 데이터 섹션은 정적 유지, reduced-motion 존중.
+     패럴랙스·자동 낮밤순환은 여전히 없음.
 
    **관문은 접근 차단이 아니다.** 이 사이트는 서버 없는 공개 정적 호스팅이라
    data/*.json 은 주소만 알면 인증 없이 받아진다 — 암구호를 해시로 두어도 마찬가지다.
@@ -1143,6 +1145,133 @@ function villageImgUrl(ext = VILLAGE_EXTS[0]) {
   return `assets/village-${currentTheme() === "dark" ? "night" : "day"}.${ext}`;
 }
 
+/* ---- 앰비언트 레이어 — 정적 지도 위에 코드로 얹는 "살아 있는 마을" ----------------
+   지도 이미지 자체는 손대지 않는다(승인된 원본이 스펙). 움직임은 전부 이 SVG 한 장이
+   만든다: 시냇물 반짝임·새(낮)·반딧불이(밤)·행인 6명·낙엽·구름 그림자.
+   - 좌표계는 viewBox 1376×768 = 지도 원본 픽셀. preserveAspectRatio="none" 이라
+     지도가 어떤 폭으로 늘어나도 1:1 로 따라붙는다 (VILLAGE_ZONES 의 % 좌표와 동일 원리).
+   - pointer-events 없음 — 클릭은 전부 핫스팟이 받는다.
+   - prefers-reduced-motion 이면 CSS 가 레이어째 감춘다(SMIL 은 그 설정을 모른다).
+   - 풀·나무 자체를 흔드는 것은 픽셀 왜곡(displacement) 이라 화질·성능을 해쳐서 넣지
+     않았다 — 낙엽·구름 그림자가 바람의 간접 신호다. */
+function villageFxMarkup() {
+  const person = (road, dur, begin, coat) => `
+    <g class="fx-person">
+      <ellipse cx="0" cy="0" rx="3.4" ry="1.3" fill="rgba(30,20,10,.28)"/>
+      <rect x="-2.6" y="-9.5" width="5.2" height="8.4" rx="2.4" fill="${coat}"/>
+      <circle cx="0" cy="-11.4" r="2.6" fill="#e8c39a"/>
+      <animateMotion dur="${dur}s" begin="${begin}s" repeatCount="indefinite"
+        keyPoints="0;1;1;0;0" keyTimes="0;.46;.5;.96;1" calcMode="linear">
+        <mpath href="#${road}"/>
+      </animateMotion>
+    </g>`;
+  const bird = (path, dur, begin) => `
+    <g class="fx-bird">
+      <path fill="none" stroke="#2f2a24" stroke-width="1.5" stroke-linecap="round" opacity=".6">
+        <animate attributeName="d" dur=".8s" begin="${begin}s" repeatCount="indefinite"
+          values="M-4.5,0 Q-2.2,-3 0,-.5 Q2.2,-3 4.5,0;M-4.5,-1.4 Q-2.2,1.2 0,-.9 Q2.2,1.2 4.5,-1.4;M-4.5,0 Q-2.2,-3 0,-.5 Q2.2,-3 4.5,0"/>
+      </path>
+      <animateMotion dur="${dur}s" begin="${begin}s" repeatCount="indefinite" path="${path}"/>
+    </g>`;
+  const fly = (x, y, dur, begin) => `
+    <circle class="fx-fly" r="1.7" fill="#ffd98c">
+      <animate attributeName="opacity" values="0;.9;.15;.75;0" dur="5.5s" begin="${begin}s" repeatCount="indefinite"/>
+      <animateMotion dur="${dur}s" begin="${begin}s" repeatCount="indefinite"
+        path="M ${x},${y} c 16,-11 30,5 20,18 c -10,13 -30,2 -20,-18"/>
+    </circle>`;
+  const leaf = (path, dur, begin, fill) => `
+    <g class="fx-leaf" opacity=".5">
+      <path d="M0,0 q3,-4 6,0 q-3,4 -6,0" fill="${fill}"/>
+      <animateTransform attributeName="transform" type="rotate" values="0;140;250;360"
+        dur="6s" begin="${begin}s" repeatCount="indefinite" additive="sum"/>
+      <animateMotion dur="${dur}s" begin="${begin}s" repeatCount="indefinite" path="${path}"/>
+    </g>`;
+  return `
+  <defs>
+    <path id="fx-road1" d="M 195,390 C 270,412 350,422 430,412 C 452,408 466,406 476,408"/>
+    <path id="fx-road2" d="M 505,425 C 560,433 615,430 660,422 C 680,419 692,422 702,428"/>
+    <path id="fx-road3" d="M 615,252 C 655,238 700,232 745,236 C 770,239 786,246 798,252"/>
+    <path id="fx-road4" d="M 895,308 C 945,330 1000,348 1045,340 C 1070,334 1088,320 1098,306"/>
+    <path id="fx-road5" d="M 360,585 C 430,605 500,600 555,575 C 590,558 615,545 635,535"/>
+    <path id="fx-road6" d="M 825,592 C 860,612 900,632 940,650"/>
+    <radialGradient id="fx-cloud-g">
+      <stop offset="0" stop-color="#000" stop-opacity=".09"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <g class="fx-water">
+    <!-- 경로는 이미지에서 물 색 픽셀을 검출해 뽑은 실측 중심선.
+         끊긴 자리(나무다리 y≈285-325 · 돌다리 y≈505-575)는 다리 그림 위로
+         점선이 지나가지 않게 일부러 비워 둔 구간이다 -->
+    <path d="M 975,166 C 980,192 972,214 950,234 C 928,252 902,262 891,278"/>
+    <path d="M 896,328 C 890,342 906,354 924,368 C 942,382 950,390 946,404 C 940,420 936,430 928,444 C 918,460 904,472 890,482 C 882,490 874,496 868,504"/>
+    <path d="M 690,575 C 675,602 658,628 640,660 C 624,686 602,706 562,722"/>
+    <path d="M 702,600 C 716,626 730,652 740,682 C 752,704 776,716 806,728"/>
+    <path class="slow" transform="translate(4,3)" d="M 975,166 C 980,192 972,214 950,234 C 928,252 902,262 891,278"/>
+    <path class="slow" transform="translate(4,3)" d="M 896,328 C 890,342 906,354 924,368 C 942,382 950,390 946,404 C 940,420 936,430 928,444 C 918,460 904,472 890,482"/>
+    <path class="slow" transform="translate(4,3)" d="M 690,575 C 675,602 658,628 640,660 C 624,686 602,706 562,722"/>
+  </g>
+  <g class="fx-cloud">
+    <ellipse rx="240" ry="130" fill="url(#fx-cloud-g)">
+      <animateMotion dur="95s" repeatCount="indefinite"
+        path="M -300,220 C 200,150 550,260 850,190 C 1150,130 1450,230 1700,180 C 1400,260 600,140 -300,220"/>
+    </ellipse>
+  </g>
+  <g class="fx-birds">
+    ${bird("M -40,150 C 300,95 700,160 1000,95 C 1200,60 1350,115 1430,95", 58, -12)}
+    ${bird("M 1430,120 C 1100,70 700,140 400,80 C 200,50 60,110 -50,90", 72, -35)}
+    ${bird("M -40,110 C 350,60 800,120 1430,70", 49, -44)}
+  </g>
+  <g class="fx-fireflies">
+    ${fly(455, 430, 13, -3)}${fly(625, 395, 15, -8)}${fly(838, 470, 12, -5)}
+    ${fly(305, 555, 16, -11)}${fly(950, 585, 14, -1)}${fly(1085, 330, 15, -7)}
+  </g>
+  <g class="fx-people">
+    ${person("fx-road1", 46, -9, "#8a4a2f")}
+    ${person("fx-road2", 40, -22, "#4f6b8a")}
+    ${person("fx-road3", 36, -5, "#6b7d4a")}
+    ${person("fx-road4", 30, -17, "#7d4a6b")}
+    ${person("fx-road5", 52, -30, "#5a5a5a")}
+    ${person("fx-road6", 28, -12, "#a05c33")}
+  </g>
+  <g class="fx-leaves">
+    ${leaf("M 320,320 c 40,60 -20,120 30,180 c 40,60 -10,120 30,170", 17, -4, "#7c8f4e")}
+    ${leaf("M 520,220 c 30,70 -25,130 20,200 c 35,65 -5,130 25,180", 21, -12, "#8a9b55")}
+    ${leaf("M 1130,420 c 25,55 -20,100 15,160 c 30,55 0,110 20,160", 15, -7, "#b7863f")}
+    ${leaf("M 240,430 c 35,55 -15,110 25,170 c 30,55 -5,100 20,150", 19, -15, "#7c8f4e")}
+  </g>`;
+}
+
+function buildVillageFx(frame) {
+  if ($("#village-fx")) return;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("id", "village-fx");
+  svg.setAttribute("class", "village-fx");
+  svg.setAttribute("viewBox", "0 0 1376 768");
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = villageFxMarkup();
+  $("#village-map").after(svg);
+}
+
+/* 건물 입장 연출 — 클릭한 건물을 향해 지도를 확대하며 페이드, 끝나면 그 화면으로.
+   reduced-motion 이거나 지도가 없으면 연출 없이 바로 이동한다. */
+function enterZone(z, targetHash) {
+  const frame = $("#village-frame");
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduced || $("#village-map").hidden || frame.classList.contains("vz-enter")) {
+    location.hash = targetHash;
+    return;
+  }
+  frame.style.transformOrigin = `${z.x}% ${z.y}%`;
+  frame.classList.add("vz-enter");
+  setTimeout(() => {
+    location.hash = targetHash;
+    frame.classList.remove("vz-enter");
+    frame.style.transformOrigin = "";
+  }, 520);
+}
+
 function renderVillage() {
   const img = $("#village-map");
   const frame = $("#village-frame");
@@ -1164,9 +1293,10 @@ function renderVillage() {
        겹쳐 얹히고, 지도가 없는 마당에 클릭할 건물도 없다. 아래 대체 목록이 그 역할을
        그대로 대신한다. */
     img.hidden = true;
-    frame.querySelectorAll(".vz, .vz-menu").forEach((n) => n.remove());
+    frame.querySelectorAll(".vz, .vz-menu, .village-fx").forEach((n) => n.remove());
     $("#village-missing").hidden = false;
   };
+  img.onload = () => buildVillageFx(frame);
   img.src = villageImgUrl();
 
   VILLAGE_ZONES.forEach((z) => {
@@ -1184,10 +1314,18 @@ function renderVillage() {
       e.stopPropagation();
       frame.querySelectorAll(".vz-menu").forEach((n) => n.remove());
       if (z.soon) return;
-      if (z.target) { location.hash = z.target; return; }
+      if (z.target) { enterZone(z, z.target); return; }
       const menu = el("div", { class: "vz-menu", style: `left:${z.x}%;top:${z.y}%` });
-      z.menu.forEach(([id, label]) =>
-        menu.append(el("a", { href: `#${id}` }, label)));
+      z.menu.forEach(([id, label]) => {
+        const a = el("a", { href: `#${id}` }, label);
+        a.addEventListener("click", (ev) => {   // 하위 메뉴도 같은 입장 연출을 탄다
+          ev.preventDefault();
+          ev.stopPropagation();
+          menu.remove();
+          enterZone(z, id);
+        });
+        menu.append(a);
+      });
       frame.append(menu);
     });
     frame.append(btn);
@@ -1218,6 +1356,7 @@ function routeView() {
   const showVillage = !sec;
 
   $("#village").hidden = !showVillage;
+  $("#village-frame").classList.remove("vz-enter");   // 입장 연출 중 해시가 먼저 바뀌어도 잔상 없게
   const filter = document.querySelector(".filter-row");
   if (filter) filter.hidden = showVillage;
   SECTION_IDS.forEach((id) => {

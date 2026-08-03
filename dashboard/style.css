@@ -410,7 +410,9 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 /* ==========================================================================
    Post Village — 관문(게이트) + 마을 지도(홈/내비게이션)
    규약: 은유는 이 두 층에만. 데이터 섹션의 레이아웃·폰트·색은 건드리지 않는다.
-   움직임 금지 — 전환 애니메이션은 호버 강조와 짧은 페이드까지만.
+   움직임 규약(사용자 요청 2026-08-03로 개정): 마을 층에는 앰비언트 모션(물·새·행인·
+   낙엽·구름 그림자)과 건물 입장 연출을 허용한다. 단 ① 데이터 섹션은 여전히 정적
+   ② prefers-reduced-motion 이면 전부 꺼진다 ③ 클릭을 가로채는 모션 금지.
    ========================================================================== */
 
 /* ---- 관문 ---- */
@@ -535,3 +537,61 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 .village-back { margin: 0 0 10px; font-size: 12.5px; }
 .village-back a { color: var(--ink-2); text-decoration: none; }
 .village-back a:hover { color: var(--ink-1); }
+
+/* ---- 앰비언트 레이어 — 지도 위 SVG 한 장 (viewBox 1376×768 = 지도 원본 픽셀) ---- */
+.village-fx {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none;               /* 클릭은 전부 핫스팟 몫 */
+}
+/* 시냇물 — 흐르는 점선. 다리·물레방아 구간은 경로를 끊어 그림 위를 지나지 않는다 */
+.fx-water path {
+  fill: none; stroke: rgba(255, 255, 255, .32); stroke-width: 3;
+  stroke-linecap: round; stroke-dasharray: 8 26;
+  animation: fx-flow 5.5s linear infinite;
+}
+.fx-water path.slow {
+  stroke-width: 2; stroke-dasharray: 5 37; opacity: .55;
+  animation-duration: 8.5s;
+}
+@keyframes fx-flow { to { stroke-dashoffset: -34; } }  /* dash 주기(8+26)만큼 → 이음새 없음 */
+
+/* 낮에만: 새·구름 그림자 / 밤에만: 반딧불이. 테마 판정은 이 파일의 기존 패턴 그대로 */
+.fx-fireflies { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .fx-birds,
+  :root:not([data-theme="light"]) .fx-cloud { display: none; }
+  :root:not([data-theme="light"]) .fx-fireflies { display: block; }
+  :root:not([data-theme="light"]) .fx-water path { stroke: rgba(205, 228, 255, .20); }
+}
+:root[data-theme="dark"] .fx-birds,
+:root[data-theme="dark"] .fx-cloud { display: none; }
+:root[data-theme="dark"] .fx-fireflies { display: block; }
+:root[data-theme="dark"] .fx-water path { stroke: rgba(205, 228, 255, .20); }
+
+/* 접근성 — 움직임을 줄여 달라는 사용자에게는 레이어째 끈다.
+   SMIL(SVG 내장 애니메이션)은 이 설정을 스스로 존중하지 않으므로 감추는 것이 유일한 방법 */
+@media (prefers-reduced-motion: reduce) {
+  .village-fx { display: none !important; }
+}
+
+/* ---- 건물 입장 연출 — 클릭한 건물로 빨려 들어가듯 확대 후 화면 전환 ---- */
+.village-frame.vz-enter {
+  animation: vz-enter .52s cubic-bezier(.5, 0, .85, .4) forwards;
+  z-index: 40;                        /* 확대 중 아래 목록 위로 */
+}
+@keyframes vz-enter {
+  0%   { transform: scale(1); opacity: 1; }
+  65%  { opacity: 1; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+.village-frame.vz-enter .vz-label,
+.village-frame.vz-enter .vz-dot { opacity: 0; transition: opacity .18s; }
+
+/* 섹션 등장 — 입장 연출을 받아 주는 짧은 페이드. reduced-motion 이면 없음 */
+@media (prefers-reduced-motion: no-preference) {
+  .section { animation: section-in .3s ease both; }
+  @keyframes section-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: none; }
+  }
+}

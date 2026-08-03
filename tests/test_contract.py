@@ -419,6 +419,38 @@ def test_section_ids_constant_matches_html():
     assert js_ids == html_ids, f"SECTION_IDS ≠ HTML 섹션: {js_ids ^ html_ids}"
 
 
+def test_village_fx_respects_reduced_motion():
+    """앰비언트 모션은 prefers-reduced-motion 이면 꺼져야 한다.
+
+    SMIL(SVG 내장 애니메이션)은 이 설정을 스스로 존중하지 않으므로, CSS 가 레이어째
+    감추는 것이 유일한 방어선이다. 입장 연출(enterZone)도 같은 설정을 확인해야 한다.
+    """
+    css = (ROOT / "dashboard" / "style.css").read_text(encoding="utf-8")
+    block = re.search(
+        r"@media \(prefers-reduced-motion: reduce\)\s*\{[^}]*\.village-fx[^}]*display:\s*none",
+        css,
+    )
+    assert block, "reduced-motion 에서 .village-fx 를 감추는 규칙이 없습니다"
+    js = _app_js()
+    assert "prefers-reduced-motion" in js.split("function enterZone")[1].split("function ")[0], (
+        "enterZone 이 reduced-motion 을 확인하지 않습니다"
+    )
+
+
+def test_village_fx_people_paths_all_exist():
+    """행인의 mpath 가 가리키는 도로 id 가 전부 실재해야 한다.
+
+    id 하나만 바꿔도 오류 없이 행인이 조용히 사라진다 — 눈으로는 잡기 어려운 결함.
+    """
+    js = _app_js()
+    used = set(re.findall(r'<mpath href="#\$\{road\}"', js))
+    assert used, "mpath 참조 코드가 사라졌습니다"
+    roads_referenced = set(re.findall(r'\$\{person\("([a-z0-9-]+)"', js))
+    roads_defined = set(re.findall(r'<path id="(fx-road\d+)"', js))
+    missing = roads_referenced - roads_defined
+    assert not missing, f"정의되지 않은 도로를 걷는 행인: {sorted(missing)}"
+
+
 def test_hidden_attribute_is_not_defeated_by_display_rules():
     """전역 `[hidden]` 규칙이 있어야 한다 — 실제 브라우저에서 잡은 결함의 회귀 테스트.
 
