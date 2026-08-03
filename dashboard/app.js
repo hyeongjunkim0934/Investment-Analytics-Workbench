@@ -1089,6 +1089,9 @@ function openDetail(key) {
    - 움직임 규약(2026-08-03 개정): 마을 층에는 앰비언트 모션(물·새·행인·낙엽·구름
      그림자)과 건물 입장 연출을 허용. 데이터 섹션은 정적 유지, reduced-motion 존중.
      패럴랙스·자동 낮밤순환은 여전히 없음.
+   - 같은 날 2차 개정(사용자: "그림에 구운 새·구름·사람이 안 움직여 이상하다"):
+     마을 배경에 상시 앰비언트 영상 루프 허용(mountVillageVideo). 단 루프는 테마
+     안에서만 돈다 — 낮 테마엔 낮 루프, 밤 테마엔 밤 루프. 자동 낮밤순환 금지는 유지.
 
    **관문은 접근 차단이 아니다.** 이 사이트는 서버 없는 공개 정적 호스팅이라
    data/*.json 은 주소만 알면 인증 없이 받아진다 — 암구호를 해시로 두어도 마찬가지다.
@@ -1151,9 +1154,11 @@ function villageImgUrl(ext = VILLAGE_EXTS[0]) {
 }
 
 /* ---- 앰비언트 레이어 — 정적 지도 위에 코드로 얹는 "살아 있는 마을" ----------------
-   지도 이미지 자체는 손대지 않는다(승인된 원본이 스펙). 움직임은 전부 이 SVG 한 장이
-   만든다: 시냇물 반짝임·새(낮)·반딧불이(밤)·행인 6명·낙엽·구름 그림자.
-   - 좌표계는 viewBox 1376×768 = 지도 원본 픽셀. preserveAspectRatio="none" 이라
+   지도 이미지 자체는 손대지 않는다(승인된 원본이 스펙). 영상 루프(mountVillageVideo)가
+   재생되는 동안에는 .has-video 가 이 레이어를 감춘다(움직임 중복 방지) — 즉 이 SVG 는
+   영상이 없거나(파일 미존재·재생 거부·자동재생 차단) 좁은 화면 폴백일 때의 모션이다:
+   시냇물 반짝임·새(낮)·반딧불이(밤)·행인 6명·낙엽·구름 그림자.
+   - 좌표계는 viewBox 1280×720 = 지도(영상 프레임) 원본 픽셀. preserveAspectRatio="none" 이라
      지도가 어떤 폭으로 늘어나도 1:1 로 따라붙는다 (VILLAGE_ZONES 의 % 좌표와 동일 원리).
    - pointer-events 없음 — 클릭은 전부 핫스팟이 받는다.
    - prefers-reduced-motion 이면 CSS 가 레이어째 감춘다(SMIL 은 그 설정을 모른다).
@@ -1269,6 +1274,71 @@ function buildVillageFx(frame) {
   $("#village-map").after(svg);
 }
 
+/* ---- 상시 앰비언트 영상 — 지도 스틸 위에 깔리는 "실제로 움직이는" 마을 ---------------
+   사용자의 Gemini 전환 영상(10초, 낮→밤)에서 잘라 만든 테마별 무이음새 루프 두 벌:
+   낮 = 낮 안정 구간(0~6.0초)을 크로스페이드(1.25초)로 이어붙인 4.75초 루프,
+   밤 = 밤 꼬리 구간(7.17~10초)을 정·역재생(palindrome)으로 이은 5.58초 루프.
+   원본 10초를 통째로 <video loop> 에 거는 것은 안 된다: 실측으로 원본은 루프가 아니라
+   낮→밤 전환이라(첫↔끝 프레임 MAD 55.3 vs 인접 프레임 평균 0.4) 10초마다 밤→낮이
+   튀고, 상시 재생은 곧 자동 낮밤순환이라 위 움직임 규약이 금지한다 — 루프는 테마 안에서만.
+   생성 레시피는 dashboard/assets/README.md. 파일이 없거나 재생이 거부되면 조용히
+   물러나 스틸 + SVG 모션이 그대로 남는다(영상은 장식이지 필수가 아니다). 재생 중에는
+   .has-video 가 SVG 모션을 끈다 — 영상 자체에 새·구름·행인·연기 모션이 들어 있다. */
+const IDLE_VIDEO = { dark: "assets/village-night-loop", light: "assets/village-day-loop" };
+const IDLE_VIDEO_EXTS = ["webm", "mp4"];   // webm(VP9) 우선, 못 읽는 브라우저는 mp4(H.264)로
+
+function mountVillageVideo(frame) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (!frame || !frame.clientWidth) return;              // ≤720px 에서는 지도째 숨김 — 마운트 안 함
+  if (frame.querySelector(".village-video[data-transition]")) return;  // 전환 연출 중 — 끝나면 다시 불린다
+  const base = IDLE_VIDEO[currentTheme() === "dark" ? "dark" : "light"];
+  const existing = frame.querySelector(".village-video[data-idle]");
+  if (existing) {
+    if (existing.dataset.base === base) { existing.play().catch(() => {}); return; }
+    existing.remove();                                   // 테마가 바뀌었다 — 그 테마의 루프로 교체
+    frame.classList.remove("has-video");
+  }
+  const v = document.createElement("video");
+  v.className = "village-video";
+  v.dataset.idle = "1";
+  v.dataset.base = base;
+  v.muted = true;
+  v.loop = true;
+  v.playsInline = true;
+  v.setAttribute("muted", "");
+  v.setAttribute("playsinline", "");
+  v.setAttribute("aria-hidden", "true");
+  v.preload = "auto";
+  const giveUp = () => { v.remove(); frame.classList.remove("has-video"); };
+  /* 자동재생 거부(NotAllowedError — 절전 모드 등)만 포기 사유다. 소스 포맷 불가
+     (NotSupportedError)는 아래 error 사다리가 다음 확장자로 넘어가며 처리한다. */
+  const tryPlay = () => v.play().catch((e) => {
+    if (e && e.name === "NotAllowedError") giveUp();
+  });
+  let tried = 0;
+  v.addEventListener("error", () => {
+    tried += 1;
+    if (tried < IDLE_VIDEO_EXTS.length) {
+      v.src = `${base}.${IDLE_VIDEO_EXTS[tried]}`;
+      tryPlay();
+    } else {
+      giveUp();
+    }
+  });
+  /* 재생이 실제로 시작된 뒤에 무대에 올리고(.has-video), 한 프레임 뒤 .is-on 으로 페이드인한다.
+     낮 루프의 첫 프레임은 원본 f24 라 낮 스틸(=원본 f0)보다 1초 앞서 있다 — 새·구름이 1초분
+     순간이동하는 셈인데(실측 MAD 3.84 vs 무이음 기준선 2.34), 0.45초 크로스페이드가 이 도약을
+     덮는다. 밤 루프는 첫 프레임이 전환 끝 프레임과 같아(2.33 ≈ 기준선 2.04) 페이드가 무해하다.
+     rAF 를 거치는 이유: display:none→block 과 opacity 를 같은 프레임에 바꾸면 전이가 생략된다. */
+  v.addEventListener("playing", () => {
+    frame.classList.add("has-video");
+    requestAnimationFrame(() => v.classList.add("is-on"));
+  });
+  v.src = `${base}.${IDLE_VIDEO_EXTS[0]}`;
+  $("#village-map").after(v);
+  tryPlay();
+}
+
 /* ---- 테마 전환 연출 — 마을에 밤이 내리는(걷히는) 영상 -------------------------------
    정지 지도 두 장(낮/밤)은 사용자가 만든 전환 영상의 첫/끝 프레임에서 뽑았다. 그래서
    영상 첫 프레임 = 현재 지도, 끝 프레임 = 목표 지도가 항상 성립하고, 이 함수는 그 사이를
@@ -1297,9 +1367,13 @@ function playThemeTransition(nextTheme, applyTheme) {
     !matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (!cinematic) { applyTheme(); return; }
 
+  /* 상시 루프를 걷어내고 전환 영상이 프레임을 덮는다. 끝나면(done) 새 테마의 루프를
+     다시 깐다 — applyTheme→renderAll→renderVillage 경로의 mountVillageVideo 는
+     data-transition 가드에 막히므로, 재마운트 책임은 여기 done 하나뿐이다. */
   frame.querySelectorAll(".village-video").forEach((n) => n.remove());
   const v = document.createElement("video");
   v.className = "village-video";
+  v.dataset.transition = "1";
   v.muted = true;
   v.playsInline = true;
   v.setAttribute("muted", "");
@@ -1307,7 +1381,12 @@ function playThemeTransition(nextTheme, applyTheme) {
   v.setAttribute("aria-hidden", "true");
   let applied = false;
   const apply = () => { if (!applied) { applied = true; applyTheme(); } };
-  const done = () => { apply(); v.remove(); frame.classList.remove("has-video"); };
+  const done = () => {
+    apply();
+    v.remove();
+    frame.classList.remove("has-video");
+    mountVillageVideo(frame);
+  };
   /* 영상이 늦으면(느린 네트워크·자동재생 거부) 연출을 포기하고 즉시 전환 */
   const guard = setTimeout(done, 700);
   v.addEventListener("playing", () => {
@@ -1363,10 +1442,18 @@ function renderVillage() {
        그대로 대신한다. */
     img.hidden = true;
     frame.querySelectorAll(".vz, .vz-menu, .village-fx, .village-video").forEach((n) => n.remove());
+    frame.classList.remove("has-video");
     $("#village-missing").hidden = false;
   };
   img.onload = () => { buildVillageFx(frame); preloadThemeVideos(); };
   img.src = villageImgUrl();
+  /* onload 안이 아니라 여기서 직접 마운트한다 — 같은 src 재할당은 브라우저에 따라
+     load 이벤트를 다시 안 줄 수 있고, 마을로 돌아올 때마다 루프가 다시 돌아야 한다
+     (routeView 가 떠날 때 pause 해 둔다). 마운트는 멱등이라 중복 호출이 안전하다. */
+  mountVillageVideo(frame);
+  /* 같은 이유로 폴백 SVG 도 캐시 경로에서 한 번 더 챙긴다 — 이미 붙어 있으면
+     buildVillageFx 가 즉시 반환한다(멱등). 영상이 뜨면 어차피 .has-video 가 가린다. */
+  if (img.complete && img.naturalWidth) { buildVillageFx(frame); preloadThemeVideos(); }
 
   VILLAGE_ZONES.forEach((z) => {
     const btn = el("button", {
@@ -1435,8 +1522,15 @@ function routeView() {
   document.querySelectorAll("#nav a").forEach((a) => {
     a.classList.toggle("active", a.getAttribute("href") === `#${sec}`);
   });
-  if (showVillage) renderVillage();
-  else ensureVillageBack(sec);
+  if (showVillage) {
+    renderVillage();
+  } else {
+    /* 섹션으로 나가 있는 동안 상시 루프의 디코딩을 세운다 — 돌아오면
+       renderVillage → mountVillageVideo 가 같은 요소를 다시 play 한다. */
+    const iv = $("#village-frame video[data-idle]");
+    if (iv) iv.pause();
+    ensureVillageBack(sec);
+  }
   window.scrollTo(0, 0);
 }
 

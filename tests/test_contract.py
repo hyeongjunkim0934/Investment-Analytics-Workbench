@@ -471,6 +471,81 @@ def test_theme_transition_disables_svg_fx_and_respects_reduced_motion():
         assert f'"{evt}"' in fn, f"전환 영상의 {evt} 이벤트 처리가 없습니다"
 
 
+def test_village_idle_video_assets_exist_and_stay_small():
+    """상시 앰비언트 루프 자산 4개(낮/밤 × webm/mp4)의 존재·포맷·용량 계약.
+
+    app.js 의 IDLE_VIDEO 가 가리키는 base 는 실재하는 파일이어야 하고(오타 시 조용히
+    스틸+SVG 폴백으로 떨어져 눈에 안 띈다), 저장소가 LFS 가 아니므로 파일당 1.5MB
+    상한을 강제한다 — 루프를 다시 뽑을 때 용량 폭주를 여기서 잡는다. 포맷은 컨테이너
+    매직 바이트로 확인한다(webm=EBML, mp4=ftyp): 확장자만 바꿔치기한 파일을 걸러 낸다.
+    """
+    js = _app_js()
+    bases = set(re.findall(r'"assets/(village-[a-z]+-loop)"', js))
+    assert bases == {"village-day-loop", "village-night-loop"}, (
+        f"IDLE_VIDEO base 가 예상과 다릅니다: {sorted(bases)}"
+    )
+    assets = ROOT / "dashboard" / "assets"
+    for base in sorted(bases):
+        webm = assets / f"{base}.webm"
+        mp4 = assets / f"{base}.mp4"
+        assert webm.is_file() and mp4.is_file(), f"{base} 루프 자산(webm+mp4)이 없습니다"
+        assert webm.read_bytes()[:4] == b"\x1a\x45\xdf\xa3", f"{webm.name} 이 webm(EBML)이 아닙니다"
+        assert mp4.read_bytes()[4:8] == b"ftyp", f"{mp4.name} 이 mp4(ftyp)가 아닙니다"
+        for p in (webm, mp4):
+            size = p.stat().st_size
+            assert 10_000 < size < 1_500_000, f"{p.name} 용량이 계약 밖입니다: {size}B"
+
+
+def test_village_idle_video_respects_reduced_motion_and_falls_back():
+    """상시 루프도 전환 영상과 같은 접근성·격리·폴백 규약을 지켜야 한다.
+
+    ① reduced-motion 사용자에게는 마운트 자체를 하지 않는다 ② 전환 연출이 도는 동안
+    이중 마운트하지 않는다(data-transition 가드 — 어기면 전환 영상 밑에서 새 테마
+    루프가 겹쳐 돈다) ③ 소스 사다리(webm→mp4)가 다 실패하면 요소를 걷어 스틸+SVG 로
+    물러난다 ④ 마을을 떠나면 디코딩을 세운다(pause).
+    """
+    js = _app_js()
+    fn = js.split("function mountVillageVideo")[1].split("\nfunction ")[0]
+    assert "prefers-reduced-motion" in fn, "mountVillageVideo 가 reduced-motion 을 확인하지 않습니다"
+    assert "data-transition" in fn or "[data-transition]" in fn, (
+        "전환 연출 중 이중 마운트를 막는 가드가 없습니다"
+    )
+    for evt in ("error", "playing"):
+        assert f'"{evt}"' in fn, f"상시 루프의 {evt} 이벤트 처리가 없습니다"
+    rv = js.split("function renderVillage")[1].split("\nfunction ")[0]
+    assert "mountVillageVideo" in rv, "renderVillage 가 상시 루프를 마운트하지 않습니다"
+    tt = js.split("function playThemeTransition")[1].split("\nfunction ")[0]
+    assert "mountVillageVideo" in tt, (
+        "전환 연출이 끝난 뒤 새 테마의 루프를 재마운트하는 경로가 없습니다"
+    )
+    route = js.split("function routeView")[1].split("\nfunction ")[0]
+    assert "pause" in route, "마을을 떠날 때 상시 루프를 pause 하지 않습니다"
+
+
+def test_leaving_village_does_not_pause_the_theme_transition():
+    """마을을 떠날 때 **전환 영상까지** 멈추면 화면이 영구히 얼어붙는다 — 실제로 재현된 결함의 회귀 테스트.
+
+    routeView 가 `video.village-video` 를 통째로 pause 하면 전환 영상도 멈추고, 멈춘 영상은
+    `ended` 를 쏘지 못해 `done()` 이 영영 실행되지 않는다. 그러면 `data-transition` 표식이
+    DOM 에 남고, 돌아왔을 때 mountVillageVideo 첫 가드가 그 표식을 보고 재마운트를 거부한다 —
+    전환 영상이 중간 프레임에서 얼어붙은 채 SVG 모션까지 꺼진 완전 정지 화면이 되고 스스로
+    회복하지 못한다(브라우저 실측: currentTime 2.5s 고정, 4초 후에도 동일). 사용자가 처음
+    문제 삼은 "정지 화면" 그 자체이므로, pause 대상은 반드시 상시 루프로 한정한다.
+    """
+    js = _app_js()
+    route = js.split("function routeView")[1].split("\nfunction ")[0]
+    assert "pause" in route, "routeView 에 pause 호출이 없습니다"
+    assert "data-idle" in route, (
+        "routeView 의 pause 대상이 상시 루프(data-idle)로 한정되지 않았습니다 — "
+        "전환 영상까지 멈추면 ended 가 오지 않아 화면이 얼어붙습니다"
+    )
+    broad = [ln.strip() for ln in route.splitlines()
+             if "village-video" in ln and "data-idle" not in ln]
+    assert not broad, f"전환 영상까지 걸리는 넓은 선택자가 routeView 에 있습니다: {broad}"
+    tt = js.split("function playThemeTransition")[1].split("\nfunction ")[0]
+    assert '"ended"' in tt, "전환 영상의 ended 처리가 없습니다 — done() 이 실행될 경로가 필요합니다"
+
+
 def test_hidden_attribute_is_not_defeated_by_display_rules():
     """전역 `[hidden]` 규칙이 있어야 한다 — 실제 브라우저에서 잡은 결함의 회귀 테스트.
 

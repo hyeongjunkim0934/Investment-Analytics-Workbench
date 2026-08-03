@@ -568,16 +568,22 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 .village-back a { color: var(--ink-2); text-decoration: none; }
 .village-back a:hover { color: var(--ink-1); }
 
-/* ---- 영상 지도 — mp4 가 있으면 정지 지도 위에 깔린다 (app.js mountVillageVideo) ---- */
+/* ---- 영상 지도 — 스틸 위에 깔리는 <video> 두 종류가 이 클래스를 공유한다:
+   상시 앰비언트 루프(app.js mountVillageVideo, data-idle)와
+   테마 전환 연출(playThemeTransition, data-transition). 클릭은 여전히 핫스팟 몫 ---- */
 .village-video {
   position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover;                 /* 16:9 영상 vs 1376×768 프레임의 미세한 비율 차 흡수 */
+  object-fit: cover;                 /* 지도 스틸과 영상은 같은 1280×720 프레임 — cover 는 보험 */
   display: none; pointer-events: none;
 }
 .village-frame.has-video .village-video { display: block; }
 .village-frame.has-video .village-fx { display: none; }   /* 영상에 이미 모션이 있다 — 겹치면 어색 */
+/* 상시 루프만 페이드인한다(전환 연출은 첫 프레임이 곧 현재 화면이라 즉시 떠야 한다).
+   낮 루프는 스틸보다 1초 뒤 그림에서 시작하므로 이 0.45초가 그 도약을 덮는다 — app.js 참조. */
+.village-video[data-idle] { opacity: 0; transition: opacity .45s ease; }
+.village-video[data-idle].is-on { opacity: 1; }
 
-/* ---- 앰비언트 레이어 — 지도 위 SVG 한 장 (viewBox 1376×768 = 지도 원본 픽셀) ---- */
+/* ---- 앰비언트 레이어 — 지도 위 SVG 한 장 (viewBox 1280×720 = 지도 원본 픽셀) ---- */
 .village-fx {
   position: absolute; inset: 0; width: 100%; height: 100%;
   pointer-events: none;               /* 클릭은 전부 핫스팟 몫 */
@@ -611,6 +617,9 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
    SMIL(SVG 내장 애니메이션)은 이 설정을 스스로 존중하지 않으므로 감추는 것이 유일한 방법 */
 @media (prefers-reduced-motion: reduce) {
   .village-fx { display: none !important; }
+  /* JS 가드(mountVillageVideo·playThemeTransition)와 겹치는 이중 차단이다. 어떤 경로로든
+     <video> 가 붙어 버리면 SMIL 과 달리 CSS 만이 마지막 방어선이다. */
+  .village-video { display: none !important; }
 }
 
 /* ---- 건물 입장 연출 — 클릭한 건물로 빨려 들어가듯 확대 후 화면 전환 ---- */
