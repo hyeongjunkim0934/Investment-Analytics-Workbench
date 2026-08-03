@@ -27,7 +27,8 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `tests/` | pytest 스위트 + 합성 엑셀 픽스처 생성기(`synth.py`). **비공개 데이터 불필요** |
 | `tests/requirements.txt` | 테스트 전용 의존성(pytest). `pipeline/requirements.txt` 와 분리 |
 | `pytest.ini` | `testpaths = tests` |
-| `dashboard/index.html` `app.js` `style.css` | 정적 대시보드 (섹션 12개, 라이트/다크, 기간 필터) |
+| `dashboard/index.html` `app.js` `style.css` | 정적 대시보드 (섹션 14개, 라이트/다크, 기간 필터, 마을 홈+관문) |
+| `dashboard/assets/` | 마을 지도 이미지(`village-day.webp`·`village-night.webp`)를 두는 자리. 넣는 법·금지 사항은 같은 폴더 `README.md` |
 | `dashboard/vendor/uplot.min.{js,css}` | 벤더링된 유일한 프런트 의존성 (외부 네트워크 요청 없음) |
 | `.github/workflows/build-dashboard.yml` | dispatch/수동/push 트리거 → **test → build(+배포 게이트) → deploy**. build 잡은 게이트 뒤에 `Build summary` 단계로 시리즈 수·최종 관측일·JSON 수·경고를 `$GITHUB_STEP_SUMMARY` 에 표로 붙인다(`if: always()` — 게이트가 막아 실패한 실행에서도 남는다) |
 | `.github/workflows/tests.yml` | PR·push 에서 pytest 만 (비공개 데이터·Pages 권한 없음) |
@@ -139,6 +140,11 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   **평가 설계**(가중 방식·타깃·표본 외 구간)뿐이다.
 - **JSON 15개 계약은 세 곳에 적혀 있다**: `process.py` 의 `payloads`, `dashboard/app.js` 의 `FILES`,
   `pipeline/check_output.py` 의 `EXPECTED`. 하나만 고치면 `tests/test_contract.py` 가 잡는다.
+- **화면 전환·마을 내비게이션** = `app.js` 의 `routeView()`. 섹션은 **한 번에 하나만** 보인다
+  (마을 또는 섹션 1개) — 14개를 세로로 쌓지 않는 것이 이 구조의 요점이다. 섹션을 추가하면
+  `SECTION_IDS`·`VILLAGE_ZONES`·`index.html` 세 곳을 함께 고쳐야 하고, 오버레이 해시를 추가하면
+  `underlyingSection()` 에 그 아래 깔릴 섹션을 등록해야 딥링크가 산다.
+  `tests/test_contract.py` 의 마을 계약 테스트가 이 대응을 강제한다.
 
 ## 실패 처리 규약 (새 계산 블록도 이 패턴을 따를 것)
 
@@ -153,6 +159,13 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 
 ## 함정
 
+- **`hidden` 속성은 클래스의 `display` 선언에 진다.** UA 스타일이라 우선순위가 가장 낮다 —
+  `.gate{display:flex}` 때문에 `hidden` 인 관문이 화면을 계속 덮고 클릭을 가로챈 적이 있다
+  (JS 는 정상이었고 브라우저에서만 드러났다). `style.css` 맨 위 전역
+  `[hidden]{display:none!important}` 이 방어선이며 회귀 테스트가 붙어 있다.
+- **이 컨테이너 헤드리스 Chromium 의 로케일은 `en-US@posix`** 라 uPlot 이 로드 도중
+  `Invalid language tag` 로 죽고, 그 뒤 `renderAll()` 이 통째로 실패해 화면이 빈다. Playwright 로
+  확인할 때는 `newPage({ locale: 'en-US' })` 를 줄 것 — 코드 결함으로 오진하기 쉽다.
 - **테스트는 합성 픽스처로만 돈다.** `tests/synth.py` 가 만드는 워크북에는 벤더 값이 한 톨도 없다 —
   공개 저장소이므로 `../Data` 의 값이나 그 파생물을 픽스처로 커밋하지 말 것. 실데이터 회귀는 여전히
   파이프라인을 완주시켜 시리즈 수·JSON 15개·경고 건수를 변경 전과 비교하는 방식으로 한다.

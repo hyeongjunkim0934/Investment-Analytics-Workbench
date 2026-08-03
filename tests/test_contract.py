@@ -341,3 +341,96 @@ def test_gate_uses_stdlib_only():
 def test_process_globals_are_not_leaked_by_tests():
     """conftest 의 autouse 픽스처가 모듈 전역을 비우는지 (테스트 간 오염 방지)."""
     assert process.SERIES == {} and process.WARNINGS == []
+
+
+# --------------------------------------------------------------------------
+# 마을(홈) 내비게이션 계약 — 구역이 14개 섹션을 빠짐없이·중복 없이 덮는가.
+# 지도 이미지는 글자가 없고 라벨을 코드가 얹으므로, 이 대응이 깨지면 화면에서
+# 도달 불가능한 섹션이 조용히 생긴다. 사람 눈으로는 안 보이는 종류의 결함이다.
+# --------------------------------------------------------------------------
+
+def _app_js() -> str:
+    return (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+
+def _index_html() -> str:
+    return (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+
+def _village_targets() -> set[str]:
+    """VILLAGE_ZONES 블록에서 target / menu 가 가리키는 섹션 id 를 전부 모은다."""
+    src = _app_js()
+    block = re.search(r"const VILLAGE_ZONES = \[(.*?)\n\];", src, re.S)
+    assert block, "VILLAGE_ZONES 블록을 찾지 못했습니다"
+    body = block.group(1)
+    out = set(re.findall(r'target:\s*"([^"]+)"', body))
+    for menu in re.findall(r"menu:\s*\[(.*?)\]\s*\}", body, re.S):
+        out |= set(re.findall(r'\["([a-z]+)",', menu))
+    return out
+
+
+def test_village_zones_cover_every_section():
+    """마을에서 14개 섹션 전부에 도달할 수 있어야 한다."""
+    ids = set(re.findall(r'<section id="([a-z]+)" class="section">', _index_html()))
+    assert len(ids) == 14, f"섹션 수가 14가 아닙니다: {sorted(ids)}"
+    missing = ids - _village_targets()
+    assert not missing, f"마을에서 도달할 수 없는 섹션: {sorted(missing)}"
+
+
+def test_village_zone_targets_all_exist():
+    """반대 방향 — 존재하지 않는 섹션을 가리키는 구역이 없어야 한다."""
+    ids = set(re.findall(r'<section id="([a-z]+)" class="section">', _index_html()))
+    dangling = _village_targets() - ids
+    assert not dangling, f"실재하지 않는 섹션을 가리키는 구역: {sorted(dangling)}"
+
+
+def test_village_zone_coords_are_in_frame():
+    """핫스팟 좌표는 지도 안(0~100%)이어야 한다 — 밖이면 클릭이 불가능해진다."""
+    src = _app_js()
+    block = re.search(r"const VILLAGE_ZONES = \[(.*?)\n\];", src, re.S).group(1)
+    coords = re.findall(r"x:\s*([\d.]+),\s*y:\s*([\d.]+)", block)
+    assert len(coords) >= 8, f"핫스팟이 너무 적습니다: {len(coords)}"
+    for x, y in coords:
+        assert 0 < float(x) < 100 and 0 < float(y) < 100, f"좌표가 지도 밖: {x},{y}"
+
+
+def test_village_map_has_no_baked_text_dependency():
+    """지도 이미지에 글자를 굽지 않는다는 규약 — 라벨은 코드가 만든다."""
+    src = _app_js()
+    assert 'class: "vz-label"' in src, "라벨을 코드로 얹는 경로가 사라졌습니다"
+
+
+def test_gate_states_it_is_not_access_control():
+    """관문이 '접근 차단'인 척하면 안 된다 — 공개 정적 호스팅에서 사실이 아니다."""
+    html = _index_html()
+    assert "접근 차단이 아니라" in html, "관문의 한계 고지 문구가 없습니다"
+
+
+def test_section_ids_constant_matches_html():
+    """app.js 의 SECTION_IDS 와 index.html 의 섹션이 같아야 한다.
+
+    routeView() 가 이 배열만 보고 섹션을 숨기고 보인다 — 어긋나면 섹션 하나가
+    영영 안 뜨거나 마을 화면 위에 겹쳐 남는다.
+    """
+    block = re.search(r"const SECTION_IDS = \[(.*?)\];", _app_js(), re.S)
+    assert block, "SECTION_IDS 를 찾지 못했습니다"
+    js_ids = set(re.findall(r'"([a-z]+)"', block.group(1)))
+    html_ids = set(re.findall(r'<section id="([a-z]+)" class="section">', _index_html()))
+    assert js_ids == html_ids, f"SECTION_IDS ≠ HTML 섹션: {js_ids ^ html_ids}"
+
+
+def test_hidden_attribute_is_not_defeated_by_display_rules():
+    """전역 `[hidden]` 규칙이 있어야 한다 — 실제 브라우저에서 잡은 결함의 회귀 테스트.
+
+    `hidden` 속성의 display:none 은 UA 스타일이라 클래스의 display 선언에 진다.
+    `.gate{display:flex}` 때문에 암구호를 맞춰도 관문이 화면을 계속 덮고 있었다
+    (요소는 '숨겨졌는데' 클릭을 가로챈다). display 를 선언하면서 hidden 으로도
+    토글되는 요소가 있는 한 이 전역 규칙이 유일한 방어선이다.
+    """
+    css = (ROOT / "dashboard" / "style.css").read_text(encoding="utf-8")
+    assert re.search(r"\[hidden\]\s*\{[^}]*display:\s*none\s*!important", css), (
+        "style.css 에 전역 `[hidden] { display: none !important }` 규칙이 없습니다"
+    )
+    # 방어선이 실제로 필요한 상태인지도 함께 확인한다(규칙만 남고 이유가 사라지는 것 방지)
+    js = _app_js() + _index_html()
+    assert 'id="gate"' in js and re.search(r"\.gate\s*\{[^}]*display:\s*flex", css)

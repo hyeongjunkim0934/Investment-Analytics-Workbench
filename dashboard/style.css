@@ -54,6 +54,10 @@
 }
 
 * { box-sizing: border-box; }
+/* hidden 속성은 UA 스타일(display:none)이라 클래스의 display 선언에 진다.
+   .gate·.filter-row 처럼 display:flex 를 가진 요소가 hidden 인데도 화면을 덮는 사고를
+   막는다 — 이 프로젝트에서 hidden 은 언제나 "숨긴다"는 뜻이다. */
+[hidden] { display: none !important; }
 html { scroll-behavior: smooth; }
 body {
   margin: 0;
@@ -85,7 +89,10 @@ body {
 }
 .brand-title { font-weight: 700; font-size: 15px; white-space: nowrap; }
 .brand-sub { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nav { margin-left: auto; display: flex; gap: 2px; overflow-x: auto; }
+/* min-width:0 이 없으면 flex 항목이 내용 너비 밑으로 줄지 않아 overflow-x 가 동작하지
+   않는다 — 좁은 창에서 마지막 메뉴가 스크롤되지 않고 그냥 잘려 나갔다. */
+.nav { margin-left: auto; min-width: 0; display: flex; gap: 2px; overflow-x: auto; }
+.nav a.home { color: var(--ink-1); font-weight: 600; }
 .nav a {
   color: var(--ink-2); text-decoration: none; font-size: 13px;
   padding: 6px 10px; border-radius: 6px; white-space: nowrap;
@@ -399,3 +406,132 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
   .nav { display: none; }
   .kpi-value { font-size: 20px; }
 }
+
+/* ==========================================================================
+   Post Village — 관문(게이트) + 마을 지도(홈/내비게이션)
+   규약: 은유는 이 두 층에만. 데이터 섹션의 레이아웃·폰트·색은 건드리지 않는다.
+   움직임 금지 — 전환 애니메이션은 호버 강조와 짧은 페이드까지만.
+   ========================================================================== */
+
+/* ---- 관문 ---- */
+.gate {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: var(--page);
+  background-image: var(--village-img);
+  background-size: cover; background-position: center;
+}
+.gate::before {                     /* 지도를 배경으로 쓸 때 카드 가독성 확보 */
+  content: ""; position: absolute; inset: 0;
+  background: var(--page); opacity: .82;
+}
+.gate-card {
+  position: relative; width: min(420px, 100%);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  padding: 28px 26px 22px; text-align: center;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .18);
+}
+.gate-emblem {
+  width: 56px; height: 56px; margin: 0 auto 12px;
+  display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 50%;
+  font-size: 24px; color: var(--ink-2);
+  background-size: cover; background-position: center;
+}
+.gate-title { margin: 0; font-size: 22px; letter-spacing: .04em; color: var(--ink-1); }
+.gate-sub   { margin: 4px 0 18px; font-size: 12.5px; color: var(--ink-3); }
+.gate-form  { display: grid; gap: 8px; text-align: left; }
+.gate-label { font-size: 12px; color: var(--ink-2); }
+.gate-form input {
+  padding: 9px 11px; font: inherit; font-size: 14px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--page); color: var(--ink-1);
+}
+.gate-form button {
+  margin-top: 2px; padding: 9px 11px; font: inherit; font-size: 14px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--accent); color: #fff;
+}
+.gate-err  { margin: 2px 0 0; font-size: 12px; color: var(--up); }
+.gate-note {
+  margin: 16px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--ink-3);
+  text-align: left; border-top: 1px solid var(--border); padding-top: 12px;
+}
+
+/* ---- 마을 지도 ---- */
+.village { margin: 0 0 18px; }
+.village-frame {
+  position: relative; width: 100%;
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  background: var(--surface);
+}
+.village-map { display: block; width: 100%; height: auto; }
+.village-missing {
+  padding: 28px 22px; font-size: 13px; line-height: 1.7; color: var(--ink-2);
+}
+.village-missing code { font-size: 12px; color: var(--ink-1); }
+
+/* 건물 핫스팟 — 비율 좌표(두 지도가 같은 구도라 낮/밤 공통) */
+.vz {
+  position: absolute; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 6px; border: 0; background: none; cursor: pointer;
+  color: inherit; font: inherit;
+}
+.vz-dot {
+  width: 46px; height: 46px; border-radius: 50%;
+  border: 2px solid transparent; background: rgba(255, 255, 255, .06);
+}
+.vz-label {
+  font-size: 12px; font-weight: 600; line-height: 1.25; text-align: center;
+  padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+  background: rgba(252, 252, 251, .88); color: #0b0b0b;
+  border: 1px solid rgba(11, 11, 11, .14);
+}
+.vz-sub { display: block; font-size: 10.5px; font-weight: 400; opacity: .72; }
+.vz:hover .vz-dot, .vz:focus-visible .vz-dot {
+  border-color: var(--accent); background: rgba(42, 120, 214, .16);
+}
+.vz:focus-visible { outline: none; }
+.vz:focus-visible .vz-label { box-shadow: 0 0 0 2px var(--accent); }
+.vz[data-soon] { cursor: default; }
+.vz[data-soon] .vz-label { opacity: .62; }
+/* 다크 라벨. 이 파일의 테마 패턴을 그대로 따른다 — OS 선호는 미디어쿼리 안에서만 보고,
+   명시 토글(data-theme)은 밖에서 본다. 미디어쿼리 없이 :root:not([data-theme="light"])
+   를 쓰면 라이트 OS + 토글 미사용 상태에서 어두운 라벨이 밝은 지도 위에 얹힌다. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .vz-label {
+    background: rgba(26, 26, 25, .88); color: #fff; border-color: rgba(255, 255, 255, .18);
+  }
+}
+:root[data-theme="dark"] .vz-label {
+  background: rgba(26, 26, 25, .88); color: #fff; border-color: rgba(255, 255, 255, .18);
+}
+
+/* 저잣거리처럼 여러 화면을 품은 구역의 하위 메뉴 */
+.vz-menu {
+  position: absolute; z-index: 20; transform: translate(-50%, 8px);
+  display: grid; gap: 2px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .2);
+}
+.vz-menu a {
+  padding: 6px 12px; font-size: 12.5px; border-radius: 6px;
+  color: var(--ink-1); text-decoration: none; white-space: nowrap;
+}
+.vz-menu a:hover { background: var(--page); }
+
+/* 지도가 없거나 좁은 화면일 때의 대체 목록 — 접근성 겸용 */
+.village-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.village-list a {
+  padding: 7px 13px; font-size: 12.5px; border-radius: 999px; text-decoration: none;
+  border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
+}
+.village-list a:hover { color: var(--ink-1); border-color: var(--accent); }
+@media (max-width: 720px) { .village-frame { display: none; } }
+
+/* 섹션에서 마을로 돌아가는 줄 */
+.village-back { margin: 0 0 10px; font-size: 12.5px; }
+.village-back a { color: var(--ink-2); text-decoration: none; }
+.village-back a:hover { color: var(--ink-1); }
