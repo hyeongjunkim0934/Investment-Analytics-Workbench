@@ -485,31 +485,61 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
   width: 46px; height: 46px; border-radius: 50%;
   border: 2px solid transparent; background: rgba(255, 255, 255, .06);
 }
+/* 라벨은 **배경 없이** 삽화 위에 바로 얹는다(사용자 지시 — 흰 알약이 겉돌았다).
+   대신 글자 외곽선(할로)으로 가독성을 만든다: 1px 사방 그림자가 윤곽을 세우고
+   넓게 번지는 그림자가 나뭇잎·지붕 같은 잡다한 배경을 눌러 준다.
+   HTML 텍스트에는 paint-order 가 안 먹으므로 text-shadow 가 유일한 수단이다.
+   text-shadow 는 상속되므로 .vz-sub 도 같은 할로를 함께 받는다. */
 .vz-label {
-  font-size: 12px; font-weight: 600; line-height: 1.25; text-align: center;
-  padding: 3px 8px; border-radius: 999px; white-space: nowrap;
-  background: rgba(252, 252, 251, .88); color: #0b0b0b;
-  border: 1px solid rgba(11, 11, 11, .14);
+  font-size: 12px; font-weight: 700; line-height: 1.25; text-align: center;
+  padding: 2px 4px; white-space: nowrap;
+  background: none; border: 0;
+  color: #17120c;
+  /* 1px 사방 = 윤곽선, 2px 상하좌우 = 두께 보강(어두운 지붕 위 작은 글씨 대비),
+     번지는 두 겹 = 나뭇잎·기와 같은 잡다한 배경 누르기 */
+  text-shadow:
+    -1px -1px 0 rgba(253, 250, 243, .98), 1px -1px 0 rgba(253, 250, 243, .98),
+    -1px  1px 0 rgba(253, 250, 243, .98), 1px  1px 0 rgba(253, 250, 243, .98),
+     0 -2px 0 rgba(253, 250, 243, .85),  0  2px 0 rgba(253, 250, 243, .85),
+    -2px  0   0 rgba(253, 250, 243, .85), 2px  0  0 rgba(253, 250, 243, .85),
+     0 0 5px rgba(253, 250, 243, .95), 0 0 10px rgba(253, 250, 243, .8);
 }
-.vz-sub { display: block; font-size: 10.5px; font-weight: 400; opacity: .72; }
+.vz-sub { display: block; font-size: 10.5px; font-weight: 700; opacity: .9; }
 .vz:hover .vz-dot, .vz:focus-visible .vz-dot {
   border-color: var(--accent); background: rgba(42, 120, 214, .16);
 }
+.vz:hover .vz-label { color: var(--accent); }
 .vz:focus-visible { outline: none; }
-.vz:focus-visible .vz-label { box-shadow: 0 0 0 2px var(--accent); }
+.vz:focus-visible .vz-label { color: var(--accent); text-decoration: underline; }
 .vz[data-soon] { cursor: default; }
 .vz[data-soon] .vz-label { opacity: .62; }
-/* 다크 라벨. 이 파일의 테마 패턴을 그대로 따른다 — OS 선호는 미디어쿼리 안에서만 보고,
-   명시 토글(data-theme)은 밖에서 본다. 미디어쿼리 없이 :root:not([data-theme="light"])
-   를 쓰면 라이트 OS + 토글 미사용 상태에서 어두운 라벨이 밝은 지도 위에 얹힌다. */
+.vz[data-soon]:hover .vz-label { color: #17120c; }   /* 준비 중은 호버해도 반응 없음 */
+/* 다크 라벨 — 밝은 글자 + 어두운 할로. 이 파일의 테마 패턴을 그대로 따른다:
+   OS 선호는 미디어쿼리 안에서만 보고, 명시 토글(data-theme)은 밖에서 본다.
+   미디어쿼리 없이 :root:not([data-theme="light"]) 를 쓰면 라이트 OS + 토글 미사용
+   상태에서 어두운 라벨이 밝은 지도 위에 얹힌다. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .vz-label {
-    background: rgba(26, 26, 25, .88); color: #fff; border-color: rgba(255, 255, 255, .18);
+    color: #fbf7ef;
+    text-shadow:
+      -1px -1px 0 rgba(8, 12, 18, .98), 1px -1px 0 rgba(8, 12, 18, .98),
+      -1px  1px 0 rgba(8, 12, 18, .98), 1px  1px 0 rgba(8, 12, 18, .98),
+       0 -2px 0 rgba(8, 12, 18, .88),  0  2px 0 rgba(8, 12, 18, .88),
+      -2px  0   0 rgba(8, 12, 18, .88), 2px  0  0 rgba(8, 12, 18, .88),
+       0 0 6px rgba(8, 12, 18, .95), 0 0 12px rgba(8, 12, 18, .85);
   }
+  :root:not([data-theme="light"]) .vz[data-soon]:hover .vz-label { color: #fbf7ef; }
 }
 :root[data-theme="dark"] .vz-label {
-  background: rgba(26, 26, 25, .88); color: #fff; border-color: rgba(255, 255, 255, .18);
+  color: #fbf7ef;
+  text-shadow:
+    -1px -1px 0 rgba(8, 12, 18, .98), 1px -1px 0 rgba(8, 12, 18, .98),
+    -1px  1px 0 rgba(8, 12, 18, .98), 1px  1px 0 rgba(8, 12, 18, .98),
+     0 -2px 0 rgba(8, 12, 18, .88),  0  2px 0 rgba(8, 12, 18, .88),
+    -2px  0   0 rgba(8, 12, 18, .88), 2px  0  0 rgba(8, 12, 18, .88),
+     0 0 6px rgba(8, 12, 18, .95), 0 0 12px rgba(8, 12, 18, .85);
 }
+:root[data-theme="dark"] .vz[data-soon]:hover .vz-label { color: #fbf7ef; }
 
 /* 저잣거리처럼 여러 화면을 품은 구역의 하위 메뉴 */
 .vz-menu {
