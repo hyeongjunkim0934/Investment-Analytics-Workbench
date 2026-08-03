@@ -26,7 +26,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `pipeline/requirements.txt` | 파이프라인이 직접 import 하는 3개를 `==` 로 고정 |
 | `tests/` | pytest 스위트 + 합성 엑셀 픽스처 생성기(`synth.py`). **비공개 데이터 불필요** |
 | `tests/test_dashboard_ux.py` | 대시보드 UI 회귀 — **값을 실제로 계산**해서 본다. 색·크기는 CSS를 파싱해 WCAG 수식으로 직접 계산하고, 동작은 아래 두 파일로 app.js를 실행시켜 확인한다 |
-| `tests/domshim.js` `tests/dashboard_probe.js` | `dashboard/app.js` 를 **node 안에서 실제로 실행**시키는 최소 DOM 셰이드와 측정 하네스. npm 의존성 0(node 표준 라이브러리만). 소스 문자열만 보는 테스트가 "이름은 남기고 동작만 뒤집는" 회귀를 못 잡아서 만든 것이다 — 뮤테이션 18건으로 확인했고 현재 18/18을 잡는다. app.js가 새 DOM API를 쓰면 셰이드가 먼저 터지므로 그때 채워 넣으면 된다 |
+| `tests/domshim.js` `tests/dashboard_probe.js` | `dashboard/app.js` 를 **node 안에서 실제로 실행**시키는 최소 DOM 셰이드와 측정 하네스. npm 의존성 0(node 표준 라이브러리만). 소스 문자열만 보는 테스트가 "이름은 남기고 동작만 뒤집는" 회귀를 못 잡아서 만든 것이다 — 이 하네스를 만들 때 쓴 뮤테이션 18건은 18/18을 잡는다. **다만 이것을 전면 커버리지로 읽지 말 것**: 독립적으로 만든 뮤테이션 32건으로 다시 재면 24/32다. 지금 **안 잡히는 것이 확인된 자리** — ① `stampLatest` 의 다계열 최신 인덱스 선택(`Math.max` → `Math.min`) ② `baseAxes` 의 refmt 를 조건 없이 항상 적용 ③ 오버레이 닫을 때 `body.style.overflow` 미복구 ④ `aria-current` 미설정 ⑤ 뒤에 오는 CSS 규칙으로 `:focus-visible` outline 무력화(테스트가 첫 규칙만 본다) ⑥ `stampLatest` 의 중복 표기 가드 제거 ⑦ index.html 의 본문 바로가기 링크 삭제(마크업 검사 없음) ⑧ 모션 축소 블록 뒤에서 `scroll-behavior: smooth` 재활성화. 이 여덟은 지금 코드에서는 정상이지만 **회귀가 조용히 통과한다** — 손댈 때 테스트를 먼저 붙일 것. app.js가 새 DOM API를 쓰면 셰이드가 먼저 터지므로 그때 채워 넣으면 된다 |
 | `tests/requirements.txt` | 테스트 전용 의존성(pytest). `pipeline/requirements.txt` 와 분리. **node 는 여기 없다** — `test_dashboard_ux.py` 가 쓰는 node 는 GitHub 호스팅 러너 기본 탑재분이며, 없으면 skip 이 아니라 **실패**한다(조용히 건너뛰면 막으려던 회귀가 되살아난다) |
 | `pytest.ini` | `testpaths = tests` |
 | `dashboard/index.html` `app.js` `style.css` | 정적 대시보드 (섹션 14개, 라이트/다크, 기간 필터, 마을 홈+관문) |
