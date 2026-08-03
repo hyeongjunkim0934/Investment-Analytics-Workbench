@@ -451,21 +451,24 @@ def test_village_fx_people_paths_all_exist():
     assert not missing, f"정의되지 않은 도로를 걷는 행인: {sorted(missing)}"
 
 
-def test_village_video_disables_svg_fx_and_respects_reduced_motion():
-    """영상 지도가 켜지면 SVG 모션은 꺼지고, reduced-motion 이면 영상을 시도조차 않는다.
+def test_theme_transition_disables_svg_fx_and_respects_reduced_motion():
+    """전환 영상이 재생되는 동안 SVG 모션은 꺼지고, reduced-motion 이면 즉시 전환한다.
 
-    움직임이 겹치면(영상 속 새 + SVG 새) 어색하고, SMIL 과 달리 영상은 사용자
-    접근성 설정을 코드가 직접 확인해야 한다.
+    움직임이 겹치면(영상 속 물결 + SVG 물결) 어색하고, SMIL 과 달리 영상은 사용자
+    접근성 설정을 코드가 직접 확인해야 한다. 어느 시점에 실패해도 applyTheme 는
+    반드시 호출돼야 한다(테마 토글이 조용히 무시되면 안 된다).
     """
     css = (ROOT / "dashboard" / "style.css").read_text(encoding="utf-8")
     assert re.search(r"\.has-video \.village-fx\s*\{\s*display:\s*none", css), (
         "영상 재생 중 SVG 모션을 끄는 규칙(.has-video .village-fx)이 없습니다"
     )
     js = _app_js()
-    mount = js.split("function mountVillageVideo")[1].split("\nfunction ")[0]
-    assert "prefers-reduced-motion" in mount, (
-        "mountVillageVideo 가 reduced-motion 을 확인하지 않습니다"
+    fn = js.split("function playThemeTransition")[1].split("\nfunction ")[0]
+    assert "prefers-reduced-motion" in fn, (
+        "playThemeTransition 이 reduced-motion 을 확인하지 않습니다"
     )
+    for evt in ("playing", "ended", "error"):
+        assert f'"{evt}"' in fn, f"전환 영상의 {evt} 이벤트 처리가 없습니다"
 
 
 def test_hidden_attribute_is_not_defeated_by_display_rules():

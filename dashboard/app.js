@@ -1111,19 +1111,24 @@ function fnv1a(str) {
 
 /* 건물 ↔ 화면. x/y 는 지도 이미지 기준 백분율(좌상단 0,0).
    target 하나면 바로 그 화면으로, menu 가 있으면 클릭 시 하위 메뉴를 연다.
-   soon 은 아직 없는 화면(눌러도 아무 일 없음). */
+   soon 은 아직 없는 화면(눌러도 아무 일 없음).
+
+   2026-08-03 지도 교체(사용자 Gemini 영상 기반). 새 지도에는 성채·망루가 없어
+   두 구역을 재배정했다: 리스크 → 종탑(교회 — 경보의 종), 이벤트 → 여관(소식이
+   모이는 곳). 언덕 위 탑은 밤에만 서서히 나타나는 영상 속 연출로 남겨 두었고
+   클릭 대상이 아니다. 좌표는 새 지도(1280×720) 실측. */
 const VILLAGE_ZONES = [
-  { key: "watchtower", x: 24.1, y: 16.3, name: "망루", sub: "리스크", target: "risk" },
-  { key: "observatory", x: 59.9, y: 22.5, name: "관천대", sub: "관계분석", target: "panel" },
-  { key: "castle", x: 48.6, y: 21.9, name: "성채", sub: "이벤트", target: "events" },
-  { key: "post", x: 48.9, y: 40.0, name: "중앙 우체국", sub: "오늘의 개요", target: "overview" },
-  { key: "market", x: 35.4, y: 51.3, name: "저잣거리", sub: "시장 시세 7종", menu: [
+  { key: "belltower", x: 83.6, y: 65.0, name: "종탑", sub: "리스크", target: "risk" },
+  { key: "observatory", x: 59.5, y: 20.6, name: "관천대", sub: "관계분석", target: "panel" },
+  { key: "inn", x: 31.3, y: 30.6, name: "여관", sub: "이벤트", target: "events" },
+  { key: "post", x: 48.6, y: 42.8, name: "중앙 우체국", sub: "오늘의 개요", target: "overview" },
+  { key: "market", x: 36.6, y: 54.9, name: "저잣거리", sub: "시장 시세 7종", menu: [
       ["rates", "금리"], ["irs", "IRS"], ["credit", "크레딧"], ["fx", "FX"],
       ["inflation", "물가"], ["acwi", "ACWI"], ["macro", "매크로"]] },
-  { key: "granary", x: 80.4, y: 35.0, name: "곳간", sub: "자산배분", target: "alloc" },
-  { key: "trading", x: 65.7, y: 75.0, name: "교역소", sub: "환헤지", target: "hedge" },
-  { key: "archive", x: 20.6, y: 68.8, name: "서고", sub: "카탈로그", target: "catalog" },
-  { key: "workshop", x: 11.3, y: 45.6, name: "공방", sub: "모델 랩 — 준비 중", soon: true },
+  { key: "granary", x: 81.0, y: 31.8, name: "곳간", sub: "자산배분", target: "alloc" },
+  { key: "trading", x: 67.8, y: 73.9, name: "교역소", sub: "환헤지", target: "hedge" },
+  { key: "archive", x: 24.8, y: 71.1, name: "서고", sub: "카탈로그", target: "catalog" },
+  { key: "workshop", x: 10.8, y: 48.9, name: "공방", sub: "모델 랩 — 준비 중", soon: true },
 ];
 
 const SECTION_IDS = ["overview", "risk", "events", "panel", "hedge", "alloc", "rates",
@@ -1188,57 +1193,67 @@ function villageFxMarkup() {
     </g>`;
   return `
   <defs>
-    <path id="fx-road1" d="M 195,390 C 270,412 350,422 430,412 C 452,408 466,406 476,408"/>
-    <path id="fx-road2" d="M 505,425 C 560,433 615,430 660,422 C 680,419 692,422 702,428"/>
-    <path id="fx-road3" d="M 615,252 C 655,238 700,232 745,236 C 770,239 786,246 798,252"/>
-    <path id="fx-road4" d="M 895,308 C 945,330 1000,348 1045,340 C 1070,334 1088,320 1098,306"/>
-    <path id="fx-road5" d="M 360,585 C 430,605 500,600 555,575 C 590,558 615,545 635,535"/>
-    <path id="fx-road6" d="M 825,592 C 860,612 900,632 940,650"/>
+    <path id="fx-road1" d="M 190,385 C 260,405 330,410 400,402 C 425,398 445,395 458,395"/>
+    <path id="fx-road2" d="M 505,412 C 560,420 600,430 625,455 C 638,468 645,480 650,492"/>
+    <path id="fx-road3" d="M 628,308 C 665,288 705,272 748,268 C 762,267 770,267 776,268"/>
+    <path id="fx-road4" d="M 850,278 C 905,285 955,288 1000,278 C 1015,274 1028,268 1038,260"/>
+    <path id="fx-road5" d="M 340,540 C 420,560 500,555 560,530 C 590,518 615,505 635,498"/>
+    <path id="fx-road6" d="M 890,555 C 940,558 985,548 1020,528 C 1032,520 1042,512 1048,504"/>
     <radialGradient id="fx-cloud-g">
       <stop offset="0" stop-color="#000" stop-opacity=".09"/>
       <stop offset="1" stop-color="#000" stop-opacity="0"/>
     </radialGradient>
+    <radialGradient id="fx-fire-g">
+      <stop offset="0" stop-color="#ffb347" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#ffb347" stop-opacity="0"/>
+    </radialGradient>
   </defs>
   <g class="fx-water">
     <!-- 경로는 이미지에서 물 색 픽셀을 검출해 뽑은 실측 중심선.
-         끊긴 자리(나무다리 y≈285-325 · 돌다리 y≈505-575)는 다리 그림 위로
+         끊긴 자리(윗다리 y≈265-300 · 돌다리 y≈490-540)는 다리 그림 위로
          점선이 지나가지 않게 일부러 비워 둔 구간이다 -->
-    <path d="M 975,166 C 980,192 972,214 950,234 C 928,252 902,262 891,278"/>
-    <path d="M 896,328 C 890,342 906,354 924,368 C 942,382 950,390 946,404 C 940,420 936,430 928,444 C 918,460 904,472 890,482 C 882,490 874,496 868,504"/>
-    <path d="M 690,575 C 675,602 658,628 640,660 C 624,686 602,706 562,722"/>
-    <path d="M 702,600 C 716,626 730,652 740,682 C 752,704 776,716 806,728"/>
-    <path class="slow" transform="translate(4,3)" d="M 975,166 C 980,192 972,214 950,234 C 928,252 902,262 891,278"/>
-    <path class="slow" transform="translate(4,3)" d="M 896,328 C 890,342 906,354 924,368 C 942,382 950,390 946,404 C 940,420 936,430 928,444 C 918,460 904,472 890,482"/>
-    <path class="slow" transform="translate(4,3)" d="M 690,575 C 675,602 658,628 640,660 C 624,686 602,706 562,722"/>
+    <path d="M 918,136 C 906,155 905,170 911,185 C 908,200 897,210 872,222 C 850,232 834,244 826,258"/>
+    <path d="M 827,304 C 833,320 850,334 860,348 C 866,362 867,376 864,390 C 856,404 843,418 828,430 C 812,442 795,454 777,466 C 765,474 760,480 759,488"/>
+    <path d="M 662,545 C 630,560 612,580 607,600 C 602,616 590,630 574,644 C 556,658 530,672 508,682 C 498,687 492,690 486,693"/>
+    <path class="slow" transform="translate(4,3)" d="M 918,136 C 906,155 905,170 911,185 C 908,200 897,210 872,222 C 850,232 834,244 826,258"/>
+    <path class="slow" transform="translate(4,3)" d="M 827,304 C 833,320 850,334 860,348 C 866,362 867,376 864,390 C 856,404 843,418 828,430 C 812,442 795,454 777,466"/>
+    <path class="slow" transform="translate(4,3)" d="M 662,545 C 630,560 612,580 607,600 C 602,616 590,630 574,644 C 556,658 530,672 508,682"/>
+  </g>
+  <g class="fx-fire">
+    <!-- 저잣거리 모닥불 — 그림 속 불꽃 위에 은은한 온기 맥동(낮밤 공통) -->
+    <circle cx="456" cy="385" r="26" fill="url(#fx-fire-g)">
+      <animate attributeName="opacity" values=".5;1;.65;1;.5" dur="2.6s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="22;28;24;29;22" dur="2.6s" repeatCount="indefinite"/>
+    </circle>
   </g>
   <g class="fx-cloud">
-    <ellipse rx="240" ry="130" fill="url(#fx-cloud-g)">
+    <ellipse rx="230" ry="120" fill="url(#fx-cloud-g)">
       <animateMotion dur="95s" repeatCount="indefinite"
-        path="M -300,220 C 200,150 550,260 850,190 C 1150,130 1450,230 1700,180 C 1400,260 600,140 -300,220"/>
+        path="M -280,200 C 180,140 500,240 790,175 C 1070,120 1350,215 1580,165 C 1300,240 550,130 -280,200"/>
     </ellipse>
   </g>
   <g class="fx-birds">
-    ${bird("M -40,150 C 300,95 700,160 1000,95 C 1200,60 1350,115 1430,95", 58, -12)}
-    ${bird("M 1430,120 C 1100,70 700,140 400,80 C 200,50 60,110 -50,90", 72, -35)}
-    ${bird("M -40,110 C 350,60 800,120 1430,70", 49, -44)}
+    ${bird("M -40,130 C 280,85 650,140 930,85 C 1120,55 1260,105 1330,90", 58, -12)}
+    ${bird("M 1330,110 C 1020,65 650,130 370,75 C 190,48 60,100 -50,85", 72, -35)}
+    ${bird("M -40,100 C 330,55 750,110 1330,65", 49, -44)}
   </g>
   <g class="fx-fireflies">
-    ${fly(455, 430, 13, -3)}${fly(625, 395, 15, -8)}${fly(838, 470, 12, -5)}
-    ${fly(305, 555, 16, -11)}${fly(950, 585, 14, -1)}${fly(1085, 330, 15, -7)}
+    ${fly(470, 400, 13, -3)}${fly(622, 372, 15, -8)}${fly(310, 542, 16, -11)}
+    ${fly(866, 552, 14, -1)}${fly(1058, 502, 12, -5)}${fly(1040, 288, 15, -7)}
   </g>
   <g class="fx-people">
     ${person("fx-road1", 46, -9, "#8a4a2f")}
-    ${person("fx-road2", 40, -22, "#4f6b8a")}
-    ${person("fx-road3", 36, -5, "#6b7d4a")}
-    ${person("fx-road4", 30, -17, "#7d4a6b")}
+    ${person("fx-road2", 38, -22, "#4f6b8a")}
+    ${person("fx-road3", 28, -5, "#6b7d4a")}
+    ${person("fx-road4", 32, -17, "#7d4a6b")}
     ${person("fx-road5", 52, -30, "#5a5a5a")}
-    ${person("fx-road6", 28, -12, "#a05c33")}
+    ${person("fx-road6", 30, -12, "#a05c33")}
   </g>
   <g class="fx-leaves">
-    ${leaf("M 320,320 c 40,60 -20,120 30,180 c 40,60 -10,120 30,170", 17, -4, "#7c8f4e")}
-    ${leaf("M 520,220 c 30,70 -25,130 20,200 c 35,65 -5,130 25,180", 21, -12, "#8a9b55")}
-    ${leaf("M 1130,420 c 25,55 -20,100 15,160 c 30,55 0,110 20,160", 15, -7, "#b7863f")}
-    ${leaf("M 240,430 c 35,55 -15,110 25,170 c 30,55 -5,100 20,150", 19, -15, "#7c8f4e")}
+    ${leaf("M 300,300 c 38,56 -18,112 28,168 c 38,56 -10,112 28,158", 17, -4, "#7c8f4e")}
+    ${leaf("M 560,180 c 28,65 -23,122 19,187 c 33,61 -5,122 23,168", 21, -12, "#8a9b55")}
+    ${leaf("M 1150,380 c 23,51 -19,94 14,150 c 28,51 0,103 19,150", 15, -7, "#b7863f")}
+    ${leaf("M 220,420 c 33,51 -14,103 23,159 c 28,51 -5,94 19,140", 19, -15, "#7c8f4e")}
   </g>`;
 }
 
@@ -1247,57 +1262,65 @@ function buildVillageFx(frame) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("id", "village-fx");
   svg.setAttribute("class", "village-fx");
-  svg.setAttribute("viewBox", "0 0 1376 768");
+  svg.setAttribute("viewBox", "0 0 1280 720");   // 지도 원본 픽셀 (영상 프레임과 동일)
   svg.setAttribute("preserveAspectRatio", "none");
   svg.setAttribute("aria-hidden", "true");
   svg.innerHTML = villageFxMarkup();
   $("#village-map").after(svg);
 }
 
-/* ---- 영상 지도 (선택) — assets/village-{day,night}.mp4 가 있으면 정지 지도 대신 재생 ----
-   업로드만 하면 켜진다: 파일이 없으면 error 이벤트로 조용히 물러나 정지 지도 + SVG 모션이
-   그대로 남는다. 영상이 켜지면 SVG 모션은 CSS(.has-video)가 끈다 — 움직임이 겹치면 어색하다.
-   정지 이미지가 밑에 계속 깔려 있으므로 영상 로딩 중에도 화면이 비지 않는다.
-   요구 조건은 assets/README.md — 특히 구도가 정지 지도와 같아야 클릭 좌표가 맞는다.
-   reduced-motion 사용자는 영상 자체를 시도하지 않는다. */
-/* mp4(H.264, 어디서나 재생) 먼저, 없거나 코덱이 없으면 webm(VP9, 오픈 코덱) — 이미지의
-   VILLAGE_EXTS 와 같은 사다리다. 파일이 없는 것과 코덱이 없는 것 모두 error 로 온다. */
-const VILLAGE_VIDEO_EXTS = ["mp4", "webm"];
+/* ---- 테마 전환 연출 — 마을에 밤이 내리는(걷히는) 영상 -------------------------------
+   정지 지도 두 장(낮/밤)은 사용자가 만든 전환 영상의 첫/끝 프레임에서 뽑았다. 그래서
+   영상 첫 프레임 = 현재 지도, 끝 프레임 = 목표 지도가 항상 성립하고, 이 함수는 그 사이를
+   재생으로 메운다: 현재 지도 위에 영상을 깔고, 재생이 실제로 시작된 순간 밑의 테마를
+   바꾼 뒤, 끝나면 영상을 걷는다 — 어느 시점에 실패해도 즉시 전환으로 떨어질 뿐이다.
+   루프가 필요 없으므로 이음새 문제도 없다. dusk = 낮→밤, dawn = 밤→낮(역재생 인코딩본).
+   reduced-motion 사용자는 영상 없이 즉시 전환한다. */
+const THEME_VIDEO = { dark: "assets/village-dusk.mp4", light: "assets/village-dawn.mp4" };
+const THEME_VIDEO_RATE = 2.5;            // 원본 10초 → 4초 연출
 
-function villageVideoUrl(ext) {
-  return `assets/village-${currentTheme() === "dark" ? "night" : "day"}.${ext}`;
+function preloadThemeVideos() {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (preloadThemeVideos.done) return;
+  preloadThemeVideos.done = true;
+  Object.values(THEME_VIDEO).forEach((src) => {
+    const v = document.createElement("video");
+    v.preload = "auto";
+    v.muted = true;
+    v.src = src;                          // DOM 에 넣지 않는다 — 캐시 워밍용
+  });
 }
 
-function mountVillageVideo(frame) {
+function playThemeTransition(nextTheme, applyTheme) {
+  const frame = $("#village-frame");
+  const cinematic = frame && !$("#village").hidden && !$("#village-map").hidden &&
+    !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!cinematic) { applyTheme(); return; }
+
   frame.querySelectorAll(".village-video").forEach((n) => n.remove());
-  frame.classList.remove("has-video");
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   const v = document.createElement("video");
   v.className = "village-video";
   v.muted = true;
-  v.loop = true;
-  v.autoplay = true;
   v.playsInline = true;
-  v.setAttribute("muted", "");           // 일부 브라우저는 속성이 있어야 자동재생을 허용한다
+  v.setAttribute("muted", "");
   v.setAttribute("playsinline", "");
   v.setAttribute("aria-hidden", "true");
-  v.preload = "auto";
-  v.addEventListener("canplay", () => {
-    frame.classList.add("has-video");
-    v.play().catch(() => {});            // 자동재생이 거부되면 정지 지도가 그대로 보인다
+  let applied = false;
+  const apply = () => { if (!applied) { applied = true; applyTheme(); } };
+  const done = () => { apply(); v.remove(); frame.classList.remove("has-video"); };
+  /* 영상이 늦으면(느린 네트워크·자동재생 거부) 연출을 포기하고 즉시 전환 */
+  const guard = setTimeout(done, 700);
+  v.addEventListener("playing", () => {
+    clearTimeout(guard);
+    frame.classList.add("has-video");     // 영상 표시 + SVG 모션 숨김 (.has-video CSS)
+    apply();                              // 영상이 현재 모습을 덮은 뒤에 밑을 갈아끼운다
   });
-  let tried = 0;
-  v.addEventListener("error", () => {
-    tried += 1;
-    if (tried < VILLAGE_VIDEO_EXTS.length) {
-      v.src = villageVideoUrl(VILLAGE_VIDEO_EXTS[tried]);
-      return;
-    }
-    v.remove();
-    frame.classList.remove("has-video");
-  });
-  v.src = villageVideoUrl(VILLAGE_VIDEO_EXTS[0]);
+  v.addEventListener("ended", done);
+  v.addEventListener("error", () => { clearTimeout(guard); done(); });
+  v.src = THEME_VIDEO[nextTheme === "dark" ? "dark" : "light"];
+  v.playbackRate = THEME_VIDEO_RATE;
   $("#village-map").after(v);
+  v.play().catch(() => { clearTimeout(guard); done(); });
 }
 
 /* 건물 입장 연출 — 클릭한 건물을 향해 지도를 확대하며 페이드, 끝나면 그 화면으로.
@@ -1340,12 +1363,10 @@ function renderVillage() {
        그대로 대신한다. */
     img.hidden = true;
     frame.querySelectorAll(".vz, .vz-menu, .village-fx, .village-video").forEach((n) => n.remove());
-    frame.classList.remove("has-video");
     $("#village-missing").hidden = false;
   };
-  img.onload = () => buildVillageFx(frame);
+  img.onload = () => { buildVillageFx(frame); preloadThemeVideos(); };
   img.src = villageImgUrl();
-  mountVillageVideo(frame);
 
   VILLAGE_ZONES.forEach((z) => {
     const btn = el("button", {
@@ -3505,9 +3526,13 @@ function bindTheme() {
   if (saved) document.documentElement.setAttribute("data-theme", saved);
   btn.addEventListener("click", () => {
     const next = currentTheme() === "dark" ? "light" : "dark";
-    document.documentElement.setAttribute("data-theme", next);
-    localStorage.setItem("iaw-theme", next);
-    renderAll();
+    /* 마을이 보이면 밤이 내리는(걷히는) 영상이 현재 화면을 덮은 "뒤에" 실제 테마를
+       바꾼다 — 영상 첫 프레임이 곧 현재 지도라 이음새가 없다. 그 외에는 즉시 전환. */
+    playThemeTransition(next, () => {
+      document.documentElement.setAttribute("data-theme", next);
+      localStorage.setItem("iaw-theme", next);
+      renderAll();
+    });
   });
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
     if (!localStorage.getItem("iaw-theme")) renderAll();
