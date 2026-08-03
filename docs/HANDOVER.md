@@ -127,6 +127,10 @@ Cloudflare Access 무료 50인으로 이전 시), 공개 페이지에는 태극�
   두었고 `test_gate_states_it_is_not_access_control` 이 그 문구를 지킨다.
 - 좁은 화면(≤720px)에서는 지도를 감추고 `#village-list` 텍스트 목록으로 떨어진다. 이미지가
   없을 때도 같은 목록으로 모든 화면에 도달 가능하다.
+- 지도 파일은 `webp → png → jpg` 순으로 찾는다(`VILLAGE_EXTS`). Gemini 가 주는 것은 PNG 이고
+  사용자의 갱신 경로는 변환 도구가 없는 GitHub 웹 업로드라, webp 만 받으면 그 단계에서 막힌다.
+- 상단 메뉴 맨 앞에 **마을** 링크를 넣었고, `.nav` 에 `min-width:0` 을 더해 좁은 창에서
+  마지막 메뉴가 잘리던 것을 고쳤다(`overflow-x:auto` 만으로는 flex 항목이 줄지 않는다).
 
 **남은 것:** 사용자가 `dashboard/assets/village-day.webp` · `village-night.webp` 두 장을 커밋
 (방법은 `dashboard/assets/README.md`). 그 뒤 실제 지도 위에서 9개 좌표를 눈으로 맞출 것 —
