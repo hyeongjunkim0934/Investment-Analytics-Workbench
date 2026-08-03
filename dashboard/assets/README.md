@@ -10,6 +10,11 @@
 | `village-day.webp` | 마을 지도 — 낮 (라이트 테마) |
 | `village-night.webp` | 마을 지도 — 밤 (다크 테마) |
 
+**확장자는 `.webp` → `.png` → `.jpg` 순으로 찾는다**(`VILLAGE_EXTS` in `app.js`). 변환 도구가
+없으면 Gemini 가 준 **PNG 를 그대로 `village-day.png`·`village-night.png` 로 올려도 뜬다.**
+다만 webp 가 아니면 앞 후보를 찾다가 콘솔에 404 가 한 줄 남고 파일이 서너 배 무겁다 —
+이 저장소는 아직 LFS 가 아니라 이력이 그만큼 불어난다. 여유가 되면 webp 로 올릴 것.
+
 **두 장은 구도·건물 위치가 동일해야 한다.** 클릭 영역(`VILLAGE_ZONES` in `app.js`)이
 비율 좌표로 두 장에 공통 적용되므로, 배치가 어긋나면 밤 테마에서 클릭이 빗나간다.
 

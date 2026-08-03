@@ -1134,21 +1134,35 @@ function underlyingSection(hash) {
   return SECTION_IDS.includes(hash) ? hash : null;
 }
 
-function villageImgUrl() {
-  return `assets/village-${currentTheme() === "dark" ? "night" : "day"}.webp`;
+/* 지도 파일 후보. webp 가 정석(용량)이지만 png 도 받는다 — 변환 도구 없이 GitHub 웹으로
+   바로 올릴 수 있어야 하기 때문이다. 앞에서부터 시도하고 전부 실패하면 안내 문구를 띄운다. */
+const VILLAGE_EXTS = ["webp", "png", "jpg"];
+
+function villageImgUrl(ext = VILLAGE_EXTS[0]) {
+  return `assets/village-${currentTheme() === "dark" ? "night" : "day"}.${ext}`;
 }
 
 function renderVillage() {
   const img = $("#village-map");
   const frame = $("#village-frame");
-  const url = villageImgUrl();
-  document.documentElement.style.setProperty("--village-img", `url("${url}")`);
+  document.documentElement.style.setProperty("--village-img", `url("${villageImgUrl()}")`);
 
   frame.querySelectorAll(".vz, .vz-menu").forEach((n) => n.remove());
   img.hidden = false;
   $("#village-missing").hidden = true;
-  img.onerror = () => { img.hidden = true; $("#village-missing").hidden = false; };
-  img.src = url;
+  let tried = 0;
+  img.onerror = () => {
+    tried += 1;
+    if (tried < VILLAGE_EXTS.length) {
+      const url = villageImgUrl(VILLAGE_EXTS[tried]);
+      document.documentElement.style.setProperty("--village-img", `url("${url}")`);
+      img.src = url;
+      return;
+    }
+    img.hidden = true;
+    $("#village-missing").hidden = false;
+  };
+  img.src = villageImgUrl();
 
   VILLAGE_ZONES.forEach((z) => {
     const btn = el("button", {
