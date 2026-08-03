@@ -68,6 +68,17 @@ secNodes.catalog.append(elem("input", "catalog-search"), elem("span", "catalog-c
 ["events-headline", "events-filters", "events-timeline"].forEach((id) => secNodes.events.append(elem("div", id)));
 secNodes.events.append(elem("details", "events-rules"));
 
+/* 환헤지 뼈대 — index.html 의 #hedge 안 구조를 그대로 흉내 낸다.
+   renderHedge() 가 만지는 컨테이너가 하나라도 없으면 그 자리에서 죽으므로,
+   이 목록 자체가 index.html 과의 계약이다. */
+["hedge-headline", "hedge-views", "hedge-lead", "hedge-matrix",
+ "hedge-curve-card", "hedge-bt-card", "hedge-cost-card", "hedge-mtm-card"]
+  .forEach((id) => secNodes.hedge.append(elem("div", id, "card")));
+secNodes.hedge.append(elem("details", "hedge-method"));
+
+/* 매크로 뼈대 */
+secNodes.macro.append(elem("div", "macro-grid"));
+
 /* ---------- app.js 를 vm 안에서 통째로 실행 ---------- */
 const sandbox = {
   document: DOC,
@@ -106,7 +117,8 @@ vm.createContext(sandbox);
 const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "sectionHasRangedChart",
   "routeView", "openOverlayShell", "hideDetail", "overlayBackdrop", "renderCatalog",
   "bandInk", "relLum", "deltaText", "factorRow", "renderEvents", "renderMetaLine",
-  "cardScaffold", "el", "registry", "DATA", "BANDS", "SECTION_IDS", "palette"];
+  "cardScaffold", "el", "registry", "DATA", "BANDS", "SECTION_IDS", "palette",
+  "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -318,6 +330,172 @@ safe("footerWarnings", () => {
     summaryText: det ? (det.querySelector("summary") || {}).textContent : null,
     buildLineText: bl.textContent,
   };
+});
+
+/* ====== P10~P13. 환헤지 — 참고치·부호·τ·만기 표기가 전부 데이터에서 나오는가 =========
+   실데이터와 **일부러 다른** 값을 태운다. 화면이 숫자나 부호 방향을 문자열로 박아 두면
+   (예전에 실제로 "채권 88~102% · 주식 10~30%", "2008년 최악의 달", 굵은 행 9개월이
+   그랬다) 여기서 옛 숫자가 그대로 나와 잡힌다. 벤더 값은 한 톨도 들어가지 않는다. */
+const HEDGE_FIXTURE = (() => {
+  /* 채권 곡선: 최소가 50% 지점(index 10) · 주식 곡선: 최소가 15% 지점(index 3, 유일) */
+  const bond = Array.from({ length: 21 }, (_, i) => 10 + Math.abs(i - 10) * 0.5);
+  const equity = Array.from({ length: 21 }, (_, i) => 13 + Math.abs(i - 3) * 0.3);
+  const mk = (y, m) => Math.floor(Date.UTC(y, m, 1) / 1000) - 86400;   // 전달 말일
+  return {
+    asof: "2030-01-31", default_tenor_m: 6,
+    matrix: [
+      { c: "USD", name: "달러", vol_e: 9.1, mvh: 71, corr: -0.4, cost_12m: -0.5,
+        cost_curve: { "3M": -0.6, "6M": -0.55, "12M": -0.5 }, src: "실측(HP)",
+        bond_kind: "실지수", active: true },
+      { c: "JPY", name: "엔", vol_e: 12.3, mvh: 118, corr: 0.2, cost_12m: 3.25,
+        cost_curve: { "3M": 3.4, "6M": 3.3, "12M": 3.25 }, src: "실측(HP)",
+        bond_kind: "합성(5y 커브)", active: true },
+      { c: "CNY", name: "위안", vol_e: 8.0, mvh: null, corr: null, cost_12m: null,
+        cost_curve: null, src: "데이터 필요", bond_kind: null, active: false },
+    ],
+    curves: { bond, equity },
+    backtest: { "테스트 자산": { period: "2010-01 ~ 2029-12",
+      rows: [{ h: 0, cagr: 1.1, vol: 2.2, mdd: -3.3 }, { h: 50, cagr: 1.2, vol: 2.1, mdd: -3.1 },
+             { h: 100, cagr: 1.3, vol: 2.0, mdd: -4.4 }] } },
+    /* 최저(= 가장 많이 낸 달)는 2021-07 */
+    cost_hist_usd: { t: [mk(2021, 5), mk(2021, 6), mk(2021, 7), mk(2021, 8)],
+                     v: [0.5, -0.2, -5.5, 0.1] },
+    cost_stats: { mean: 0.1, now: -0.2, min: -5.5 },
+    mtm: { sigma_ds_3m: 0.4, worst_ds: 3.3, worst_date: "2019-03-31", corr_ds_e: -0.1 },
+    sim: { labels: ["e_USD", "b_USD", "eq", "ds_USD", "e_JPY", "b_JPY"],
+           cov: Array.from({ length: 6 }, (_, i) => Array.from({ length: 6 }, (_, j) => (i === j ? 0.01 : 0.001))),
+           sample: "2010-01 ~ 2029-12", n_months: 240 },
+    acct_model: ["① 유효이자 — 상수"], limits: "한계 문장",
+  };
+})();
+
+safe("hedgeScreen", () => {
+  P.DATA.hedge = HEDGE_FIXTURE;
+  P.DATA.meta = { last_observation: "2030-01-31" };
+  P.renderHedge();
+  const txt = (id) => (DOC.getElementById(id) || { textContent: "" }).textContent;
+  const rowsOf = (id) => DOC.getElementById(id).querySelectorAll("tr");
+  const mxRows = rowsOf("hedge-matrix");
+  const cell = (row, i) => row.children[i].textContent;
+  const jpy = mxRows.find((r) => /엔 \(/.test(r.textContent));
+  const usd = mxRows.find((r) => /달러 \(/.test(r.textContent));
+  const cny = mxRows.find((r) => /위안/.test(r.textContent));
+  const mtmRows = rowsOf("hedge-mtm-card");
+  const boldRow = mtmRows.find((r) => /700/.test(r.getAttribute("style") || ""));
+  return {
+    signKey: P.COST_SIGN_KEY,
+    headline: txt("hedge-headline"),
+    views: txt("hedge-views"),
+    lead: txt("hedge-lead"),
+    matrixHeader: mxRows[0].children.map((c) => c.textContent),
+    /* 부호 방향은 **글자**로 나와야 한다 — 색만으로는 전달되지 않고, 뒤집히면 여기서 잡힌다 */
+    jpyCost: jpy ? cell(jpy, 4) : null,
+    usdCost: usd ? cell(usd, 4) : null,
+    cnyClass: cny ? cny.className : null,
+    cnyStyle: cny ? cny.getAttribute("style") : null,
+    cnyText: cny ? cny.textContent : null,
+    curveSub: DOC.getElementById("hedge-curve-card").querySelector(".card-sub").textContent,
+    costSub: DOC.getElementById("hedge-cost-card").querySelector(".card-sub").textContent,
+    costNote: txt("hedge-cost-card"),
+    mtmHeader: mtmRows[0].children.map((c) => c.textContent),
+    /* τ 열 — 만기 ÷ 2 (년). 3/6/9/12 개월 → 0.125/0.250/0.375/0.500 */
+    mtmTau: mtmRows.slice(1).map((r) => cell(r, 1)),
+    mtmWorst: mtmRows.slice(1).map((r) => cell(r, 3)),
+    boldRowText: boldRow ? boldRow.textContent : null,
+    method: txt("hedge-method"),
+    fxLinks: DOC.getElementById("hedge-matrix").querySelectorAll("a").map((a) => a.getAttribute("href")),
+  };
+});
+
+/* 필수 필드가 빠진 payload 로도 "undefined" 를 화면에 찍지 않는다 */
+safe("hedgeMissingFields", () => {
+  const thin = JSON.parse(JSON.stringify(HEDGE_FIXTURE));
+  delete thin.default_tenor_m; delete thin.curves; delete thin.mtm;
+  delete thin.cost_hist_usd; delete thin.cost_stats; delete thin.backtest;
+  P.DATA.hedge = thin;
+  let threw = null;
+  try { P.renderHedge(); } catch (e) { threw = String(e && e.message || e); }
+  const all = DOC.getElementById("hedge").textContent;
+  const bad = (all.match(/[^\s]{0,18}(undefined|NaN)[^\s]{0,18}/g) || []).slice(0, 6);
+  P.DATA.hedge = HEDGE_FIXTURE;
+  P.renderHedge();
+  return { threw, hasUndefined: bad.length > 0, where: bad };
+});
+
+safe("hedgeSim", () => {
+  P.DATA.hedge = HEDGE_FIXTURE;
+  shim.location.hash = "#hedge-sim";
+  P.openHedgeSim();
+  const ov = DOC.getElementById("detail-overlay");
+  const inputs = ov.querySelectorAll("input");
+  const rows = P.hedgeRows(HEDGE_FIXTURE);
+  const gridHead = ov.querySelector(".grid-inp").querySelectorAll("tr")[0];
+  const g = (id) => { const n = DOC.getElementById(id); return n ? n.textContent : null; };
+  const tenorInput = DOC.getElementById("hg-tenor");
+  /* 셰이드는 `value` 를 속성으로만 들고 있어 `.value` 프로퍼티가 비어 있다.
+     시뮬레이터를 실제로 굴리려면 프로퍼티를 직접 채운다 — 브라우저에서 사용자가
+     타이핑한 것과 같은 상태다. 금액은 검산하기 쉬운 수로 넣는다. */
+  const setv = (id, v) => { const n = DOC.getElementById(id); if (n) n.value = String(v); };
+  setv("hg-a-USD_b", 4000); setv("hg-q-USD_b", 70); setv("hg-h-USD_b", 90);
+  setv("hg-a-USD_e", 2000); setv("hg-h-USD_e", 30);
+  setv("hg-a-JPY_b", 2000); setv("hg-q-JPY_b", 100); setv("hg-h-JPY_b", 100);
+  setv("hg-a-CNY_b", 0); setv("hg-q-CNY_b", 100); setv("hg-h-CNY_b", 100);
+  setv("hg-tenor", 6);
+  tenorInput.dispatchEvent({ type: "input", target: tenorInput });
+  const read = () => ({
+    tenor: tenorInput.value,
+    costHead: gridHead.children[4].textContent,
+    econ: g("hg-econ"), acct: g("hg-acct"), carry: g("hg-carry"),
+    econAmt: g("hg-econ-amt"), acctAmt: g("hg-acct-amt"),
+    usdCost: g("hg-c-USD_b"), jpyCost: g("hg-c-JPY_b"),
+    usdCarry: g("hg-k-USD_b"), span: g("hg-span"),
+  });
+  const atDefault = read();
+  /* 만기를 바꾸면 헤지비용 열 제목·값이 함께 따라와야 한다 */
+  tenorInput.value = "12";
+  tenorInput.dispatchEvent({ type: "input", target: tenorInput });
+  const at12 = read();
+  /* 반올림이 실제로 드러나는 규모에서 한 번 더 읽는다 — 합계가 커지면 「반올림한 σ」와
+     「원값 σ」의 곱이 억 단위에서 갈라진다. 화면 문구와 산식이 어긋나면 여기서 잡힌다. */
+  setv("hg-tenor", 6);
+  setv("hg-a-USD_b", 500000); setv("hg-a-USD_e", 250000); setv("hg-a-JPY_b", 250000);
+  tenorInput.dispatchEvent({ type: "input", target: tenorInput });
+  const atBig = read();
+  const out = {
+    total: inputs.length,
+    labelled: inputs.filter((i) => (i.getAttribute("aria-label") || "").trim().length > 0).length,
+    labels: inputs.map((i) => i.getAttribute("aria-label")),
+    eqRef: (rows.find((r) => r.id === "USD_e") || {}).ref,
+    tiles: ov.querySelectorAll(".rt").map((t) => t.querySelector(".l").textContent),
+    amtLines: ov.querySelectorAll(".amt").length,
+    tenorNote: ov.querySelector(".tenor-row").textContent,
+    /* hedgeCostAt 의 만기 보간을 프로브가 직접 계산해 화면값과 대조한다 */
+    jpyAt6: P.hedgeCostAt(HEDGE_FIXTURE.matrix[1], 6),
+    jpyAt12: P.hedgeCostAt(HEDGE_FIXTURE.matrix[1], 12),
+    usdAt6: P.hedgeCostAt(HEDGE_FIXTURE.matrix[0], 6),
+    /* 캐리·억원 줄을 파이썬 쪽에서 독립 재계산하기 위한 입력 사본 */
+    amounts: { USD_b: 4000, USD_e: 2000, JPY_b: 2000 },
+    hs: { USD_b: 0.9, USD_e: 0.3, JPY_b: 1.0 },
+    cov: HEDGE_FIXTURE.sim.cov, covLabels: HEDGE_FIXTURE.sim.labels,
+    bigAmounts: { USD_b: 500000, USD_e: 250000, JPY_b: 250000 },
+    atDefault, at12, atBig,
+  };
+  P.hideDetail();
+  shim.location.hash = "#hedge";
+  return out;
+});
+
+/* ====== P14. 매크로 카드가 파이프라인이 준 단위를 버리지 않는다 ================= */
+safe("macroUnit", () => {
+  P.DATA.macro = { items: [
+    { key: "k1", label: "테스트 고용 MoM", unit: "천명", last: 123, date: "2030-01-31",
+      t: [1700000000, 1700086400], v: [40, 123] },
+    { key: "k2", label: "테스트 실업률", unit: "%", last: 4.2, date: "2030-01-31",
+      t: [1700000000, 1700086400], v: [4.1, 4.2] },
+  ] };
+  P.renderMacro();
+  const cards = DOC.getElementById("macro-grid").children;
+  return { subs: cards.map((c) => c.querySelector(".card-sub").textContent) };
 });
 
 /* boot() 은 async 라 fetch 거부가 마이크로태스크로 나중에 돌아온다. 그때는 위 프로브가
