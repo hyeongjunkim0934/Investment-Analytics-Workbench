@@ -192,7 +192,17 @@ function tsTableFn(labels, data, dec) {
 
 const AXIS_FONT = "11px system-ui, sans-serif";
 
-function baseAxes(pal, yFmt) {
+/* y축 눈금이 반올림 때문에 같은 글자로 뭉개지는 것을 막는다.
+
+   실측으로 잡은 결함이다: 자산배분의 「이행 경로」는 y 범위가 2.62~2.75% 인데 소수점 0자리로
+   찍혀 눈금 4개가 전부 "3%" 였고(고유 라벨 1개), 「효율적 투자선」·「총위험 vs 주식헤지」·
+   「총위험 vs 채권헤지」도 같은 증상이었다. 축이 "3% 3% 3% 3%" 로 서 있으면 그래프가 무엇을
+   말하는지 읽을 수 없다.
+
+   `refmt(v, 추가소수점)` 을 주면, 기본 표기로 라벨이 겹칠 때만 소수점을 한 자리씩 늘려
+   전부 서로 다른 라벨이 될 때까지 다시 찍는다. refmt 를 안 주는 호출자는 이전과 완전히
+   동일하게 동작한다 — 겹치지 않는 차트는 첫 줄에서 그대로 반환된다. */
+function baseAxes(pal, yFmt, refmt) {
   return [
     {
       stroke: pal.ink3, font: AXIS_FONT, grid: { stroke: pal.grid, width: 1 },
@@ -201,9 +211,55 @@ function baseAxes(pal, yFmt) {
     {
       stroke: pal.ink3, font: AXIS_FONT, grid: { stroke: pal.grid, width: 1 },
       ticks: { show: false }, size: 56,
-      values: (u, vals) => vals.map((v) => yFmt(v)),
+      values: (u, vals) => {
+        let out = vals.map((v) => yFmt(v));
+        if (!refmt) return out;
+        for (let extra = 1; extra <= 3 && new Set(out).size < out.length; extra++) {
+          out = vals.map((v) => refmt(v, extra));
+        }
+        return out;
+      },
     },
   ];
+}
+
+/* 차트 제목줄에 "지금 얼마인가"를 한 줄로 박는다.
+
+   uPlot 범례는 마우스를 올리기 전까지 "일자: --  달러/원: –" 처럼 대시만 보인다.
+   차트를 처음 보는 사람에게는 값이 없는 것처럼 읽히고, 최신 수치를 알려면 커서를
+   정확히 오른쪽 끝에 올려야 했다. 매크로 카드에만 있던 "최근 3.80% (2026-07-20)"
+   표기를 모든 시계열 카드로 넓힌다.
+
+   그리는 값은 이미 그 차트에 찍혀 있는 계열의 마지막 관측치다 — 새로 계산하거나
+   새로 공개하는 수치가 아니다. 계열이 여럿이면 값 나열이 길어지므로 기준일만 적는다.
+
+   날짜 표기 규칙: 이 대시보드의 기준일(meta.last_observation)보다 뒤의 날짜는 찍지
+   않는다. 월말 시계열(예: 환헤지비용)은 마지막 점이 2026-07-31 인데 기준일은
+   2026-07-20 이라, 그대로 찍으면 한 화면에 미래 날짜가 나타나 관측일로 오독된다.
+   그런 경우 "2026-07월" 처럼 월까지만 적는다. 값은 어느 경우에도 그대로다. */
+function stampDate(ts) {
+  const d = tsToDate(ts);
+  const asof = DATA.meta && DATA.meta.last_observation;
+  return (asof && d > asof) ? `${d.slice(0, 7)}월` : d;
+}
+
+function stampLatest(box, cfg) {
+  const card = box.parentElement;
+  const head = card && card.querySelector(".card-head");
+  if (!head || head.querySelector(".card-last")) return;
+  if (/최근/.test(head.textContent)) return;      // 이미 적혀 있으면(매크로) 건드리지 않는다
+  const [xs, ...ys] = cfg.data;
+  if (!xs || !xs.length) return;
+  const lastIdxOf = (y) => { for (let i = y.length - 1; i >= 0; i--) if (y[i] != null) return i; return -1; };
+  const newest = Math.max(...ys.map(lastIdxOf));
+  if (newest < 0) return;
+  const dec = cfg.dec ?? 2;
+  const txt = ys.length === 1
+    ? `최근 ${fmtNum(ys[0][newest], dec)}${cfg.unit || ""} (${stampDate(xs[newest])})`
+    : `최근 ${stampDate(xs[newest])} 기준`;
+  const node = el("span", { class: "card-last" }, txt);
+  const actions = head.querySelector(".card-actions");
+  if (actions) head.insertBefore(node, actions); else head.append(node);
 }
 
 function makeTimeChart(box, cfg) {
@@ -212,6 +268,7 @@ function makeTimeChart(box, cfg) {
   const dec = cfg.dec ?? 2;
   const h = cfg.height ?? 260;
   const yFmt = (v) => fmtNum(v, v != null && Math.abs(v) >= 1000 ? 0 : dec);
+  const yReFmt = (v, extra) => fmtNum(v, (v != null && Math.abs(v) >= 1000 ? 0 : dec) + extra);
 
   const series = [{ label: "일자", value: "{YYYY}-{MM}-{DD}" }];
   cfg.labels.forEach((lbl, i) => {
@@ -238,11 +295,12 @@ function makeTimeChart(box, cfg) {
     cursor: { points: { size: 8 }, y: false },
     scales: cfg.bars ? { y: { range: (u, mn, mx) => [Math.min(mn, 0), Math.max(mx, 0)] } } : {},
     series,
-    axes: baseAxes(pal, yFmt),
+    axes: baseAxes(pal, yFmt, yReFmt),
     legend: { live: true },
   };
 
   const u = new uPlot(opts, cfg.data, box);
+  stampLatest(box, cfg);
 
   const xs = cfg.data[0];
   const rangeEntry = { u, tmin: xs[0], tmax: xs[xs.length - 1], isTime: true };
@@ -618,6 +676,13 @@ function renderCatalog() {
         el("td", {}, s.last),
         el("td", { class: "num" }, s.n.toLocaleString("ko-KR"))));
     }
+    /* 검색 결과가 없을 때 표가 통째로 비어 버리면 "고장났다"로 읽힌다 —
+       무슨 일이 일어났는지 표 안에서 한 줄로 말해 준다. */
+    if (n === 0) {
+      tbody.append(el("tr", {}, el("td", { colspan: "6", class: "cat-empty" },
+        q ? `'${input.value.trim()}' 과(와) 일치하는 시리즈가 없습니다 — 검색어를 지우면 전체 ${cat.series.length.toLocaleString("ko-KR")}개가 다시 나옵니다.`
+          : "표시할 시리즈가 없습니다.")));
+    }
     count.textContent = `${n.toLocaleString("ko-KR")} / ${cat.series.length.toLocaleString("ko-KR")}개 시리즈`;
   };
   input.addEventListener("input", draw);
@@ -629,10 +694,28 @@ function renderMetaLine() {
   if (!m) return;
   $("#meta-line").textContent =
     `기준일 ${m.last_observation} · 빌드 ${m.built_at_kst} · ${m.series_count}개 시리즈`;
-  const warn = (m.warnings && m.warnings.length)
-    ? ` · 경고 ${m.warnings.length}건(콘솔 참조)` : "";
   $("#build-line").textContent =
-    `빌드 ${m.built_at_kst} (${m.built_at_utc}) · 원본 파일 ${m.files.length}개 · 시리즈 ${m.series_count}개${warn}`;
+    `빌드 ${m.built_at_kst} (${m.built_at_utc}) · 원본 파일 ${m.files.length}개 · 시리즈 ${m.series_count}개`;
+  /* 예전에는 "경고 N건(콘솔 참조)" 라고만 적혀 있었다. 브라우저 개발자 콘솔을 여는 것은
+     이 화면을 쓰는 사람의 일이 아니다 — 같은 내용을 화면에서 펼쳐 볼 수 있게 한다.
+     내용은 이미 meta.json 으로 내려받아지는 값이라 새로 공개되는 것은 없다.
+     반드시 #build-warnings(<p> 의 형제 <div>)에 넣을 것 — <p id="build-line"> 안에
+     넣으면 펼치는 순간 문단이 18px→209px 로 늘며 빌드 메타 줄과 설명 문장이 같은
+     시각적 줄에 겹친다(실제 클릭으로 재현). 콘솔 출력도 그대로 남긴다. */
+  const wbox = $("#build-warnings");
+  if (wbox) {
+    wbox.textContent = "";
+    if (m.warnings && m.warnings.length) {
+      const det = el("details", { class: "warn-box", id: "build-warnings-details" });
+      det.append(el("summary", {}, `빌드 경고 ${m.warnings.length}건 — 펼쳐 보기`));
+      const ul = el("ul");
+      m.warnings.forEach((w) => ul.append(el("li", {}, w)));
+      det.append(ul, el("p", {},
+        "경고는 대시보드의 값이 틀렸다는 뜻이 아니라, 원본 엑셀에서 같은 이름의 열이 겹쳐 "
+        + "뒤쪽 열이 버려졌다는 기록입니다. 건수가 늘거나 성격이 바뀌면 원본 파일 구조가 바뀐 것입니다."));
+      wbox.append(det);
+    }
+  }
   if (m.warnings && m.warnings.length) console.warn("pipeline warnings:", m.warnings);
 }
 
@@ -650,6 +733,35 @@ function gradeChip(g) {
 function hexA(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+/* WCAG 상대휘도 → 어떤 배경색 위에 검정/흰색 중 어느 쪽이 더 잘 읽히는지 고른다.
+   등급 밴드 범례("낮음 (0–25)" …)는 예전에 네 칸 모두 흰 글자였는데 실측 대비가
+   1.94~3.88:1 로 AA(4.5:1) 미달이었다 — 특히 '주의'(노랑)는 1.94:1 로 사실상 안 보였다.
+   임의로 색을 고르지 않고 대비가 큰 쪽을 계산해 쓴다: 낮음 5.63 · 보통 5.26 ·
+   주의 8.72 · 경계 4.80:1 (전부 AA 통과). */
+function relLum(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+}
+
+function bandInk(hex) {
+  const L = relLum(hex);
+  const onDark = (L + 0.05) / 0.05;          // 검정 글자 대비
+  const onLight = 1.05 / (L + 0.05);         // 흰 글자 대비
+  return onDark >= onLight ? "#111111" : "#ffffff";
+}
+
+/* 화면용 deltaPts 와 같은 값을 글자로만 — aria-label 처럼 기호(▲▼)가 읽히지 않는
+   자리에서 쓴다. 숫자·반올림 규칙은 deltaPts 와 동일하게 유지할 것. */
+function deltaText(d) {
+  if (d == null) return "자료 없음";
+  if (Math.abs(d) < 0.5) return "변화 없음";
+  return `${d > 0 ? "상승" : "하락"} ${fmtNum(Math.abs(d), 0)}p`;
 }
 
 function deltaPts(d) {
@@ -758,10 +870,19 @@ function factorRow(f, r, asofTs) {
       el("span", { style: "color:var(--ink-3);font-size:12px" }, f.pending || "데이터 대기"),
       el("span"), el("span"),
       el("span", { style: "text-align:right" }, gradeChip(null)),
-      el("span", { class: "chev" }, "›"));
+      /* 대기 행은 눌러도 갈 곳이 없다 — `›` 를 남겨 두면 "눌리는 줄"로 읽힌다.
+         빈 칸으로 두고 스크린리더에도 그렇게 알린다. */
+      el("span", { class: "chev", "aria-hidden": "true" }, ""));
     return row;
   }
-  const row = el("div", { class: "fr", onclick: () => { location.hash = `detail-${f.key}`; } });
+  /* <div onclick> 이었다 — 마우스로만 열렸고 Tab 으로는 닿지 않아, 2단 구조(결론 →
+     클릭해서 상세)의 입구가 키보드 사용자에게는 아예 없었다. 진짜 <a href> 로 바꾸면
+     포커스·Enter·새 탭 열기가 전부 브라우저 기본으로 따라온다. 겉모습은 그대로. */
+  const row = el("a", { class: "fr", href: `#detail-${f.key}`,
+    /* aria-label 은 행 안의 글자를 '대체'한다 — 1개월 변화를 빼면 화면을 못 보는
+       사용자에게만 정보가 줄어든다. 화면에 있는 것을 모두 담고 링크 목적만 덧붙인다. */
+    "aria-label": `${f.name}, ${f.sub}. ${Math.round(f.score)}점 ${f.grade}. `
+      + `1개월 변화 ${deltaText(f.delta)}. 상세 보기` });
   const sparkWrap = el("span", { class: "spark-wrap" },
     sparkSVG(withToday(f.hist, asofTs, f.score), palette().accent));
   row.append(
@@ -770,7 +891,7 @@ function factorRow(f, r, asofTs) {
     el("span", { class: "dl" }, deltaPts(f.delta)),
     el("span", { class: "sc" }, String(Math.round(f.score))),
     el("span", { style: "text-align:right" }, gradeChip(f.grade)),
-    el("span", { class: "chev" }, "›"));
+    el("span", { class: "chev", "aria-hidden": "true" }, "›"));
   return row;
 }
 
@@ -820,8 +941,8 @@ function prependRiskCards(r) {
   ["vuln", "stress"].forEach((k) => {
     const L = r.layers[k];
     if (!L || L.score == null) return;
-    const kpi = el("div", { class: "kpi kpi-risk", style: "cursor:pointer",
-      onclick: () => { location.href = "#risk"; } });
+    const kpi = el("a", { class: "kpi kpi-risk", href: "#risk", style: "cursor:pointer",
+      "aria-label": `${L.name} ${Math.round(L.score)}점 ${L.grade} — 리스크 화면으로` });
     kpi.append(el("div", { class: "kpi-label" },
       el("span", {}, L.name), el("span", { class: "kpi-date" }, r.asof)));
     const val = el("div", { class: "kpi-value" }, String(Math.round(L.score)));
@@ -873,14 +994,17 @@ function renderRisk() {
   hw.append(el("b", {}, "점수 읽는 법"), ` — ${r.howto}`);
   const gb = el("div", { class: "gradebar" });
   BANDS.forEach(([lo, hi, c, nm]) =>
-    gb.append(el("div", { style: `flex:1;background:${hexA(c, 0.85)}` }, `${nm} (${lo}–${hi})`)));
+    gb.append(el("div", { style: `flex:1;background:${c};color:${bandInk(c)}` }, `${nm} (${lo}–${hi})`)));
   hw.append(gb);
 
   const em = $("#risk-events-mini");
   em.textContent = "";
   const emHead = el("div", { class: "card-head" }, el("span", { class: "card-title" }, "최근 이벤트"));
   emHead.append(el("a", { href: "#events",
-    style: "margin-left:auto;font-size:12px;color:var(--accent);text-decoration:none" }, "전체 보기 →"));
+    /* display/padding 은 24×24 최소 조작부(WCAG 2.5.8)를 맞추기 위한 것 — 카드 머리글의
+       유일한 링크라 문장 속 인라인 링크 예외에 해당하지 않는다. */
+    style: "margin-left:auto;font-size:12px;color:var(--accent-ink);text-decoration:none;"
+         + "display:inline-block;padding:5px 4px" }, "전체 보기 →"));
   em.append(emHead);
   const evs = ((DATA.events && DATA.events.events) || []).slice(0, 5);
   if (!evs.length) em.append(el("div", { class: "chart-empty" }, "최근 이벤트 없음"));
@@ -953,7 +1077,8 @@ function renderEvents() {
   const mkChip = (label, kind, val) => {
     const on = kind === "sev" ? evFilter.sev === val : kind === "cat" ? evFilter.cat === val
              : !evFilter.sev && !evFilter.cat;
-    return el("span", { class: on ? "on" : "", onclick: () => {
+    return el("button", { type: "button", class: on ? "on" : "",
+      "aria-pressed": on ? "true" : "false", onclick: () => {
       if (kind === "all") { evFilter.sev = null; evFilter.cat = null; }
       else if (kind === "sev") evFilter.sev = evFilter.sev === val ? null : val;
       else evFilter.cat = evFilter.cat === val ? null : val;
@@ -981,34 +1106,91 @@ function renderEvents() {
 /* ---------------- 요인 상세 오버레이 ---------------- */
 
 let overlayCharts = [];
+let overlayReturnFocus = null;
+
+/* 드릴다운 오버레이의 공통 껍데기 — 요인 상세(리스크)·시뮬레이터(환헤지)·자산배분
+   드릴다운이 모두 같은 `#detail-overlay` 하나를 쓰므로 여는 방식도 한 곳으로 모은다.
+
+   실측으로 잡은 결함: 오버레이가 떠 있는 상태에서 Tab 을 12번 눌러도 초점이 오버레이
+   **안으로 한 번도 들어가지 않았다**(0/12). 뒤에 깔린 섹션과 상단 메뉴를 계속 돌았다.
+   닫는 길도 화면 왼쪽 위 작은 글씨 링크 하나뿐이었다.
+
+   ① `role="dialog"` + `aria-modal` 로 보조기술에 "지금은 이 층이 전부"라고 알린다.
+   ② 뒤 배경(header/main/footer)에 `inert` 를 걸어 초점과 클릭이 새지 않게 한다.
+      오버레이는 position:fixed·inset:0·z-index:60 으로 헤더(z-index:30)를 **덮는다** —
+      즉 헤더는 보이지 않는 상태이므로 조작 가능하게 두는 편이 오히려 틀렸다.
+      (테마 버튼이 오버레이 중에는 눌리지 않게 되는데, 이는 회귀가 아니라 의도다.)
+      inert 를 모르는 브라우저에서는 지금과 똑같이 동작할 뿐 나빠지지 않는다.
+   ③ 눈에 보이는 「✕ 닫기」 버튼을 넣고, 열 때 그 버튼으로 초점을 옮긴다.
+      닫을 때는 열기 전에 초점이 있던 자리로 되돌린다. Esc 는 그대로 산다. */
+function overlayBackdrop(on) {
+  /* 오버레이 **자신을 뺀** body 직계 자식 전부에 건다.
+     header/main/footer 만 이름으로 집으면 그 셋에 속하지 않는 형제(본문 바로가기 링크,
+     관문)가 남아 초점이 그리로 샌다 — 실측으로 Tab 16회 중 8회가 오버레이 밖으로
+     나갔고, 그중 하나가 `.skip-link` 였다. 여기서 "그 외 전부"로 잡으면 나중에 body
+     자식이 하나 더 늘어도 자동으로 따라온다. */
+  document.querySelectorAll("body > *").forEach((n) => {
+    if (n.id === "detail-overlay") return;
+    if ("inert" in n) n.inert = on;
+  });
+}
+
+function openOverlayShell({ backLabel, backHash, crumbTail, title }) {
+  const ov = $("#detail-overlay");
+  const prev = document.activeElement;
+  if (prev && prev !== document.body && !ov.contains(prev)) overlayReturnFocus = prev;
+  overlayCharts.forEach(destroyChart);
+  overlayCharts = [];
+  ov.textContent = "";
+  ov.hidden = false;
+  ov.setAttribute("role", "dialog");
+  ov.setAttribute("aria-modal", "true");
+  ov.setAttribute("aria-label", title);
+  overlayBackdrop(true);
+  document.body.style.overflow = "hidden";
+  const inner = el("div", { class: "detail-inner" });
+  ov.append(inner);
+  const back = el("a", { href: `#${backHash}` }, backLabel);
+  const close = el("button", {
+    class: "detail-close", type: "button", "aria-label": `${title} 닫기 (Esc)`,
+    onclick: () => { location.hash = backHash; },
+  }, "✕ 닫기");
+  inner.append(el("div", { class: "crumb" }, back, crumbTail, close));
+  close.focus();
+  ov.scrollTop = 0;
+  return inner;
+}
 
 function hideDetail() {
   overlayCharts.forEach(destroyChart);
   overlayCharts = [];
   const ov = $("#detail-overlay");
+  const wasOpen = !ov.hidden;
   ov.hidden = true;
   ov.textContent = "";
+  ov.removeAttribute("role");
+  ov.removeAttribute("aria-modal");
+  ov.removeAttribute("aria-label");
+  overlayBackdrop(false);
   document.body.style.overflow = "";
+  if (wasOpen && overlayReturnFocus && document.contains(overlayReturnFocus)
+      && overlayReturnFocus.offsetParent !== null) {
+    overlayReturnFocus.focus();
+  }
+  overlayReturnFocus = null;
 }
 
 function openDetail(key) {
   const r = DATA.risk;
   const f = r && r.factors.find((x) => x.key === key);
   if (!f || f.pending || f.score == null) { hideDetail(); return; }
-  overlayCharts.forEach(destroyChart);
-  overlayCharts = [];
   const layer = r.layers[f.layer];
   const asofTs = Math.floor(Date.parse(r.asof + "T00:00:00Z") / 1000);
   const pal = palette();
-  const ov = $("#detail-overlay");
-  ov.textContent = "";
-  ov.hidden = false;
-  document.body.style.overflow = "hidden";
-  const inner = el("div", { class: "detail-inner" });
-  ov.append(inner);
-
-  const back = el("a", { onclick: () => { location.hash = "risk"; } }, "‹ 리스크로 돌아가기");
-  inner.append(el("div", { class: "crumb" }, back, ` / ${layer.name} / ${f.name}`));
+  const inner = openOverlayShell({
+    backLabel: "‹ 리스크로 돌아가기", backHash: "risk",
+    crumbTail: ` / ${layer.name} / ${f.name}`, title: `${f.name} 요인 상세`,
+  });
 
   const hl = el("div", { class: "qa" });
   hl.append(el("div", { class: "q" }, `이 요인이 답하는 질문 — ${f.question}`));
@@ -1076,7 +1258,8 @@ function openDetail(key) {
     seriesDefs: [{ label: `${f.name} 점수`, color: pal.series[0], t: fh.t, v: fh.v }],
     height: 280,
   }));
-  ov.scrollTop = 0;
+  /* 맨 위로 올리는 것은 openOverlayShell() 이 이미 한다 — 여기서 지역변수 ov 를 다시
+     들여다보면 ReferenceError 로 상세 화면이 통째로 죽는다. */
 }
 
 /* ==========================================================================
@@ -1505,6 +1688,22 @@ function renderVillage() {
   });
 }
 
+/* 기간 버튼이 실제로 무언가를 움직이는 화면인가.
+
+   `registry` 에는 기간 필터가 축을 다시 잡아 주는 차트만 들어간다(makeTimeChart).
+   실측 결과 개요·리스크·이벤트·관계분석·자산배분·카탈로그 6개 화면에는 그런 차트가
+   **0개**인데도 "기간 1년/3년/5년/10년/전체" 줄이 그대로 떠 있었다. 눌러도 아무 일이
+   일어나지 않는 버튼이 화면 맨 위에 있는 셈이라, 처음 쓰는 사람은 "내가 잘못 눌렀나"
+   부터 의심하게 된다. 관계분석은 더 나쁘다 — 화면 안에 '기간' 이라는 이름의 다른
+   드롭다운이 따로 있어서 같은 이름의 컨트롤 두 개가 서로 다른 뜻으로 겹쳐 있었다.
+
+   DOM 포함관계로 판정하므로 차트가 다른 카드로 옮겨가도 따라온다. */
+function sectionHasRangedChart(sec) {
+  const node = document.getElementById(sec);
+  if (!node) return false;
+  return registry.some((e) => e.isTime && e.u && e.u.root && node.contains(e.u.root));
+}
+
 /* 마을 ↔ 섹션 화면 전환. 섹션은 한 번에 하나만 보인다(스크롤 길이 문제 해결). */
 function routeView() {
   const hash = location.hash.replace(/^#/, "");
@@ -1514,13 +1713,18 @@ function routeView() {
   $("#village").hidden = !showVillage;
   $("#village-frame").classList.remove("vz-enter");   // 입장 연출 중 해시가 먼저 바뀌어도 잔상 없게
   const filter = document.querySelector(".filter-row");
-  if (filter) filter.hidden = showVillage;
+  if (filter) filter.hidden = showVillage || !sectionHasRangedChart(sec);
   SECTION_IDS.forEach((id) => {
     const node = document.getElementById(id);
     if (node) node.hidden = showVillage || id !== sec;
   });
   document.querySelectorAll("#nav a").forEach((a) => {
-    a.classList.toggle("active", a.getAttribute("href") === `#${sec}`);
+    const on = a.getAttribute("href") === `#${sec}`;
+    a.classList.toggle("active", on);
+    /* .active 는 색일 뿐이라 화면을 못 보는 사용자에게는 아무 신호도 아니었다.
+       aria-current 가 "지금 이 화면"을 읽어 준다. */
+    if (on) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
   });
   if (showVillage) {
     renderVillage();
@@ -2107,8 +2311,9 @@ function renderRegression(body, sample, risk, rvals) {
                 ...pnl.vars.filter((id) => id !== pnl.dep).map((id) => ({ id, name: vmap[id].name, isRisk: false }))];
   cand.forEach((c) => {
     const on = pnl.regressors.includes(c.id);
-    pickWrap.append(el("span", {
-      class: "vchip", style: on ? "border-color:var(--accent);color:var(--ink-1)" : "opacity:.6;cursor:pointer",
+    pickWrap.append(el("button", {
+      type: "button", "aria-pressed": on ? "true" : "false",
+      class: "vchip", style: on ? "border-color:var(--accent-ink);color:var(--ink-1)" : "opacity:.6;cursor:pointer",
       onclick: () => {
         pnl.regressors = on ? pnl.regressors.filter((x) => x !== c.id) : [...pnl.regressors, c.id];
         renderPanelBody();
@@ -2241,7 +2446,8 @@ function makeRatioChart(box, opts) {
     axes: [
       { stroke: pal.ink3, font: AXIS_FONT, grid: { stroke: pal.grid, width: 1 },
         ticks: { show: false }, values: (u2, vals) => vals.map((v) => v + xSuffix) },
-      baseAxes(pal, (v) => fmtNum(v, unit === "" ? 1 : 0) + unit)[1],
+      baseAxes(pal, (v) => fmtNum(v, unit === "" ? 1 : 0) + unit,
+                    (v, extra) => fmtNum(v, (unit === "" ? 1 : 0) + extra) + unit)[1],
     ],
     legend: { live: true },
   };
@@ -2437,15 +2643,10 @@ function openHedgeSim() {
   if (!H2 || !H2.sim) { hideDetail(); return; }
   overlayCharts.forEach(destroyChart);
   overlayCharts = [];
-  const ov = $("#detail-overlay");
-  ov.textContent = "";
-  ov.hidden = false;
-  document.body.style.overflow = "hidden";
-  const inner = el("div", { class: "detail-inner" });
-  ov.append(inner);
-
-  const back = el("a", { onclick: () => { location.hash = "hedge"; } }, "‹ 환헤지 기본 화면");
-  inner.append(el("div", { class: "crumb" }, back, " / 시뮬레이터 (7통화)"));
+  const inner = openOverlayShell({
+    backLabel: "‹ 환헤지 기본 화면", backHash: "hedge",
+    crumbTail: " / 시뮬레이터 (7통화)", title: "환헤지 시뮬레이터",
+  });
   const hl = el("div", { class: "qa" });
   hl.append(el("div", { class: "q" }, "이 화면이 하는 일"));
   hl.append(el("div", { class: "a" }, "우리 포트폴리오 숫자로 통화별 헤지비율을 바꿔보기 ",
@@ -2574,7 +2775,8 @@ function openHedgeSim() {
   }
   inner.querySelectorAll("input").forEach((i) => i.addEventListener("input", () => recalc()));
   recalc(false);
-  ov.scrollTop = 0;
+  /* 맨 위로 올리는 것은 openOverlayShell() 이 이미 한다 — 여기서 지역변수 ov 를 다시
+     들여다보면 ReferenceError 로 시뮬레이터가 통째로 죽는다. */
 }
 
 /* ================= 자산배분 — 수학 엔진 (DOM 없음 · node 교차검증 대상) =================
@@ -2984,7 +3186,10 @@ function renderAlloc() {
         el("div", { style: "font-size:12.5px;margin-top:6px" },
           "장부가 자산은 가격변동성이 0이라 평균-분산 최적화기에 넣으면 밴드 상한까지 쏠립니다(§7.2-1). ",
           "그래서 회계 관점은 손익 변동·ALM 진단 전용이고, ",
-          el("a", { onclick: () => { st.view = "econ"; allocSaveState(st); renderAlloc(); } },
+          /* 관점을 바꾸는 동작이지 이동이 아니다 → <button>. href 없는 <a> 였을 때는
+             Tab 으로 닿지 않아 키보드만으로는 경제 관점으로 넘어갈 길이 없었다. */
+          el("button", { type: "button", class: "linkish",
+            onclick: () => { st.view = "econ"; allocSaveState(st); renderAlloc(); } },
             "배분 참고치는 경제 관점에서 계산합니다 →")));
       cardsBox.append(gapCard, whyCard);
     } else {
@@ -3219,17 +3424,10 @@ function renderAlloc() {
 /* ----- 자산배분 드릴다운 오버레이 ----- */
 
 function allocOverlayShell(title) {
-  overlayCharts.forEach(destroyChart);
-  overlayCharts = [];
-  const ov = $("#detail-overlay");
-  ov.textContent = "";
-  ov.hidden = false;
-  document.body.style.overflow = "hidden";
-  const inner = el("div", { class: "detail-inner" });
-  ov.append(inner);
-  inner.append(el("div", { class: "crumb" },
-    el("a", { onclick: () => { location.hash = "alloc"; } }, "‹ 자산배분 기본 화면"), ` / ${title}`));
-  return inner;
+  return openOverlayShell({
+    backLabel: "‹ 자산배분 기본 화면", backHash: "alloc",
+    crumbTail: ` / ${title}`, title: `자산배분 — ${title}`,
+  });
 }
 
 function openAllocDetail(topic) {
@@ -3633,10 +3831,23 @@ function bindTheme() {
   });
 }
 
+function bindSkipLink() {
+  const a = document.querySelector(".skip-link");
+  const main = document.getElementById("main-content");
+  if (!a || !main) return;
+  a.addEventListener("click", (e) => {
+    e.preventDefault();          /* 해시를 건드리면 routeView() 가 마을로 튕긴다 */
+    main.focus();
+    const first = main.querySelector("section:not([hidden])");
+    if (first) first.scrollIntoView({ block: "start" });
+  });
+}
+
 async function boot() {
   bindGate();
   bindTheme();
   bindRangeButtons();
+  bindSkipLink();
   const results = await Promise.allSettled(
     FILES.map((f) => fetch(`data/${f}.json`).then((r) => {
       if (!r.ok) throw new Error(`${f}.json ${r.status}`);

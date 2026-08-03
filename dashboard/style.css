@@ -7,7 +7,11 @@
   --surface: #fcfcfb;
   --ink-1: #0b0b0b;
   --ink-2: #52514e;
-  --ink-3: #898781;
+  /* --ink-3 은 보조 텍스트(기준일·차트 부제·각주·'이 화면이 답하는 질문' 라벨) 전용이다.
+     예전 값 #898781 은 밝은 배경에서 대비 3.41:1 로 WCAG AA(4.5:1) 미달이었고,
+     실측상 화면에 가장 많이 쓰이는 색이었다 → 4.98:1(page)·5.11:1(surface)로 낮춘다.
+     어두운 테마에서는 이미 4.85~5.41:1 이라 그대로 둔다(더 낮추면 오히려 눈부시다). */
+  --ink-3: #6e6c67;
   --grid: #e1e0d9;
   --baseline: #c3c2b7;
   --border: rgba(11, 11, 11, 0.10);
@@ -16,7 +20,25 @@
   /* 국내 시장 관례: 상승 빨강 · 하락 파랑 */
   --up: #d03b3b;
   --down: #1c5cab;
+  /* 델타 '글자' 전용. --up 자체는 다른 곳(칩 배경 틴트 등)에서도 쓰므로 건드리지 않는다.
+     밝은 테마에서 #d03b3b 는 정지 상태 4.56:1 로 겨우 통과하지만, 요인 행에 hover
+     틴트가 깔리면 4.35:1 로 내려가 AA 미달이 된다(실제 렌더로 측정). #a02c2c 는
+     같은 빨강 계열이면서 7.17:1 이라 hover 상태에서도 여유가 있다.
+     어두운 테마의 #e66767 은 이미 6.02:1 이므로 그대로 둔다.
+     이 저장소에는 이미 같은 패턴이 있다 — 등급 칩의 --g-low/--g-warn/--g-crit. */
+  --up-ink: #a02c2c;
+  --down-ink: #1c5cab;
+  /* --accent 는 차트 색(palette().accent · 스파크라인 · 배경 틴트)이라 건드리지 않는다.
+     텍스트/버튼용으로만 대비를 맞춘 두 토큰을 따로 둔다 — 차트 색은 1비트도 안 바뀐다.
+       --accent-ink   : 강조색 '글자'      (light 6.02:1 / dark 5.34:1)
+       --accent-solid : 흰 글자를 얹는 '면'
+     밝은 테마 #1b5fb0 = 흰 글자 6.34:1 · 배경 경계 6.2:1.
+     어두운 테마는 #1b5fb0 을 그대로 쓰면 카드면(--surface #1a1a19)과의 경계가
+     2.75:1 로 WCAG 1.4.11(비텍스트 3:1)에 못 미친다 — 계산으로 확인했다.
+     #2a6fc4 는 흰 글자 5.04:1 · 카드면 경계 3.46:1 · 페이지 경계 3.86:1 로 둘 다 통과한다. */
   --accent: #2a78d6;
+  --accent-ink: #1b5fb0;
+  --accent-solid: #1b5fb0;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -33,7 +55,14 @@
     --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
     --up: #e66767;
     --down: #3987e5;
+    --up-ink: #e66767;
+    /* 어두운 테마의 --down(#3987e5)은 카드면 hover 틴트 위에서 4.46:1 로 AA 에
+       살짝 못 미친다(계산으로 확인). 글자만 한 단계 밝혀 5.26:1 로 올린다 —
+       --down 자체(칩·차트 토큰)는 그대로다. */
+    --down-ink: #4d95ea;
     --accent: #3987e5;
+    --accent-ink: #3987e5;
+    --accent-solid: #2a6fc4;
   }
 }
 :root[data-theme="dark"] {
@@ -50,7 +79,11 @@
   --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
   --up: #e66767;
   --down: #3987e5;
+  --up-ink: #e66767;
+  --down-ink: #4d95ea;
   --accent: #3987e5;
+  --accent-ink: #3987e5;
+  --accent-solid: #2a6fc4;
 }
 
 * { box-sizing: border-box; }
@@ -59,6 +92,37 @@
    막는다 — 이 프로젝트에서 hidden 은 언제나 "숨긴다"는 뜻이다. */
 [hidden] { display: none !important; }
 html { scroll-behavior: smooth; }
+
+/* 키보드 포커스 표시 — 예전에는 브라우저 기본 1px 링뿐이라 색이 깔린 버튼(파란 면,
+   등급 밴드) 위에서 지금 어디에 있는지 보이지 않았다. :focus-visible 이라 마우스로
+   눌렀을 때는 나타나지 않는다(눌러 쓰는 사람에게는 그대로). */
+:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.range-group button.active:focus-visible, .btn-primary:focus-visible,
+.seg button.active:focus-visible, .filters button.on:focus-visible {
+  outline-offset: -3px; outline-color: #fff;       /* 파란 면 위에서는 흰 링이 보인다 */
+}
+.range-group button:focus-visible, .seg button:focus-visible,
+.filters button:focus-visible { outline-offset: -2px; }
+.nav a:focus-visible { outline-offset: -2px; }
+
+/* 본문 바로가기 — 상단 메뉴가 16칸이라 키보드로는 매 화면 16번 Tab 을 눌러야 본문에
+   닿았다(WCAG 2.4.1 블록 건너뛰기). 평소에는 화면 밖, Tab 으로 잡으면 나타난다. */
+.skip-link {
+  /* fixed 여야 한다 — absolute 면 문서 맨 위에 붙어 있어서, 스크롤을 내린 상태에서
+     Shift+Tab 으로 되돌아왔을 때 화면 밖에 나타난다(실측으로 잡음). z-index 는
+     sticky 헤더(30)보다 위. */
+  position: fixed; left: 12px; top: -60px; z-index: 60;
+  background: var(--accent-solid); color: #fff; text-decoration: none;
+  padding: 9px 16px; border-radius: 0 0 8px 8px; font-size: 13px; font-weight: 600;
+  transition: top .12s ease;
+}
+.skip-link:focus { top: 0; }
+@media (prefers-reduced-motion: reduce) { .skip-link { transition: none; } }
+.page:focus { outline: none; }
 body {
   margin: 0;
   background: var(--page);
@@ -83,7 +147,7 @@ body {
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand-mark {
   flex: none; width: 34px; height: 34px; border-radius: 8px;
-  background: var(--accent); color: #fff;
+  background: var(--accent-solid); color: #fff;
   display: grid; place-items: center;
   font-weight: 700; font-size: 13px; letter-spacing: 0.5px;
 }
@@ -91,11 +155,15 @@ body {
 .brand-sub { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* min-width:0 이 없으면 flex 항목이 내용 너비 밑으로 줄지 않아 overflow-x 가 동작하지
    않는다 — 좁은 창에서 마지막 메뉴가 스크롤되지 않고 그냥 잘려 나갔다. */
-.nav { margin-left: auto; min-width: 0; display: flex; gap: 2px; overflow-x: auto; }
+/* 1440px(가장 흔한 노트북 폭)에서 메뉴 15개의 총폭이 855px 인데 자리는 794px 뿐이라
+   마지막 항목 「카탈로그」가 어느 창 너비에서도 보이지 않았다(실측). 가로 스크롤은
+   살아 있었지만 스크롤바가 안 보여 메뉴가 더 있다는 사실 자체를 알 수 없었다.
+   간격과 좌우 여백만 줄여 15개가 한 줄에 들어가게 한다 — 높이(32px)는 그대로 둔다. */
+.nav { margin-left: auto; min-width: 0; display: flex; gap: 0; overflow-x: auto; }
 .nav a.home { color: var(--ink-1); font-weight: 600; }
 .nav a {
   color: var(--ink-2); text-decoration: none; font-size: 13px;
-  padding: 6px 10px; border-radius: 6px; white-space: nowrap;
+  padding: 6px 7px; border-radius: 6px; white-space: nowrap;
 }
 .nav a:hover { background: var(--border); color: var(--ink-1); }
 .theme-btn {
@@ -128,13 +196,13 @@ body {
 .range-group { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .range-group button {
   border: 0; background: var(--surface); color: var(--ink-2);
-  padding: 6px 14px; font-size: 13px; cursor: pointer;
+  padding: 6px 14px; min-height: 26px; font-size: 13px; cursor: pointer;
   border-right: 1px solid var(--border);
   font-family: inherit;
 }
 .range-group button:last-child { border-right: 0; }
 .range-group button:hover { color: var(--ink-1); }
-.range-group button.active { background: var(--accent); color: #fff; }
+.range-group button.active { background: var(--accent-solid); color: #fff; }
 .filter-note { font-size: 12px; color: var(--ink-3); }
 
 /* ---------- KPI cards ---------- */
@@ -154,8 +222,8 @@ body {
 .kpi-delta { font-size: 12.5px; display: flex; gap: 10px; flex-wrap: wrap; }
 .kpi-delta span { color: var(--ink-3); }
 .kpi-delta b { font-weight: 600; }
-.d-up { color: var(--up) !important; }
-.d-down { color: var(--down) !important; }
+.d-up { color: var(--up-ink) !important; }
+.d-down { color: var(--down-ink) !important; }
 .d-flat { color: var(--ink-3) !important; }
 .kpi svg.spark { width: 100%; height: 30px; margin-top: 4px; display: block; }
 .spark-line { fill: none; stroke: var(--baseline); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
@@ -169,15 +237,17 @@ body {
 .card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
 .card-title { font-weight: 650; font-size: 14px; }
 .card-sub { color: var(--ink-3); font-size: 12px; }
+/* 차트 제목줄의 "최근 …" 읽음값 — 부제보다 진하게 두어 눈이 먼저 닿게 한다. */
+.card-last { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .card-actions { margin-left: auto; display: flex; gap: 6px; }
 .card-actions button, .seg button {
   border: 1px solid var(--border); background: transparent; color: var(--ink-2);
-  border-radius: 6px; font-size: 11.5px; padding: 3px 9px; cursor: pointer;
+  border-radius: 6px; font-size: 11.5px; padding: 4px 10px; min-height: 26px; cursor: pointer;
   font-family: inherit;
 }
 .card-actions button:hover, .seg button:hover { color: var(--ink-1); border-color: var(--baseline); }
 .seg { display: inline-flex; gap: 4px; flex-wrap: wrap; }
-.seg button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.seg button.active { background: var(--accent-solid); border-color: var(--accent-solid); color: #fff; }
 .chart-box { position: relative; width: 100%; }
 .chart-empty { color: var(--ink-3); font-size: 12.5px; padding: 30px 0; text-align: center; }
 
@@ -215,6 +285,13 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 /* hedge table */
 .mini-table td, .mini-table th { font-size: 13px; }
 
+/* 조작부 최소 크기 — WCAG 2.5.8(24×24). 화면별 규칙이 흩어져 있어 여기서 바닥을 깐다.
+   높이만 올리고 글꼴·너비·값은 건드리지 않으므로 표의 배치는 그대로다. */
+.section select, .detail-overlay select,
+.section input[type=number], .detail-overlay input[type=number],
+.section input[type=text], .section input[type=search] { min-height: 26px; }
+.section input[type=range], .detail-overlay input[type=range] { height: 26px; }
+
 /* ---------- catalog ---------- */
 .catalog-controls { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 #catalog-search {
@@ -222,8 +299,11 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
   border-radius: 8px; padding: 7px 12px; font-size: 13px; width: 280px; max-width: 100%;
   font-family: inherit;
 }
-#catalog-search:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#catalog-search:focus { outline: 2px solid var(--accent-ink); outline-offset: -1px; }
 .catalog-wrap { max-height: 520px; }
+/* 검색 결과 0건일 때 표가 빈 채로 남으면 고장으로 읽힌다 — 안내 한 줄을 표 안에 둔다. */
+.cat-empty { color: var(--ink-2); padding: 22px 10px !important; text-align: center;
+  white-space: normal !important; }
 .src-chip {
   display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 11px;
   border: 1px solid var(--border); color: var(--ink-2);
@@ -258,8 +338,8 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
   padding: 12px 16px; font-size: 12.5px; color: var(--ink-2); line-height: 1.7;
 }
 .howto b { color: var(--ink-1); }
-.gradebar { display: flex; height: 22px; border-radius: 6px; overflow: hidden;
-  font-size: 11px; color: #fff; text-align: center; line-height: 22px; margin-top: 6px; }
+.gradebar { display: flex; height: 26px; border-radius: 6px; overflow: hidden;
+  font-size: 11.5px; font-weight: 600; text-align: center; line-height: 26px; margin-top: 6px; }
 .legendline { display: flex; gap: 16px; font-size: 12.5px; color: var(--ink-2); margin: 4px 0 6px; flex-wrap: wrap; }
 .legendline i { display: inline-block; width: 18px; height: 0; border-top: 3px solid; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
 
@@ -269,6 +349,10 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 .frh, .fr { display: grid; grid-template-columns: 190px 1fr 86px 64px 68px 24px; gap: 12px; padding: 10px 18px; align-items: center; }
 .frh { font-size: 11.5px; color: var(--ink-3); border-bottom: 1px solid var(--grid); padding: 8px 18px; }
 .fr { border-bottom: 1px solid var(--grid); text-decoration: none; color: var(--ink-1); cursor: pointer; }
+/* .fr / .kpi-risk 는 <a href> 다(키보드 도달·Enter 실행·새 탭 열기). 겉모습은 그대로 둔다. */
+a.fr:hover .nm, a.fr:focus-visible .nm { text-decoration: underline; }
+a.kpi { text-decoration: none; color: inherit; }
+a.kpi:hover { border-color: var(--baseline); }
 .fr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .fr:last-child { border-bottom: 0; }
 .fr .nm { font-weight: 650; font-size: 13.5px; }
@@ -283,16 +367,18 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 
 .method { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
   padding: 12px 18px; margin-top: 18px; font-size: 12.5px; color: var(--ink-2); line-height: 1.7; }
-.method summary { cursor: pointer; font-weight: 650; color: var(--ink-1); }
+.method summary { cursor: pointer; font-weight: 650; color: var(--ink-1);
+  min-height: 26px; display: flex; align-items: center; }
 .method table { margin: 8px 0; }
 .method th, .method td { padding: 4px 12px 4px 0; text-align: left; font-size: 12.5px; }
 .method td.num, .method th.num { text-align: right; }
 
 /* ---------- 이벤트 타임라인 ---------- */
 .filters { display: flex; gap: 8px; margin: 0 0 16px; font-size: 12.5px; flex-wrap: wrap; }
-.filters span { border: 1px solid var(--border); background: var(--surface); border-radius: 20px;
-  padding: 4px 14px; color: var(--ink-2); cursor: pointer; }
-.filters span.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.filters span, .filters button { border: 1px solid var(--border); background: var(--surface); border-radius: 20px;
+  padding: 5px 14px; min-height: 26px; color: var(--ink-2); cursor: pointer;
+  font-size: inherit; font-family: inherit; }
+.filters span.on, .filters button.on { background: var(--accent-solid); border-color: var(--accent-solid); color: #fff; }
 .filters .sep { border: 0; background: none; color: var(--ink-3); padding: 4px 2px; cursor: default; }
 .tlday { display: flex; gap: 16px; }
 .tldate { flex: 0 0 88px; text-align: right; font-size: 12.5px; color: var(--ink-3); padding-top: 13px; font-variant-numeric: tabular-nums; }
@@ -314,8 +400,18 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 /* ---------- 요인 상세 오버레이 ---------- */
 .detail-overlay { position: fixed; inset: 0; z-index: 60; background: var(--page); overflow-y: auto; }
 .detail-inner { max-width: 1200px; margin: 0 auto; padding: 18px 20px 60px; }
-.crumb { font-size: 13px; color: var(--ink-3); margin-bottom: 10px; }
-.crumb a { color: var(--accent); text-decoration: none; cursor: pointer; }
+.crumb { font-size: 13px; color: var(--ink-3); margin-bottom: 10px;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.crumb a { color: var(--accent-ink); text-decoration: none; cursor: pointer; }
+/* 드릴다운을 닫는 길이 왼쪽 위 작은 글씨 링크 하나뿐이었다(그마저 키보드로 못 잡혔다).
+   눈에 보이는 닫기 버튼을 오른쪽 끝에 두고, 열 때 이 버튼으로 초점이 간다. */
+.detail-close {
+  margin-left: auto; flex: none;
+  border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
+  border-radius: 8px; font-size: 12.5px; padding: 5px 12px; cursor: pointer;
+  font-family: inherit; min-height: 30px;
+}
+.detail-close:hover { color: var(--ink-1); border-color: var(--baseline); }
 .detail-two { display: grid; grid-template-columns: 1fr 390px; gap: 14px; align-items: start; }
 @media (max-width: 980px) { .detail-two { grid-template-columns: 1fr; } }
 .icard { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 13px 16px; margin-bottom: 12px; }
@@ -334,16 +430,22 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 .pnl-controls .grp > b { color: var(--ink-2); font-weight: 600; }
 .pnl-controls select, .pnl-controls input[type=number] {
   background: var(--page); border: 1px solid var(--border); color: var(--ink-1);
-  border-radius: 7px; padding: 5px 8px; font-size: 12.5px; font-family: inherit; }
+  border-radius: 7px; padding: 5px 8px; min-height: 26px; font-size: 12.5px; font-family: inherit; }
 .pnl-vars { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+/* .vchip 은 <span>(변수 칩)과 <button>(회귀 설명변수 칩) 두 곳에서 쓰인다.
+   <button> 은 색·글꼴을 상속하지 않으므로 여기서 못박아 둔다 — 안 그러면 다크 테마에서
+   버튼 기본색(검정)이 어두운 배경에 얹혀 글자가 사라진다. */
 .vchip { display: inline-flex; align-items: center; gap: 6px; background: var(--surface);
-  border: 1px solid var(--border); border-radius: 20px; padding: 4px 8px 4px 13px; font-size: 12.5px; }
+  border: 1px solid var(--border); border-radius: 20px; padding: 4px 8px 4px 13px; font-size: 12.5px;
+  color: var(--ink-1); font-family: inherit; min-height: 26px; cursor: default; }
+button.vchip { cursor: pointer; }
 .vchip i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 .vchip button { border: 0; background: none; color: var(--ink-3); cursor: pointer;
-  font-size: 14px; line-height: 1; padding: 0 3px; font-family: inherit; }
+  font-size: 14px; line-height: 1; padding: 0 6px; min-width: 24px; min-height: 24px;
+  border-radius: 50%; font-family: inherit; }
 .vchip button:hover { color: var(--up); }
 .vadd { position: relative; }
-.vadd > summary { list-style: none; cursor: pointer; background: var(--accent); color: #fff;
+.vadd > summary { list-style: none; cursor: pointer; background: var(--accent-solid); color: #fff;
   border-radius: 20px; padding: 5px 14px; font-size: 12.5px; }
 .vadd > summary::-webkit-details-marker { display: none; }
 .vpick { position: absolute; z-index: 20; top: 34px; left: 0; width: 330px; max-height: 380px;
@@ -351,7 +453,9 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
   border-radius: 12px; padding: 10px 14px; box-shadow: 0 8px 28px rgba(0,0,0,.18); }
 .vpick h4 { margin: 10px 0 4px; font-size: 11.5px; color: var(--ink-3); font-weight: 600; }
 .vpick label { display: flex; align-items: center; gap: 8px; font-size: 12.5px;
-  padding: 3px 0; cursor: pointer; }
+  padding: 3px 6px; margin: 0 -6px; min-height: 26px; border-radius: 6px; cursor: pointer; }
+.vpick label:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.vpick input[type=checkbox] { flex: none; width: 17px; height: 17px; accent-color: var(--accent); }
 .pnl-tabs { margin-bottom: 12px; }
 .pnl-note { font-size: 12.5px; color: var(--ink-2); background: color-mix(in srgb, var(--accent) 6%, var(--surface));
   border: 1px solid var(--border); border-radius: 10px; padding: 10px 15px; line-height: 1.7; margin-top: 12px; }
@@ -359,13 +463,18 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 .corrbar { position: relative; height: 8px; background: var(--grid); border-radius: 4px; min-width: 90px; }
 .corrbar i { position: absolute; top: 0; height: 8px; border-radius: 4px; }
 .corrbar u { position: absolute; top: -3px; bottom: -3px; left: 50%; width: 1px; background: var(--baseline); }
+/* 링크처럼 보이지만 이동이 아니라 상태를 바꾸는 조작부. 진짜 <button> 이라
+   Tab·Enter·Space 가 전부 브라우저 기본으로 동작한다. */
+.linkish { border: 0; background: none; padding: 0; font: inherit; cursor: pointer;
+  color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; }
+
 .warnbox { background: color-mix(in srgb, #fab219 13%, var(--surface)); border: 1px solid var(--border);
   border-radius: 10px; padding: 9px 14px; font-size: 12.5px; color: var(--ink-2); margin-top: 10px; }
 .regtable td.sig { font-weight: 700; }
-.stars { color: var(--accent); font-weight: 700; }
+.stars { color: var(--accent-ink); font-weight: 700; }
 
 /* ---------- 환헤지 ---------- */
-.btn-primary { display: inline-block; background: var(--accent); color: #fff;
+.btn-primary { display: inline-block; background: var(--accent-solid); color: #fff;
   padding: 10px 20px; border-radius: 9px; text-decoration: none; font-size: 14px; }
 .hl-box { background: color-mix(in srgb, #0ca30c 8%, var(--surface));
   border: 1px solid var(--border); border-radius: 10px; padding: 11px 15px;
@@ -377,11 +486,11 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 .grid-inp th:first-child, .grid-inp td:first-child { text-align: left; }
 .grid-inp td { padding: 7px 8px; border-bottom: 1px solid var(--grid); text-align: right; vertical-align: middle; }
 .grid-inp input[type=number] { width: 86px; background: var(--page); border: 1px solid var(--border);
-  border-radius: 6px; color: var(--ink-1); padding: 4px 7px; font-size: 12.5px; text-align: right; font-family: inherit; }
-.grid-inp input[type=range] { width: 120px; accent-color: var(--accent); vertical-align: middle; }
+  border-radius: 6px; color: var(--ink-1); padding: 4px 7px; min-height: 26px; font-size: 12.5px; text-align: right; font-family: inherit; }
+.grid-inp input[type=range] { width: 120px; height: 26px; accent-color: var(--accent); vertical-align: middle; }
 .grid-inp .hlbl { display: inline-block; width: 42px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
 .grid-inp tr.dis { opacity: .45; }
-.grid-inp .refbadge { display: block; font-size: 10.5px; color: var(--accent); font-weight: 500; }
+.grid-inp .refbadge { display: block; font-size: 10.5px; color: var(--accent-ink); font-weight: 500; }
 .res { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
 .res .rt { flex: 1; min-width: 170px; background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 12px 16px; }
@@ -399,6 +508,18 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
   max-width: 1280px; margin: 0 auto; padding: 18px 20px 40px;
 }
 .footer p { margin: 4px 0; }
+/* 빌드 경고를 화면에서 펼쳐 볼 수 있게 — 예전에는 "콘솔 참조"라고만 적혀 있었다.
+   #build-warnings 는 <p id="build-line"> 의 형제 <div> 다. <p> 안에 넣으면
+   ① 펼치는 순간 문단 높이가 18px→209px 로 늘며 빌드 메타 줄과 설명 문장이 같은
+   시각적 줄에 겹쳐 읽는 순서가 무너지고 ② <p> 안에 <ul>/<p> 를 넣는 것이라
+   HTML 콘텐츠 모델 위반이다 — 둘 다 실제 클릭으로 재현해 확인했다. */
+.warn-box { display: block; margin-top: 4px; }
+.warn-box > summary { cursor: pointer; color: var(--accent-ink);
+  display: inline-flex; align-items: center; min-height: 24px; }
+.warn-box[open] > summary { margin-bottom: 2px; }
+.warn-box ul { margin: 6px 0 4px; padding-left: 20px; line-height: 1.7; }
+.warn-box li { font-variant-numeric: tabular-nums; }
+.warn-box > p { margin: 4px 0 0; color: var(--ink-2); max-width: 70ch; }
 
 @media (max-width: 760px) {
   .brand-title { font-size: 13.5px; }
@@ -510,7 +631,7 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 }
 .vz:hover .vz-label { color: var(--accent); }
 .vz:focus-visible { outline: none; }
-.vz:focus-visible .vz-label { color: var(--accent); text-decoration: underline; }
+.vz:focus-visible .vz-label { color: var(--accent-ink); text-decoration: underline; }
 .vz[data-soon] { cursor: default; }
 .vz[data-soon] .vz-label { opacity: .62; }
 .vz[data-soon]:hover .vz-label { color: #17120c; }   /* 준비 중은 호버해도 반응 없음 */
@@ -620,6 +741,12 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
   /* JS 가드(mountVillageVideo·playThemeTransition)와 겹치는 이중 차단이다. 어떤 경로로든
      <video> 가 붙어 버리면 SMIL 과 달리 CSS 만이 마지막 방어선이다. */
   .village-video { display: none !important; }
+  /* routeView() 는 화면을 바꿀 때마다 scrollTo(0,0) 를 부른다 — scroll-behavior:smooth
+     가 남아 있으면 그 이동이 애니메이션으로 보인다. 모션을 끄라고 한 사용자에게는
+     이것도 모션이다.
+     주의: 이 규칙은 반드시 `.village-fx` 뒤에 둘 것 —
+     test_village_fx_respects_reduced_motion 이 블록 첫 규칙을 정규식으로 본다. */
+  html { scroll-behavior: auto; }
 }
 
 /* ---- 건물 입장 연출 — 클릭한 건물로 빨려 들어가듯 확대 후 화면 전환 ---- */
