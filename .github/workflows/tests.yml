@@ -14,7 +14,10 @@ on:
     paths:
       - "pipeline/**"
       - "tests/**"
-      - "dashboard/app.js"
+      # dashboard 전체 — test_contract.py 가 app.js 뿐 아니라 index.html(섹션 목록)과
+      # style.css([hidden] 규칙)도 읽는다. app.js 만 걸어 두면 나머지 두 파일을 고친
+      # 커밋이 검사 없이 지나간다.
+      - "dashboard/**"
       - "pytest.ini"
       - ".github/workflows/tests.yml"
   workflow_dispatch:
