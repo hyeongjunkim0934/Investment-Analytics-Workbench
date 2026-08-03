@@ -497,12 +497,16 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 .vz:focus-visible .vz-label { box-shadow: 0 0 0 2px var(--accent); }
 .vz[data-soon] { cursor: default; }
 .vz[data-soon] .vz-label { opacity: .62; }
-:root[data-theme="dark"] .vz-label,
-:root:not([data-theme="light"]) .vz-label {
-  background: rgba(26, 26, 25, .88); color: #fff; border-color: rgba(255, 255, 255, .18);
+/* 다크 라벨. 이 파일의 테마 패턴을 그대로 따른다 — OS 선호는 미디어쿼리 안에서만 보고,
+   명시 토글(data-theme)은 밖에서 본다. 미디어쿼리 없이 :root:not([data-theme="light"])
+   를 쓰면 라이트 OS + 토글 미사용 상태에서 어두운 라벨이 밝은 지도 위에 얹힌다. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .vz-label {
+    background: rgba(26, 26, 25, .88); color: #fff; border-color: rgba(255, 255, 255, .18);
+  }
 }
-@media (prefers-color-scheme: light) {
-  :root[data-theme="light"] .vz-label { background: rgba(252, 252, 251, .88); color: #0b0b0b; }
+:root[data-theme="dark"] .vz-label {
+  background: rgba(26, 26, 25, .88); color: #fff; border-color: rgba(255, 255, 255, .18);
 }
 
 /* 저잣거리처럼 여러 화면을 품은 구역의 하위 메뉴 */
