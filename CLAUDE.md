@@ -44,7 +44,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 153개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 209개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (1초 미만)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js
 python -m pytest
@@ -123,12 +123,13 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 
 ## 어디를 고치면 무엇이 바뀌나
 
-- **공개되는 시리즈 목록은 한 곳에 모여 있지 않다.** 이름 붙은 상수(`OVERVIEW_CARDS` 361행, `CURVES` 394행,
-  `IRS_TENORS`/`IRS_COUNTRIES` 476행, `KR_CREDIT_3Y` 514행, `MACRO_DEFS` 618행)와, `build_rates` /
-  `build_irs` / `build_credit` / `build_fx` / `build_inflation` 안에 **인라인으로 박힌 `series_group([...])`
-  리스트**(451·455·507·538·542·551·570·578·583행)에 절반씩 흩어져 있다. 여기에 더해 `risk.py` 의
-  `Indicator` `spark` 와 `hedge.py` 의 `cost_hist_usd`, 그리고 **`panel.py` 의 `VARS`** (관계분석용 30개
-  변수의 주간 수준값 전 구간)도 원본 값을 그대로 싣는다. `alloc.py` 는 예외적으로 **원본 값을 싣지 않는다**
+- **공개되는 시리즈 목록은 한 곳에 모여 있지 않다.** 이름 붙은 상수(`OVERVIEW_CARDS`, `CURVES`,
+  `IRS_TENORS`/`IRS_COUNTRIES`, `KR_CREDIT_3Y`, `MACRO_DEFS`)와, `build_rates` / `build_irs` /
+  `build_credit` / `build_fx` / `build_inflation` 안에 **인라인으로 박힌 `series_group([...])`
+  리스트**에 절반씩 흩어져 있다(전수는 `grep -n "series_group(\[" pipeline/process.py`).
+  여기에 더해 `risk.py` 의 `Indicator` `spark` 와 `hedge.py` 의 `cost_hist_usd`·`cost_hist_curve`,
+  그리고 **`panel.py` 의 `VARS`** (관계분석용 30개 변수의 주간 수준값 전 구간)도 원본 값을
+  그대로 싣는다. `alloc.py` 는 예외적으로 **원본 값을 싣지 않는다**
   — 게시물은 원천 10개의 공분산·평균·부트스트랩 분위수뿐이다(`tests/test_contract.py` 의 유출 가드가 이를 강제).
   어느 경로든 넣은 시리즈의 **값이 Pages로 나간다** — 상수만 훑고 공개 범위를 판단하면 크게 과소평가한다.
 - **리스크 요인 구성·가중** = `risk.py` 의 **모듈 수준** `derive_inputs()`(원천·파생 시리즈)와

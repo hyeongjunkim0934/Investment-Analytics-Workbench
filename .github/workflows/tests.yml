@@ -20,6 +20,10 @@ on:
       - "dashboard/**"
       - "pytest.ini"
       - ".github/workflows/tests.yml"
+      # 문서도 건다 — 테스트가 문서의 수치(테스트 개수·JSON 개수)를 검사하므로,
+      # 문서만 고친 커밋이 검사 없이 지나가면 그 검사가 무의미해진다.
+      - "docs/**"
+      - "CLAUDE.md"
   workflow_dispatch:
 
 permissions:

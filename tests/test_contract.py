@@ -885,3 +885,61 @@ def test_gate_rejects_a_hedge_payload_missing_a_nested_key(built, tmp_path, sub,
     del obj[sub][key]
     p.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
     assert _run_gate(tmp) == 1, f"hedge.json.{sub}.{key} 가 사라졌는데 게이트가 통과시켰습니다"
+
+
+# --------------------------------------------------------------------------
+# 문서 드리프트 — 문서는 다음 세션의 유일한 지도인데 읽는 테스트가 하나도 없었다
+#
+# 이 저장소는 방향 이탈로 56커밋 프로젝트를 폐기한 전력이 있고, 뮤테이션 커버리지
+# 주장을 이미 두 번 하향했다(2d2a46f · 9a34c2d). 기계로 확인 가능한 수만이라도
+# 여기서 잠근다 — 사람이 세는 수는 반드시 어긋난다.
+# --------------------------------------------------------------------------
+
+def _docs() -> dict[str, str]:
+    return {p.name: p.read_text(encoding="utf-8")
+            for p in [ROOT / "CLAUDE.md", ROOT / "docs" / "HANDOVER.md"]}
+
+
+def test_docs_state_the_real_test_count():
+    """문서가 적은 "N개 통과" 가 실제 수집 개수와 같아야 한다."""
+    r = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q"],
+                       cwd=ROOT, capture_output=True, text=True)
+    m = re.search(r"(\d+) tests? collected", r.stdout)
+    assert m, r.stdout[-1500:]
+    real = int(m.group(1))
+    for name, txt in _docs().items():
+        for claimed in re.findall(r"(?:현재|정상)?\s*(\d+)개\s*(?:통과|테스트)", txt):
+            assert int(claimed) == real, (
+                f"{name} 이 테스트 {claimed}개라고 적었지만 실제는 {real}개입니다"
+            )
+
+
+def test_docs_state_the_real_json_contract_size():
+    """JSON 계약 크기(15)는 코드가 정한 수다 — 문서의 다른 수를 잡는다."""
+    n = len(check_output.EXPECTED)
+    for name, txt in _docs().items():
+        for claimed in re.findall(r"JSON\s*(\d+)개", txt):
+            assert int(claimed) == n, f"{name}: JSON {claimed}개라고 적혀 있으나 계약은 {n}개"
+
+
+def test_docs_do_not_point_at_line_numbers_of_moving_code():
+    """`process.py` 의 행 번호를 문서에 적지 않는다.
+
+    실측으로 11건이 전부 −1 만큼 어긋나 있었다. 코드가 한 줄만 움직여도 전부
+    거짓이 되고, 어긋났다는 사실은 아무도 모른다 — 이름이나 grep 명령으로 적는다.
+    """
+    bad = []
+    for name, txt in _docs().items():
+        for m in re.finditer(r"`?(process|risk|hedge|alloc|panel|app)\.(py|js)`?[^\n]{0,40}?(\d{2,4})\s*행", txt):
+            bad.append(f"{name}: {m.group(0)[:60]}")
+        for m in re.finditer(r"(\d{2,4})(?:·\d{2,4})+\s*행", txt):
+            bad.append(f"{name}: {m.group(0)[:60]}")
+    assert not bad, "문서가 코드 행 번호를 가리킵니다(이름·grep 으로 바꾸세요): " + "; ".join(bad)
+
+
+def test_ci_runs_tests_when_only_docs_change():
+    """문서의 수치를 테스트가 검사하므로, 문서만 고친 커밋도 CI 를 타야 한다."""
+    wf = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    paths = wf.split("paths:", 1)[1].split("workflow_dispatch", 1)[0]
+    for need in ('"docs/**"', '"CLAUDE.md"'):
+        assert need in paths, f"tests.yml 의 paths 에 {need} 가 없습니다"
