@@ -27,6 +27,7 @@ import openpyxl
 import pandas as pd
 
 import alloc
+import breadth
 import hedge
 import panel
 import risk
@@ -237,6 +238,22 @@ def load_data_dir(data_dir: Path) -> list[dict]:
         elif low.startswith("data_info"):
             n = parse_wide(p, "info")
             files_report.append({"file": p.name, "kind": "infomax-wide", "series": n})
+        elif breadth.is_stock_report(p):
+            # 미국 증시 데일리 리포트 — **하루치 스냅샷**이라 성격이 다르다.
+            # 파일 하나 = 관측 하루이고, 이력은 날짜별 파일이 쌓여야 생긴다.
+            # 판정은 파일명이 아니라 시트 이름으로 한다(리포트는 날짜가 박힌 이름으로
+            # 배포되므로 접두사 규약을 매일 지키게 하면 언젠가 반드시 잊는다).
+            rep = breadth.parse(p, warn)
+            if rep:
+                ts = pd.Timestamp(rep["date"])
+                for k, v in rep["values"].items():
+                    label, unit, _ = breadth.METRICS.get(k, (k, "", None))
+                    add_series(f"us:{k}", "kiwoom", "US Breadth",
+                               f"{label} ({unit})" if unit else label, [(ts, v)])
+                files_report.append({"file": p.name, "kind": "us-breadth",
+                                     "series": len(rep["values"]), "asof": rep["date"]})
+            else:
+                files_report.append({"file": p.name, "kind": "skipped", "series": 0})
         else:
             name, pairs = parse_index_export(p)
             if name and pairs:
@@ -596,7 +613,43 @@ def build_acwi() -> dict:
         "low_52w": round(float(s.loc[last_ts - timedelta(days=365):].min()), 2),
         "chg": changes(s, "price"),
     }
-    return {"price": price, "drawdown": drawdown, "stats": stats}
+    return {"price": price, "drawdown": drawdown, "stats": stats,
+            "breadth": build_breadth()}
+
+
+def build_breadth() -> dict:
+    """미국 증시 시장 폭 — 이 화면이 답하지 못하던 질문 하나를 채운다.
+
+    ACWI 는 **지수 하나의 가격**이라 "올랐다/내렸다"만 말할 수 있고, 그 상승이
+    전 종목이 함께 오른 것인지 대형주 몇 개가 끈 것인지는 답하지 못한다.
+    시장 폭은 그 구분을 준다.
+
+    **관측이 하루뿐일 수 있다** — 원본이 데일리 리포트라 이력은 날짜별 파일이
+    쌓여야 생긴다. 그래서 `n` 을 그대로 실어 화면이 스냅샷과 추세를 구분하게 한다.
+    없는 이력을 있는 것처럼 보이는 차트를 그리지 않기 위한 필드다.
+    """
+    rows, ts_out, n_obs = [], {}, 0
+    for key, (label, unit, note) in breadth.METRICS.items():
+        entry = SERIES.get(f"us:{key}")
+        if entry is None:
+            continue
+        ser = entry["s"].dropna()
+        if ser.empty:
+            continue
+        n_obs = max(n_obs, len(ser))
+        rows.append({"key": key, "label": label, "unit": unit, "note": note,
+                     "last": round(float(ser.iloc[-1]), 3),
+                     "date": ser.index[-1].strftime("%Y-%m-%d"),
+                     "n": int(len(ser))})
+        if len(ser) >= 2:
+            # 점 하나짜리 시계열은 싣지 않는다 — 차트가 그려질 수 없고,
+            # 실려 있으면 화면이 "이력이 있다"고 오판한다.
+            ts_out[key] = pack(ser, round_to=3, daily_years=50)
+    if not rows:
+        return {}
+    return {"asof": max(r["date"] for r in rows), "n": n_obs,
+            "rows": rows, "ts": ts_out,
+            "src": "키움증권 미국 증시 데일리 리포트 (집계 지표만 — 종목 단위 미게시)"}
 
 
 MACRO_DEFS = [

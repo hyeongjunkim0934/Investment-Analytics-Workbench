@@ -172,21 +172,72 @@ def write_index(path, a1: str = "ACWI  synthetic-fixture", *,
     wb.save(path)
 
 
+def write_stock_report(path, *, date="2030-05-17", market=None, indexes=None,
+                       sheet="Market Overview", header_shift=0) -> None:
+    """미국 증시 데일리 리포트 워크북 (집계 블록만 — 종목 단위는 만들지 않는다).
+
+    벤더 값은 한 톨도 들어가지 않는다. 실제 리포트에는 티커·회사명·현재가가
+    7,000종목 규모로 들어 있지만, **파서가 그것을 읽지 않는다는 것이 계약**이므로
+    픽스처에도 넣지 않는다 — 넣으면 "안 읽는다"를 시험하는 것이 아니라
+    "없어서 못 읽는다"를 시험하게 된다. 종목 단위 검사는 별도로 한다.
+
+    `header_shift` 는 벤더가 서식을 바꿔 블록이 밀린 상황을 재현한다 — 파서가
+    행 번호가 아니라 헤더 라벨로 블록을 찾는지 확인하는 데 쓴다.
+    """
+    m = {"total": 4000, "adv": 3000, "dec": 1000, "part": 70,
+         "nh": 200, "nl": 500, "up5": 700, "dn5": 100}
+    m.update(market or {})
+    ix = {"S&P500": (2.0, 0.010, 0.015), "NASDAQ": (3.0, 0.020, 0.018),
+          "러셀2000": (4.0, 0.022, 0.017), "DOW": (1.5, 0.011, 0.013)}
+    ix.update(indexes or {})
+
+    wb = openpyxl.Workbook(write_only=True)
+    ws = wb.create_sheet(sheet)
+    ws.append([])
+    ws.append(["미국 증시 데일리 리포트"])
+    ws.append([f"미국 {date} 종가 기준  ·  합성 픽스처"])
+    for _ in range(header_shift):
+        ws.append(["(벤더가 끼워 넣은 줄)"])
+    ws.append([])
+    ws.append(["1. 시장 요약  (미국 상장 보통주 전체)"])
+    ws.append(["상장 보통주", "상승", "하락", "참여율", "신고가권", "신저가권",
+               "급등 +5%", "급락 -5%", "ETF 상승/하락"])
+    ws.append([f"{m['total']:,}", f"{m['adv']:,}", f"{m['dec']:,}", f"{m['part']}%",
+               str(m["nh"]), str(m["nl"]), str(m["up5"]), str(m["dn5"]), "900/300"])
+    ws.append([])
+    ws.append(["4. 지수별 시장 폭 (Breadth)"])
+    ws.append(["지수", "종목수", "상승", "하락", "보합", "상승/하락",
+               "평균(단순)", "평균(시가총액가중)", "신고가권", "신저가권"])
+    for name, (ad, simple, weighted) in ix.items():
+        ws.append([name, 500, 340, 160, 0, ad, simple, weighted, 20, 5])
+    wb.save(path)
+
+
 def build_all(dest) -> dict:
-    """세 워크북을 dest 에 만들고 {kind: path} 를 돌려준다."""
+    """네 워크북을 dest 에 만들고 {kind: path} 를 돌려준다."""
     dest = str(dest).rstrip("/")
     paths = {
         "bb": f"{dest}/data_bb_synth.xlsx",
         "info": f"{dest}/data_info_synth.xlsx",
         "idx": f"{dest}/ACWI_synth.xlsx",
+        "report": f"{dest}/Daily_Stock_Report_synth.xlsx",
     }
     write_wide(paths["bb"], BB_SPEC, dup_notation="달러원")
     write_wide(paths["info"], INFO_SPEC, sheet_title="DailyRate")
     write_index(paths["idx"])
+    write_stock_report(paths["report"])
     return paths
 
 
 BB_KEYS = [f"bb:{s[0]}" for s in BB_SPEC]
 INFO_KEYS = [f"info:{s[0]}" for s in INFO_SPEC]
 IDX_KEYS = ["idx:ACWI"]
-ALL_KEYS = BB_KEYS + INFO_KEYS + IDX_KEYS
+#: 데일리 리포트가 만드는 키 — `write_stock_report` 기본 픽스처 기준.
+#: 지수는 선언된 셋만 나가므로 DOW 는 여기 없다(픽스처에는 있다).
+BREADTH_KEYS = [
+    "us:ad_ratio", "us:participation", "us:net_new_high", "us:net_new_high_pct",
+    "us:surge_net", "us:universe",
+    "us:ad_sp500", "us:ad_nasdaq", "us:ad_r2000",
+    "us:skew_sp500", "us:skew_nasdaq", "us:skew_r2000",
+]
+ALL_KEYS = BB_KEYS + INFO_KEYS + IDX_KEYS + BREADTH_KEYS

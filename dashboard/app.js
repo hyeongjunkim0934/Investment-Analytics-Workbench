@@ -628,6 +628,90 @@ function renderACWI() {
     });
     makeTimeChart(box, { labels: ["낙폭(%)"], colors: [pal.series[7]], data, dec: 2, unit: "%", fill: true });
   }
+  renderBreadth(d.breadth, pal);
+}
+
+/* ── 미국 증시 시장 폭 ──────────────────────────────────────────────────────
+   ACWI 가격은 "올랐다/내렸다"만 말한다. 같은 상승이라도 **전 종목이 함께 오른 것**과
+   **대형주 몇 개가 끈 것**은 뜻이 전혀 다른데, 이 대시보드에는 그 구분을 주는
+   시리즈가 하나도 없었다(전부 가격·금리·스프레드다).
+
+   **관측이 하루뿐일 수 있다.** 원본이 데일리 리포트라 이력은 날짜별 파일이 쌓여야
+   생긴다. 그래서 없는 이력을 있는 것처럼 보이는 차트를 그리지 않고, 관측 수를
+   화면에 그대로 적는다 — 「보이는 것이 곧 가진 것」이어야 한다. */
+function renderBreadth(B, pal) {
+  const card = $("#card-breadth");
+  if (!card) return;
+  card.textContent = "";
+  if (!B || !B.rows || !B.rows.length) { card.hidden = true; return; }
+  card.hidden = false;
+
+  const byKey = Object.fromEntries(B.rows.map((r) => [r.key, r]));
+  const val = (k) => (byKey[k] ? byKey[k].last : null);
+  const fmt = (k, dec) => (byKey[k] ? fmtNum(byKey[k].last, dec) : "–");
+
+  card.append(el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, "미국 증시 시장 폭 (breadth)"),
+    el("span", { class: "card-sub" },
+      `${B.asof} 종가 기준 · 관측 ${B.n}일 · ${B.src}`)));
+
+  /* 결론 한 줄 — 이 카드가 답하는 질문은 "넓은 상승인가 좁은 상승인가" 하나다.
+     판정은 **화면이 만드는 말이 아니라 두 수의 대소**다(부호가 곧 결론). */
+  const ad = val("ad_ratio");
+  const nnh = val("net_new_high");
+  if (ad != null && nnh != null) {
+    const wide = ad >= 1;
+    const deep = nnh >= 0;
+    const verdict = wide && deep ? "넓은 상승 — 오른 종목이 많고 신고가도 신저가보다 많습니다."
+      : wide && !deep ? "겉은 상승, 속은 갈라짐 — 오른 종목이 많은데 52주 바닥을 깨는 종목이 더 많습니다."
+      : !wide && deep ? "겉은 하락, 속은 버팀 — 내린 종목이 많은데 신고가가 신저가보다 많습니다."
+      : "넓은 하락 — 내린 종목이 많고 신저가도 신고가보다 많습니다.";
+    card.append(el("div", { class: "qa", style: "margin:8px 0 12px" },
+      el("b", {}, verdict),
+      el("div", { class: "card-sub", style: "margin-top:4px" },
+        `상승/하락 ${fmt("ad_ratio", 2)}배 · 신고가권 − 신저가권 ${fmt("net_new_high", 0)}종목`
+        + (val("net_new_high_pct") != null ? ` (상장 종목의 ${fmt("net_new_high_pct", 2)}%)` : ""))));
+  }
+
+  const t = el("table", { class: "mini-table" },
+    el("tr", {}, el("th", {}, "지표"),
+      el("th", {}, "값"), el("th", { style: "text-align:left" }, "읽는 법")));
+  B.rows.forEach((r) => {
+    const dec = r.unit === "종목" ? 0 : (r.unit === "%p" ? 3 : 2);
+    t.append(el("tr", {},
+      el("td", {}, r.label),
+      el("td", { class: "num" }, `${fmtNum(r.last, dec)}${r.unit ? " " + r.unit : ""}`),
+      el("td", { style: "text-align:left;font-size:11.5px" }, r.note || "")));
+  });
+  card.append(wrapTable(t));
+
+  /* 이력이 2일 이상 쌓이면 추세를 그린다. 그 전까지는 그리지 않는다 —
+     점 하나짜리 차트는 정보가 0인데 "이력이 있다"고 읽힌다. */
+  const tsKeys = Object.keys(B.ts || {});
+  if (tsKeys.length) {
+    /* `rows` 에 없는 키는 그리지 않는다 — 라벨을 만들 수 없어 범례에 `net_new_high_pct`
+       같은 **내부 키가 그대로 찍힌다**(프로브에서 실제로 그랬다). 이름 없는 계열은
+       "그 자리에서 한 줄로 설명한다" 규약을 지킬 수 없으므로 아예 빼는 쪽이 맞다. */
+    const pick = ["ad_ratio", "net_new_high_pct"].filter((k) => B.ts[k] && byKey[k]);
+    const groups = pick.map((k) => ({ label: byKey[k].label, t: B.ts[k].t, v: B.ts[k].v }));
+    if (groups.length) {
+      const box = cardScaffold(card, {
+        title: "시장 폭 추이", sub: `관측 ${B.n}일`,
+        csvName: "미국-시장폭.csv",
+        tableFn: tsTableFn(groups.map((g) => g.label), joinSeries(groups), 2),
+      });
+      makeTimeChart(box, {
+        labels: groups.map((g) => g.label),
+        colors: groups.map((_, i) => pal.series[i % 8]),
+        data: joinSeries(groups), dec: 2, height: 220,
+      });
+    }
+  } else {
+    card.append(el("p", { class: "card-sub", style: "margin-top:8px;line-height:1.7" },
+      el("b", {}, "아직 하루치입니다"), " — 이 리포트는 하루치 스냅샷이라 ",
+      "추세·백분위·위험 요인 반영은 ", el("b", {}, "날짜별 파일이 쌓여야"), " 가능합니다. ",
+      "같은 리포트를 계속 올리시면 여기에 추이 차트가 자동으로 붙습니다."));
+  }
 }
 
 function renderMacro() {

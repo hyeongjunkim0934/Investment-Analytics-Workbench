@@ -13,21 +13,44 @@ import synth
 
 
 def test_series_count_and_files(parsed):
-    """파싱 시리즈 수 = 스펙 길이의 합, 파일 3개. 중복 컬럼은 세지 않는다."""
+    """파싱 시리즈 수 = 스펙 길이의 합, 파일 4개. 중복 컬럼은 세지 않는다."""
     report, P = parsed
-    assert len(report) == 3
-    expected = len(synth.BB_SPEC) + len(synth.INFO_SPEC) + 1     # +1 = idx:ACWI
+    assert len(report) == 4
+    expected = (len(synth.BB_SPEC) + len(synth.INFO_SPEC)
+                + 1                       # idx:ACWI
+                + len(synth.BREADTH_KEYS))  # 데일리 리포트 집계 지표
     assert len(P.SERIES) == expected
     kinds = {r["kind"] for r in report}
-    assert kinds == {"bloomberg-wide", "infomax-wide", "index:ACWI"}
+    assert kinds == {"bloomberg-wide", "infomax-wide", "index:ACWI", "us-breadth"}
 
 
 def test_key_prefixes_follow_filename(parsed):
-    """키 접두사는 파일명 접두사가 정한다 (`data_bb*`/`data_info*`/그 외)."""
+    """키 접두사는 파서가 정한다.
+
+    `data_bb*`/`data_info*` 는 **파일명**으로, 데일리 리포트(`us:`)는 **시트 이름**으로,
+    나머지는 지수 익스포트(`idx:`)로 간다 — 리포트만 내용 판정인 이유는 그 파일이
+    날짜가 박힌 이름으로 배포되기 때문이다(`pipeline/breadth.py` 참조).
+    """
     _, P = parsed
     for k in synth.ALL_KEYS:
         assert k in P.SERIES, f"missing {k}"
-    assert all(k.split(":", 1)[0] in ("bb", "info", "idx") for k in P.SERIES)
+    assert all(k.split(":", 1)[0] in ("bb", "info", "idx", "us") for k in P.SERIES)
+
+
+def test_stock_report_publishes_aggregates_only(parsed):
+    """데일리 리포트에서 온 시리즈는 전부 집계이고, 관측일은 본문 날짜다.
+
+    공개 저장소이므로 종목 단위가 섞이면 안 된다 — 파서 쪽 계약은
+    `tests/test_breadth.py` 가 지키고, 여기서는 **파이프라인을 통과한 뒤에도**
+    `us:` 키가 선언된 집계 지표뿐인지 본다.
+    """
+    _, P = parsed
+    us = {k: v for k, v in P.SERIES.items() if k.startswith("us:")}
+    assert us, "데일리 리포트에서 온 시리즈가 없다"
+    assert set(us) == set(synth.BREADTH_KEYS), sorted(us)
+    for k, entry in us.items():
+        assert entry["source"] == "kiwoom" and entry["category"] == "US Breadth"
+        assert len(entry["s"]) == 1, f"{k}: 파일 하나 = 관측 하루여야 한다"
 
 
 def test_key_suffix_is_verbatim_header(parsed):

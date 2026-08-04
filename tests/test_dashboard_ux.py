@@ -1166,3 +1166,50 @@ def test_receiving_currencies_list_only_contains_positive_costs(probe):
         assert name in recv, f"{name}(양수)가 받는 통화 목록에 없다: {recv}"
     for name in neg:
         assert name not in recv, f"{name}(음수)가 받는 통화 목록에 있다: {recv}"
+
+
+# ---- 미국 시장 폭 카드 (실행해서 확인) --------------------------------------
+def test_breadth_card_draws_no_chart_from_a_single_observation(probe):
+    """관측 1일이면 차트를 그리지 않는다.
+
+    원본이 데일리 리포트라 이력은 날짜별 파일이 쌓여야 생긴다. 점 하나짜리
+    차트는 정보가 0인데 화면에서는 "이력이 있다"로 읽힌다 — 보이는 것이 곧
+    가진 것이어야 한다. 대신 왜 없는지와 어떻게 하면 생기는지를 글자로 적는다.
+    """
+    b = probe["breadth"]
+    assert b["oneDayCharts"] == 0, "관측 1일인데 차트를 그렸다"
+    assert b["oneDaySaysSoManyDays"] is True, "관측 일수를 화면에 적지 않는다"
+    assert b["oneDaySaysItIsOneDayOnly"] is True, "하루치라는 사실을 말하지 않는다"
+    assert b["twoDayCharts"] == 1, "이력이 2일인데 추이를 안 그린다"
+    assert b["twoDayStillSaysOneDayOnly"] is False, "이력이 있는데 '하루치' 안내가 남았다"
+
+
+def test_breadth_verdict_follows_the_numbers_not_a_fixed_string(probe):
+    """판정 문구는 **두 수의 대소**에서 나와야 한다.
+
+    이 카드가 답하는 질문은 "넓은 상승인가 좁은 상승인가" 하나다. 문구를 고정하면
+    데이터가 반대로 가도 같은 말이 나가고, 그건 틀린 말이다. 같은 화면 코드에
+    반대 상황을 태워 문구가 뒤집히는지 본다.
+    """
+    b = probe["breadth"]
+    # 상승 우세(3.0배)인데 신고가 − 신저가가 음수 → 갈라짐
+    assert b["verdictOnDivergence"] is True, "괴리 상황에서 갈라짐 판정이 안 나온다"
+    # 같은 상승 우세인데 신고가가 더 많으면 → 넓은 상승
+    assert b["verdictOnBroadRally"] is True, "정상 상황에서 판정이 안 바뀐다"
+
+
+def test_breadth_chart_never_shows_an_internal_key_as_a_legend(probe):
+    """범례에 `net_new_high_pct` 같은 **내부 키**가 찍히면 안 된다.
+
+    이름을 만들 수 없는 계열은 "모든 숫자는 그 자리에서 한 줄로 설명한다" 규약을
+    지킬 수 없으므로 아예 그리지 않는다(프로브에서 실제로 키가 찍혔던 자리다).
+    """
+    b = probe["breadth"]
+    for chart in b["twoDaySeries"] + b["orphanSeries"]:
+        for label in chart:
+            assert not re.fullmatch(r"[a-z0-9_]+", label), f"내부 키가 범례에 있다: {label}"
+
+
+def test_breadth_card_hides_itself_when_there_is_no_report(probe):
+    """리포트를 안 올렸으면 카드를 숨긴다 — 빈 카드는 고장으로 읽힌다."""
+    assert probe["breadth"]["hiddenWhenAbsent"] is True
