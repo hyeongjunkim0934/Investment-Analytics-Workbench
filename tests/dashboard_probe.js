@@ -136,7 +136,8 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "cardScaffold", "el", "registry", "DATA", "BANDS", "SECTION_IDS", "palette",
   "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY",
   "SCENE_CYCLE_MS", "sceneCycleAllowed", "restartSceneCycle", "stopSceneCycle",
-  "currentScene", "currentTheme", "syncThemeButton"];
+  "currentScene", "currentTheme", "syncThemeButton",
+  "RENDERERS", "renderAll", "renderSection"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -613,6 +614,38 @@ safe("sceneCycle", () => {
   shim.location.hash = "#village"; P.routeView();
   r.liveBackOnVillage = INTERVALS.filter((h) => h.live).length;
   P.stopSceneCycle();
+  return r;
+});
+
+/* ====== P16. 렌더 격리 — 렌더러 하나가 던져도 뒤 섹션이 그려지는가 ============
+   SECTION_IDS 순서상 macro 가 catalog 보다 **앞**이다. 예전 renderAll 은 호출을
+   나열했으므로 macro 에서 던지면 catalog 는 영영 안 그려졌다. */
+safe("renderIsolation", () => {
+  const r = {};
+  P.DATA.macro = { items: [{ key: "k", label: "격리 테스트", unit: "%", last: 1,
+    date: "2030-01-31", t: [1700000000], v: [1] }] };
+  P.DATA.catalog = { series: [
+    { key: "bb:격리", source: "bb", category: "테스트", start: "2020-01-01",
+      end: "2030-01-01", n: 10 },
+  ] };
+  const real = P.RENDERERS.macro;
+  P.RENDERERS.macro = () => { throw new Error("probe: 일부러 던진다"); };
+  P.renderAll();
+  P.RENDERERS.macro = real;
+
+  const macro = DOC.getElementById("macro");
+  const notes = macro.querySelectorAll(".render-error");
+  r.failedSectionIsMarked = notes.length === 1;
+  r.noticeMentionsTheSection = notes.length ? notes[0].textContent.includes("macro") : false;
+  r.noticeSaysOthersAreFine = notes.length ? notes[0].textContent.includes("다른 화면은 정상") : false;
+  /* macro 뒤에 오는 catalog 가 그려졌는가 — 이것이 격리의 전부다. */
+  r.laterSectionStillRendered =
+    DOC.getElementById("catalog-table").querySelectorAll("tr").length > 0;
+  /* 두 번 던져도 안내가 겹쳐 쌓이지 않는다 */
+  P.RENDERERS.macro = () => { throw new Error("probe: 또 던진다"); };
+  P.renderSection("macro");
+  P.RENDERERS.macro = real;
+  r.noticeNotDuplicated = macro.querySelectorAll(".render-error").length === 1;
   return r;
 });
 

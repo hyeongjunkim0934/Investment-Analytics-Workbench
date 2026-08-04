@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -372,8 +373,11 @@ def _fn(name: str) -> str:
     복사돼 있었고, 그중 일부만 주석을 걷었다 — 한 곳으로 모아 그 갈림을 없앤다.
     """
     js = _app_js()
-    assert f"function {name}" in js, f"app.js 에 function {name} 이 없습니다"
-    return js.split(f"function {name}")[1].split("\nfunction ")[0]
+    # 이름 뒤에 `(` 를 요구한다 — 없으면 `renderAll` 이 `renderAlloc` 에 먼저 걸려
+    # **엉뚱한 함수 본문**을 조용히 돌려준다(실제로 한 번 그랬다).
+    m = re.search(rf"function {re.escape(name)}\s*\(", js)
+    assert m, f"app.js 에 function {name}( 이 없습니다"
+    return js[m.end():].split("\nfunction ")[0]
 
 
 def _strip_js_comments(src: str) -> str:
@@ -663,4 +667,157 @@ def test_probe_skeleton_covers_the_ids_its_renderers_touch():
     assert not missing, (
         f"프로브 뼈대에 없는 id 를 렌더러가 집습니다: {missing} — "
         "tests/dashboard_probe.js 의 해당 섹션 뼈대에 추가하세요."
+    )
+
+
+# --------------------------------------------------------------------------
+# 배포 게이트의 최소 스키마 — 파일이 있다고 내용이 온전한 것은 아니다
+#
+# 실측: `hedge.json` 에서 asof·curves·mtm·cost_stats·backtest·sim 을 통째로
+# 지워도 게이트가 exit 0 이었다. 필드 하나를 개명한 뮤테이션은 pytest·프로브·게이트
+# **세 관문 전부 초록**인데 화면의 헤지비용 열이 전 통화 `—` 로 비었다.
+# --------------------------------------------------------------------------
+
+def _run_gate(out: Path) -> int:
+    """게이트를 서브프로세스로 돌린다 — 모듈 전역(_errors)이 테스트 간에 누적되므로."""
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "pipeline" / "check_output.py"),
+         # 합성 픽스처는 실데이터에 없는 시리즈를 대량으로 못 찾아 경고가 140건대다
+         # (`series not found:`). 여기서 보려는 것은 경고 수가 아니라 **최소 스키마**이므로
+         # 상한을 넉넉히 준다 — 경고 상한 자체는 CI 인자(20)가 지킨다.
+         "--out", str(out), "--max-warnings", "1000", "--min-series", "10",
+         "--dashboard", str(ROOT / "dashboard" / "app.js")],
+        capture_output=True, text=True)
+    return r.returncode
+
+
+def test_gate_passes_on_a_healthy_build(built):
+    out, _ = built
+    assert _run_gate(out) == 0, "정상 산출물인데 게이트가 막습니다"
+
+
+@pytest.mark.parametrize("payload,key", [
+    ("hedge", "matrix"), ("hedge", "curves"), ("hedge", "mtm"),
+    ("hedge", "cost_stats"), ("hedge", "sim"), ("hedge", "default_tenor_m"),
+    ("alloc", "sources"), ("risk", "factors"), ("panel", "vars"),
+])
+def test_gate_rejects_a_payload_missing_a_required_key(built, tmp_path, payload, key):
+    """필수 키 하나만 사라져도 배포를 막아야 한다.
+
+    이것이 실제로 일어나는 방식은 삭제가 아니라 **개명**이다 — 파이프라인만 고치고
+    화면을 안 고치면 그 카드가 조용히 빈다. 게이트에서 키 이름을 못박아 둔다.
+    """
+    out, _ = built
+    tmp = tmp_path / "data"
+    shutil.copytree(out, tmp)
+    p = tmp / f"{payload}.json"
+    obj = json.loads(p.read_text(encoding="utf-8"))
+    assert key in obj, f"테스트 전제가 깨졌다 — {payload}.json 에 {key} 가 원래 없다"
+    del obj[key]
+    p.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+    assert _run_gate(tmp) == 1, f"{payload}.json 의 {key} 가 사라졌는데 게이트가 통과시켰습니다"
+
+
+def test_gate_rejects_a_renamed_matrix_column(built, tmp_path):
+    """매트릭스 행의 열 이름 개명 — B-4 조사에서 세 관문을 전부 통과했던 바로 그 뮤테이션."""
+    out, _ = built
+    tmp = tmp_path / "data"
+    shutil.copytree(out, tmp)
+    p = tmp / "hedge.json"
+    obj = json.loads(p.read_text(encoding="utf-8"))
+    for row in obj["matrix"]:
+        row["swap_rate_12m"] = row.pop("cost_12m")
+    p.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+    assert _run_gate(tmp) == 1, "cost_12m 이 개명됐는데 게이트가 통과시켰습니다"
+
+
+#: 화면이 이름으로 읽지 **않는데도** 게이트가 지키는 키 — 그 이유를 여기 적는다.
+#: 목록에 넣는 것 자체가 "왜 지키는가"를 답하는 행위이므로, 이유 없이 늘어나지 않는다.
+PUBLISH_ONLY_KEYS = {
+    ("alloc", "anchor_ref"): "동일 샤프 앵커의 기준(자국통화)·값. 방법론 재현용 게시물",
+    ("alloc", "checks"):     "자기검증 결과. 값이 사라지면 검증 없이 배포된 것과 같다",
+    ("risk", "grade_bands"): "등급 밴드 정본(app.js 는 자체 BANDS 상수를 쓴다 — 3중 진실이 남아 있다)",
+}
+
+
+def test_required_keys_are_keys_the_dashboard_actually_reads():
+    """게이트의 필수 키 목록이 **허구가 되지 않게** 한다.
+
+    화면이 더 이상 읽지 않는 키를 지키면 게이트는 죽은 계약을 강제하는 셈이고,
+    반대로 목록이 낡으면 아무것도 못 지킨다. 원칙은 "app.js 가 이 이름을 실제로
+    집는가"이고(주석 제거본에서), 예외는 위 목록에 **이유와 함께** 적는다.
+    """
+    js = _app_js()
+    for payload, keys in check_output.REQUIRED_KEYS.items():
+        for k in keys:
+            if (payload, k) in PUBLISH_ONLY_KEYS:
+                continue
+            assert re.search(rf"[.\[]\"?'?{re.escape(k)}\b", js), (
+                f"check_output.REQUIRED_KEYS['{payload}'] 의 '{k}' 를 app.js 가 읽지 않습니다 — "
+                "화면에서 사라진 키라면 목록에서 빼고, 게시 전용이라면 "
+                "PUBLISH_ONLY_KEYS 에 이유와 함께 등록하세요"
+            )
+
+
+def test_publish_only_exceptions_are_still_required_keys():
+    """예외 목록이 **검사를 끄는 스위치**가 되지 않게 한다.
+
+    게이트가 더 이상 지키지 않는 키가 예외 목록에만 남아 있으면, 목록은 지키는
+    척하는 문서가 된다. 예외는 반드시 REQUIRED_KEYS 안에 있어야 한다.
+    """
+    stale = [(p, k) for (p, k) in PUBLISH_ONLY_KEYS
+             if k not in check_output.REQUIRED_KEYS.get(p, [])]
+    assert not stale, f"REQUIRED_KEYS 에 없는 예외: {stale}"
+
+
+# --------------------------------------------------------------------------
+# 렌더 격리 — 렌더러 하나가 던져도 나머지 섹션은 그려져야 한다
+#
+# JSON 로딩(Promise.allSettled)과 파이프라인(risk/hedge 의 try/except)은 이미
+# 격리돼 있는데 렌더 계층에만 그 규약이 없었다. 실측: index.html 의 id 하나
+# (`#card-curve`)를 지우자 렌더된 섹션이 10 → 5 로 줄었다(rates·irs·credit·fx·
+# inflation·acwi·macro 전멸). 화면은 오류 없이 그냥 비어 보였다.
+# --------------------------------------------------------------------------
+
+def _renderer_map() -> dict[str, str]:
+    block = re.search(r"const RENDERERS = \{(.*?)\n\};", _app_js(), re.S)
+    assert block, "app.js 에서 RENDERERS 를 찾지 못했습니다"
+    return dict(re.findall(r"(\w+):\s*(\w+)", block.group(1)))
+
+
+def test_every_section_has_a_renderer():
+    """SECTION_IDS 의 14개가 전부 RENDERERS 에 있어야 한다.
+
+    빠뜨리면 그 섹션은 **아무 오류 없이 영영 비어 있다** — 클릭해서 들어가야만
+    보이는 구조라 눈으로 알아채기까지 오래 걸린다.
+    """
+    ids = re.findall(r'"([a-z]+)"', re.search(
+        r"const SECTION_IDS = \[(.*?)\];", _app_js(), re.S).group(1))
+    r = _renderer_map()
+    assert set(ids) - set(r) == set(), f"렌더러가 없는 섹션: {sorted(set(ids) - set(r))}"
+    assert set(r) - set(ids) == set(), f"섹션에 없는 렌더러: {sorted(set(r) - set(ids))}"
+    assert len(ids) == 14
+
+
+def test_renderers_named_in_the_map_actually_exist():
+    """맵의 값이 실재하는 함수여야 한다 — 오타는 조용히 그 섹션만 지운다."""
+    js = _app_js()
+    for sec, fn in _renderer_map().items():
+        assert f"function {fn}(" in js, f"{sec} 의 렌더러 {fn} 가 app.js 에 없습니다"
+
+
+def test_render_all_isolates_each_section():
+    """renderAll 이 섹션을 하나씩 가둬서 부르는지.
+
+    예전처럼 `renderOverview(); renderRisk(); …` 를 나열하면 앞에서 던진 순간
+    뒤가 통째로 멈춘다. 격리 함수를 거치고, 그 안에 try/catch 가 있어야 한다.
+    """
+    ra = _fn("renderAll")
+    assert "SECTION_IDS.forEach(renderSection)" in ra, (
+        "renderAll 이 섹션을 개별 호출로 나열합니다 — 하나가 던지면 뒤가 전부 멈춥니다"
+    )
+    rs = _fn("renderSection")
+    assert "try {" in rs and "catch" in rs, "renderSection 에 try/catch 가 없습니다"
+    assert "render-error" in rs, (
+        "실패한 섹션에 안내를 붙이지 않습니다 — 빈 화면은 '데이터 없음'으로 읽힙니다"
     )

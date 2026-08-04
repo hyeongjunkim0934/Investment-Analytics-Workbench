@@ -4131,25 +4131,46 @@ function openAllocDetail(topic) {
 
 /* ---------------- render all / boot ---------------- */
 
+/* 섹션 id → 그 섹션을 그리는 함수. SECTION_IDS 와 1:1 이며 계약 테스트가 강제한다.
+   순서는 화면 순서(마을 구역 순)와 같게 둔다 — 읽는 사람이 대조하기 쉽게. */
+const RENDERERS = {
+  overview: renderOverview, risk: renderRisk, events: renderEvents,
+  panel: renderPanel, hedge: renderHedge, alloc: renderAlloc,
+  rates: renderRates, irs: renderIRS, credit: renderCredit,
+  fx: renderFX, inflation: renderInflation, acwi: renderACWI,
+  macro: renderMacro, catalog: renderCatalog,
+};
+
+/* ── 렌더 격리 ────────────────────────────────────────────────────────────
+   JSON 로딩(Promise.allSettled)과 파이프라인(risk/hedge 의 try/except)은 이미
+   격리돼 있는데 **렌더 계층에만 그 규약이 없었다**. 렌더러 하나가 던지면
+   renderAll 이 거기서 끊겨 그 뒤의 섹션이 전부 안 그려진다 — 실측으로
+   index.html 의 id 하나(`#card-curve`)를 지웠더니 렌더된 섹션이 10 → 5 로
+   줄었고(rates·irs·credit·fx·inflation·acwi·macro 전멸), 화면은 오류 없이
+   그냥 비어 보였다. 여기서 섹션 단위로 가둔다. */
+function renderSection(id) {
+  const fn = RENDERERS[id];
+  if (!fn) return;
+  try {
+    fn();
+  } catch (e) {
+    console.error(`render failed: ${id}`, e);
+    const node = document.getElementById(id);
+    if (!node || node.querySelector(".render-error")) return;
+    /* 빈 화면은 "데이터가 없다"로 읽힌다 — 고장임을 화면에 적는다. */
+    node.prepend(el("p", { class: "render-error", role: "status" },
+      "이 화면을 그리는 중 오류가 났습니다. 다른 화면은 정상입니다 — ",
+      "브라우저 콘솔의 ", el("code", {}, `render failed: ${id}`), " 를 확인하세요."));
+  }
+}
+
 function renderAll() {
   destroyAllCharts();
   overlayCharts = [];
   registry.length = 0;
-  renderOverview();
-  renderRisk();
-  renderEvents();
-  renderPanel();
-  renderHedge();
-  renderAlloc();
-  renderRates();
-  renderIRS();
-  renderCredit();
-  renderFX();
-  renderInflation();
-  renderACWI();
-  renderMacro();
-  if (!$("#village").hidden) renderVillage();       // 테마 전환 시 낮/밤 지도 교체
-  if (!$("#detail-overlay").hidden) handleHash();   // 테마 전환 시 열린 상세 재구성
+  SECTION_IDS.forEach(renderSection);
+  if (!$("#village").hidden) renderVillage();       // 장면 전환 시 낮/밤 지도 교체
+  if (!$("#detail-overlay").hidden) handleHash();   // 명암 전환 시 열린 상세 재구성
 }
 
 /* ── 마을 장면(scene) 15초 자동 순환 ─────────────────────────────────────
@@ -4285,8 +4306,7 @@ async function boot() {
     return;
   }
   renderMetaLine();
-  renderAll();
-  renderCatalog();
+  renderAll();          // 카탈로그도 RENDERERS 에 있으므로 따로 부르지 않는다
   window.addEventListener("hashchange", handleHash);
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !$("#detail-overlay").hidden) {

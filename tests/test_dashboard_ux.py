@@ -862,3 +862,32 @@ def test_signed_number_text_uses_the_text_only_ink_tokens(light, dark):
                 for label, b in ((surf, bg), (f"hover/{surf}", _blend(tk["--accent"], bg, 0.06))):
                     cr = contrast(ink, b)
                     assert cr >= AA_TEXT, f"[{name}] 부호 글자 {ink} on {label} = {cr:.3f}"
+
+
+# ---- 렌더 격리 (실행해서 확인) ---------------------------------------------
+def test_a_failing_renderer_does_not_take_the_rest_of_the_page_with_it(probe):
+    """렌더러 하나가 던져도 **그 뒤 섹션이 그려져야** 한다.
+
+    JSON 로딩과 파이프라인은 이미 격리돼 있었는데 렌더 계층에만 그 규약이 없었다.
+    실측으로 index.html 의 id 하나(`#card-curve`)를 지우자 렌더된 섹션이 10 → 5 로
+    줄었고(rates·irs·credit·fx·inflation·acwi·macro 전멸) 화면은 오류 없이 그냥
+    비어 보였다. SECTION_IDS 순서상 macro 는 catalog 보다 앞이므로, macro 가 던진
+    뒤 catalog 가 그려졌다면 격리가 실제로 작동한 것이다.
+    """
+    r = probe["renderIsolation"]
+    assert r["laterSectionStillRendered"] is True, (
+        "앞 섹션이 던지자 뒤 섹션이 안 그려졌다 — 격리가 없거나 깨졌다"
+    )
+
+
+def test_a_failing_section_says_it_is_broken(probe):
+    """빈 화면은 "데이터가 없다"로 읽힌다 — 고장임을 글자로 적어야 한다.
+
+    색만으로 알리지 않고(1.4.1), 어느 섹션인지와 "다른 화면은 정상"임을 함께
+    적어 사용자가 새로고침 말고 무엇을 할지 알 수 있게 한다.
+    """
+    r = probe["renderIsolation"]
+    assert r["failedSectionIsMarked"] is True, "실패한 섹션에 아무 표시가 없다"
+    assert r["noticeMentionsTheSection"] is True, "안내가 어느 섹션인지 말하지 않는다"
+    assert r["noticeSaysOthersAreFine"] is True, "안내가 나머지 화면의 상태를 말하지 않는다"
+    assert r["noticeNotDuplicated"] is True, "다시 그릴 때마다 안내가 겹쳐 쌓인다"
