@@ -229,3 +229,117 @@ def test_a_report_without_a_date_is_rejected(tmp_path):
     warns = []
     assert _parse(p, warns) == {}
     assert any("관측일" in w for w in warns), warns
+
+
+# ---- 이벤트 규칙 --------------------------------------------------------------
+# 위험 요인과 달리 **이력이 필요 없다** — 전부 같은 날 안에서 두 수를 비교하는
+# 횡단면 조건이기 때문이다. 그리고 **임의 기준이 하나도 없어야 한다**(상위 제약).
+
+import pandas as pd
+
+
+def _store(**metrics):
+    """`{키: 값}` → `us:` 시리즈 저장소 한 날짜치."""
+    ts = pd.Timestamp("2030-05-17")
+    return {f"us:{k}": {"s": pd.Series([v], index=[ts])} for k, v in metrics.items()}
+
+
+WIN = pd.Timestamp("2030-01-01")
+
+#: 세 지수가 전부 같은 방향이고 쏠림도 만장일치가 아닌 '조용한' 배경 —
+#: 규칙 하나만 떼어 보려고 나머지를 잠재운다.
+QUIET = dict(ad_sp500=2.0, ad_nasdaq=2.0, ad_r2000=2.0,
+             skew_sp500=0.1, skew_nasdaq=-0.1, skew_r2000=0.1)
+
+
+def _fire(**metrics):
+    ev, _ = breadth.detect_events(_store(**metrics), WIN)
+    return ev
+
+
+def test_divergence_event_fires_on_opposite_directions():
+    """오른 종목이 많은데 52주 신저가가 더 많으면 — 지수와 시장 내부가 다른 말을 한다."""
+    ev = _fire(ad_ratio=2.86, net_new_high=-366, universe=4596, **QUIET)
+    d = [e for e in ev if "신저가가 더 많음" in e["title"]]
+    assert len(d) == 1, [e["title"] for e in ev]
+    assert d[0]["sev"] == "주의" and d[0]["cat"] == breadth.EVENT_CAT
+    assert "2.86" in d[0]["value"] and "-366" in d[0]["value"]
+
+
+def test_divergence_event_has_no_threshold():
+    """**1종목 차이로도 발동한다** — 이것이 임의 기준이 없다는 증거다.
+
+    「N개 이상이면」 류의 수를 지금 정하면 그 N 은 근거 없는 수가 된다(자의성 금지).
+    부호 비교이므로 −1 이든 −366 이든 같은 규칙이 걸린다.
+    """
+    assert _fire(ad_ratio=1.01, net_new_high=-1, **QUIET), "1종목 차이에서 안 걸린다"
+    assert not _fire(ad_ratio=1.01, net_new_high=0, **QUIET), "차이가 0인데 걸렸다"
+
+
+def test_mirror_case_is_information_not_warning():
+    """내린 날인데 신고가가 더 많으면 — 같은 괴리지만 방향이 반대라 '정보'다."""
+    ev = _fire(ad_ratio=0.7, net_new_high=+120, **QUIET)
+    d = [e for e in ev if "신고가가 더 많음" in e["title"]]
+    assert len(d) == 1 and d[0]["sev"] == "정보"
+
+
+def test_no_divergence_event_when_both_agree():
+    """방향이 같으면 아무 일도 아니다 — 규칙이 늘 발동하면 신호가 아니다."""
+    assert not [e for e in _fire(ad_ratio=2.0, net_new_high=+200, **QUIET)
+                if "신저가가 더 많음" in e["title"] or "신고가가 더 많음" in e["title"]]
+    assert not [e for e in _fire(ad_ratio=0.5, net_new_high=-200, **QUIET)
+                if "신저가가 더 많음" in e["title"] or "신고가가 더 많음" in e["title"]]
+
+
+def test_index_disagreement_fires_only_when_split():
+    """대형·기술·소형이 1을 사이에 두고 갈릴 때만."""
+    base = dict(ad_ratio=1.5, net_new_high=100,
+                skew_sp500=0.1, skew_nasdaq=-0.1, skew_r2000=0.1)
+    split = _fire(ad_sp500=1.4, ad_nasdaq=0.8, ad_r2000=1.2, **base)
+    assert [e for e in split if "방향이 갈림" in e["title"]]
+    same = _fire(ad_sp500=1.4, ad_nasdaq=1.8, ad_r2000=1.2, **base)
+    assert not [e for e in same if "방향이 갈림" in e["title"]]
+
+
+def test_skew_event_needs_unanimity_in_both_directions():
+    """쏠림은 **만장일치**일 때만 — 만장일치는 기준값이 아니라 일치 여부라 임의성이 없다."""
+    base = dict(ad_ratio=1.5, net_new_high=100,
+                ad_sp500=2.0, ad_nasdaq=2.0, ad_r2000=2.0)
+    up = _fire(skew_sp500=0.5, skew_nasdaq=0.2, skew_r2000=0.01, **base)
+    assert [e for e in up if "대형주가 끌어올림" in e["title"]][0]["sev"] == "주의"
+    dn = _fire(skew_sp500=-0.5, skew_nasdaq=-0.2, skew_r2000=-0.01, **base)
+    assert [e for e in dn if "중소형이 끌어올림" in e["title"]][0]["sev"] == "정보"
+    mixed = _fire(skew_sp500=0.5, skew_nasdaq=-0.2, skew_r2000=0.1, **base)
+    assert not [e for e in mixed if "끌어올림" in e["title"]], "만장일치가 아닌데 걸렸다"
+
+
+def test_events_respect_the_lookback_window():
+    """창 밖 관측은 이벤트가 되지 않는다 — 다른 규칙과 같은 창을 쓴다."""
+    store = _store(ad_ratio=2.0, net_new_high=-300, **QUIET)
+    assert breadth.detect_events(store, pd.Timestamp("2030-01-01"))[0]
+    assert not breadth.detect_events(store, pd.Timestamp("2031-01-01"))[0]
+
+
+def test_every_event_states_its_rule_and_says_it_has_no_threshold():
+    """규칙 문구가 화면에 그대로 나간다 — 「임계값 없음」은 방어 가능성의 핵심이다."""
+    ev = _fire(ad_ratio=2.0, net_new_high=-300,
+               ad_sp500=1.4, ad_nasdaq=0.8, ad_r2000=1.2,
+               skew_sp500=0.5, skew_nasdaq=0.2, skew_r2000=0.1)
+    assert len(ev) == 3, [e["title"] for e in ev]
+    for e in ev:
+        assert set(e) == {"date", "sev", "cat", "title", "value", "rule", "tags"}, sorted(e)
+        assert e["sev"] in ("경계", "주의", "정보")
+        assert "임계값 없음" in e["rule"] or "만장일치" in e["rule"], e["rule"]
+        assert e["date"] == "2030-05-17"
+
+
+def test_event_catalog_row_is_published_with_the_rules():
+    """규칙 카탈로그에도 실린다 — 화면이 「전 규칙 공개」를 표방하기 때문이다."""
+    _, cat = breadth.detect_events(_store(ad_ratio=2.0, net_new_high=-300, **QUIET), WIN)
+    assert len(cat) == 1 and cat[0]["cat"] == breadth.EVENT_CAT
+    assert "임계값 없음" in cat[0]["rule"]
+
+
+def test_no_breadth_series_means_no_events():
+    """리포트를 안 올렸으면 조용해야 한다 — 없는 데이터로 이벤트를 만들지 않는다."""
+    assert breadth.detect_events({}, WIN) == ([], [])

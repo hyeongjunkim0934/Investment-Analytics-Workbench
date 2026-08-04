@@ -728,6 +728,23 @@ def main() -> None:
     try:
         risk_payload, events_payload, risk_weekly = risk.build(SERIES, warn)
         payloads["risk.json"] = risk_payload
+        # 시장 폭 이벤트를 같은 스트림에 합친다. **risk.py 는 건드리지 않는다** —
+        # 규칙의 뜻은 breadth.py 가 알고, 여기서는 합치기만 한다(사용자 제안 2026-08-04).
+        # 실패해도 나머지 이벤트는 나가야 하므로 따로 격리한다.
+        try:
+            b_ev, b_cat = breadth.detect_events(
+                SERIES, pd.Timestamp(events_payload["asof"])
+                - pd.Timedelta(days=events_payload["lookback_days"]))
+            if b_ev:
+                events_payload["events"] = sorted(
+                    events_payload["events"] + b_ev,
+                    key=lambda e: e["date"], reverse=True)[:40]
+            if b_cat:
+                events_payload["catalog"] = events_payload["catalog"] + b_cat
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            warn("breadth: 시장 폭 이벤트 계산 실패 — 나머지 이벤트만 나갑니다")
         payloads["events.json"] = events_payload
         try:
             payloads["panel.json"] = panel.build(SERIES, risk_weekly, warn)

@@ -199,3 +199,117 @@ METRICS = {
     "skew_nasdaq":      ("NASDAQ 쏠림(시총가중 − 단순평균)", "%p", "양수면 대형주가 지수를 끌었다"),
     "skew_r2000":       ("러셀2000 쏠림(시총가중 − 단순평균)", "%p", "양수면 대형주가 지수를 끌었다"),
 }
+
+
+# ---------------------------------------------------------------------------
+# 이벤트 — 「하루 안에서 판정되는 것」만
+# ---------------------------------------------------------------------------
+# 위험 요인(백분위·z 점수·워크포워드)과 달리 **이력이 필요 없다.** 아래 규칙은 전부
+# 같은 날 안에서 서로 다른 두 수를 비교하는 **횡단면 조건**이라, 관측이 하루뿐이어도
+# 그날의 판정이 성립한다. 사용자 제안(2026-08-04)이 정확히 이 성질을 짚었다.
+#
+# **임의 기준을 하나도 쓰지 않는다.** 전부 `>` 비교이거나 "세 지수의 부호가 같은가"
+# 같은 만장일치 조건이다. 「신고가가 신저가보다 N개 많으면」 류의 수를 지금 정하면
+# 그 N 은 근거 없는 수가 된다 — 이 저장소의 상위 제약(자의성 금지) 위반이다.
+# 분포를 세울 만큼 관측이 쌓이면 그때 세기를 나눌 것.
+
+#: 이벤트 카테고리 이름 — `risk.detect_events` 의 카테고리와 겹치지 않게 둔다.
+EVENT_CAT = "시장폭"
+
+
+def detect_events(series_store: dict, win_start) -> tuple[list, list]:
+    """`us:*` 시리즈에서 이벤트를 뽑는다 → `(events, catalog_rows)`.
+
+    `win_start` 이후 관측만 본다 — 다른 규칙과 같은 창을 쓴다.
+    """
+    def ser(key):
+        e = series_store.get(f"us:{key}")
+        return None if e is None else e["s"].dropna()
+
+    keys = ["ad_ratio", "net_new_high", "universe",
+            "ad_sp500", "ad_nasdaq", "ad_r2000",
+            "skew_sp500", "skew_nasdaq", "skew_r2000"]
+    cols = {k: ser(k) for k in keys}
+    if cols["ad_ratio"] is None or cols["net_new_high"] is None:
+        return [], []
+
+    dates = [d for d in cols["ad_ratio"].index if d > win_start]
+    out = []
+
+    def at(k, d):
+        s = cols.get(k)
+        if s is None or d not in s.index:
+            return None
+        return float(s.loc[d])
+
+    for d in dates:
+        ad, nnh = at("ad_ratio", d), at("net_new_high", d)
+        if ad is None or nnh is None:
+            continue
+        date_s = d.strftime("%Y-%m-%d")
+        univ = at("universe", d)
+
+        # ── ① 시장 폭 괴리 — 방향이 서로 반대다.
+        # 오른 종목이 더 많은 날(A/D>1)인데 52주 **바닥**을 깨는 종목이 신고가보다
+        # 많다면, 지수가 오른 것과 시장 내부가 튼튼한 것은 다른 이야기다.
+        # 두 수 모두 그날 안에서 독립적으로 세어진 것이라 비교에 기준값이 없다.
+        if ad > 1 and nnh < 0:
+            out.append({
+                "date": date_s, "sev": "주의", "cat": EVENT_CAT,
+                "title": "미국 증시 — 오른 종목이 많은데 52주 신저가가 더 많음",
+                "value": f"상승/하락 {ad:.2f}배 · 신고가−신저가 {nnh:+.0f}종목"
+                         + (f" (상장 {univ:,.0f})" if univ else ""),
+                "rule": "같은 날 A/D>1 이면서 (52주 신고가권 − 신저가권)<0 — 임계값 없음(부호 비교)",
+                "tags": ["breadth", "equity"]})
+        elif ad < 1 and nnh > 0:
+            out.append({
+                "date": date_s, "sev": "정보", "cat": EVENT_CAT,
+                "title": "미국 증시 — 내린 종목이 많은데 52주 신고가가 더 많음",
+                "value": f"상승/하락 {ad:.2f}배 · 신고가−신저가 {nnh:+.0f}종목",
+                "rule": "같은 날 A/D<1 이면서 (52주 신고가권 − 신저가권)>0 — 임계값 없음(부호 비교)",
+                "tags": ["breadth", "equity"]})
+
+        # ── ② 지수 간 방향 불일치 — 대형·기술·소형이 서로 다른 쪽을 본다.
+        ads = {"S&P500": at("ad_sp500", d), "NASDAQ": at("ad_nasdaq", d),
+               "러셀2000": at("ad_r2000", d)}
+        have = {k: v for k, v in ads.items() if v is not None}
+        if len(have) == 3:
+            up = [k for k, v in have.items() if v > 1]
+            dn = [k for k, v in have.items() if v < 1]
+            if up and dn:
+                out.append({
+                    "date": date_s, "sev": "정보", "cat": EVENT_CAT,
+                    "title": "미국 증시 — 규모대별로 방향이 갈림",
+                    "value": " · ".join(f"{k} {v:.2f}배" for k, v in have.items()),
+                    "rule": "같은 날 세 지수(대형·기술·소형)의 A/D 비율이 1을 사이에 두고 갈림 — 임계값 없음",
+                    "tags": ["breadth", "equity"]})
+
+        # ── ③ 쏠림 만장일치 — 세 지수 모두 큰 종목이 끌었다(= 상승 폭이 좁다).
+        # 만장일치는 기준값이 아니라 **일치 여부**라 임의성이 없다.
+        sk = {"S&P500": at("skew_sp500", d), "NASDAQ": at("skew_nasdaq", d),
+              "러셀2000": at("skew_r2000", d)}
+        skv = [v for v in sk.values() if v is not None]
+        if len(skv) == 3 and all(v > 0 for v in skv):
+            out.append({
+                "date": date_s, "sev": "주의", "cat": EVENT_CAT,
+                "title": "미국 증시 — 세 지수 모두 대형주가 끌어올림 (좁은 상승)",
+                "value": " · ".join(f"{k} {v:+.2f}%p" for k, v in sk.items() if v is not None),
+                "rule": "같은 날 세 지수 모두 (시총가중평균 − 단순평균)>0 — 만장일치 조건, 임계값 없음",
+                "tags": ["breadth", "equity"]})
+        elif len(skv) == 3 and all(v < 0 for v in skv):
+            out.append({
+                "date": date_s, "sev": "정보", "cat": EVENT_CAT,
+                "title": "미국 증시 — 세 지수 모두 중소형이 끌어올림 (넓은 상승)",
+                "value": " · ".join(f"{k} {v:+.2f}%p" for k, v in sk.items() if v is not None),
+                "rule": "같은 날 세 지수 모두 (시총가중평균 − 단순평균)<0 — 만장일치 조건, 임계값 없음",
+                "tags": ["breadth", "equity"]})
+
+    catalog = [{
+        "cat": EVENT_CAT,
+        "rule": "미국 증시 데일리 리포트의 **같은 날 안 비교**(임계값 없음): "
+                "① A/D 방향과 52주 신고가−신저가 방향이 반대 "
+                "② 대형·기술·소형 지수의 A/D 방향이 갈림 "
+                "③ 세 지수의 쏠림(시총가중−단순)이 모두 같은 부호",
+        "sev": "주의/정보",
+    }] if out or cols["ad_ratio"] is not None else []
+    return out, catalog

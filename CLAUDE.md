@@ -45,7 +45,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 229개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 242개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (1초 미만)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js
 python -m pytest
@@ -147,7 +147,12 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   상수 `FLOOR`/`EMBARGO_W`/`REFIT_EVERY_W`. 등급 밴드는 `GRADE_BANDS`.
   이 둘은 `risk.build()` 안에 있던 것을 밖으로 뺀 것이다 — `research/wf_validation.py` 가
   **같은 정의를 import** 해 쓰기 위해서다. 요인을 고치면 배포 코드와 검증 하네스가 함께 바뀐다.
-- **이벤트 규칙** = `risk.py` 의 `detect_events()` (급변 2.5σ·백분위 90% 교차·커브 역전·삼 룰·데이터 지연).
+- **이벤트 규칙**은 두 곳이다. 시계열 기반(급변 2.5σ·백분위·커브·삼 룰·데이터 지연)은
+  `risk.py` 의 `detect_events()`, **시장 폭**(`시장폭` 카테고리)은 `breadth.py` 의
+  `detect_events()` 다. 후자는 **이력이 필요 없다** — 같은 날 안에서 두 수를 비교하는
+  횡단면 조건이라 관측 1일로도 성립하고, 그래서 **임의 기준이 하나도 없다**(부호 비교와
+  만장일치 조건뿐). 둘을 합치는 자리는 `process.py` 이며 **서로 다른 try 블록**이다.
+  아래는 시계열 쪽 설명이다 — `risk.py` 의 `detect_events()` (급변 2.5σ·백분위 90% 교차·커브 역전·삼 룰·데이터 지연).
   규칙을 바꾸면 화면에 노출되는 `catalog` 설명 문구도 같은 함수 안에서 같이 고칠 것.
 - **환헤지 통화·프록시** = `hedge.py` 의 `CURRENCIES`/`FX`/`BONDS`/`R3M`.
 - **헤지비용의 이름·부호는 파이프라인이 정한다.** `hedge.py` 의 `cost_curve`/`cost_12m` 을 문서·`limits` 가 일관되게 「헤지비용」이라 부르고 `alloc.py` 도 같다 — 화면에서 새 이름을 만들면 방법론 패널이 출력하는 `limits` 문장과 어긋난다. 부호는 산식이 정한다(캐리 = A×h×cost, 회계모형 ④, 백테스트 `+h*f`) → **양수 = 받음**. 화면 쪽 정본은 `app.js` 의 `COST_SIGN_KEY` **한 상수**이며 #hedge·#fx·#alloc·시뮬레이터·방법론이 공유한다. 값을 표시하는 모든 문장은 **자기 만기를 밝혀야 한다** — 매트릭스는 12개월, 시뮬레이터는 `default_tenor_m`(9개월) 보간이라 같은 통화가 다른 숫자로 나온다(엔 +2.30% vs +2.3550%).
