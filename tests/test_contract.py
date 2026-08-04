@@ -349,8 +349,31 @@ def test_process_globals_are_not_leaked_by_tests():
 # 도달 불가능한 섹션이 조용히 생긴다. 사람 눈으로는 안 보이는 종류의 결함이다.
 # --------------------------------------------------------------------------
 
-def _app_js() -> str:
+def _app_js_raw() -> str:
+    """주석까지 포함한 app.js 원문. **코드가 있는지** 보는 검사에는 쓰지 말 것."""
     return (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+
+def _app_js() -> str:
+    """주석을 걷어낸 app.js — 이 파일의 문자열 검사는 **전부** 이것을 쓴다.
+
+    예전에는 이 함수가 원문을 돌려주고 `_strip_js_comments()` 를 **5개 중 2개**에만
+    걸었다. 그 결과 `mountVillageVideo` 의 reduced-motion 가드를 지우고 주석만 남긴
+    뮤테이션이 141개 전부 초록으로 통과했다 — 접근성 불변식이 실제로는 보호되지
+    않고 있었다는 뜻이다. 기본값을 뒤집어 그 실수가 다시 나올 수 없게 한다.
+    """
+    return _strip_js_comments(_app_js_raw())
+
+
+def _fn(name: str) -> str:
+    """app.js 에서 함수 하나의 본문을 잘라 온다(주석 제거 후).
+
+    같은 `split("function X")[1].split("\nfunction ")[0]` 관용구가 여덟 군데에
+    복사돼 있었고, 그중 일부만 주석을 걷었다 — 한 곳으로 모아 그 갈림을 없앤다.
+    """
+    js = _app_js()
+    assert f"function {name}" in js, f"app.js 에 function {name} 이 없습니다"
+    return js.split(f"function {name}")[1].split("\nfunction ")[0]
 
 
 def _strip_js_comments(src: str) -> str:
@@ -444,8 +467,7 @@ def test_village_fx_respects_reduced_motion():
         css,
     )
     assert block, "reduced-motion 에서 .village-fx 를 감추는 규칙이 없습니다"
-    js = _app_js()
-    assert "prefers-reduced-motion" in js.split("function enterZone")[1].split("function ")[0], (
+    assert "prefers-reduced-motion" in _fn("enterZone"), (
         "enterZone 이 reduced-motion 을 확인하지 않습니다"
     )
 
@@ -475,8 +497,7 @@ def test_scene_transition_disables_svg_fx_and_respects_reduced_motion():
     assert re.search(r"\.has-video \.village-fx\s*\{\s*display:\s*none", css), (
         "영상 재생 중 SVG 모션을 끄는 규칙(.has-video .village-fx)이 없습니다"
     )
-    js = _app_js()
-    fn = js.split("function playSceneTransition")[1].split("\nfunction ")[0]
+    fn = _fn("playSceneTransition")
     assert "prefers-reduced-motion" in fn, (
         "playSceneTransition 이 reduced-motion 을 확인하지 않습니다"
     )
@@ -517,24 +538,21 @@ def test_village_idle_video_respects_reduced_motion_and_falls_back():
     루프가 겹쳐 돈다) ③ 소스 사다리(webm→mp4)가 다 실패하면 요소를 걷어 스틸+SVG 로
     물러난다 ④ 마을을 떠나면 디코딩을 세운다(pause).
     """
-    js = _app_js()
-    fn = js.split("function mountVillageVideo")[1].split("\nfunction ")[0]
+    fn = _fn("mountVillageVideo")
     assert "prefers-reduced-motion" in fn, "mountVillageVideo 가 reduced-motion 을 확인하지 않습니다"
     assert "data-transition" in fn or "[data-transition]" in fn, (
         "전환 연출 중 이중 마운트를 막는 가드가 없습니다"
     )
     for evt in ("error", "playing"):
         assert f'"{evt}"' in fn, f"상시 루프의 {evt} 이벤트 처리가 없습니다"
-    rv = js.split("function renderVillage")[1].split("\nfunction ")[0]
-    assert re.search(r"mountVillageVideo\s*\(", _strip_js_comments(rv)), (
+    assert re.search(r"mountVillageVideo\s*\(", _fn("renderVillage")), (
         "renderVillage 가 상시 루프를 마운트하지 않습니다"
     )
-    tt = js.split("function playSceneTransition")[1].split("\nfunction ")[0]
-    assert re.search(r"mountVillageVideo\s*\(", _strip_js_comments(tt)), (
+    assert re.search(r"mountVillageVideo\s*\(", _fn("playSceneTransition")), (
         "전환 연출이 끝난 뒤 새 장면의 루프를 재마운트하는 경로가 없습니다 — "
         "주석에 이름만 적혀 있고 실제 호출이 없으면 토글 후 배경이 스틸로 돌아간다"
     )
-    route = js.split("function routeView")[1].split("\nfunction ")[0]
+    route = _fn("routeView")
     assert "pause" in route, "마을을 떠날 때 상시 루프를 pause 하지 않습니다"
 
 
@@ -548,8 +566,7 @@ def test_leaving_village_does_not_pause_the_theme_transition():
     회복하지 못한다(브라우저 실측: currentTime 2.5s 고정, 4초 후에도 동일). 사용자가 처음
     문제 삼은 "정지 화면" 그 자체이므로, pause 대상은 반드시 상시 루프로 한정한다.
     """
-    js = _app_js()
-    route = js.split("function routeView")[1].split("\nfunction ")[0]
+    route = _fn("routeView")
     assert "pause" in route, "routeView 에 pause 호출이 없습니다"
     assert "data-idle" in route, (
         "routeView 의 pause 대상이 상시 루프(data-idle)로 한정되지 않았습니다 — "
@@ -558,7 +575,7 @@ def test_leaving_village_does_not_pause_the_theme_transition():
     broad = [ln.strip() for ln in route.splitlines()
              if "village-video" in ln and "data-idle" not in ln]
     assert not broad, f"전환 영상까지 걸리는 넓은 선택자가 routeView 에 있습니다: {broad}"
-    tt = js.split("function playSceneTransition")[1].split("\nfunction ")[0]
+    tt = _fn("playSceneTransition")
     assert '"ended"' in tt, "전환 영상의 ended 처리가 없습니다 — done() 이 실행될 경로가 필요합니다"
 
 
@@ -577,3 +594,73 @@ def test_hidden_attribute_is_not_defeated_by_display_rules():
     # 방어선이 실제로 필요한 상태인지도 함께 확인한다(규칙만 남고 이유가 사라지는 것 방지)
     js = _app_js() + _index_html()
     assert 'id="gate"' in js and re.search(r"\.gate\s*\{[^}]*display:\s*flex", css)
+
+
+# --------------------------------------------------------------------------
+# app.js 가 이름으로 집는 DOM id 가 index.html 에 실재하는가
+#
+# app.js 는 index.html 의 id 를 82곳에서 정적으로 참조하는데, 그중 실재를 확인하는
+# 검사는 프로브 뼈대(tests/dashboard_probe.js)의 **수기 목록** 몇 개뿐이었다.
+# id 하나를 지우거나 오타를 내면 `$("#x")` 가 null 을 돌려주고 그 다음 줄에서 죽는데,
+# 죽는 자리가 렌더러 안이라 **그 섹션만 조용히 비고** 나머지는 정상으로 보인다.
+# (실측: `#card-curve` 하나를 지우자 렌더된 섹션이 10 → 5 로 줄었다.)
+# --------------------------------------------------------------------------
+
+#: app.js 가 **자기가 만들어 붙이는** id — index.html 에 없는 것이 정상이다.
+#: 여기에 이름을 더할 때는 아래 테스트가 "실제로 만드는지"까지 확인한다.
+DYNAMIC_IDS = {
+    "village-fx":  'setAttribute("id", "village-fx")',   # 마을 앰비언트 SVG 레이어
+    "hg-econ":     'tile("hg-econ"',                     # 시뮬레이터 결과 타일 3개
+    "hg-acct":     'tile("hg-acct"',
+    "hg-carry":    'tile("hg-carry"',
+    "hg-span":     'id: "hg-span"',                      # 시뮬레이터 표본기간 줄
+}
+
+
+def _referenced_ids() -> set[str]:
+    js = _app_js()          # 주석 제거본 — 주석에 적힌 id 는 참조가 아니다
+    return (set(re.findall(r'\$\("#([A-Za-z0-9_-]+)', js))
+            | set(re.findall(r'getElementById\("([A-Za-z0-9_-]+)"', js)))
+
+
+def test_every_id_app_js_reaches_for_exists_in_index_html():
+    """`$("#x")` / `getElementById("x")` 의 x 가 index.html 에 있거나 동적 생성이어야 한다."""
+    html_ids = set(re.findall(r'id="([A-Za-z0-9_-]+)"', _index_html()))
+    missing = sorted(_referenced_ids() - html_ids - set(DYNAMIC_IDS))
+    assert not missing, (
+        f"app.js 가 집는데 index.html 에 없는 id: {missing} — 그 섹션이 조용히 빕니다. "
+        "app.js 가 직접 만드는 id 라면 DYNAMIC_IDS 에 생성 근거와 함께 등록하세요."
+    )
+
+
+def test_dynamic_id_allowlist_is_not_a_dumping_ground():
+    """허용 목록의 id 는 **실제로 app.js 가 만들어야** 한다.
+
+    이 확인이 없으면 오타난 id 를 목록에 적어 넣는 것만으로 위 테스트가 무력화된다 —
+    허용 목록은 검사를 끄는 스위치가 아니라 "여기 있다"는 주장이고, 주장은 검사한다.
+    """
+    js = _app_js()
+    for name, evidence in DYNAMIC_IDS.items():
+        assert evidence in js, f"{name} 을 만드는 코드({evidence!r})가 app.js 에 없습니다"
+    stale = sorted(set(DYNAMIC_IDS) & set(re.findall(r'id="([A-Za-z0-9_-]+)"', _index_html())))
+    assert not stale, f"index.html 에 실재하므로 허용 목록에서 빼야 합니다: {stale}"
+
+
+def test_probe_skeleton_covers_the_ids_its_renderers_touch():
+    """프로브 뼈대가 렌더러가 집는 id 를 갖고 있는지 — 수기 계약의 자동화.
+
+    `tests/dashboard_probe.js` 는 index.html 구조를 손으로 흉내 낸다. 새 카드를
+    index.html 에 추가하고 뼈대에 안 넣으면 프로브가 **그 자리에서 죽는데**, 그
+    실패 메시지는 "Cannot read properties of null" 이라 원인이 안 보인다.
+    여기서 먼저 이름으로 잡아 준다.
+    """
+    probe = (Path(__file__).resolve().parent / "dashboard_probe.js").read_text(encoding="utf-8")
+    renderers = ("renderHedge", "renderMacro", "renderEvents", "renderCatalog", "renderVillage")
+    need = set()
+    for fn in renderers:
+        need |= set(re.findall(r'\$\("#([A-Za-z0-9_-]+)', _fn(fn)))
+    missing = sorted(i for i in need if f'"{i}"' not in probe and i not in DYNAMIC_IDS)
+    assert not missing, (
+        f"프로브 뼈대에 없는 id 를 렌더러가 집습니다: {missing} — "
+        "tests/dashboard_probe.js 의 해당 섹션 뼈대에 추가하세요."
+    )
