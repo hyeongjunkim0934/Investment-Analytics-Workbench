@@ -2,7 +2,7 @@
 """출력 JSON 계약 + 배포 게이트.
 
 여기서 지키는 계약: `process.py` 의 `payloads` = `dashboard/app.js` 의 `FILES`
-= `pipeline/check_output.py` 의 `EXPECTED` = **같은 14개**. 셋 중 하나만 고치면
+= `pipeline/check_output.py` 의 `EXPECTED` = **같은 15개**. 셋 중 하나만 고치면
 대시보드의 한 섹션이 조용히 사라진다.
 
 개수 assert 는 교차 대조와 별개로 남겨 둔다 — 세 곳을 일관되게 고치면 교차 대조는
@@ -821,3 +821,46 @@ def test_render_all_isolates_each_section():
     assert "render-error" in rs, (
         "실패한 섹션에 안내를 붙이지 않습니다 — 빈 화면은 '데이터 없음'으로 읽힙니다"
     )
+
+
+def test_no_payload_is_published_twice():
+    """같은 값이 두 JSON 에 실리면 새 이중 진실이 된다.
+
+    헤지비용 커브는 2026-08-04 에 `fx.json` → `hedge.json` 으로 이사했다. 옮기면서
+    원본을 안 지우면 한쪽만 고치는 사고가 그대로 재발한다 — 이 저장소는 이미
+    "같은 값이 두 이름으로 돌아다니는" 문제를 한 번 겪었다.
+    """
+    js = _app_js()
+    assert "DATA.fx" in js, "테스트 전제가 깨졌다 — #fx 렌더러가 사라졌다"
+    fx_fn = _fn("renderFX")
+    for gone in ("hedge_ts", "hedge_rows", "card-hedge-ts", "card-hedge-table"):
+        assert gone not in fx_fn, f"renderFX 가 아직 {gone} 를 그립니다"
+    build_fx = (ROOT / "pipeline" / "process.py").read_text(encoding="utf-8")
+    build_fx = build_fx.split("def build_fx()")[1].split("\ndef ")[0]
+    for gone in ("hedge_ts", "hedge_rows"):
+        assert gone not in build_fx, f"build_fx 가 아직 {gone} 를 싣습니다"
+    hedge_py = (ROOT / "pipeline" / "hedge.py").read_text(encoding="utf-8")
+    assert "cost_hist_curve" in hedge_py, "hedge.py 가 이사받은 커브를 싣지 않습니다"
+
+
+def test_hedge_matrix_row_carries_its_sample(built):
+    """매트릭스 각 행이 자기 표본을 들고 있어야 한다 (B-6).
+
+    통일하지 않고 게시한다 — 짧은 쪽에 맞추면 변동성 표본을 버리고, 긴 쪽에 맞출
+    방법은 없다. 게시만 하면 자의성이 0이다.
+    """
+    out, _ = built
+    H = json.loads((out / "hedge.json").read_text(encoding="utf-8"))
+    assert H["matrix"], "매트릭스가 비었습니다"
+    for row in H["matrix"]:
+        sp = row.get("sample")
+        assert isinstance(sp, dict), f"{row['c']} 행에 sample 이 없습니다"
+        assert "vol" in sp and "fit" in sp, f"{row['c']}: {sorted(sp)}"
+        vol = sp["vol"]
+        assert vol and {"start", "end", "n"} <= set(vol), f"{row['c']} vol: {vol}"
+        assert isinstance(vol["n"], int) and vol["n"] > 0
+        if row.get("mvh") is not None:
+            assert sp["fit"], f"{row['c']}: MVH 는 있는데 적합 표본이 없습니다"
+            assert sp["fit"]["n"] <= vol["n"], (
+                f"{row['c']}: 적합 표본이 변동성 표본보다 깁니다 — 조인은 짧게만 만듭니다"
+            )

@@ -743,7 +743,7 @@ def test_every_worked_number_names_the_tenor_it_used(probe):
     다른 숫자로 보인다 — 그래서 **모든** 문장이 자기 만기를 들고 있어야 한다.
     """
     h, s = probe["hedgeScreen"], probe["hedgeSim"]
-    assert "헤지비용 12개월" in " ".join(h["matrixHeader"])
+    assert "12개월" in " ".join(h["matrixHeader"])
     assert "12개월 만기로 헤지한다면" in h["lead"]
     assert "만기 6개월" in s["atDefault"]["costHead"]
     assert "만기 12개월" in s["at12"]["costHead"], "만기를 바꾸면 열 제목이 따라와야 한다"
@@ -785,15 +785,98 @@ def test_hedge_cost_is_called_the_same_thing_on_every_screen():
     assert "헤지비용" in hedge_py, "파이프라인 어휘가 바뀌었다면 화면 이름도 함께 봐야 한다"
 
 
-def test_fx_and_hedge_screens_point_at_each_other():
-    """#hedge 와 #fx 는 같은 값을 다른 이름으로 부르고 있었고 링크가 0개였다."""
+def test_fx_screen_is_pure_market_data_after_the_migration():
+    """#fx 는 순수 시세 화면이다 — 헤지 카드는 2026-08-04 에 #hedge 로 이관됐다.
+
+    이관 전 이 테스트는 `<h2>FX · 환율과 스왑포인트</h2>` 를 단정했다. 그 제목이
+    남아 있으면 스왑포인트가 없는 화면이 스왑포인트를 약속하는 셈이다.
+    같은 이유로 `#fx` 안에는 부호 규약 문장도 남으면 안 된다 — 부호 있는 값이
+    이 화면에 하나도 없기 때문이다(그 정적 문장은 오래 미검출로 남아 있던 자리다).
+    """
     html = INDEX_HTML.read_text(encoding="utf-8")
     assert "<h2>FX · 환헤지</h2>" not in html, "제목이 환헤지 섹션과 겹친다"
-    assert "<h2>FX · 환율과 스왑포인트</h2>" in html
+    assert "<h2>FX · 환율</h2>" in html
     fx_sec = html.split('<section id="fx"', 1)[1].split("</section>", 1)[0]
-    assert 'href="#hedge"' in fx_sec
+    assert 'href="#hedge"' in fx_sec, "헤지비용을 찾는 사람을 보낼 곳이 없다"
+    for gone in ("card-hedge-ts", "card-hedge-table"):
+        assert gone not in fx_sec, f"{gone} 가 아직 #fx 에 있습니다"
+    assert "받고" not in fx_sec and "냅니다" not in fx_sec, (
+        "#fx 에 부호 규약 문장이 남아 있습니다 — 이 화면에는 부호 있는 값이 없습니다"
+    )
+
+
+def test_cross_screen_pointers_are_true():
+    """"저쪽 화면에 있습니다" 류 문장이 **실제로** 그 화면을 가리켜야 한다.
+
+    이관에서 가장 위험한 자리다 — 이런 문장은 공간적 주장인데 이를 지키는 테스트가
+    한 건도 없었다(저장소 전체에 `card-hedge` 문자열 0건). 옮기고 문장을 안 고쳐도
+    전부 초록이었다. 여기서는 `#<섹션>` 링크 옆에 "…화면" 이라고 적힌 문장을 찾아,
+    그 섹션이 약속한 카드를 실제로 갖고 있는지 본다.
+    """
     app = APP_JS.read_text(encoding="utf-8")
-    assert '"통화별 스왑포인트 = 헤지비용 (연율)"' in app
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    fx_sec = html.split('<section id="fx"', 1)[1].split("</section>", 1)[0]
+    hedge_sec = html.split('<section id="hedge"', 1)[1].split("</section>", 1)[0]
+    # 이관 뒤 #fx 를 "…에 있습니다" 로 가리키는 문장이 남아 있으면 거짓말이다.
+    stale = re.findall(r'href: "#fx" \}, "FX 화면"\), "?[^)]{0,40}있습니다', app)
+    assert not stale, f"#fx 로 보내는 문장이 남아 있습니다: {stale}"
+    # 반대로 새 카드는 실제로 #hedge 안에 있어야 한다.
+    assert 'id="hedge-ts-card"' in hedge_sec, "이관된 커브 카드가 #hedge 에 없습니다"
+    assert 'id="hedge-ts-card"' not in fx_sec
+
+
+def test_hedge_matrix_covers_all_three_tenors(probe):
+    """매트릭스가 3·6·12개월을 전부 싣는가 — FX 화면 표를 흡수한 결과.
+
+    흡수 이유: 그 표의 12M 열과 매트릭스 12M 열이 **완전히 같은 숫자**였다(실측 4/4).
+    한 화면에 나란히 놓으면 순수 잉여가 된다. 흡수하면서 이관 표에 없던
+    캐나다달러·파운드의 3·6개월이 처음으로 화면에 나온다.
+    """
+    h = probe["hedgeScreen"]
+    head = " ".join(h["matrixHeader"])
+    for tenor in ("3개월", "6개월", "12개월"):
+        assert tenor in head, f"매트릭스에 {tenor} 열이 없다: {head}"
+    # 픽스처 커브가 만기마다 다른 값이므로, 세 열이 같은 값이면 같은 열을 세 번 그린 것이다
+    assert h["jpyCost3m"] != h["jpyCost6m"] != h["jpyCost"], (
+        f"세 만기 열이 같은 값이다: {h['jpyCost3m']} / {h['jpyCost6m']} / {h['jpyCost']}"
+    )
+    assert "+3.40%" in h["jpyCost3m"] and "+3.30%" in h["jpyCost6m"]
+    # 커브가 없는 통화는 세 열 모두 대시 — undefined 가 나가면 안 된다
+    assert h["cnyCost3m"] == "—", h["cnyCost3m"]
+
+
+def test_matrix_states_its_own_sample_per_row(probe):
+    """행마다 표본 구간·월수를 적는다. 두 표본이 다르면 **둘 다** 적는다.
+
+    같은 행 안에서도 열마다 표본이 다르다 — `vol_e` 는 조인 전에, `mvh`/`corr` 은
+    채권 프록시와 조인한 뒤에 계산되므로 짧은 쪽에 맞춰 잘린다(실데이터 실측:
+    EUR·JPY 305 vs 294, AUD 267/267). 표에는 「변동성·MVH·상관 = 월간 수익률」
+    한 줄만 있어 **같은 표본으로 읽혔다.** 파이프라인만 고치고 화면을 안 고치면
+    조용히 무시되므로, 렌더된 글자를 본다.
+    """
+    h = probe["hedgeScreen"]
+    assert "표본" in " ".join(h["matrixHeader"])
+    # 두 표본이 같은 행: 한 줄로 줄어야 한다(같은 말을 두 번 적지 않는다)
+    assert h["usdSample"] == "2002-01~2029-12 (294)", h["usdSample"]
+    # 다른 행: 둘 다 적혀야 하고 월수도 각각 나와야 한다
+    assert "305" in h["jpySample"] and "294" in h["jpySample"], h["jpySample"]
+    assert "변동성" in h["jpySample"] and "MVH" in h["jpySample"], h["jpySample"]
+    # 적합 표본이 없는 행: 변동성만
+    assert h["cnySample"].startswith("변동성") and "MVH" not in h["cnySample"], h["cnySample"]
+
+
+def test_migrated_curve_card_says_what_it_is_for(probe):
+    """이관된 커브 카드는 "왜 여기 있는지"를 스스로 말해야 한다.
+
+    시세로 읽히면 #fx 로 되돌아갈 이유가 생긴다. 이 카드가 여기 있는 이유는
+    세 계열이 **시뮬레이터의 만기 보간이 쓰는 곡선의 원자료**이기 때문이고,
+    그러므로 기본 만기(픽스처 6개월)를 문장이 들고 있어야 한다.
+    """
+    t = probe["hedgeScreen"]["tsCardText"]
+    assert "커브 추이" in t, t[:80]
+    assert "3·6·12개월" in t or "3개월" in t
+    assert "6개월을 보간" in t, "무엇에 쓰는 원자료인지 말하지 않는다"
+    assert "＋받음 −지불" in t, "부호 규약이 카드에 없다"
 
 
 def test_inactive_row_state_is_not_conveyed_by_opacity_alone(probe):

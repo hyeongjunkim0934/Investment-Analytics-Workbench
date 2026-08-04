@@ -51,7 +51,8 @@ META_FIELDS = ["built_at_utc", "last_observation", "series_count", "files", "war
 # 게이트의 일이 아니다 — 그건 pytest 와 프로브가 본다.
 REQUIRED_KEYS = {
     "hedge": ["asof", "default_tenor_m", "matrix", "curves", "backtest",
-              "cost_hist_usd", "cost_stats", "mtm", "sim", "acct_model", "limits"],
+              "cost_hist_curve", "cost_hist_usd", "cost_stats", "mtm", "sim",
+              "acct_model", "limits"],
     "alloc": ["asof", "sources", "sets", "rates", "cost_options", "anchor_ref",
               "defaults", "boot", "checks", "acct_model", "limits"],
     "risk":  ["asof", "grade_bands", "howto", "layers", "weights",
@@ -62,7 +63,7 @@ REQUIRED_KEYS = {
 # 배열 페이로드의 **행 스키마** — 행 하나만 봐도 개명·누락이 드러난다.
 REQUIRED_ROW_KEYS = {
     ("hedge", "matrix"): ["c", "name", "vol_e", "mvh", "corr",
-                          "cost_12m", "cost_curve", "src", "active"],
+                          "cost_12m", "cost_curve", "src", "active", "sample"],
 }
 
 _errors: list[str] = []

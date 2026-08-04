@@ -110,6 +110,22 @@ def build(series_store: dict, warn) -> dict:
             cost_src[c] = "데이터 필요"
 
     # ----- 통화 매트릭스 -----
+    def span(idx) -> dict | None:
+        """표본 구간을 그대로 게시한다 — 통일하지 않는다.
+
+        같은 행 안에서도 열마다 표본이 다르다. `vol_e` 는 환율 월수익률만 쓰므로
+        조인 **전**에 계산되고, `mvh`/`corr` 은 채권 프록시와 조인한 **뒤**라
+        짧은 쪽에 맞춰 잘린다(실측: EUR·JPY 는 305 vs 294, AUD 는 267 vs 267).
+        표에는 「변동성·MVH·상관 = 월간 수익률」 한 줄만 있어 같은 표본으로 읽혔다.
+
+        통일하지 말 것 — 짧은 쪽에 맞추면 EUR·JPY 변동성이 11개월치를 버리고,
+        긴 쪽에 맞출 방법은 없다. 게시만 하면 자의성이 0이다.
+        """
+        if idx is None or not len(idx):
+            return None
+        return {"start": idx[0].strftime("%Y-%m"),
+                "end": idx[-1].strftime("%Y-%m"), "n": int(len(idx))}
+
     matrix = []
     for c in CURRENCIES:
         e = cutm(mret(FX[c]))
@@ -119,8 +135,9 @@ def build(series_store: dict, warn) -> dict:
             j.columns = ["r", "e"]
             mvh = float(1 + j["r"].cov(j["e"]) / j["e"].var()) * 100
             corr = float(j["r"].corr(j["e"]))
+            fit_idx = j.index
         else:
-            mvh, corr = None, None
+            mvh, corr, fit_idx = None, None, None
         cc = cost_curve[c]
         matrix.append({
             "c": c, "name": NAME[c], "vol_e": round(vol_e, 1),
@@ -130,6 +147,7 @@ def build(series_store: dict, warn) -> dict:
             "cost_curve": cc, "src": cost_src[c],
             "bond_kind": "실지수" if c == "USD" else ("합성(5y 커브)" if c in BONDS else None),
             "active": cc is not None and c in BONDS,
+            "sample": {"vol": span(e.index), "fit": span(fit_idx)},
         })
 
     # ----- 달러: 헤지비율-변동성 곡선, 백테스트, 비용 25년 -----
@@ -188,12 +206,26 @@ def build(series_store: dict, warn) -> dict:
     labels = list(Mx.columns)
     cov = (Mx.cov() * 12).round(8)
 
+    # ----- 헤지비용 일별 이력 (달러 3/6/12M) -----
+    # 예전에는 `fx.json` 이 실었다. 이 값은 시세가 아니라 **시뮬레이터가 만기를
+    # 보간하는 곡선의 원자료**이므로(hedgeCostAt 이 쓰는 3/6/12M 이 바로 이것),
+    # 환헤지 화면의 질문 안에 있다. 무엇보다 `renderHedge` 가 `DATA.fx` 를 읽으면
+    # fx.json 하나가 깨질 때 #hedge 까지 「데이터 없음」이 된다 —
+    # Promise.allSettled 의 부분 실패는 정상 경로이므로 그 전파를 끊는다.
+    # **fx.json 쪽에서는 제거한다** — 같은 값이 두 JSON 에 실리면 새 이중 진실이다.
+    cost_hist_curve = {}
+    for m in ["3M", "6M", "12M"]:
+        s = g(f"info:USDKRW_HP_{m}")
+        if s is not None:
+            cost_hist_curve[m] = pack(s.dropna(), 3)
+
     payload = {
         "asof": usdkrw.index[-1].strftime("%Y-%m-%d"),
         "default_tenor_m": DEFAULT_TENOR_M,
         "matrix": matrix,
         "curves": curves,
         "backtest": backtest,
+        "cost_hist_curve": cost_hist_curve,
         "cost_hist_usd": pack(smb_m),
         "cost_stats": {"mean": round(float(smb_m.mean()), 2),
                        "now": round(float(smb_m.iloc[-1]), 2),

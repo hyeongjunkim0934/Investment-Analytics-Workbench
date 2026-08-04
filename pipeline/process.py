@@ -551,26 +551,11 @@ def build_fx() -> dict:
         ("info:USDKRW", "달러/원"), ("info:DXY", "달러지수"),
         ("info:USDJPY", "달러/엔"), ("info:EURKRW", "유로/원"),
     ])
-    hedge_rows = []
-    for cur, label in [("USDKRW", "달러"), ("JPYKRW", "엔"),
-                       ("EURKRW", "유로"), ("AUDKRW", "호주달러")]:
-        row = {"label": label}
-        any_val = False
-        for hz in ["3M", "6M", "12M"]:
-            s = get(f"info:{cur}_HP_{hz}")
-            if s is not None:
-                row[hz] = round(float(s.iloc[-1]), 3)
-                row["date"] = s.index[-1].strftime("%Y-%m-%d")
-                any_val = True
-            else:
-                row[hz] = None
-        if any_val:
-            hedge_rows.append(row)
-    hedge_ts = series_group([
-        ("info:USDKRW_HP_3M", "3개월"), ("info:USDKRW_HP_6M", "6개월"),
-        ("info:USDKRW_HP_12M", "12개월"),
-    ])
-    return {"ts": ts, "hedge": hedge_rows, "hedge_ts": hedge_ts}
+    # 헤지비용(HP 커브)은 여기서 싣지 않는다 — `hedge.py` 가 `cost_curve`·
+    # `cost_hist_curve` 로 싣고 #hedge 화면이 그린다. 같은 값을 두 JSON 에 실으면
+    # 새 이중 진실이 되고, `renderHedge` 가 `DATA.fx` 를 읽으면 fx.json 하나가
+    # 깨질 때 #hedge 까지 함께 빈다. #fx 는 순수 시세 화면이다.
+    return {"ts": ts}
 
 
 def build_inflation() -> dict:

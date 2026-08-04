@@ -77,7 +77,8 @@ secNodes.events.append(elem("details", "events-rules"));
    renderHedge() 가 만지는 컨테이너가 하나라도 없으면 그 자리에서 죽으므로,
    이 목록 자체가 index.html 과의 계약이다. */
 ["hedge-headline", "hedge-views", "hedge-lead", "hedge-matrix",
- "hedge-curve-card", "hedge-bt-card", "hedge-cost-card", "hedge-mtm-card"]
+ "hedge-curve-card", "hedge-bt-card", "hedge-cost-card", "hedge-mtm-card",
+ "hedge-ts-card"]
   .forEach((id) => secNodes.hedge.append(elem("div", id, "card")));
 secNodes.hedge.append(elem("details", "hedge-method"));
 
@@ -365,12 +366,20 @@ const HEDGE_FIXTURE = (() => {
     matrix: [
       { c: "USD", name: "달러", vol_e: 9.1, mvh: 71, corr: -0.4, cost_12m: -0.5,
         cost_curve: { "3M": -0.6, "6M": -0.55, "12M": -0.5 }, src: "실측(HP)",
-        bond_kind: "실지수", active: true },
+        bond_kind: "실지수", active: true,
+        /* 두 표본이 같은 행 — 한 줄로 줄어야 한다 */
+        sample: { vol: { start: "2002-01", end: "2029-12", n: 294 },
+                  fit: { start: "2002-01", end: "2029-12", n: 294 } } },
       { c: "JPY", name: "엔", vol_e: 12.3, mvh: 118, corr: 0.2, cost_12m: 3.25,
         cost_curve: { "3M": 3.4, "6M": 3.3, "12M": 3.25 }, src: "실측(HP)",
-        bond_kind: "합성(5y 커브)", active: true },
+        bond_kind: "합성(5y 커브)", active: true,
+        /* 두 표본이 다른 행 — 둘 다 적혀야 한다(뭉뚱그리면 같은 표본으로 읽힌다) */
+        sample: { vol: { start: "2001-02", end: "2029-12", n: 305 },
+                  fit: { start: "2002-01", end: "2029-12", n: 294 } } },
       { c: "CNY", name: "위안", vol_e: 8.0, mvh: null, corr: null, cost_12m: null,
-        cost_curve: null, src: "데이터 필요", bond_kind: null, active: false },
+        cost_curve: null, src: "데이터 필요", bond_kind: null, active: false,
+        /* 적합 표본이 없는 행 — 변동성만 적는다 */
+        sample: { vol: { start: "2002-01", end: "2029-12", n: 294 }, fit: null } },
     ],
     curves: { bond, equity },
     backtest: { "테스트 자산": { period: "2010-01 ~ 2029-12",
@@ -379,6 +388,12 @@ const HEDGE_FIXTURE = (() => {
     /* 최저(= 가장 많이 낸 달)는 2021-07 */
     cost_hist_usd: { t: [mk(2021, 5), mk(2021, 6), mk(2021, 7), mk(2021, 8)],
                      v: [0.5, -0.2, -5.5, 0.1] },
+    /* FX 화면에서 이관된 일별 커브 — 세 계열이 서로 다른 값이어야 흡수 검사가 의미 있다 */
+    cost_hist_curve: {
+      "3M":  { t: [mk(2029, 10), mk(2029, 11)], v: [-0.61, -0.60] },
+      "6M":  { t: [mk(2029, 10), mk(2029, 11)], v: [-0.56, -0.55] },
+      "12M": { t: [mk(2029, 10), mk(2029, 11)], v: [-0.51, -0.50] },
+    },
     cost_stats: { mean: 0.1, now: -0.2, min: -5.5 },
     mtm: { sigma_ds_3m: 0.4, worst_ds: 3.3, worst_date: "2019-03-31", corr_ds_e: -0.1 },
     sim: { labels: ["e_USD", "b_USD", "eq", "ds_USD", "e_JPY", "b_JPY"],
@@ -399,6 +414,13 @@ safe("hedgeScreen", () => {
   const jpy = mxRows.find((r) => /엔 \(/.test(r.textContent));
   const usd = mxRows.find((r) => /달러 \(/.test(r.textContent));
   const cny = mxRows.find((r) => /위안/.test(r.textContent));
+  /* 헤더 텍스트에 이름이 들어 있는 열을 찾아 그 행의 같은 위치를 돌려준다. */
+  const heads = mxRows[0].children.map((c) => c.textContent);
+  const col = (row, name) => {
+    if (!row) return null;
+    const i = heads.findIndex((h) => h.includes(name));
+    return i < 0 ? `열없음:${name}` : row.children[i].textContent;
+  };
   const mtmRows = rowsOf("hedge-mtm-card");
   const boldRow = mtmRows.find((r) => /700/.test(r.getAttribute("style") || ""));
   return {
@@ -407,9 +429,16 @@ safe("hedgeScreen", () => {
     views: txt("hedge-views"),
     lead: txt("hedge-lead"),
     matrixHeader: mxRows[0].children.map((c) => c.textContent),
-    /* 부호 방향은 **글자**로 나와야 한다 — 색만으로는 전달되지 않고, 뒤집히면 여기서 잡힌다 */
-    jpyCost: jpy ? cell(jpy, 4) : null,
-    usdCost: usd ? cell(usd, 4) : null,
+    /* 부호 방향은 **글자**로 나와야 한다 — 색만으로는 전달되지 않고, 뒤집히면 여기서 잡힌다.
+       열은 인덱스가 아니라 **헤더 이름**으로 집는다 — 예전에는 `cell(row, 4)` 라
+       3·6개월 열을 흡수하자 조용히 다른 열을 재고 있었다. */
+    jpyCost: col(jpy, "12개월"), usdCost: col(usd, "12개월"),
+    jpyCost3m: col(jpy, "헤지비용 3개월"), jpyCost6m: col(jpy, "6개월"),
+    cnyCost3m: col(cny, "헤지비용 3개월"),
+    usdSample: col(usd, "표본"), jpySample: col(jpy, "표본"), cnySample: col(cny, "표본"),
+    tsCardText: txt("hedge-ts-card"),
+    tsCardSeries: DOC.getElementById("hedge-ts-card")
+      .querySelectorAll(".legend-item, .chart-legend span").map((n) => n.textContent),
     cnyClass: cny ? cny.className : null,
     cnyStyle: cny ? cny.getAttribute("style") : null,
     cnyText: cny ? cny.textContent : null,

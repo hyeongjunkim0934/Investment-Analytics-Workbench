@@ -90,7 +90,10 @@ function el(tag, attrs = {}, ...children) {
     else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
     else n.setAttribute(k, v);
   }
-  for (const c of children) {
+  /* 배열은 펼친다 — `el("td", {}, rows.map(...))` 를 쓰면 예전에는 자식이
+     `String(배열)` 로 뭉개져 화면에 "[object HTMLSpanElement],..." 가 찍혔다.
+     오류가 안 나고 글자만 이상해지는 종류라 눈으로 잡기 전까지 살아남는다. */
+  for (const c of children.flat(Infinity)) {
     if (c == null) continue;
     n.append(c.nodeType ? c : document.createTextNode(String(c)));
   }
@@ -570,39 +573,6 @@ function renderFX() {
     });
   });
 
-  /* 이 두 카드의 숫자는 환헤지 화면 「통화별 한눈에 보기」의 헤지비용 열과 **같은 값**이다
-     (둘 다 info:*KRW_HP_* 실측 — 달러 12개월 값이 양쪽에서 일치하는 것을 실측 확인).
-     예전에는 한쪽은 "헤지비용", 한쪽은 "환헤지 프리미엄" 이라 불러 같은 숫자가 두 이름으로
-     돌아다녔고 부호 규약도 표에 없었으며 두 화면을 잇는 링크가 하나도 없었다.
-     이름은 파이프라인 어휘(「헤지비용」)로 통일하고, 서로 링크를 건다. */
-  tsCard($("#card-hedge-ts"), d.hedge_ts, {
-    title: "달러/원 스왑포인트(= 헤지비용) 추이", sub: `연율 %, ${COST_SIGN_KEY}`, unit: "%", dec: 2,
-  });
-
-  const hcard = $("#card-hedge-table");
-  hcard.textContent = "";
-  hcard.append(el("div", { class: "card-head" },
-    el("span", { class: "card-title" }, "통화별 스왑포인트 = 헤지비용 (연율)"),
-    el("span", { class: "card-sub" },
-      `${COST_SIGN_KEY} · 최신 호가 ${(d.hedge && d.hedge[0] && d.hedge[0].date) || ""}`)));
-  const rows = (d.hedge || []).map((h) =>
-    el("tr", {}, el("td", {}, h.label),
-      ...["3M", "6M", "12M"].map((k) =>
-        el("td", { class: "num" }, h[k] == null ? "–" : fmtCost(+(+h[k]).toFixed(2))))));
-  /* 부호 열쇠는 바로 위 카드 부제에 한 번만 — 세 열에 되풀이하면 표가 글자로 덮인다.
-     「비용인데 부호가 반대」인 함정을 실제로 판단에 쓰는 곳은 환헤지 화면이라
-     그쪽 표에서는 셀마다 받음/지불을 적는다. */
-  hcard.append(el("div", { class: "table-wrap" },
-    el("table", { class: "mini-table" },
-      el("thead", {}, el("tr", {}, el("th", {}, "통화"),
-        ...["3개월", "6개월", "12개월"].map((L) =>
-          el("th", {}, L, el("small", { class: "th-sub" }, "연 %"))))),
-      el("tbody", {}, ...rows))));
-  hcard.append(el("div", { class: "card-sub", style: "margin-top:6px;line-height:1.7" },
-    "이 12개월 값이 ", el("a", { href: "#hedge" }, "환헤지 화면"),
-    " 「통화별 한눈에 보기」의 헤지비용 열과 같은 숫자입니다. 이 화면은 ",
-    el("b", {}, "호가가 지금 어디에 있나"), " 를, 환헤지 화면은 ",
-    el("b", {}, "그래서 헤지비율을 얼마로 둘까"), " 를 답합니다."));
 }
 
 function renderInflation() {
@@ -2560,6 +2530,18 @@ function makeRatioChart(box, opts) {
   return trackChart(u, ro);
 }
 
+/* 매트릭스 표본 칸. 변동성 표본과 적합(MVH·상관) 표본이 다른 행에는 **둘 다** 적는다 —
+   같으면 한 줄로 줄인다. 뭉뚱그려 한 구간만 적으면 "같은 표본"으로 읽힌다. */
+function sampleTxt(sample) {
+  if (!sample) return "—";
+  const f = (x) => (x ? `${x.start}~${x.end} (${x.n})` : null);
+  const vol = f(sample.vol), fit = f(sample.fit);
+  if (!vol) return "—";
+  if (!fit) return `변동성 ${vol}`;
+  if (vol === fit) return vol;
+  return el("span", {}, `변동성 ${vol}`, el("br"), `MVH·상관 ${fit}`);
+}
+
 function renderHedge() {
   const H2 = DATA.hedge;
   if (!$("#hedge")) return;
@@ -2624,7 +2606,7 @@ function renderHedge() {
       "· 헤지하면 ", el("b", { class: "neg" }, "내는 통화"), " — ", listOf(paid), el("br"),
       "· 읽는 법 — 금액 × 이 비율 = 1년치 금액. ",
       el("b", {}, "다른 만기에는 다른 값입니다"), " — 3·6·12개월 커브와 만기 보간은 ",
-      el("a", { href: "#hedge-sim" }, "시뮬레이터"), " 와 ", el("a", { href: "#fx" }, "FX 화면"), " 에 있습니다.");
+      el("a", { href: "#hedge-sim" }, "시뮬레이터"), " 와 아래 표·커브 카드에 있습니다.");
     lead.append(box);
   }
 
@@ -2645,9 +2627,19 @@ function renderHedge() {
       el("th", {}, "환-채권 상관", el("small", { class: "th-sub" }, "−면 환쿠션 있음")),
       /* 부호 열쇠를 **열 제목에** 붙인다. 예전에는 이 규약이 표에서 한참 위의 회색 한 줄
          ("비용 양수 = 프리미엄 수취")에만 있었고, 그 문장 자체가 "비용인데 양수면 받는다"는
-         모순 표현이었다. 만기도 열 제목이 스스로 들고 있어야 한다(다른 만기에는 다른 값). */
-      el("th", {}, "헤지비용 12개월", el("small", { class: "th-sub" }, `연 %, ${COST_SIGN_KEY}`)),
-      el("th", { style: "text-align:left" }, "근거")));
+         모순 표현이었다. 만기도 열 제목이 스스로 들고 있어야 한다(다른 만기에는 다른 값).
+         2026-08-04 이관: 예전에 FX 화면에 따로 있던 3·6·12개월 표를 여기로 흡수했다.
+         12M 열은 그 표와 **완전히 같은 숫자**였으므로(실측 4/4) 한 화면에 두 번 나올
+         이유가 없고, 흡수하면서 캐나다달러·파운드의 3/6M 이 처음으로 화면에 나온다. */
+      el("th", {}, "헤지비용 3개월", el("small", { class: "th-sub" }, `연 %, ${COST_SIGN_KEY}`)),
+      el("th", {}, "6개월", el("small", { class: "th-sub" }, "연 %")),
+      el("th", {}, "12개월", el("small", { class: "th-sub" }, "연 %")),
+      el("th", { style: "text-align:left" }, "근거"),
+      /* 표본을 통일하지 않고 게시한다 — 같은 행 안에서도 열마다 표본이 다르다.
+         `vol_e` 는 조인 전에, `mvh`/`corr` 은 채권 프록시와 조인한 뒤에 계산되므로
+         짧은 쪽에 맞춰 잘린다(실측: EUR·JPY 305 vs 294). 짧은 쪽에 통일하면 변동성이
+         11개월치를 버리고, 긴 쪽에 맞출 방법은 없다. */
+      el("th", { style: "text-align:left" }, "표본", el("small", { class: "th-sub" }, "월수"))));
   H2.matrix.forEach((m) => {
     /* 비활성 통화를 opacity 로 흐리게 하던 것을 색으로 바꾼다. pristine 빌드 실측 결과
        opacity .5 는 본문 대비를 3.67:1 로 떨어뜨려 WCAG AA(4.5:1) 미달이었다(활성 행 19.2:1).
@@ -2658,10 +2650,13 @@ function renderHedge() {
       el("td", { class: "num" }, `${fmtNum(m.vol_e, 1)}%`),
       el("td", { class: "num" }, m.mvh != null ? el("b", {}, `${m.mvh}%`) : "—"),
       el("td", { class: "num" }, m.corr != null ? String(m.corr) : "—"),
+      el("td", { class: "num" }, fmtCost(m.cost_curve ? m.cost_curve["3M"] : null, true)),
+      el("td", { class: "num" }, fmtCost(m.cost_curve ? m.cost_curve["6M"] : null)),
       el("td", { class: "num" }, fmtCost(m.cost_12m, true)),
       el("td", { style: "text-align:left;font-size:11.5px" },
         off ? "헤지비용·단기금리 데이터 확보 전 — 계산 대상 아님"
-            : `${m.src}${m.bond_kind ? " · 채권 " + m.bond_kind : ""}`)));
+            : `${m.src}${m.bond_kind ? " · 채권 " + m.bond_kind : ""}`),
+      el("td", { style: "text-align:left;font-size:11.5px" }, sampleTxt(m.sample))));
   });
   mx.append(wrapTable(t));
   mx.append(el("div", { class: "card-sub", style: "margin-top:8px;line-height:1.7" },
@@ -2670,7 +2665,10 @@ function renderHedge() {
     el("b", {}, "채권 MVH"), ": 경제 관점에서 변동이 가장 작아지는 헤지비율(100%보다 낮으면 그만큼 환율이 완충해 준다는 뜻). ",
     el("b", {}, "환-채권 상관"), ": 음수면 환율이 오를 때 그 나라 채권 수익이 낮아져 서로 상쇄된다는 뜻이고, MVH 가 100% 아래로 내려가는 이유입니다. ",
     el("b", {}, "헤지비용"), `: 헤지할 때 해마다 주고받는 연율 %, ${COST_SIGN_KEY}. `,
-    "같은 값의 일별 시계열과 3·6·12개월 커브는 ", el("a", { href: "#fx" }, "FX 화면"), "에 있습니다."));
+    el("b", {}, "표본"), ": 이 행의 통계를 뽑은 구간과 월 수입니다. ",
+    "변동성은 환율만 쓰므로 길고, MVH·상관은 채권 프록시와 겹치는 구간만 쓰므로 짧습니다 ",
+    "— 두 값이 다른 행에는 둘 다 적었습니다. ",
+    "달러 3·6·12개월의 일별 이력은 아래 ", el("b", {}, "「헤지비용 커브 추이」"), " 카드에 있습니다."));
 
   /* 두 관점 설명은 원래 9개 용어가 든 231자 산문 한 덩어리였다. 같은 내용을 4행 비교표로
      세운다 — "나는 어느 쪽을 봐야 하나"에 줄 하나로 답한다. 위치는 표 **뒤**다: 찾아온
@@ -2692,7 +2690,7 @@ function renderHedge() {
   const terms = el("details", { class: "terms" });
   terms.append(el("summary", {}, "이 화면에 나오는 말 다섯 개 (펼쳐 보기)"));
   [["헤지비율", "외화 자산 중 선물환·스왑으로 환위험을 덮은 비율. 0% = 환율에 그대로 노출, 100% = 환율이 움직여도 원화 손익은 그대로."],
-   ["헤지비용 (= 스왑레이트 = 스왑포인트)", `헤지할 때 해마다 주고받는 연율 %. ${COST_SIGN_KEY} — 이름은 '비용'이지만 부호가 양수면 받습니다. FX 화면·자산배분·시뮬레이터도 같은 부호 규약입니다.`],
+   ["헤지비용 (= 스왑레이트 = 스왑포인트)", `헤지할 때 해마다 주고받는 연율 %. ${COST_SIGN_KEY} — 이름은 '비용'이지만 부호가 양수면 받습니다. 자산배분·시뮬레이터도 같은 부호 규약입니다.`],
    ["MVH (최소분산 헤지비율)", "경제 관점에서 변동성이 가장 작아지는 헤지비율. 산식은 1 + Cov(자산수익, 환율변화) ÷ Var(환율변화)."],
    ["스왑 MTM (평가손익)", "이미 체결한 스왑의 평가손익. 시장 스왑레이트가 오르면 평가손실입니다(민감도 = 잔존만기 τ = 만기 ÷ 2)."],
    ["장부가 비중", "보유 채권 중 만기보유로 분류돼 가격변동이 손익에 안 잡히는 비율. 회계 관점 계산에만 씁니다."],
@@ -2782,7 +2780,45 @@ function renderHedge() {
     "위 「통화별 한눈에 보기」의 헤지비용 열은 ", el("b", {}, "일별 스왑포인트 최신 호가"),
     " 이고, 이 차트는 ", el("b", {}, "3개월 스왑레이트 월말값"),
     " 입니다 — 같은 성격의 값이지만 계열과 시점이 달라 숫자가 일치하지 않습니다. 일별 호가 추이는 ",
-    el("a", { href: "#fx" }, "FX 화면"), " 에 있습니다."));
+    el("b", {}, "옆의 「헤지비용 커브 추이」"), " 카드에 있습니다."));
+
+  /* ── 이관 카드(2026-08-04): 달러 헤지비용 3·6·12개월 일별 커브 ─────────────
+     예전에는 FX 화면에 "달러/원 스왑포인트 추이"로 있었다. 여기 있어야 하는 이유는
+     이 세 계열이 **시뮬레이터의 만기 보간(hedgeCostAt)이 쓰는 곡선의 원자료**이기
+     때문이다 — 시세가 아니라 "만기별 비용"이고, 그것은 이 화면의 질문 안에 있다.
+     payload 도 fx.json 에서 hedge.json 으로 옮겼다(같은 값이 두 JSON 에 실리면
+     새 이중 진실이고, DATA.fx 를 읽으면 fx.json 하나가 깨질 때 이 화면까지 빈다). */
+  const tsCardEl = $("#hedge-ts-card");
+  tsCardEl.textContent = "";
+  const CH = H2.cost_hist_curve || {};
+  const curveGroups = [["3M", "3개월"], ["6M", "6개월"], ["12M", "12개월"]]
+    .filter(([k]) => CH[k] && CH[k].t && CH[k].t.length)
+    .map(([k, label]) => ({ label, t: CH[k].t, v: CH[k].v }));
+  if (curveGroups.length) {
+    const cdata = joinSeries(curveGroups);
+    const cbox = cardScaffold(tsCardEl, {
+      title: "달러 헤지비용 커브 추이 (3·6·12개월)",
+      /* 만기를 모르면 그 조각을 통째로 뺀다 — "undefined개월" 을 내보내지 않는다.
+         이 화면의 다른 문장들도 같은 규약이다(tenorM 이 없으면 문장 자체를 뺀다). */
+      sub: `연율 %, ${COST_SIGN_KEY}`
+        + (H2.default_tenor_m ? ` · 시뮬레이터가 ${H2.default_tenor_m}개월을 보간할 때 쓰는 원자료` : ""),
+      csvName: "달러-헤지비용-커브.csv",
+      tableFn: tsTableFn(curveGroups.map((g) => g.label), cdata, 2),
+    });
+    makeTimeChart(cbox, {
+      labels: curveGroups.map((g) => g.label),
+      colors: curveGroups.map((_, i) => pal.series[i % 8]),
+      data: cdata, dec: 2, unit: "%", height: 230,
+    });
+    tsCardEl.append(el("div", { class: "card-sub", style: "margin-top:6px;line-height:1.7" },
+      "세 선이 벌어져 있으면 만기에 따라 비용이 크게 다르다는 뜻입니다 — ",
+      el("a", { href: "#hedge-sim" }, "시뮬레이터"),
+      H2.default_tenor_m
+        ? ` 는 이 커브 위에서 ${H2.default_tenor_m}개월을 보간하므로, 위 표의 12개월 값과 다른 숫자가 나옵니다.`
+        : " 는 이 커브 위에서 만기를 보간하므로, 위 표의 12개월 값과 다른 숫자가 나옵니다."));
+  } else {
+    tsCardEl.append(el("p", { class: "card-sub" }, "헤지비용 커브 이력을 불러오지 못했습니다."));
+  }
 
   const mtm = $("#hedge-mtm-card");
   mtm.textContent = "";
