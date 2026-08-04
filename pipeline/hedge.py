@@ -93,14 +93,18 @@ def build(series_store: dict, warn) -> dict:
            "AUD": "bb:호주_3m", "CAD": "bb:캐나다_3m", "GBP": "bb:영국_3m"}
 
     # ----- 헤지비용: 통화별 현재 커브(3/6/12M) + 출처 -----
+    # 읽는 법은 `common.hp_curve` **한 곳**에만 있다 — alloc.py 도 같은 함수를 부른다.
+    # 예전에는 두 모듈이 같은 시리즈를 각자 `iloc[-1]` 로 읽었고, 우연히 같은 값이
+    # 나와 문제가 안 보였다. 한쪽만 바꾸면 같은 화면의 두 숫자가 조용히 갈라진다.
+    hp_label = common.hp_read_label()
     cost_curve, cost_src = {}, {}
+    hp_asof = None
     for c in CURRENCIES:
-        # 인포맥스 HP 시리즈 키: USDKRW_HP_3M / JPYKRW_HP_3M ...
-        hp = {m: S.get(f"info:{'USDKRW' if c == 'USD' else c + 'KRW'}_HP_{m}")
-              for m in ["3M", "6M", "12M"]}
-        if all(v is not None for v in hp.values()):
-            cost_curve[c] = {m: round(float(hp[m].dropna().iloc[-1]), 2) for m in hp}
-            cost_src[c] = "실측(HP)"
+        hp = common.hp_curve(S, c)
+        if hp is not None:
+            cost_curve[c] = hp["curve"]
+            cost_src[c] = f"실측(HP) · {hp_label}"
+            hp_asof = hp["asof"] if hp_asof is None else max(hp_asof, hp["asof"])
         elif c in R3M and g(R3M[c]) is not None:
             v = round(float((kr3m - S[R3M[c]]).dropna().iloc[-1]), 2)
             cost_curve[c] = {"3M": v, "6M": v, "12M": v}
@@ -222,6 +226,11 @@ def build(series_store: dict, warn) -> dict:
     payload = {
         "asof": usdkrw.index[-1].strftime("%Y-%m-%d"),
         "default_tenor_m": DEFAULT_TENOR_M,
+        # 헤지비용 커브를 어떻게 읽었는지 — 화면 부제가 이 값을 그대로 쓴다.
+        # 하드코딩하면 `HP_MEDIAN_N` 을 되돌려도 화면 문장만 남는다
+        # (이 저장소는 「25년 평균」 하드코딩으로 같은 사고를 한 번 겪었다).
+        "cost_read": {"label": hp_label, "window": common.HP_MEDIAN_N,
+                      "asof": None if hp_asof is None else hp_asof.strftime("%Y-%m-%d")},
         "matrix": matrix,
         "curves": curves,
         "backtest": backtest,
@@ -241,12 +250,20 @@ def build(series_store: dict, warn) -> dict:
             "④ 스왑레이트 캐리 = 장부금액 × 헤지비율 × 체결 스왑레이트 (계약 기간 확정)",
             "⑤ 스왑 MTM = 장부금액 × 헤지비율 × 잔존만기 × (−Δ시장 스왑레이트)",
         ],
-        "limits": ("유로·엔·호주·캐나다·파운드 채권은 5년 국채 커브 합성 수익률(실지수 확보 시 교체, "
+        "limits": (f"유로·엔·호주·캐나다·파운드 채권은 5년 국채 커브 합성 수익률(실지수 확보 시 교체, "
                    "달러 검증: 실지수와 상관 0.85). 위안은 단기금리·헤지비용 데이터 확보 전까지 비활성. "
                    "캐나다·파운드 헤지비용 '수준'은 금리차 프록시(달러 실측과 상관 0.89 검증). "
                    "스왑 MTM의 Δ스왑레이트는 전 통화에 달러 실측(2001~)을 공통 적용 — 금리차 '변화' "
                    "프록시는 실측과 상관 0.07로 검증에 실패해 채택하지 않았습니다(통화별 실측 확보 시 교체). "
                    "월간 통계는 완성된 달까지만 사용. 스왑 MTM 손실은 스왑레이트 상승 시 발생합니다. "
+                   f"헤지비용 커브는 {hp_label}입니다 — 일간 호가 변화의 1차 자기상관이 "
+                   "12계열 전부 음수(−0.15~−0.63)라 되돌아오는 측정잡음이고, 최신 호가를 "
+                   "그대로 쓰면 한 번의 빌드로 게시값이 최대 5.50%p 움직입니다(중앙값 적용 후 0.53%p). "
+                   "대신 표시가 2영업일 뒤처집니다. "
+                   "중앙값은 커브의 비단조성을 고치지 못합니다 — 3/6/12개월이 한 방향으로 "
+                   "정렬되지 않는 날이 달러 34.2%→34.8%, 유로 26.4%→28.8%, 엔 10.0%→10.6%, "
+                   "호주 23.0%→23.0% 로 오히려 늘거나 그대로입니다(비단조성은 잡음이 아니라 "
+                   "커브의 실제 성질입니다). "
                    "K-ICS 요구자본·증거금·중도 청산 관점은 미반영. 기대수익 예측이 아닌 변동성·비용 계산기입니다."),
     }
     return payload

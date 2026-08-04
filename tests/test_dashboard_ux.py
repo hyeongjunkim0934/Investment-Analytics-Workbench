@@ -974,3 +974,28 @@ def test_a_failing_section_says_it_is_broken(probe):
     assert r["noticeMentionsTheSection"] is True, "안내가 어느 섹션인지 말하지 않는다"
     assert r["noticeSaysOthersAreFine"] is True, "안내가 나머지 화면의 상태를 말하지 않는다"
     assert r["noticeNotDuplicated"] is True, "다시 그릴 때마다 안내가 겹쳐 쌓인다"
+
+
+def test_screen_says_how_the_cost_curve_was_read(probe):
+    """헤지비용을 **어떻게 읽었는지**를 화면이 말해야 하고, 그 문자열은 파이프라인 값이어야 한다.
+
+    최근 5영업일 중앙값은 최신 호가와 다른 숫자를 낸다(실데이터 9개월 −0.975 →
+    −0.800). 화면이 "최신 호가"라고 계속 적으면 게시값과 설명이 어긋난다.
+    화면에 문자열을 박으면 `HP_MEDIAN_N` 을 되돌려도 문장만 남으므로,
+    파이프라인의 `cost_read.label` 을 그대로 쓰는지 본다 — 픽스처는 실데이터와
+    **일부러 다른** 라벨을 태운다.
+    """
+    h = probe["hedgeScreen"]
+    assert "프로브전용읽기" in h["matrixSub"], (
+        f"매트릭스 부제가 파이프라인의 읽는 법을 쓰지 않는다: {h['matrixSub']}"
+    )
+    assert "최신 호가" not in h["matrixSub"], "읽는 법이 화면에 박혀 있다"
+    assert "프로브전용읽기" in h["costNote"], (
+        f"비용 이력 카드가 읽는 법을 박아 두고 있다: {h['costNote'][:120]}"
+    )
+
+
+def test_screen_falls_back_when_the_read_method_is_missing(probe):
+    """`cost_read` 가 없는 옛 payload 로도 "undefined" 를 안 찍는다."""
+    m = probe["hedgeMissingFields"]
+    assert not m["hasUndefined"], m["where"]

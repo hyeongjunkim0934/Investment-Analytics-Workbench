@@ -16,10 +16,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from pathlib import Path
+
 import common
 import hedge
 import process
 import risk
+
+ROOT_PIPE = Path(__file__).resolve().parents[1] / "pipeline"
 
 
 # --------------------------------------------------------------------------
@@ -442,3 +446,94 @@ def test_alloc_infeasible_bands_raise():
     with pytest.raises(ValueError):
         alloc.check_feasible(np.zeros(3), np.array([0.2, 0.2, 0.2]), 1.0)
     alloc.check_feasible(np.zeros(3), np.ones(3), 1.0)   # 정상 — 예외 없음
+
+
+# ---------------------------------------------------------------------------
+# HP 커브 읽기 — hedge.py 와 alloc.py 의 유일한 경로 (B-7)
+#
+# 예전에는 두 모듈이 같은 시리즈를 각자 `iloc[-1]` 로 읽었다. 두 산식이 우연히
+# 같아 9개월에서 −0.9750 으로 일치했을 뿐이고, 한쪽만 읽는 법을 바꾸면 **같은
+# 화면의 두 숫자가 조용히 갈라진다.** 통합이 중앙값 도입의 선행 조건이었다.
+# ---------------------------------------------------------------------------
+
+def _hp_store(vals: dict, days: int = 30) -> dict:
+    idx = pd.bdate_range("2030-01-01", periods=days)
+    return {f"info:USDKRW_HP_{m}": pd.Series(v, index=idx) for m, v in vals.items()}
+
+
+def test_hp_curve_takes_the_median_of_the_last_n_days():
+    """홀수창 중앙값 — 마지막 값 하나가 튀어도 게시값이 따라가지 않아야 한다."""
+    base = [-1.0] * 25 + [-1.0, -1.0, -1.0, -1.0, -5.5]     # 마지막 날만 −5.5 로 튐
+    S = _hp_store({"3M": base, "6M": base, "12M": base}, days=30)
+    got = common.hp_curve(S, "USD", n=5)
+    assert got["curve"] == {"3M": -1.0, "6M": -1.0, "12M": -1.0}, got["curve"]
+    assert got["window"] == 5 and got["n_used"] == 5
+    # N=1 이면 예전의 최신 호가와 정확히 같다 — 되돌리기가 상수 한 글자인 근거
+    assert common.hp_curve(S, "USD", n=1)["curve"]["3M"] == -5.5
+
+
+def test_hp_curve_is_the_plain_median_not_a_mean():
+    """평균이면 튄 값이 섞여 들어온다 — 중앙값이어야 한다."""
+    vals = [1.0, 1.0, 1.0, 1.0, 100.0]
+    S = _hp_store({m: vals for m in common.HP_TENORS}, days=5)
+    assert common.hp_curve(S, "USD", n=5)["curve"]["3M"] == 1.0
+
+
+def test_hp_curve_skips_nan_and_reports_what_it_used():
+    """NaN 은 제거하고, 관측이 창보다 짧으면 있는 만큼만 쓴다(조용히 실패하지 않는다)."""
+    v = [float("nan"), float("nan"), 2.0, 4.0, 6.0]
+    S = _hp_store({m: v for m in common.HP_TENORS}, days=5)
+    got = common.hp_curve(S, "USD", n=5)
+    assert got["curve"]["3M"] == 4.0, "NaN 을 값으로 셌다"
+    assert got["n_used"] == 3, got["n_used"]
+
+
+def test_hp_curve_returns_none_when_a_tenor_is_missing():
+    """세 만기 중 하나라도 없으면 커브가 아니다 — 부분 커브를 내보내면 보간이 거짓말한다."""
+    S = _hp_store({"3M": [1.0] * 5, "6M": [1.0] * 5}, days=5)
+    assert common.hp_curve(S, "USD", n=5) is None
+    assert common.hp_curve({}, "USD") is None
+
+
+def test_hp_curve_maps_currency_codes_to_series_keys():
+    """USD 만 키가 `USDKRW` 로 예외다 — 나머지는 `<코드>KRW`."""
+    idx = pd.bdate_range("2030-01-01", periods=5)
+    S = {f"info:JPYKRW_HP_{m}": pd.Series([2.0] * 5, index=idx) for m in common.HP_TENORS}
+    assert common.hp_curve(S, "JPY")["curve"]["3M"] == 2.0
+    assert common.hp_curve(S, "USD") is None
+
+
+def test_hedge_and_alloc_read_the_same_hp_curve():
+    """두 모듈이 **같은 헬퍼를 부르고 같은 값을 낸다.**
+
+    이것이 깨지면 `#hedge` 매트릭스의 12개월 값과 `#alloc` 방법론 패널의 헤지비용이
+    조용히 갈라진다. 소스 검사가 아니라 두 모듈을 실제로 돌려서 대조한다.
+    """
+    import alloc
+    src = (ROOT_PIPE / "hedge.py").read_text(encoding="utf-8")
+    src_a = (ROOT_PIPE / "alloc.py").read_text(encoding="utf-8")
+    for name, txt in (("hedge.py", src), ("alloc.py", src_a)):
+        assert "common.hp_curve(" in txt, f"{name} 가 공유 헬퍼를 쓰지 않습니다"
+        assert "_HP_3M" not in txt or "hp_curve" in txt, f"{name} 가 HP 를 직접 읽습니다"
+    # 값 대조 — 같은 store 를 두 경로에 태운다
+    idx = pd.bdate_range("2030-01-01", periods=20)
+    vals = {"3M": -0.60, "6M": -0.78, "12M": -0.82}
+    S = {f"info:USDKRW_HP_{m}": pd.Series([v] * 20, index=idx) for m, v in vals.items()}
+    from_common = common.hp_curve(S, "USD")["curve"]
+    assert from_common == vals
+    # alloc 의 보간은 그 커브 위에서 돈다 — 9개월은 6M~12M 구간의 선형 보간
+    expect = vals["6M"] + (vals["12M"] - vals["6M"]) * (9 - 6) / 6
+    assert alloc.hp_cost_at(from_common, 9) == round(expect, 3)
+
+
+def test_hp_median_window_is_odd_and_documented():
+    """창은 홀수여야 중앙값이 실제 관측 하나가 된다(짝수면 두 값의 평균 = 없는 값).
+
+    그리고 이 상수는 **근거가 소스에 적혀 있어야** 한다 — 자의적 상수 금지 규약.
+    """
+    assert common.HP_MEDIAN_N % 2 == 1, f"창이 짝수다: {common.HP_MEDIAN_N}"
+    src = (ROOT_PIPE / "common.py").read_text(encoding="utf-8")
+    block = src.split("HP_MEDIAN_N =")[0][-2000:]
+    assert "자기상관" in block and "임의 상수가 아니다" in block, (
+        "HP_MEDIAN_N 의 근거가 소스에 없습니다 — 자의적 상수 금지"
+    )

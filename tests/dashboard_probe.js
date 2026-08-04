@@ -363,6 +363,9 @@ const HEDGE_FIXTURE = (() => {
   const mk = (y, m) => Math.floor(Date.UTC(y, m, 1) / 1000) - 86400;   // 전달 말일
   return {
     asof: "2030-01-31", default_tenor_m: 6,
+    /* 읽는 법은 파이프라인이 정한다 — 실데이터와 **일부러 다른** 라벨을 태워
+       화면이 문자열을 박아 두면 여기서 옛 문구가 그대로 나와 잡히게 한다. */
+    cost_read: { label: "프로브전용읽기", window: 7, asof: "2030-01-30" },
     matrix: [
       { c: "USD", name: "달러", vol_e: 9.1, mvh: 71, corr: -0.4, cost_12m: -0.5,
         cost_curve: { "3M": -0.6, "6M": -0.55, "12M": -0.5 }, src: "실측(HP)",
@@ -429,6 +432,7 @@ safe("hedgeScreen", () => {
     views: txt("hedge-views"),
     lead: txt("hedge-lead"),
     matrixHeader: mxRows[0].children.map((c) => c.textContent),
+    matrixSub: DOC.getElementById("hedge-matrix").querySelector(".card-sub").textContent,
     /* 부호 방향은 **글자**로 나와야 한다 — 색만으로는 전달되지 않고, 뒤집히면 여기서 잡힌다.
        열은 인덱스가 아니라 **헤더 이름**으로 집는다 — 예전에는 `cell(row, 4)` 라
        3·6개월 열을 흡수하자 조용히 다른 열을 재고 있었다. */

@@ -2610,15 +2610,21 @@ function renderHedge() {
     lead.append(box);
   }
 
+  /* 읽는 법 문자열 — 파이프라인 값. 없으면(옛 payload) 문장을 짧게 줄인다. */
+  const costRead = (H2.cost_read && H2.cost_read.label) || "실측 커브";
+
   const mx = $("#hedge-matrix");
   mx.textContent = "";
-  /* 기준일이 하나가 아니다 — 월간 통계(변동성·MVH·상관)와 최신 호가(헤지비용)와 환율
+  /* 기준일이 하나가 아니다 — 월간 통계(변동성·MVH·상관)와 헤지비용 커브와 환율
      최종 관측일이 서로 다른 날짜다. "기준일 …" 한 줄로 뭉뚱그리면 헤지비용 열이 그날
-     값인 줄로 읽힌다. 셋을 그대로 적는다. */
+     값인 줄로 읽힌다. 셋을 그대로 적는다.
+     읽는 법(최신 호가 / N영업일 중앙값)은 **파이프라인이 정해서 실어 준다** — 화면에
+     박아 두면 산식을 되돌려도 문장만 남는다. */
   mx.append(el("div", { class: "card-head" },
     el("span", { class: "card-title" }, "통화별 한눈에 보기 (7통화)"),
     el("span", { class: "card-sub" },
-      `변동성·MVH·상관 = 월간 수익률(완성된 달까지) · 헤지비용 = 최신 호가 · 환율 최종 관측 ${H2.asof}`)));
+      `변동성·MVH·상관 = 월간 수익률(완성된 달까지) · 헤지비용 = ${costRead}`
+      + ` · 환율 최종 관측 ${H2.asof}`)));
   const t = el("table", { class: "mini-table" },
     el("tr", {},
       el("th", {}, "통화"),
@@ -2774,10 +2780,10 @@ function renderHedge() {
   makeTimeChart(costBox, { labels: ["3개월 스왑레이트"], colors: [pal.series[0]],
     data: [ch.t, ch.v], dec: 2, unit: "%", fill: true, height: 230 });
   /* 같은 화면에 「헤지비용」이 두 개 있고 값이 다르다 — 위 표는 인포맥스 실측 스왑포인트
-     (HP, 일별 최신 호가), 이 차트는 3개월 스왑레이트(SMB, 월말)다. 어느 쪽을 보고 있는지
+     (HP), 이 차트는 3개월 스왑레이트(SMB, 월말)다. 어느 쪽을 보고 있는지
      화면이 말해 주지 않으면 두 숫자가 충돌한다(실측: 달러 3M −1.15% vs 월말 −0.45%). */
   cost.append(el("div", { class: "card-sub", style: "margin-top:6px;line-height:1.7" },
-    "위 「통화별 한눈에 보기」의 헤지비용 열은 ", el("b", {}, "일별 스왑포인트 최신 호가"),
+    "위 「통화별 한눈에 보기」의 헤지비용 열은 ", el("b", {}, `일별 스왑포인트 ${costRead}`),
     " 이고, 이 차트는 ", el("b", {}, "3개월 스왑레이트 월말값"),
     " 입니다 — 같은 성격의 값이지만 계열과 시점이 달라 숫자가 일치하지 않습니다. 일별 호가 추이는 ",
     el("b", {}, "옆의 「헤지비용 커브 추이」"), " 카드에 있습니다."));
