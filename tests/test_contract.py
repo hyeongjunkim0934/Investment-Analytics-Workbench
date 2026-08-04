@@ -978,3 +978,53 @@ def test_breadth_publishes_no_ticker_level_field(built):
     us = [r for r in cat["series"] if r["key"].startswith("us:")]
     assert us, "카탈로그에 us: 시리즈가 없습니다"
     assert all(r["source"] == "kiwoom" for r in us)
+
+
+def test_breadth_events_join_the_same_event_stream(built):
+    """시장 폭 이벤트가 `events.json` 의 같은 스트림·같은 카탈로그에 들어간다.
+
+    사용자 제안(2026-08-04): "그냥 최근 이벤트 같은 거에 사용하면 어때". 이벤트는
+    **하루 안에서 판정**되므로 이력이 없어도 성립한다 — 위험 요인(백분위·워크포워드)과
+    다른 점이 이것이다. 별도 화면을 만들지 않고 기존 스트림에 합친다.
+    """
+    out, _ = built
+    E = json.loads((out / "events.json").read_text(encoding="utf-8"))
+    cats = {c["cat"] for c in E["catalog"]}
+    assert "시장폭" in cats, f"규칙 카탈로그에 없습니다: {sorted(cats)}"
+    # 합성 픽스처는 상승 우세(3.0배) + 신고가−신저가 음수(200−500) 라 ① 이 걸린다
+    b = [e for e in E["events"] if e["cat"] == "시장폭"]
+    assert b, "합성 픽스처 조건에서 시장 폭 이벤트가 안 나왔습니다"
+    for e in b:
+        assert set(e) >= {"date", "sev", "cat", "title", "value", "rule", "tags"}
+        assert e["sev"] in ("경계", "주의", "정보")
+        assert "임계값 없음" in e["rule"] or "만장일치" in e["rule"], e["rule"]
+    # 정렬은 전체 스트림 기준으로 유지된다
+    dates = [e["date"] for e in E["events"]]
+    assert dates == sorted(dates, reverse=True), "이벤트가 날짜 역순이 아닙니다"
+
+
+def test_breadth_events_never_leak_ticker_names(built):
+    """이벤트 문구에도 종목 단위가 들어가면 안 된다 — 공개 페이지로 나가는 글이다."""
+    out, _ = built
+    E = json.loads((out / "events.json").read_text(encoding="utf-8"))
+    blob = json.dumps([e for e in E["events"] if e["cat"] == "시장폭"], ensure_ascii=False)
+    for banned in ("티커", "회사명", "현재가", "시가총액"):
+        assert banned not in blob, f"이벤트 문구에 종목 단위가 있습니다: {banned}"
+
+
+def test_breadth_event_failure_does_not_lose_the_other_events(built, tmp_path, monkeypatch):
+    """시장 폭 이벤트가 터져도 나머지 이벤트는 나가야 한다 (격리 규약).
+
+    `risk.build` 는 이미 try/except 로 격리돼 있는데, 그 안에 새 계산을 넣으면서
+    격리를 안 하면 시장 폭 하나 때문에 이벤트 화면이 통째로 사라진다.
+    """
+    src = (ROOT / "pipeline" / "process.py").read_text(encoding="utf-8")
+    block = src.split("breadth.detect_events")[0].rsplit("try:", 1)[-1]
+    assert "risk.build" not in block, (
+        "breadth.detect_events 가 risk.build 와 같은 try 블록에 있습니다 — "
+        "시장 폭 실패가 이벤트 전체를 날립니다"
+    )
+    after = src.split("breadth.detect_events", 1)[1].split("payloads[\"events.json\"]")[0]
+    assert "except Exception" in after and "warn(" in after, (
+        "시장 폭 이벤트 계산에 격리(try/except + warn)가 없습니다"
+    )
