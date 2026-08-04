@@ -397,8 +397,12 @@ const HEDGE_FIXTURE = (() => {
       "6M":  { t: [mk(2029, 10), mk(2029, 11)], v: [-0.56, -0.55] },
       "12M": { t: [mk(2029, 10), mk(2029, 11)], v: [-0.51, -0.50] },
     },
-    cost_stats: { mean: 0.1, now: -0.2, min: -5.5 },
-    mtm: { sigma_ds_3m: 0.4, worst_ds: 3.3, worst_date: "2019-03-31", corr_ds_e: -0.1 },
+    /* 표본 길이·계열명도 payload 에서 온다 — 실데이터(25.2년 · 303개월)와 **일부러
+       다른** 수를 태워, 화면이 「25년 평균」처럼 박아 두면 여기서 잡히게 한다. */
+    cost_stats: { mean: 0.1, now: -0.2, min: -5.5, series: "프로브전용계열",
+                  start: "2027-01", end: "2029-12", n_months: 36, years: 3.0 },
+    mtm: { sigma_ds_3m: 0.4, worst_ds: 3.3, worst_date: "2019-03-31", corr_ds_e: -0.1,
+           series: "프로브전용MTM계열", start: "2027-02", end: "2029-12", n_months: 35 },
     sim: { labels: ["e_USD", "b_USD", "eq", "ds_USD", "e_JPY", "b_JPY"],
            cov: Array.from({ length: 6 }, (_, i) => Array.from({ length: 6 }, (_, j) => (i === j ? 0.01 : 0.001))),
            sample: "2010-01 ~ 2029-12", n_months: 240 },
@@ -407,6 +411,7 @@ const HEDGE_FIXTURE = (() => {
 })();
 
 safe("hedgeScreen", () => {
+  shim.UPlotStub.made.length = 0;          // 이 렌더에서 만들어진 차트만 본다
   P.DATA.hedge = HEDGE_FIXTURE;
   P.DATA.meta = { last_observation: "2030-01-31" };
   P.renderHedge();
@@ -448,6 +453,14 @@ safe("hedgeScreen", () => {
     cnyText: cny ? cny.textContent : null,
     curveSub: DOC.getElementById("hedge-curve-card").querySelector(".card-sub").textContent,
     costSub: DOC.getElementById("hedge-cost-card").querySelector(".card-sub").textContent,
+    mtmSub: DOC.getElementById("hedge-mtm-card").querySelector(".card-sub").textContent,
+    /* 차트에 **실제로 그려진 계열**. 설명 문장만 보면 "겹쳐 그렸다"고 적어 두고
+       그리지 않는 변경이 통과한다 — uPlot 에 넘어간 series 를 직접 센다. */
+    chartSeries: shim.UPlotStub.made.map((u) => ({
+      title: (u.opts && u.opts.title) || "",
+      labels: ((u.opts && u.opts.series) || []).slice(1).map((sr) => sr.label),
+      rows: (u.data && u.data[0] && u.data[0].length) || 0,
+    })),
     costNote: txt("hedge-cost-card"),
     mtmHeader: mtmRows[0].children.map((c) => c.textContent),
     /* τ 열 — 만기 ÷ 2 (년). 3/6/9/12 개월 → 0.125/0.250/0.375/0.500 */

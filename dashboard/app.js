@@ -2771,21 +2771,40 @@ function renderHedge() {
   const sgn = (x) => (x == null ? "—" : `${x > 0 ? "+" : ""}${fmtNum(x, 2)}%`);
   const costBox = cardScaffold(cost, {
     title: "달러 헤지비용 이력 — 3개월 스왑레이트(월말)",
-    sub: `${COST_SIGN_KEY} · 25년 평균 ${sgn(cs.mean)}`
+    /* 「25년 평균」은 **하드코딩이었다.** 표본이 늘거나 줄어도 문장이 25년에 멈춰
+       있으면 거짓이 된다 — 파이프라인이 실어 주는 표본 길이를 쓴다. */
+    sub: `${COST_SIGN_KEY} · ${cs.years ? cs.years + "년" : "장기"} 평균 ${sgn(cs.mean)}`
       + (nowYm ? ` · ${nowYm} ${sgn(cs.now)}` : "")
-      + (minYm ? ` · 가장 많이 낸 달 ${minYm} ${sgn(cs.min)}` : ""),
+      + (minYm ? ` · 가장 많이 낸 달 ${minYm} ${sgn(cs.min)}` : "")
+      + (cs.start ? ` · ${cs.series || "이력"} ${cs.start}~${cs.end} (${cs.n_months}개월)` : ""),
     csvName: "달러-헤지비용.csv",
     tableFn: tsTableFn(["헤지비용 3개월 스왑레이트(%)"], [ch.t, ch.v], 2),
   });
-  makeTimeChart(costBox, { labels: ["3개월 스왑레이트"], colors: [pal.series[0]],
-    data: [ch.t, ch.v], dec: 2, unit: "%", fill: true, height: 230 });
+  /* HP 3M(2024-10~)을 보조 계열로 겹친다 — "같은 성격, 다른 계열"이라는 아래 문장을
+     그림이 증명한다. 추가 공개는 없다(같은 값이 바로 옆 커브 카드에 이미 있다). */
+  const hp3 = (H2.cost_hist_curve || {})["3M"];
+  const costGroups = [{ label: "3개월 스왑레이트(SMB, 월말)", t: ch.t, v: ch.v }];
+  if (hp3 && hp3.t && hp3.t.length) {
+    costGroups.push({ label: `HP 3개월(일별, ${costRead})`, t: hp3.t, v: hp3.v });
+  }
+  makeTimeChart(costBox, {
+    labels: costGroups.map((g) => g.label),
+    colors: costGroups.map((_, i) => pal.series[i === 0 ? 0 : 3]),
+    data: joinSeries(costGroups), dec: 2, unit: "%",
+    fill: costGroups.length === 1, height: 230,
+  });
   /* 같은 화면에 「헤지비용」이 두 개 있고 값이 다르다 — 위 표는 인포맥스 실측 스왑포인트
      (HP), 이 차트는 3개월 스왑레이트(SMB, 월말)다. 어느 쪽을 보고 있는지
      화면이 말해 주지 않으면 두 숫자가 충돌한다(실측: 달러 3M −1.15% vs 월말 −0.45%). */
   cost.append(el("div", { class: "card-sub", style: "margin-top:6px;line-height:1.7" },
     "위 「통화별 한눈에 보기」의 헤지비용 열은 ", el("b", {}, `일별 스왑포인트 ${costRead}`),
     " 이고, 이 차트는 ", el("b", {}, "3개월 스왑레이트 월말값"),
-    " 입니다 — 같은 성격의 값이지만 계열과 시점이 달라 숫자가 일치하지 않습니다. 일별 호가 추이는 ",
+    " 입니다 — 같은 성격의 값이지만 계열과 시점이 달라 숫자가 일치하지 않습니다. ",
+    hp3 ? el("span", {}, "위 차트에 ", el("b", {}, "HP 3개월을 보조선으로 겹쳐"),
+      " 두 계열이 같이 움직인다는 것을 그림으로 확인할 수 있습니다 — ",
+      "겹치는 구간 421일에서 상관 0.9644, 평균차 +0.04%p(sd 0.13, 범위 −1.35~+0.70)입니다. ") : null,
+    "수준은 HP, 이력은 SMB 로 역할이 나뉩니다 — HP 는 2024-10 시작이라 이력이 없고, ",
+    "공분산의 스왑레이트 요인은 그래서 SMB(2001~)를 씁니다. 일별 호가 추이는 ",
     el("b", {}, "옆의 「헤지비용 커브 추이」"), " 카드에 있습니다."));
 
   /* ── 이관 카드(2026-08-04): 달러 헤지비용 3·6·12개월 일별 커브 ─────────────
@@ -2833,7 +2852,8 @@ function renderHedge() {
   const worstYm = String(MTM.worst_date || "").slice(0, 7);
   mtm.append(el("div", { class: "card-head" },
     el("span", { class: "card-title" }, "스왑을 몇 개월짜리로 굴릴 것인가 — 스왑 MTM"),
-    el("span", { class: "card-sub" }, "이미 체결한 스왑의 평가손익 — 회계 손익에 그대로 잡힙니다")));
+    el("span", { class: "card-sub" }, "이미 체결한 스왑의 평가손익 — 회계 손익에 그대로 잡힙니다"
+      + (MTM.start ? ` · ${MTM.series || "표본"} ${MTM.start}~${MTM.end} (${MTM.n_months}개월)` : ""))));
   /* 부호가 이 표의 전부다. MTM = 잔존만기 × (−Δ스왑레이트) 이므로 **스왑레이트가 오르는
      달에 평가손**이 난다(hedge.py 주석과 동일). 예전 표는 최악월을 부호 없는 양수로 찍어
      "손실"이라는 말이 두 줄 아래 회색 글씨에만 있었다 — 손실을 손실로 적는다. */

@@ -190,6 +190,10 @@ def build(series_store: dict, warn) -> dict:
     mtm_stats = {"sigma_ds_3m": round(float(ds_usd.std()), 2),
                  "worst_ds": round(float(ds_usd.max()), 2),
                  "worst_date": str(ds_usd.idxmax().date()),
+                 "series": "3개월 스왑레이트 월간 변화(SMB)",
+                 "start": ds_usd.index[0].strftime("%Y-%m"),
+                 "end": ds_usd.index[-1].strftime("%Y-%m"),
+                 "n_months": int(len(ds_usd)),
                  "corr_ds_e": round(float(ds_usd.corr(e_usd.loc[e_usd.index.intersection(ds_usd.index)] * 100)), 2)}
 
     # ----- 시뮬레이터 공분산 (월간, 연율화) -----
@@ -236,9 +240,18 @@ def build(series_store: dict, warn) -> dict:
         "backtest": backtest,
         "cost_hist_curve": cost_hist_curve,
         "cost_hist_usd": pack(smb_m),
+        # 계열명·표본기간·관측수를 함께 싣는다 — 화면이 「25년 평균」을 하드코딩하고
+        # 있었다. 표본이 늘거나 줄어도 문장이 25년에 멈춰 있으면 거짓이 된다
+        # (이 저장소는 「주식 10%는 어느 산식에서도 나오지 않는 수」로 같은 사고를
+        # 한 번 겪었다). 수준은 HP, 이력은 SMB 라는 역할 분담도 여기서 밝힌다.
         "cost_stats": {"mean": round(float(smb_m.mean()), 2),
                        "now": round(float(smb_m.iloc[-1]), 2),
-                       "min": round(float(smb_m.min()), 2)},
+                       "min": round(float(smb_m.min()), 2),
+                       "series": "3개월 스왑레이트(SMB, 월말)",
+                       "start": smb_m.index[0].strftime("%Y-%m"),
+                       "end": smb_m.index[-1].strftime("%Y-%m"),
+                       "n_months": int(len(smb_m)),
+                       "years": round(len(smb_m) / 12, 1)},
         "mtm": mtm_stats,
         "sim": {"labels": labels, "cov": cov.values.tolist(),
                 "sample": f"{Mx.index[0].strftime('%Y-%m')} ~ {Mx.index[-1].strftime('%Y-%m')}",

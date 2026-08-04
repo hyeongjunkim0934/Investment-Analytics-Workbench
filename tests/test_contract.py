@@ -864,3 +864,24 @@ def test_hedge_matrix_row_carries_its_sample(built):
             assert sp["fit"]["n"] <= vol["n"], (
                 f"{row['c']}: 적합 표본이 변동성 표본보다 깁니다 — 조인은 짧게만 만듭니다"
             )
+
+
+@pytest.mark.parametrize("sub,key", [
+    ("cost_stats", "series"), ("cost_stats", "n_months"), ("cost_stats", "years"),
+    ("mtm", "series"), ("mtm", "n_months"), ("cost_read", "label"),
+])
+def test_gate_rejects_a_hedge_payload_missing_a_nested_key(built, tmp_path, sub, key):
+    """중첩 객체의 필수 키도 지킨다.
+
+    화면 부제가 이 값들로 **자기 표본을 밝힌다**. 빠지면 부제가 조용히 짧아지고,
+    그 자리에 예전처럼 하드코딩된 「25년 평균」이 되돌아올 여지가 생긴다.
+    """
+    out, _ = built
+    tmp = tmp_path / "data"
+    shutil.copytree(out, tmp)
+    p = tmp / "hedge.json"
+    obj = json.loads(p.read_text(encoding="utf-8"))
+    assert key in obj[sub], f"테스트 전제가 깨졌다 — hedge.json.{sub} 에 {key} 가 없다"
+    del obj[sub][key]
+    p.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+    assert _run_gate(tmp) == 1, f"hedge.json.{sub}.{key} 가 사라졌는데 게이트가 통과시켰습니다"

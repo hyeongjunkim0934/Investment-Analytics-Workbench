@@ -999,3 +999,61 @@ def test_screen_falls_back_when_the_read_method_is_missing(probe):
     """`cost_read` 가 없는 옛 payload 로도 "undefined" 를 안 찍는다."""
     m = probe["hedgeMissingFields"]
     assert not m["hasUndefined"], m["where"]
+
+
+def test_cost_history_card_states_its_series_and_span(probe):
+    """「25년 평균」은 **하드코딩이었다.**
+
+    표본이 늘거나 줄어도 문장이 25년에 멈춰 있으면 거짓이 된다 — 이 저장소는
+    「주식 10%는 어느 산식에서도 나오지 않는 수」로 같은 사고를 한 번 겪었다.
+    픽스처는 실데이터(25.2년 · 303개월)와 **일부러 다른** 값을 태운다.
+    """
+    h = probe["hedgeScreen"]
+    assert "25년" not in h["costSub"], f"표본 길이가 화면에 박혀 있다: {h['costSub']}"
+    assert "3년 평균" in h["costSub"], h["costSub"]
+    assert "프로브전용계열" in h["costSub"], "계열명을 payload 에서 가져오지 않는다"
+    assert "2027-01~2029-12" in h["costSub"] and "36개월" in h["costSub"], h["costSub"]
+
+
+def test_mtm_card_states_its_own_sample(probe):
+    """MTM 통계도 자기 표본을 밝혀야 한다 — σ 와 최악월이 표본에 통째로 의존한다.
+
+    HP 로 통일했다면 이 표본이 302 → 21개월로 줄어 σ 를 54% 과소평가하고 최악월이
+    +4.92%p(2008-12) → +0.41%p(2025-12) 로 12분의 1이 됐을 것이다. 그래서 이력은
+    SMB 로 남겼고, 남긴 이상 무엇을 쓰는지 화면이 말해야 한다.
+    """
+    h = probe["hedgeScreen"]
+    assert "프로브전용MTM계열" in h["mtmSub"], h["mtmSub"]
+    assert "2027-02~2029-12" in h["mtmSub"] and "35개월" in h["mtmSub"], h["mtmSub"]
+
+
+def test_cost_history_overlays_the_hp_series(probe):
+    """"같은 성격, 다른 계열" 이라는 주장을 그림이 증명해야 한다.
+
+    이 카드는 SMB 월말, 바로 위 표는 HP 일별이라 숫자가 다르다. 문장만 있으면
+    독자는 둘 중 하나가 틀렸다고 읽는다 — HP 3M 을 보조선으로 겹치고, 겹치는
+    구간의 실측 상관·평균차를 함께 적는다(추가 공개 없음 — 같은 값이 옆 카드에 있다).
+    """
+    h = probe["hedgeScreen"]
+    t = h["costNote"]
+    assert "보조선으로 겹쳐" in t, "HP 보조선 설명이 없다"
+    assert "0.9644" in t, "겹치는 구간의 실측 상관이 없다"
+    assert "수준은 HP, 이력은 SMB" in t, "역할 분담을 말하지 않는다"
+    # 문장이 아니라 **차트에 실제로 그려진 계열**을 센다 — "겹쳐 그렸다"고 적어 두고
+    # 안 그리는 변경은 문장 검사로는 통과한다(뮤테이션으로 실제로 확인했다).
+    cost_chart = next((c for c in h["chartSeries"]
+                       if any("SMB" in l for l in c["labels"])), None)
+    assert cost_chart, f"비용 이력 차트를 못 찾았다: {h['chartSeries']}"
+    assert len(cost_chart["labels"]) == 2, (
+        f"HP 보조선이 차트에 없다 — 그려진 계열: {cost_chart['labels']}"
+    )
+    assert any("HP" in l for l in cost_chart["labels"]), cost_chart["labels"]
+
+
+def test_migrated_curve_chart_draws_all_three_tenors(probe):
+    """이관된 커브 카드가 3·6·12개월을 **실제로 세 계열로** 그리는가."""
+    h = probe["hedgeScreen"]
+    curve = next((c for c in h["chartSeries"]
+                  if c["labels"] == ["3개월", "6개월", "12개월"]), None)
+    assert curve, f"커브 차트를 못 찾았다: {h['chartSeries']}"
+    assert curve["rows"] > 0, "커브 차트에 점이 하나도 없다"

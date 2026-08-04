@@ -65,6 +65,14 @@ REQUIRED_ROW_KEYS = {
     ("hedge", "matrix"): ["c", "name", "vol_e", "mvh", "corr",
                           "cost_12m", "cost_curve", "src", "active", "sample"],
 }
+# 중첩 객체의 필수 키 — 화면 부제가 이 값들로 자기 표본을 밝힌다(하드코딩 금지).
+REQUIRED_NESTED_KEYS = {
+    ("hedge", "cost_stats"): ["mean", "now", "min", "series", "start", "end",
+                              "n_months", "years"],
+    ("hedge", "mtm"): ["sigma_ds_3m", "worst_ds", "worst_date", "series",
+                       "start", "end", "n_months"],
+    ("hedge", "cost_read"): ["label", "window", "asof"],
+}
 
 _errors: list[str] = []
 _notes: list[str] = []
@@ -166,6 +174,14 @@ def check(out: Path, max_warnings: int, min_series: int, dashboard: Path | None)
         gone = sorted({k for r in rows if isinstance(r, dict) for k in keys if k not in r})
         if gone:
             fail(f"{name}.json: {arr}[] 행에 필수 키 없음 — {', '.join(gone)}")
+    for (name, sub), keys in REQUIRED_NESTED_KEYS.items():
+        obj = (payloads.get(name) or {}).get(sub)
+        if not isinstance(obj, dict):
+            continue                       # 위 REQUIRED_KEYS 가 이미 잡는다
+        gone = [k for k in keys if k not in obj]
+        if gone:
+            fail(f"{name}.json: {sub} 에 필수 키 없음 — {', '.join(gone)} "
+                 f"(화면 부제가 이 값으로 자기 표본을 밝힙니다)")
     if checked:
         note(f"계산 페이로드 필수 키 {checked}/{len(REQUIRED_KEYS)}개 확인")
 
