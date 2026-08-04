@@ -2904,8 +2904,46 @@ function renderHedge() {
 
 const HEDGE_LS_KEY = "iaw-hedge-input";
 
-function hedgeRows(H2) {
+/* 시뮬레이터 금액의 출처 3단 — 사용자 지시(2026-08-04) 3번 "시뮬레이터 기본금액 연결".
+   ① 표에 직접 입력한 값  ② 총 운용자산 × 자산배분 화면의 비중  ③ 예시값.
+   ②가 왜 총자산 한 칸인가: `iaw-alloc` 스키마에는 **금액 필드가 하나도 없다**(비중 %·
+   밴드·헤지비율 총계뿐). 통화별 구성 분해는 §7.3 미구현분이라 이번 범위를 넘는다.
+   총자산 하나만 있으면 해외채권·해외주식 비중과 곱해 달러 금액을 유도할 수 있고,
+   그것이 지금 하드코딩된 5000/3000 이 하던 일 전부다. */
+const AMT_SRC = { input: "우리 값", derived: "자산배분에서 유도", sample: "예시값" };
+
+/* `iaw-alloc` 은 **읽기만** 한다. allocSaveState() 가 저장 시 state 전체를 덮어쓰므로,
+   hedge 가 alloc 에 쓰면 자산배분 화면의 다음 저장에 조용히 지워진다. */
+function allocMixReadOnly() {
+  try { return (JSON.parse(localStorage.getItem(ALLOC_LS_KEY)) || {}).mix_acct || null; }
+  catch { return null; }
+}
+
+/* 총 운용자산(억원) — hedge 자신의 저장소에만 둔다(스키마는 추가만 하므로 하위 호환). */
+function hedgeTotalAum(saved) {
+  const v = saved && +saved.total_aum;
+  return isFinite(v) && v > 0 ? v : null;
+}
+
+function hedgeRows(H2, saved) {
   const rows = [];
+  const aum = hedgeTotalAum(saved);
+  const mix = aum ? allocMixReadOnly() : null;
+  /* 유도 매핑 — 통화 구성 정보가 없으므로 **달러 두 줄만** 유도한다.
+     장부가 해외채권 + 시가 해외채권 → USD_b, 해외주식 → USD_e. */
+  const pct = (...keys) => {
+    if (!mix) return null;
+    const vals = keys.map((k) => +mix[k]).filter((x) => isFinite(x));
+    return vals.length === keys.length ? vals.reduce((a, b) => a + b, 0) : null;
+  };
+  const derive = (...keys) => {
+    const w = pct(...keys);
+    return w == null ? null : Math.round(aum * w / 100);
+  };
+  const pick = (derived, sample) => (derived != null
+    ? { amt: derived, src: AMT_SRC.derived }
+    : { amt: sample, src: AMT_SRC.sample });
+
   /* 주식 참고치는 곡선의 최소점에서 뽑는다 — 예전의 "경제 10~30%" 는 산식이 만들어 낸 수가
      아니었다(실측: 10% 지점은 최소점보다 변동성이 0.20%p 높다). 곡선이 없으면 아예 안 적는다. */
   const eq = (H2.curves || {}).equity;
@@ -2918,14 +2956,18 @@ function hedgeRows(H2) {
   H2.matrix.forEach((m) => {
     if (m.c === "USD") {
       rows.push({ id: "USD_b", cur: "USD", kind: "bond", name: "달러 — 채권",
-                  ref: `경제 ${m.mvh}% · 회계 100%`, amt: 5000, book: 70, h: 90 });
+                  ref: `경제 ${m.mvh}% · 회계 100%`, book: 70, h: 90,
+                  ...pick(derive("장부가 해외채권", "시가 해외채권"), 5000) });
       rows.push({ id: "USD_e", cur: "USD", kind: "eq", name: "달러 — 해외주식(ACWI)",
                   ref: eqMinH == null ? "경제 —" : `경제 ${eqMinH}% (변동성 최소)`,
-                  amt: 3000, book: null, h: 30 });
+                  book: null, h: 30,
+                  ...pick(derive("해외주식"), 3000) });
     } else {
+      /* 통화 구성 정보가 없어 유도하지 않는다 — 0 으로 두고 사용자가 넣는다.
+         (예전에는 `amt: m.active ? 0 : 0` 이라는 죽은 삼항이 있었다.) */
       rows.push({ id: m.c + "_b", cur: m.c, kind: "bond", name: `${m.name} — 채권`,
                   ref: m.active ? `경제 ${m.mvh}% · 회계 100%` : "데이터 확보 전",
-                  amt: m.active ? 0 : 0, book: 100, h: 100, dis: !m.active });
+                  amt: 0, src: AMT_SRC.sample, book: 100, h: 100, dis: !m.active });
     }
   });
   return rows;
@@ -2958,13 +3000,43 @@ function openHedgeSim() {
     try { return JSON.parse(localStorage.getItem(HEDGE_LS_KEY)) || {}; }
     catch { return {}; }
   })();
-  const rows = hedgeRows(H2).map((r) => ({ ...r, ...(saved.rows && saved.rows[r.id]) }));
+  const rows = hedgeRows(H2, saved).map((r) => {
+    const mine = saved.rows && saved.rows[r.id];
+    /* 표에 금액을 직접 넣었으면 그것이 이긴다 — 배지도 함께 바뀌어야 한다.
+       배지와 실제 쓰인 값의 출처가 어긋나면 배지가 거짓말이 된다. */
+    const amtGiven = mine && mine.amt != null;
+    return { ...r, ...mine, src: amtGiven ? AMT_SRC.input : r.src };
+  });
   const tenor0 = saved.tenor || H2.default_tenor_m || 9;
+  const aum0 = hedgeTotalAum(saved);
 
   const panel = el("div", { class: "card" });
   panel.append(el("div", { class: "card-head" },
     el("span", { class: "card-title" }, "① 우리 숫자를 넣습니다"),
     el("span", { class: "card-sub" }, "금액 = 억원 · 장부가 비중 = 채권 중 만기보유 비율(회계 관점 계산에만 씀) · 파란 글씨 = 모델 참고치")));
+  /* 총 운용자산 한 칸 — 자산배분 화면의 비중과 곱해 달러 두 줄의 초기값을 유도한다.
+     통화별 금액은 지금처럼 표에서 직접 넣는다(§7.3 통화 구성 분해는 미구현). */
+  const aumInput = el("input", { type: "number", id: "hg-aum", min: "0", step: "100",
+                                 value: aum0 == null ? "" : String(aum0),
+                                 placeholder: "예: 20000",
+                                 "aria-label": "총 운용자산(억원)" });
+  const aumNote = el("span", { style: "color:var(--ink-3);font-size:12px" });
+  const setAumNote = () => {
+    const mix = allocMixReadOnly();
+    aumNote.textContent = !aumInput.value
+      ? "— 넣으면 아래 달러 두 줄의 금액을 자산배분 화면의 비중으로 유도합니다(빈칸이면 예시값)."
+      : mix
+        ? "— 자산배분 화면에 저장된 비중으로 달러 채권·주식 금액을 유도했습니다. 표에서 직접 고치면 그 값이 이깁니다."
+        : "— 자산배분 화면에서 비중을 먼저 저장해야 유도됩니다. 지금은 예시값입니다.";
+  };
+  setAumNote();
+  /* 클래스를 `tenor-row` 와 나눈다 — 같은 줄 모양이지만 다른 입력이고,
+     프로브·테스트가 `.tenor-row` 로 만기 줄을 집기 때문이다(합치면 이 줄이 먼저
+     잡혀 만기 설명 검사가 엉뚱한 문장을 본다 — 실제로 그렇게 깨졌다). */
+  panel.append(el("div", { class: "tenor-row aum-row" },
+    el("b", {}, "총 운용자산"), aumInput, "억원", aumNote));
+  panel.append(el("p", { class: "card-sub", style: "margin:4px 0 10px" },
+    "입력값은 이 브라우저에만 저장되며 서버로 전송되지 않습니다 — 이 페이지는 정적 호스팅이라 보낼 상대가 없습니다."));
   /* 헤지비용 열의 제목은 **지금 만기**를 스스로 들고 있어야 한다. 기본 만기와 매트릭스의
      12개월은 다른 값이므로(엔 9개월 +2.36% vs 12개월 +2.30%), 만기를 밝히지 않은 문장은
      같은 통화가 두 숫자로 보이게 만든다. 만기 입력이 바뀌면 이 제목도 같이 바뀐다. */
@@ -2997,7 +3069,9 @@ function openHedgeSim() {
     if (r.dis) { amt.disabled = true; if (book) book.disabled = true; slider.disabled = true; }
     inputs[r.id] = { amt, book, slider, hlbl, costCell, carryCell, cfg: r };
     tr.append(
-      el("td", {}, r.name, el("span", { class: "refbadge" }, r.ref)),
+      el("td", {}, r.name, el("span", { class: "refbadge" }, r.ref),
+        /* 이 금액이 어디서 왔는지 — 「모든 숫자는 그 자리에서 한 줄로 설명한다」 */
+        el("span", { class: "amtbadge", id: `hg-s-${r.id}` }, r.src || AMT_SRC.sample)),
       el("td", {}, amt),
       el("td", {}, book ? book : el("span", { style: "color:var(--ink-3)" }, "—"), book ? "%" : ""),
       el("td", {}, slider, hlbl),
@@ -3108,12 +3182,18 @@ function openHedgeSim() {
   function recalc(save = true) {
     const tenor = Math.min(12, Math.max(3, +tenorInput.value || H2.default_tenor_m || 9));
     costTh.textContent = `만기 ${tenor}개월, 연 %, ${COST_SIGN_KEY}`;
-    const state = { rows: {}, tenor };
+    const aum = Math.max(0, +aumInput.value || 0);
+    const state = { rows: {}, tenor, total_aum: aum || null };
     for (const [id, o] of Object.entries(inputs)) {
       const h = Math.min(1, Math.max(0, (+o.slider.value || 0) / 100));
       o.hlbl.textContent = `${Math.round(h * 100)}%`;
       state.rows[id] = { amt: Math.max(0, +o.amt.value || 0),
         book: o.book ? Math.min(100, Math.max(0, +o.book.value || 0)) : null, h: h * 100 };
+      /* 배지는 **지금 그 칸에 들어 있는 값의 출처**를 말해야 한다. 사용자가 손대는
+         순간 유도·예시가 아니라 「우리 값」이 된다 — 배지와 실제 값의 출처가
+         어긋나면 배지가 거짓말이 된다. */
+      const badge = document.getElementById(`hg-s-${id}`);
+      if (badge && +o.amt.value !== o.cfg.amt) badge.textContent = AMT_SRC.input;
     }
     const cur = assemble(tenor, null);
     /* 행별 헤지비용·캐리 — 세 번째 타일의 근거를 그 자리에서 보여준다 */
@@ -3125,7 +3205,12 @@ function openHedgeSim() {
       o.costCell.append(fmtCost(+p.cost.toFixed(2), true));
       o.carryCell.append(el("span", { class: p.carry >= 0 ? "pos" : "neg" }, carryTxt(p.carry)));
     }
-    if (save) { try { localStorage.setItem(HEDGE_LS_KEY, JSON.stringify(state)); } catch {} }
+    if (save) {
+      /* `iaw-hedge-input` 에만 쓴다 — `iaw-alloc` 은 읽기 전용이다.
+         allocSaveState() 가 저장 시 state 전체를 덮어쓰므로, 여기서 alloc 에 쓰면
+         자산배분 화면의 다음 저장에 조용히 지워진다. */
+      try { localStorage.setItem(HEDGE_LS_KEY, JSON.stringify(state)); } catch {}
+    }
     const spanBox = $("#hg-span");
     const setAmt = (id, txt) => { const n = $("#" + id); if (n) n.textContent = txt; };
     if (!cur.tot) {
@@ -3173,6 +3258,20 @@ function openHedgeSim() {
         "양 끝은 임의 기준선이 아니라 이 모형이 낼 수 있는 헤지비율의 하한·상한입니다(장부가 비중·금액·만기는 지금 입력 그대로)."));
     }
   }
+  /* 총자산을 고치면 **아직 손대지 않은** 행의 금액만 다시 유도한다.
+     직접 넣은 값을 덮으면 사용자가 방금 입력한 숫자가 사라진다. */
+  aumInput.addEventListener("input", () => {
+    const fresh = hedgeRows(H2, { total_aum: +aumInput.value || null });
+    fresh.forEach((f) => {
+      const o = inputs[f.id];
+      if (!o) return;
+      const untouched = +o.amt.value === o.cfg.amt;      // cfg.amt = 직전에 유도/제시한 값
+      if (untouched) { o.amt.value = String(f.amt); o.cfg.amt = f.amt; }
+      const badge = document.getElementById(`hg-s-${f.id}`);
+      if (badge && untouched) badge.textContent = f.src || AMT_SRC.sample;
+    });
+    setAumNote();
+  });
   inner.querySelectorAll("input").forEach((i) => i.addEventListener("input", () => recalc()));
   recalc(false);
   /* 맨 위로 올리는 것은 openOverlayShell() 이 이미 한다 — 여기서 지역변수 ov 를 다시

@@ -86,7 +86,6 @@ class Node {
     this.classList = new ClassList(this);
     this.style = new Style();
     this.listeners = {};
-    this.value = "";
     this.scrollTop = 0;
     this.clientWidth = 800;
     this._seq = NODE_SEQ++;
@@ -94,6 +93,13 @@ class Node {
   }
   get id() { return this.attrs.get("id") || ""; }
   set id(v) { this.attrs.set("id", v); }
+  /* `value` 는 속성과 프로퍼티가 갈린다 — HTML 도 그렇다(속성 = 초기값,
+     프로퍼티 = 현재값이며 사용자가 건드리면 속성과 무관해진다). 예전 셰이드는
+     프로퍼티를 항상 `""` 로 두어, `el("input", {value: "5000"})` 로 만든 칸을
+     app.js 가 `+node.value` 로 읽으면 **0 이 나왔다** — "사용자가 이미 고쳤다"로
+     오판하는 코드 경로가 프로브에서 검증 불가였다. */
+  get value() { return this._value !== undefined ? this._value : (this.attrs.get("value") || ""); }
+  set value(v) { this._value = v == null ? "" : String(v); }
   /* `hidden`/`inert` 는 프로퍼티로 읽고 쓴다 — app.js 가 `node.hidden = true` 로 쓴다. */
   get hidden() { return this.attrs.get("hidden") === true; }
   set hidden(v) { this.attrs.set("hidden", !!v); }

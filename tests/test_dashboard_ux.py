@@ -1057,3 +1057,112 @@ def test_migrated_curve_chart_draws_all_three_tenors(probe):
                   if c["labels"] == ["3개월", "6개월", "12개월"]), None)
     assert curve, f"커브 차트를 못 찾았다: {h['chartSeries']}"
     assert curve["rows"] > 0, "커브 차트에 점이 하나도 없다"
+
+
+# ---- 시뮬레이터 금액의 출처 (지시 3) ---------------------------------------
+def test_amount_source_badges_match_the_value_used(probe):
+    """배지가 **실제로 쓰인 금액의 출처**와 일치해야 한다.
+
+    ① 표 직접 입력 ② 총자산 × 자산배분 비중 ③ 예시값. 배지와 값이 어긋나면
+    배지가 거짓말이 되고, 그러면 "이 숫자 어디서 왔나"에 답할 수 없다.
+    유도 매핑은 달러 두 줄뿐이다 — `iaw-alloc` 에 통화 구성 정보가 없기 때문이다
+    (§7.3 미구현). 다른 통화는 유도하지 않고 0 으로 둔다.
+    """
+    a = probe["hedgeAmounts"]
+    # ③ 아무것도 없으면 예시값
+    assert a["sampleUsdB"] == 5000 and a["sampleUsdE"] == 3000
+    assert a["sampleUsdBSrc"] == "예시값"
+    # 총자산만 있고 자산배분 저장값이 없으면 유도할 수 없다 → 여전히 예시값
+    assert a["aumOnlySrc"] == "예시값", "비중 없이 유도했다 — 어디서 온 수인가"
+    # ② 유도: 20000 × (12+6)/100 = 3600, 20000 × 5/100 = 1000
+    assert a["derivedUsdB"] == 3600, a["derivedUsdB"]
+    assert a["derivedUsdE"] == 1000, a["derivedUsdE"]
+    assert a["derivedUsdBSrc"] == "자산배분에서 유도"
+    assert a["derivedUsdESrc"] == "자산배분에서 유도"
+    # 통화 구성 정보가 없는 통화는 유도하지 않는다
+    assert a["jpyAmt"] == 0 and a["jpySrc"] == "예시값"
+    # 최초 렌더 시점 — 총자산을 아직 안 넣었으므로 예시값이다.
+    # (이 확인이 없으면 배지를 상수로 박아 두는 변경이 통과한다 — 뮤테이션으로 확인했다.)
+    assert a["badgeAtOpen"] == "예시값", a["badgeAtOpen"]
+    assert a["badgeAtOpenJpy"] == "예시값", a["badgeAtOpenJpy"]
+    # 화면에서도 같은 대응 — 총자산을 넣으면 칸과 배지가 함께 바뀐다
+    assert a["rowAmtAfterAum"] == "3600", a["rowAmtAfterAum"]
+    assert a["badgeAfterAum"] == "자산배분에서 유도", a["badgeAfterAum"]
+    # ① 직접 고치면 그 값이 이기고 배지도 따라온다
+    assert a["badgeAfterEdit"] == "우리 값", a["badgeAfterEdit"]
+
+
+def test_hedge_inputs_never_leave_the_browser(probe):
+    """시뮬레이터 입력은 이 브라우저를 벗어나지 않는다.
+
+    사용자가 넣는 것은 **실제 운용 규모**다. "코드에 fetch 가 없다"가 아니라
+    시뮬레이터를 실제로 굴리면서 네트워크 호출 횟수를 세고, 해시에 숫자가 실리지
+    않는지 본다(딥링크로 값이 새는 경로 차단).
+    """
+    a = probe["hedgeAmounts"]
+    assert a["fetchCalls"] == 0, f"시뮬레이터 실행 중 네트워크 호출 {a['fetchCalls']}건"
+    assert a["hashHasNoNumbers"] is True, "URL 해시에 숫자가 실린다"
+    assert a["aumInputExists"] and a["aumHasLabel"], "총자산 칸에 접근 가능한 이름이 없다"
+
+
+def test_hedge_sim_does_not_write_alloc_storage(probe):
+    """`iaw-alloc` 은 **읽기 전용**이다.
+
+    `allocSaveState()` 가 저장 시 state 전체를 덮어쓰므로, hedge 가 alloc 에 쓰면
+    자산배분 화면의 다음 저장에 조용히 지워진다 — 사라지는 쪽이 사용자가 자산배분
+    화면에서 직접 넣은 값이라 특히 나쁘다.
+    """
+    a = probe["hedgeAmounts"]
+    assert a["wroteAllocStore"] is False, "시뮬레이터가 자산배분 저장소에 썼다"
+    assert a["storageKeysWritten"] == ["iaw-hedge-input"], a["storageKeysWritten"]
+    assert a["savedTotalAum"] == 20000, "총자산이 hedge 저장소에 남지 않았다"
+
+
+def test_no_dead_ternary_in_hedge_rows():
+    """`m.active ? 0 : 0` 같은 죽은 삼항 재발 방지 — 읽는 사람을 오도한다."""
+    src = APP_JS.read_text(encoding="utf-8")
+    dead = re.findall(r"\?\s*([^:?\n]{1,20}?)\s*:\s*\1\s*[,;)]", src)
+    assert not dead, f"양 가지가 같은 삼항: {dead}"
+
+
+def test_every_row_sign_matches_the_computed_carry(probe):
+    """행별 부호가 **계산된 값의 부호와 대응**해야 한다 (E-6).
+
+    지금까지 이 자리는 "받음/지불 이라는 글자가 있는가"만 봤다. 그러면 부호를
+    통째로 뒤집어도 글자는 남아 통과한다 — 이 저장소는 부호 반전으로 최악월을
+    1.8배 과소 발표한 전력이 있다. 여기서는 같은 입력에서 산식이 내는 값
+    (캐리 = 금액 × 헤지비율 × 헤지비용)과 화면에 찍힌 부호·크기를 대조한다.
+    """
+    for tenor_key in ("atDefault", "at12"):
+        rows = probe["hedgeSim"][tenor_key]["perRow"]
+        for rid, r in rows.items():
+            shown, expect = r["shown"], r["expect"]
+            neg_shown = shown.startswith("−")            # U+2212, carryTxt 가 쓰는 문자
+            assert neg_shown == (expect < 0), (
+                f"[{tenor_key}/{rid}] 화면 {shown!r} vs 계산값 {expect:.3f} — 부호가 어긋난다"
+            )
+            # 크기도 본다 — 부호만 맞고 값이 딴 데서 오면 안 된다(반올림 1억 허용)
+            mag = float(re.sub(r"[^\d.]", "", shown) or 0)
+            assert abs(mag - abs(expect)) <= 1.0, f"[{tenor_key}/{rid}] {shown} vs {expect:.3f}"
+            # 비용 셀의 받음/지불도 같은 부호를 따른다
+            word = "받음" if r["expectCost"] >= 0 else "지불"
+            assert word in r["costShown"], (
+                f"[{tenor_key}/{rid}] 비용 {r['costShown']!r} 이 {r['expectCost']:+.2f} 와 어긋난다"
+            )
+
+
+def test_receiving_currencies_list_only_contains_positive_costs(probe):
+    """「받는 통화」 목록에 든 통화는 전부 `cost_12m > 0` 이어야 한다 (E-6).
+
+    분류가 뒤집히면 "내는 통화"가 "받는 통화"로 발표된다. 픽스처는 엔만 양수다.
+    """
+    lead = probe["hedgeScreen"]["lead"]
+    pos = [m["name"] for m in probe["hedgeScreen"]["matrixCosts"] if (m["cost"] or 0) > 0]
+    neg = [m["name"] for m in probe["hedgeScreen"]["matrixCosts"] if (m["cost"] or 0) < 0]
+    assert pos and neg, "테스트 전제가 깨졌다 — 픽스처에 양수·음수가 다 있어야 한다"
+    recv = lead.split("받는 통화")[1].split("내는 통화")[0] if "받는 통화" in lead else ""
+    assert recv, f"결론 상자에 「받는 통화」가 없다: {lead[:160]}"
+    for name in pos:
+        assert name in recv, f"{name}(양수)가 받는 통화 목록에 없다: {recv}"
+    for name in neg:
+        assert name not in recv, f"{name}(음수)가 받는 통화 목록에 있다: {recv}"

@@ -88,6 +88,7 @@ secNodes.macro.append(elem("div", "macro-grid"));
 /* ---------- app.js 를 vm 안에서 통째로 실행 ---------- */
 let REDUCED = false;        // prefers-reduced-motion 스위치 (아래 sceneCycle 프로브가 쓴다)
 const INTERVALS = [];       // app.js 가 건 setInterval 기록 (실제로 걸지는 않는다)
+const FETCH_CALLS = [];     // 네트워크 호출 기록 (시뮬레이터 유출 검사용)
 const sandbox = {
   document: DOC,
   window: null,
@@ -106,7 +107,9 @@ const sandbox = {
   cancelAnimationFrame: shim.win.cancelAnimationFrame,
   /* fetch 는 전부 거부시킨다 → boot() 이 "데이터를 불러오지 못했습니다" 가지로 빠져
      조기 종료한다. 렌더링은 우리가 필요한 것만 직접 호출한다. */
-  fetch: () => Promise.reject(new Error("probe: no network")),
+  /* 호출 **횟수**를 센다 — 시뮬레이터 입력이 브라우저 밖으로 나가지 않는다는 것을
+     "코드에 fetch 가 없다"가 아니라 실행으로 확인하기 위해서다. */
+  fetch: (...a) => { FETCH_CALLS.push(a[0]); return Promise.reject(new Error("probe: no network")); },
   ResizeObserver: class { observe() {} unobserve() {} disconnect() {} },
   IntersectionObserver: class { observe() {} unobserve() {} disconnect() {} },
   setTimeout, clearTimeout,
@@ -438,6 +441,7 @@ safe("hedgeScreen", () => {
     lead: txt("hedge-lead"),
     matrixHeader: mxRows[0].children.map((c) => c.textContent),
     matrixSub: DOC.getElementById("hedge-matrix").querySelector(".card-sub").textContent,
+    matrixCosts: HEDGE_FIXTURE.matrix.map((m) => ({ name: m.name, cost: m.cost_12m })),
     /* 부호 방향은 **글자**로 나와야 한다 — 색만으로는 전달되지 않고, 뒤집히면 여기서 잡힌다.
        열은 인덱스가 아니라 **헤더 이름**으로 집는다 — 예전에는 `cell(row, 4)` 라
        3·6개월 열을 흡수하자 조용히 다른 열을 재고 있었다. */
@@ -493,7 +497,7 @@ safe("hedgeSim", () => {
   P.openHedgeSim();
   const ov = DOC.getElementById("detail-overlay");
   const inputs = ov.querySelectorAll("input");
-  const rows = P.hedgeRows(HEDGE_FIXTURE);
+  const rows = P.hedgeRows(HEDGE_FIXTURE, {});
   const gridHead = ov.querySelector(".grid-inp").querySelectorAll("tr")[0];
   const g = (id) => { const n = DOC.getElementById(id); return n ? n.textContent : null; };
   const tenorInput = DOC.getElementById("hg-tenor");
@@ -514,6 +518,23 @@ safe("hedgeSim", () => {
     econAmt: g("hg-econ-amt"), acctAmt: g("hg-acct-amt"),
     usdCost: g("hg-c-USD_b"), jpyCost: g("hg-c-JPY_b"),
     usdCarry: g("hg-k-USD_b"), span: g("hg-span"),
+    /* E-6 — 부호를 **문자열 존재**가 아니라 **계산된 값과의 대응**으로 본다.
+       화면에 찍힌 부호 문자와, 같은 입력에서 산식이 내는 부호가 일치해야 한다.
+       이 저장소는 부호 반전으로 최악월을 1.8배 과소 발표한 전력이 있다. */
+    perRow: Object.fromEntries(["USD_b", "USD_e", "JPY_b"].map((id) => {
+      const amt = +(DOC.getElementById(`hg-a-${id}`) || {}).value || 0;
+      const h = +(DOC.getElementById(`hg-h-${id}`) || {}).value || 0;
+      const cur = id.split("_")[0];
+      const m = HEDGE_FIXTURE.matrix.find((x) => x.c === cur);
+      const cost = P.hedgeCostAt(m, +tenorInput.value || 6);
+      return [id, {
+        shown: g(`hg-k-${id}`),
+        costShown: g(`hg-c-${id}`),
+        // 캐리 = 금액 × 헤지비율 × 헤지비용 (hedge.py 회계모형 ④ 와 같은 식)
+        expect: amt * (h / 100) * cost / 100,
+        expectCost: cost,
+      }];
+    })),
   });
   const atDefault = read();
   /* 만기를 바꾸면 헤지비용 열 제목·값이 함께 따라와야 한다 */
@@ -533,7 +554,7 @@ safe("hedgeSim", () => {
     eqRef: (rows.find((r) => r.id === "USD_e") || {}).ref,
     tiles: ov.querySelectorAll(".rt").map((t) => t.querySelector(".l").textContent),
     amtLines: ov.querySelectorAll(".amt").length,
-    tenorNote: ov.querySelector(".tenor-row").textContent,
+    tenorNote: ov.querySelectorAll(".tenor-row").filter((n) => !n.classList.contains("aum-row"))[0].textContent,
     /* hedgeCostAt 의 만기 보간을 프로브가 직접 계산해 화면값과 대조한다 */
     jpyAt6: P.hedgeCostAt(HEDGE_FIXTURE.matrix[1], 6),
     jpyAt12: P.hedgeCostAt(HEDGE_FIXTURE.matrix[1], 12),
@@ -561,6 +582,73 @@ safe("macroUnit", () => {
   P.renderMacro();
   const cards = DOC.getElementById("macro-grid").children;
   return { subs: cards.map((c) => c.querySelector(".card-sub").textContent) };
+});
+
+/* ====== P17. 시뮬레이터 금액의 출처 3단 + 비공개 정보 유출 없음 (지시 3) ======
+   ① 표 직접 입력 ② 총자산 × 자산배분 비중 ③ 예시값. 배지와 실제 쓰인 값의 출처가
+   어긋나면 배지가 거짓말이 된다 — 그 대응을 값으로 확인한다. */
+safe("hedgeAmounts", () => {
+  const r = {};
+  const store = shim.localStorage;
+  const wrote = [];
+  const realSet = store.setItem;
+  store.setItem = (k, v) => { wrote.push(k); return realSet(k, v); };
+  const fetchesBefore = FETCH_CALLS.length;
+
+  /* ③ 예시값 — 총자산도 자산배분 저장값도 없을 때 */
+  store.removeItem("iaw-alloc");
+  const sample = P.hedgeRows(HEDGE_FIXTURE, {});
+  const pick = (rows, id) => rows.find((x) => x.id === id) || {};
+  r.sampleUsdB = pick(sample, "USD_b").amt;
+  r.sampleUsdBSrc = pick(sample, "USD_b").src;
+  r.sampleUsdE = pick(sample, "USD_e").amt;
+
+  /* 총자산만 있고 자산배분 저장값이 없으면 여전히 예시값이어야 한다 */
+  r.aumOnlySrc = pick(P.hedgeRows(HEDGE_FIXTURE, { total_aum: 20000 }), "USD_b").src;
+
+  /* ② 유도 — 자산배분 화면이 저장해 둔 비중을 읽는다(쓰지는 않는다) */
+  realSet("iaw-alloc", JSON.stringify({ mix_acct: {
+    "장부가 해외채권": 12, "시가 해외채권": 6, "해외주식": 5 } }));
+  const derived = P.hedgeRows(HEDGE_FIXTURE, { total_aum: 20000 });
+  r.derivedUsdB = pick(derived, "USD_b").amt;        // 20000 × (12+6)/100 = 3600
+  r.derivedUsdBSrc = pick(derived, "USD_b").src;
+  r.derivedUsdE = pick(derived, "USD_e").amt;        // 20000 × 5/100 = 1000
+  r.derivedUsdESrc = pick(derived, "USD_e").src;
+  /* 통화 구성 정보가 없는 통화는 유도하지 않는다 */
+  r.jpyAmt = pick(derived, "JPY_b").amt;
+  r.jpySrc = pick(derived, "JPY_b").src;
+
+  /* 시뮬레이터를 실제로 굴렸을 때 — 저장은 hedge 키에만, 네트워크는 0 */
+  P.DATA.hedge = HEDGE_FIXTURE;
+  shim.location.hash = "#hedge-sim";
+  store.removeItem("iaw-hedge-input");     // 앞 프로브가 남긴 상태를 지운다
+  wrote.length = 0;
+  P.openHedgeSim();
+  /* **최초 렌더 시점의 배지**. 총자산을 아직 안 넣었으므로 예시값이어야 한다.
+     이 측정이 없으면 "배지를 항상 「우리 값」으로" 같은 뮤테이션이 통과한다 —
+     총자산 입력 뒤의 배지만 보면 그 경로는 별도 리스너가 다시 쓰기 때문이다. */
+  r.badgeAtOpen = (DOC.getElementById("hg-s-USD_b") || {}).textContent;
+  r.badgeAtOpenJpy = (DOC.getElementById("hg-s-JPY_b") || {}).textContent;
+  const aum = DOC.getElementById("hg-aum");
+  aum.value = "20000";
+  aum.dispatchEvent({ type: "input", target: aum });
+  r.aumInputExists = !!aum;
+  r.aumHasLabel = !!(aum && aum.getAttribute("aria-label"));
+  r.rowAmtAfterAum = DOC.getElementById("hg-a-USD_b").value;
+  r.badgeAfterAum = (DOC.getElementById("hg-s-USD_b") || {}).textContent;
+  /* 직접 고치면 배지가 「우리 값」으로 바뀐다 */
+  const cell = DOC.getElementById("hg-a-USD_b");
+  cell.value = "7777";
+  cell.dispatchEvent({ type: "input", target: cell });
+  r.badgeAfterEdit = (DOC.getElementById("hg-s-USD_b") || {}).textContent;
+
+  r.storageKeysWritten = Array.from(new Set(wrote));
+  r.wroteAllocStore = wrote.includes("iaw-alloc");
+  r.savedTotalAum = JSON.parse(store.getItem("iaw-hedge-input") || "{}").total_aum;
+  r.fetchCalls = FETCH_CALLS.length - fetchesBefore;
+  r.hashHasNoNumbers = !/\d{3,}/.test(shim.location.hash);
+  store.setItem = realSet;
+  return r;
 });
 
 /* ====== P15. 마을 장면 15초 자동 순환 — 가드 5개와 틱 본문을 실제로 돌린다 ======

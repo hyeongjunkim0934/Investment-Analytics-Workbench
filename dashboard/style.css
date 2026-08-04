@@ -234,6 +234,15 @@ body {
   background: color-mix(in srgb, var(--up) 8%, var(--surface));
 }
 .render-error code { font-size: 12px; color: var(--ink-2); }
+
+/* 시뮬레이터 금액의 출처 배지 — 참고치 배지(.refbadge)와 같은 자리, 다른 뜻이라
+   색을 나눈다. 색만으로 구분하지 않도록 글자가 출처를 그대로 말한다(1.4.1). */
+.amtbadge {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
 /* 차트 제목줄의 "최근 …" 읽음값 — 부제보다 진하게 두어 눈이 먼저 닿게 한다. */
 .card-last { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .card-actions { margin-left: auto; display: flex; gap: 6px; }
