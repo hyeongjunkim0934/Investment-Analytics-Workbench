@@ -38,10 +38,23 @@ const FILES = ["meta", "overview", "risk", "events", "panel", "hedge", "alloc",
 
 /* ---------------- theme & palette ---------------- */
 
+/* ══ 테마는 축이 둘이다 (2026-08-04 사용자 지시) ═══════════════════════════
+   ① chrome — 대시보드 섹션·카드·헤더·차트 색.  <html data-theme>
+      **기본값 다크.** 속성이 없으면 다크, 사용자가 토글하면 "light".
+      localStorage 'iaw-theme' 에 영구 저장. prefers-color-scheme 은 보지 않는다.
+   ② scene  — 마을 지도의 낮/밤(스틸·루프영상·전환영상·SVG fx·구역 라벨). <html data-scene>
+      **저장하지 않는다** — 15초마다 뒤집히는 값이라 저장하면 쓰기 폭주이고,
+      "저장값 없으면 …" 분기가 무의미해진다. 페이지 수명 동안만 사는 런타임 상태다.
+
+   예전에는 data-theme 하나가 둘 다 몰았다. 그래서 대시보드를 어둡게 하면 마을이
+   밤이 됐고, 마을을 밤으로 보려면 대시보드까지 어두워졌다. 축을 쪼갠 이유가 그것이다.
+   ══════════════════════════════════════════════════════════════════════ */
 function currentTheme() {
-  const t = document.documentElement.getAttribute("data-theme");
-  if (t) return t;
-  return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+}
+
+function currentScene() {
+  return document.documentElement.getAttribute("data-scene") === "night" ? "night" : "day";
 }
 
 function cssVar(name) {
@@ -1352,7 +1365,7 @@ function underlyingSection(hash) {
 const VILLAGE_EXTS = ["webp", "png", "jpg"];
 
 function villageImgUrl(ext = VILLAGE_EXTS[0]) {
-  return `assets/village-${currentTheme() === "dark" ? "night" : "day"}.${ext}`;
+  return `assets/village-${currentScene()}.${ext}`;
 }
 
 /* ---- 앰비언트 레이어 — 정적 지도 위에 코드로 얹는 "살아 있는 마을" ----------------
@@ -1486,14 +1499,14 @@ function buildVillageFx(frame) {
    생성 레시피는 dashboard/assets/README.md. 파일이 없거나 재생이 거부되면 조용히
    물러나 스틸 + SVG 모션이 그대로 남는다(영상은 장식이지 필수가 아니다). 재생 중에는
    .has-video 가 SVG 모션을 끈다 — 영상 자체에 새·구름·행인·연기 모션이 들어 있다. */
-const IDLE_VIDEO = { dark: "assets/village-night-loop", light: "assets/village-day-loop" };
+const IDLE_VIDEO = { night: "assets/village-night-loop", day: "assets/village-day-loop" };
 const IDLE_VIDEO_EXTS = ["webm", "mp4"];   // webm(VP9) 우선, 못 읽는 브라우저는 mp4(H.264)로
 
 function mountVillageVideo(frame) {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   if (!frame || !frame.clientWidth) return;              // ≤720px 에서는 지도째 숨김 — 마운트 안 함
   if (frame.querySelector(".village-video[data-transition]")) return;  // 전환 연출 중 — 끝나면 다시 불린다
-  const base = IDLE_VIDEO[currentTheme() === "dark" ? "dark" : "light"];
+  const base = IDLE_VIDEO[currentScene()];
   const existing = frame.querySelector(".village-video[data-idle]");
   if (existing) {
     if (existing.dataset.base === base) { existing.play().catch(() => {}); return; }
@@ -1548,14 +1561,17 @@ function mountVillageVideo(frame) {
    바꾼 뒤, 끝나면 영상을 걷는다 — 어느 시점에 실패해도 즉시 전환으로 떨어질 뿐이다.
    루프가 필요 없으므로 이음새 문제도 없다. dusk = 낮→밤, dawn = 밤→낮(역재생 인코딩본).
    reduced-motion 사용자는 영상 없이 즉시 전환한다. */
-const THEME_VIDEO = { dark: "assets/village-dusk.mp4", light: "assets/village-dawn.mp4" };
-const THEME_VIDEO_RATE = 2.5;            // 원본 10초 → 4초 연출
+/* dusk = 낮→밤, dawn = 밤→낮(역재생 인코딩본). **scene 축이다** — 정지 지도 2장이
+   이 영상의 첫/끝 프레임이라, chrome 에 붙이면 "대시보드를 어둡게 했더니 해가 진다"는
+   모순이 생긴다. */
+const SCENE_VIDEO = { night: "assets/village-dusk.mp4", day: "assets/village-dawn.mp4" };
+const SCENE_VIDEO_RATE = 2.5;            // 원본 10초 → 4초 연출
 
-function preloadThemeVideos() {
+function preloadSceneVideos() {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  if (preloadThemeVideos.done) return;
-  preloadThemeVideos.done = true;
-  Object.values(THEME_VIDEO).forEach((src) => {
+  if (preloadSceneVideos.done) return;
+  preloadSceneVideos.done = true;
+  Object.values(SCENE_VIDEO).forEach((src) => {
     const v = document.createElement("video");
     v.preload = "auto";
     v.muted = true;
@@ -1563,14 +1579,14 @@ function preloadThemeVideos() {
   });
 }
 
-function playThemeTransition(nextTheme, applyTheme) {
+function playSceneTransition(nextScene, applyScene) {
   const frame = $("#village-frame");
   const cinematic = frame && !$("#village").hidden && !$("#village-map").hidden &&
     !matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (!cinematic) { applyTheme(); return; }
+  if (!cinematic) { applyScene(); return; }
 
   /* 상시 루프를 걷어내고 전환 영상이 프레임을 덮는다. 끝나면(done) 새 테마의 루프를
-     다시 깐다 — applyTheme→renderAll→renderVillage 경로의 mountVillageVideo 는
+     다시 깐다 — applyScene→renderVillage 경로의 mountVillageVideo 는
      data-transition 가드에 막히므로, 재마운트 책임은 여기 done 하나뿐이다. */
   frame.querySelectorAll(".village-video").forEach((n) => n.remove());
   const v = document.createElement("video");
@@ -1582,7 +1598,7 @@ function playThemeTransition(nextTheme, applyTheme) {
   v.setAttribute("playsinline", "");
   v.setAttribute("aria-hidden", "true");
   let applied = false;
-  const apply = () => { if (!applied) { applied = true; applyTheme(); } };
+  const apply = () => { if (!applied) { applied = true; applyScene(); } };
   const done = () => {
     apply();
     v.remove();
@@ -1598,8 +1614,8 @@ function playThemeTransition(nextTheme, applyTheme) {
   });
   v.addEventListener("ended", done);
   v.addEventListener("error", () => { clearTimeout(guard); done(); });
-  v.src = THEME_VIDEO[nextTheme === "dark" ? "dark" : "light"];
-  v.playbackRate = THEME_VIDEO_RATE;
+  v.src = SCENE_VIDEO[nextScene === "night" ? "night" : "day"];
+  v.playbackRate = SCENE_VIDEO_RATE;
   $("#village-map").after(v);
   v.play().catch(() => { clearTimeout(guard); done(); });
 }
@@ -1608,6 +1624,10 @@ function playThemeTransition(nextTheme, applyTheme) {
    reduced-motion 이거나 지도가 없으면 연출 없이 바로 이동한다. */
 function enterZone(z, targetHash) {
   const frame = $("#village-frame");
+  /* 확대 연출(520ms)이 도는 동안 자동 순환이 끼어들면 확대 중인 지도가 통째로
+     낮↔밤 전환 영상에 덮인다. 해시가 바뀌면 routeView 가 어차피 멈추지만
+     그건 연출이 끝난 뒤라 늦다. */
+  stopSceneCycle();
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (reduced || $("#village-map").hidden || frame.classList.contains("vz-enter")) {
     location.hash = targetHash;
@@ -1647,7 +1667,7 @@ function renderVillage() {
     frame.classList.remove("has-video");
     $("#village-missing").hidden = false;
   };
-  img.onload = () => { buildVillageFx(frame); preloadThemeVideos(); };
+  img.onload = () => { buildVillageFx(frame); preloadSceneVideos(); };
   img.src = villageImgUrl();
   /* onload 안이 아니라 여기서 직접 마운트한다 — 같은 src 재할당은 브라우저에 따라
      load 이벤트를 다시 안 줄 수 있고, 마을로 돌아올 때마다 루프가 다시 돌아야 한다
@@ -1655,7 +1675,7 @@ function renderVillage() {
   mountVillageVideo(frame);
   /* 같은 이유로 폴백 SVG 도 캐시 경로에서 한 번 더 챙긴다 — 이미 붙어 있으면
      buildVillageFx 가 즉시 반환한다(멱등). 영상이 뜨면 어차피 .has-video 가 가린다. */
-  if (img.complete && img.naturalWidth) { buildVillageFx(frame); preloadThemeVideos(); }
+  if (img.complete && img.naturalWidth) { buildVillageFx(frame); preloadSceneVideos(); }
 
   VILLAGE_ZONES.forEach((z) => {
     const btn = el("button", {
@@ -1747,13 +1767,19 @@ function routeView() {
   });
   if (showVillage) {
     renderVillage();
+    /* 자동 순환은 마을이 보일 때만 돈다. hidden 을 위에서 이미 풀었으므로
+       sceneCycleAllowed() 의 ②·⑤(가시성·폭) 판정이 여기서 유효하다. */
+    restartSceneCycle();
   } else {
     /* 섹션으로 나가 있는 동안 상시 루프의 디코딩을 세운다 — 돌아오면
        renderVillage → mountVillageVideo 가 같은 요소를 다시 play 한다. */
     const iv = $("#village-frame video[data-idle]");
     if (iv) iv.pause();
+    stopSceneCycle();
     ensureVillageBack(sec);
   }
+  /* 토글 버튼의 의미가 화면에 따라 바뀐다(마을=장면, 섹션=명암) — 라벨을 같이 돌린다. */
+  syncThemeButton();
   window.scrollTo(0, 0);
 }
 
@@ -1778,6 +1804,9 @@ function bindGate() {
     if (fnv1a(val) === GATE_HASH) {
       localStorage.setItem(GATE_KEY, "1");
       gate.hidden = true;
+      /* 관문이 떠 있는 동안은 sceneCycleAllowed() ③ 이 막고 있었다.
+         통과한 지금이 자동 순환의 실제 시작점이다 — routeView 는 이미 지나갔다. */
+      restartSceneCycle();
     } else {
       $("#gate-err").hidden = false;
       $("#gate-pw").select();
@@ -4123,23 +4152,105 @@ function renderAll() {
   if (!$("#detail-overlay").hidden) handleHash();   // 테마 전환 시 열린 상세 재구성
 }
 
+/* ── 마을 장면(scene) 15초 자동 순환 ─────────────────────────────────────
+   사용자 지시(2026-08-04): "그냥 놔두면 15초 간격으로 낮↔밤이 바뀌고, 수기로 바꿔도
+   그대로 두면 15초 뒤 다시 바뀐다."
+   **이 지시는 이 저장소의 옛 규약 「자동 낮밤순환 금지」를 명시적으로 해제한다** —
+   몰래 어긴 것이 아니라 사용자가 바꾼 것이다(docs/HANDOVER.md §3.3 에 기록).
+   해제되지 않은 것: prefers-reduced-motion. 자동 순환은 모션이고, 배경 이미지 교체는
+   CSS 로 막을 수 없으므로 **타이머를 만드는 지점에 JS 가드**가 있어야 한다. */
+const SCENE_CYCLE_MS = 15000;      // 사용자가 정한 수. 임의 상수가 아니다.
+let sceneTimer = null;
+let sceneBusy = false;             // 전환 연출(약 4초) 진행 중
+
+/* 타이머가 살아 있어도 되는 조건 5개 — 하나라도 어긋나면 돌리지 않는다. */
+function sceneCycleAllowed() {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return false;  // ① 접근성
+  const village = $("#village");
+  if (!village || village.hidden) return false;                              // ② 마을이 안 보임
+  const gate = $("#gate");
+  if (gate && !gate.hidden) return false;                                    // ③ 암구호 입력 중
+  if (document.visibilityState !== "visible") return false;                  // ④ 백그라운드 탭
+  const frame = $("#village-frame");
+  return !!(frame && frame.clientWidth);                                     // ⑤ ≤720px 는 지도째 숨김
+}
+
+function stopSceneCycle() {
+  if (sceneTimer) { clearInterval(sceneTimer); sceneTimer = null; }
+}
+
+/* 항상 stop 후 start — 수동 토글이 주기를 리셋한다("바꾼 뒤 15초"). */
+function restartSceneCycle() {
+  stopSceneCycle();
+  if (!sceneCycleAllowed()) return;
+  sceneTimer = setInterval(() => {
+    if (sceneBusy) return;                    // 전환 중이면 이번 틱은 건너뛴다
+    if (!sceneCycleAllowed()) { stopSceneCycle(); return; }
+    setScene(currentScene() === "day" ? "night" : "day");
+  }, SCENE_CYCLE_MS);
+}
+
+/* 장면 전환. 전환 영상이 현재 화면을 덮은 뒤에 밑을 갈아끼운다.
+   renderAll() 이 아니라 renderVillage() 만 부른다 — 15초마다 14개 화면의 차트를
+   전부 다시 그릴 이유가 없고, chrome 은 이 축과 무관하다. */
+function setScene(next, opts) {
+  const reset = !opts || opts.resetCycle !== false;
+  sceneBusy = true;
+  playSceneTransition(next, () => {
+    document.documentElement.setAttribute("data-scene", next);
+    if (!$("#village").hidden) renderVillage();
+    syncThemeButton();
+  });
+  /* 연출이 끝나는 시점을 정확히 알 수 없으므로(영상 실패 시 즉시 전환) 여유를 두고 푼다.
+     이 플래그가 없으면 전환 중에 다음 틱이 겹쳐 data-transition 요소가 엇갈리고,
+     mountVillageVideo 의 가드가 영구히 막혀 화면이 정지한다 — 실제로 한 번 난 사고다. */
+  setTimeout(() => { sceneBusy = false; }, 5200);
+  if (reset) restartSceneCycle();
+}
+
+/* ── 토글 버튼(◐) — 지금 보고 있는 것을 바꾼다 ───────────────────────────
+   마을이 보이면 장면(낮↔밤), 섹션이 보이면 명암(라이트↔다크).
+   반대로 배정하면 "눌러도 아무 일이 없는 버튼"이 된다 — 섹션에서 장면을 토글하면
+   지도가 안 보이니 변화가 없고, 마을에서 명암을 토글하면 헤더 색만 바뀐다.
+   이 저장소는 이미 같은 이유로 효과 없는 기간 버튼을 숨긴 적이 있다. */
+function syncThemeButton() {
+  const btn = $("#theme-btn");
+  if (!btn) return;
+  const onVillage = !$("#village").hidden;
+  const label = onVillage
+    ? "마을 낮/밤 전환 (그냥 두면 15초마다 자동으로 바뀝니다)"
+    : (currentTheme() === "dark" ? "화면을 밝게 전환" : "화면을 어둡게 전환");
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+}
+
 function bindTheme() {
   const btn = $("#theme-btn");
-  const saved = localStorage.getItem("iaw-theme");
-  if (saved) document.documentElement.setAttribute("data-theme", saved);
+  /* 기본값은 다크다 — 속성을 붙이지 않으면 :root 가 다크 토큰이다.
+     저장된 값이 "light" 일 때만 속성을 단다. 기존 사용자의 'iaw-theme' 키·값을
+     그대로 재사용하므로 마이그레이션 코드가 필요 없다. */
+  if (localStorage.getItem("iaw-theme") === "light") {
+    document.documentElement.setAttribute("data-theme", "light");
+  }
+  document.documentElement.setAttribute("data-scene", "day");
+
   btn.addEventListener("click", () => {
-    const next = currentTheme() === "dark" ? "light" : "dark";
-    /* 마을이 보이면 밤이 내리는(걷히는) 영상이 현재 화면을 덮은 "뒤에" 실제 테마를
-       바꾼다 — 영상 첫 프레임이 곧 현재 지도라 이음새가 없다. 그 외에는 즉시 전환. */
-    playThemeTransition(next, () => {
-      document.documentElement.setAttribute("data-theme", next);
-      localStorage.setItem("iaw-theme", next);
-      renderAll();
-    });
+    if (!$("#village").hidden) {            // 마을 → 장면 토글 + 주기 리셋
+      setScene(currentScene() === "day" ? "night" : "day");
+      return;
+    }
+    const next = currentTheme() === "dark" ? "light" : "dark";   // 섹션 → 명암 토글
+    if (next === "light") document.documentElement.setAttribute("data-theme", "light");
+    else document.documentElement.removeAttribute("data-theme");
+    localStorage.setItem("iaw-theme", next);
+    renderAll();
+    syncThemeButton();
   });
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    if (!localStorage.getItem("iaw-theme")) renderAll();
-  });
+
+  /* 탭이 백그라운드로 가면 영상 디코드·타이머를 멈추고, 돌아오면 다시 건다. */
+  document.addEventListener("visibilitychange", restartSceneCycle);
+  matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", restartSceneCycle);
+  syncThemeButton();
 }
 
 function bindSkipLink() {

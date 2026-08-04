@@ -26,10 +26,10 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `pipeline/requirements.txt` | 파이프라인이 직접 import 하는 3개를 `==` 로 고정 |
 | `tests/` | pytest 스위트 + 합성 엑셀 픽스처 생성기(`synth.py`). **비공개 데이터 불필요** |
 | `tests/test_dashboard_ux.py` | 대시보드 UI 회귀 — **값을 실제로 계산**해서 본다. 색·크기는 CSS를 파싱해 WCAG 수식으로 직접 계산하고, 동작은 아래 두 파일로 app.js를 실행시켜 확인한다 |
-| `tests/domshim.js` `tests/dashboard_probe.js` | `dashboard/app.js` 를 **node 안에서 실제로 실행**시키는 최소 DOM 셰이드와 측정 하네스. npm 의존성 0(node 표준 라이브러리만). 소스 문자열만 보는 테스트가 "이름은 남기고 동작만 뒤집는" 회귀를 못 잡아서 만든 것이다 — 이 하네스를 만들 때 쓴 뮤테이션 18건은 18/18을 잡는다. **다만 이것을 전면 커버리지로 읽지 말 것**: 독립적으로 만든 뮤테이션 32건으로 다시 재면 24/32다. 지금 **안 잡히는 것이 확인된 자리** — ① `stampLatest` 의 다계열 최신 인덱스 선택(`Math.max` → `Math.min`) ② `baseAxes` 의 refmt 를 조건 없이 항상 적용 ③ 오버레이 닫을 때 `body.style.overflow` 미복구 ④ `aria-current` 미설정 ⑤ 뒤에 오는 CSS 규칙으로 `:focus-visible` outline 무력화(테스트가 첫 규칙만 본다) ⑥ `stampLatest` 의 중복 표기 가드 제거 ⑦ index.html 의 본문 바로가기 링크 삭제(마크업 검사 없음) ⑧ 모션 축소 블록 뒤에서 `scroll-behavior: smooth` 재활성화. 이 여덟은 지금 코드에서는 정상이지만 **회귀가 조용히 통과한다** — 손댈 때 테스트를 먼저 붙일 것. app.js가 새 DOM API를 쓰면 셰이드가 먼저 터지므로 그때 채워 넣으면 된다. **환헤지 2차 패스(141개)에도 같은 성격의 공백 10곳이 실측돼 있다** — 그중 넷이 부호·단위 자리다(`carryTxt` 의 ± · `index.html` `#fx` 의 정적 부호 문장 · `#hedge-lead` 의 받는/내는 분류 · MTM 연율화 `√12`). 목록은 `docs/HANDOVER.md` §5.3.1 |
+| `tests/domshim.js` `tests/dashboard_probe.js` | `dashboard/app.js` 를 **node 안에서 실제로 실행**시키는 최소 DOM 셰이드와 측정 하네스. npm 의존성 0(node 표준 라이브러리만). 소스 문자열만 보는 테스트가 "이름은 남기고 동작만 뒤집는" 회귀를 못 잡아서 만든 것이다 — 이 하네스를 만들 때 쓴 뮤테이션 18건은 18/18을 잡는다. **다만 이것을 전면 커버리지로 읽지 말 것**: 독립적으로 만든 뮤테이션 32건으로 다시 재면 24/32다. 지금 **안 잡히는 것이 확인된 자리** — ① `stampLatest` 의 다계열 최신 인덱스 선택(`Math.max` → `Math.min`) ② `baseAxes` 의 refmt 를 조건 없이 항상 적용 ③ 오버레이 닫을 때 `body.style.overflow` 미복구 ④ `aria-current` 미설정 ⑤ 뒤에 오는 CSS 규칙으로 `:focus-visible` outline 무력화(테스트가 첫 규칙만 본다) ⑥ `stampLatest` 의 중복 표기 가드 제거 ⑦ index.html 의 본문 바로가기 링크 삭제(마크업 검사 없음) ⑧ 모션 축소 블록 뒤에서 `scroll-behavior: smooth` 재활성화. 이 여덟은 지금 코드에서는 정상이지만 **회귀가 조용히 통과한다** — 손댈 때 테스트를 먼저 붙일 것. app.js가 새 DOM API를 쓰면 셰이드가 먼저 터지므로 그때 채워 넣으면 된다(그렇게 `after()`·`play()`/`pause()`·`visibilityState` 를 채웠다). **장면 자동 순환 검사도 여기 있다** — `setInterval` 을 기록만 하도록 바꿔 15초를 기다리지 않고 틱 본문을 직접 돌린다(자작 뮤테이션 20/20, 같은 이유로 과대평가로 읽을 것). **환헤지 2차 패스(141개)에도 같은 성격의 공백 10곳이 실측돼 있다** — 그중 넷이 부호·단위 자리다(`carryTxt` 의 ± · `index.html` `#fx` 의 정적 부호 문장 · `#hedge-lead` 의 받는/내는 분류 · MTM 연율화 `√12`). 목록은 `docs/HANDOVER.md` §5.3.1 |
 | `tests/requirements.txt` | 테스트 전용 의존성(pytest). `pipeline/requirements.txt` 와 분리. **node 는 여기 없다** — `test_dashboard_ux.py` 가 쓰는 node 는 GitHub 호스팅 러너 기본 탑재분이며, 없으면 skip 이 아니라 **실패**한다(조용히 건너뛰면 막으려던 회귀가 되살아난다) |
 | `pytest.ini` | `testpaths = tests` |
-| `dashboard/index.html` `app.js` `style.css` | 정적 대시보드 (섹션 14개, 라이트/다크, 기간 필터, 마을 홈+관문). **app.js 가 DOM 으로 조립하는 표에는 `<tbody>` 가 없다** — `createElement("table")` 에 `<tr>` 을 직접 붙이면 브라우저가 tbody 를 끼워 넣지 않기 때문이다. 그래서 `style.css` 에는 `thead th`/`tbody td` 와 `table > tr > th|td` **두 벌**이 있어야 한다. 한 벌만 두면 조립 표(#hedge·#alloc·#panel)의 숫자 셀이 조용히 padding 1px·왼쪽 정렬로 렌더된다 (실제로 117칸이 그 상태였다). 회귀 테스트 있음 |
+| `dashboard/index.html` `app.js` `style.css` | 정적 대시보드 (섹션 14개, **다크 기본**+라이트, 기간 필터, 마을 홈+관문. 명암과 마을 낮/밤은 **별개 축** — 아래 「어디를 고치면 무엇이 바뀌나」). **app.js 가 DOM 으로 조립하는 표에는 `<tbody>` 가 없다** — `createElement("table")` 에 `<tr>` 을 직접 붙이면 브라우저가 tbody 를 끼워 넣지 않기 때문이다. 그래서 `style.css` 에는 `thead th`/`tbody td` 와 `table > tr > th|td` **두 벌**이 있어야 한다. 한 벌만 두면 조립 표(#hedge·#alloc·#panel)의 숫자 셀이 조용히 padding 1px·왼쪽 정렬로 렌더된다 (실제로 117칸이 그 상태였다). 회귀 테스트 있음 |
 | `dashboard/assets/` | 마을 지도 이미지(`village-day.webp`·`village-night.webp`)를 두는 자리. 넣는 법·금지 사항은 같은 폴더 `README.md` |
 | `dashboard/vendor/uplot.min.{js,css}` | 벤더링된 유일한 프런트 의존성 (외부 네트워크 요청 없음) |
 | `.github/workflows/build-dashboard.yml` | dispatch/수동/push 트리거 → **test → build(+배포 게이트) → deploy**. build 잡은 게이트 뒤에 `Build summary` 단계로 시리즈 수·최종 관측일·JSON 수·경고를 `$GITHUB_STEP_SUMMARY` 에 표로 붙인다(`if: always()` — 게이트가 막아 실패한 실행에서도 남는다) |
@@ -44,7 +44,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 65초). 현재 141개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 153개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (1초 미만)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js
 python -m pytest
@@ -153,6 +153,21 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   `SECTION_IDS`·`VILLAGE_ZONES`·`index.html` 세 곳을 함께 고쳐야 하고, 오버레이 해시를 추가하면
   `underlyingSection()` 에 그 아래 깔릴 섹션을 등록해야 딥링크가 산다.
   `tests/test_contract.py` 의 마을 계약 테스트가 이 대응을 강제한다.
+- **테마는 축이 둘이고 서로 무관하다** (2026-08-04 사용자 지시). ① **명암**(chrome) =
+  `data-theme` — **속성이 없는 상태가 다크이고 그게 기본값**이다. CSS 에는 `:root`(다크) 와
+  `:root[data-theme="light"]` 두 벌만 있고 `prefers-color-scheme` 도 `[data-theme="dark"]` 도
+  **없다**(있으면 토큰이 두 벌로 갈라진다 — 실제로 한 번 프로덕션에 나간 사고다).
+  ② **마을 장면** = `data-scene="day"|"night"` — 지도 이미지·상시 루프·전환 영상·`.vz-label`·
+  주변 SVG 효과가 이 축에 달린다. JS 진입점은 `currentTheme()` / `currentScene()` 두 함수다.
+  섞으면 "대시보드를 어둡게" 가 곧 "마을이 밤" 이 되던 예전 상태로 돌아간다.
+  토글 버튼(`#theme-btn`)은 **보고 있는 화면에 따라 다른 축을 바꾼다** — 마을이면 장면,
+  섹션이면 명암(`syncThemeButton()` 이 라벨을 맞춘다).
+  마을은 그냥 두면 **15초마다 낮↔밤이 자동으로 바뀐다**(`SCENE_CYCLE_MS` — 사용자가 정한 수).
+  `sceneCycleAllowed()` 가드 5개(reduced-motion·마을 비가시·관문·백그라운드 탭·좁은 화면)를
+  전부 통과할 때만 돌고, 시작/정지 훅은 `routeView`·`bindGate`·`enterZone`·`visibilitychange`·
+  reduced-motion `change` 다. 순환은 `renderAll()` 이 아니라 `renderVillage()` 만 부른다.
+  **「자동 낮밤순환 금지」 규약은 이 지시로 해제된 것**이며(`docs/HANDOVER.md` §3.3),
+  `prefers-reduced-motion` 은 해제되지 않았다.
 
 ## 실패 처리 규약 (새 계산 블록도 이 패턴을 따를 것)
 

@@ -1,71 +1,18 @@
 /* Investment Analytics Workbench — dashboard chrome
    Palette roles follow the validated reference palette (light + dark). */
 
+/* ── 테마 축 ①: 명암(chrome) — 대시보드 섹션·카드·헤더·차트 색 ───────────────
+   **기본값이 다크다**(사용자 지시 2026-08-04). 속성이 없으면 다크, 사용자가 토글하면
+   [data-theme="light"]. `prefers-color-scheme` 은 더 이상 보지 않는다 — OS 라이트
+   사용자에게도 다크가 기본이어야 한다는 것이 지시의 내용이기 때문이다.
+
+   **이 축은 마을 지도의 낮/밤(축 ②, data-scene)과 완전히 별개다.** 예전에는 하나의
+   data-theme 이 둘 다 몰았고, 그래서 "대시보드를 어둡게" 하면 마을이 밤이 됐다.
+
+   부수 효과가 이 재배치의 진짜 이득이다 — 예전에는 같은 다크 토큰이 두 벌
+   (@media 안 한 벌 + [data-theme="dark"] 한 벌) 있어서 한쪽만 고치면 조용히 갈라졌다
+   (실제로 한 번 프로덕션에 나갔다). 이제 **대조할 쌍 자체가 없다.** */
 :root {
-  color-scheme: light;
-  --page: #f9f9f7;
-  --surface: #fcfcfb;
-  --ink-1: #0b0b0b;
-  --ink-2: #52514e;
-  /* --ink-3 은 보조 텍스트(기준일·차트 부제·각주·'이 화면이 답하는 질문' 라벨) 전용이다.
-     예전 값 #898781 은 밝은 배경에서 대비 3.41:1 로 WCAG AA(4.5:1) 미달이었고,
-     실측상 화면에 가장 많이 쓰이는 색이었다 → 4.98:1(page)·5.11:1(surface)로 낮춘다.
-     어두운 테마에서는 이미 4.85~5.41:1 이라 그대로 둔다(더 낮추면 오히려 눈부시다). */
-  --ink-3: #6e6c67;
-  --grid: #e1e0d9;
-  --baseline: #c3c2b7;
-  --border: rgba(11, 11, 11, 0.10);
-  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
-  --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
-  /* 국내 시장 관례: 상승 빨강 · 하락 파랑 */
-  --up: #d03b3b;
-  --down: #1c5cab;
-  /* 델타 '글자' 전용. --up 자체는 다른 곳(칩 배경 틴트 등)에서도 쓰므로 건드리지 않는다.
-     밝은 테마에서 #d03b3b 는 정지 상태 4.56:1 로 겨우 통과하지만, 요인 행에 hover
-     틴트가 깔리면 4.35:1 로 내려가 AA 미달이 된다(실제 렌더로 측정). #a02c2c 는
-     같은 빨강 계열이면서 7.17:1 이라 hover 상태에서도 여유가 있다.
-     어두운 테마의 #e66767 은 이미 6.02:1 이므로 그대로 둔다.
-     이 저장소에는 이미 같은 패턴이 있다 — 등급 칩의 --g-low/--g-warn/--g-crit. */
-  --up-ink: #a02c2c;
-  --down-ink: #1c5cab;
-  /* --accent 는 차트 색(palette().accent · 스파크라인 · 배경 틴트)이라 건드리지 않는다.
-     텍스트/버튼용으로만 대비를 맞춘 두 토큰을 따로 둔다 — 차트 색은 1비트도 안 바뀐다.
-       --accent-ink   : 강조색 '글자'      (light 6.02:1 / dark 5.34:1)
-       --accent-solid : 흰 글자를 얹는 '면'
-     밝은 테마 #1b5fb0 = 흰 글자 6.34:1 · 배경 경계 6.2:1.
-     어두운 테마는 #1b5fb0 을 그대로 쓰면 카드면(--surface #1a1a19)과의 경계가
-     2.75:1 로 WCAG 1.4.11(비텍스트 3:1)에 못 미친다 — 계산으로 확인했다.
-     #2a6fc4 는 흰 글자 5.04:1 · 카드면 경계 3.46:1 · 페이지 경계 3.86:1 로 둘 다 통과한다. */
-  --accent: #2a78d6;
-  --accent-ink: #1b5fb0;
-  --accent-solid: #1b5fb0;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --page: #0d0d0d;
-    --surface: #1a1a19;
-    --ink-1: #ffffff;
-    --ink-2: #c3c2b7;
-    --ink-3: #898781;
-    --grid: #2c2c2a;
-    --baseline: #383835;
-    --border: rgba(255, 255, 255, 0.10);
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
-    --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
-    --up: #e66767;
-    --down: #3987e5;
-    --up-ink: #e66767;
-    /* 어두운 테마의 --down(#3987e5)은 카드면 hover 틴트 위에서 4.46:1 로 AA 에
-       살짝 못 미친다(계산으로 확인). 글자만 한 단계 밝혀 5.26:1 로 올린다 —
-       --down 자체(칩·차트 토큰)는 그대로다. */
-    --down-ink: #4d95ea;
-    --accent: #3987e5;
-    --accent-ink: #3987e5;
-    --accent-solid: #2a6fc4;
-  }
-}
-:root[data-theme="dark"] {
   color-scheme: dark;
   --page: #0d0d0d;
   --surface: #1a1a19;
@@ -77,13 +24,49 @@
   --border: rgba(255, 255, 255, 0.10);
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
   --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  /* 국내 시장 관례: 상승 빨강 · 하락 파랑 */
   --up: #e66767;
   --down: #3987e5;
   --up-ink: #e66767;
+  /* --down(#3987e5)은 카드면 hover 틴트 위에서 4.46:1 로 AA 에 살짝 못 미친다
+     (계산으로 확인). 글자만 한 단계 밝혀 5.26:1 로 올린다 — --down 자체(칩·차트
+     토큰)는 그대로다. */
   --down-ink: #4d95ea;
+  /* --accent 는 차트 색(palette().accent · 스파크라인 · 배경 틴트)이라 건드리지 않는다.
+     텍스트/버튼용으로만 대비를 맞춘 두 토큰을 따로 둔다 — 차트 색은 1비트도 안 바뀐다.
+     #1b5fb0 을 그대로 쓰면 카드면(--surface #1a1a19)과의 경계가 2.75:1 로 WCAG
+     1.4.11(비텍스트 3:1)에 못 미친다. #2a6fc4 는 흰 글자 5.04:1 · 카드면 경계 3.46:1 ·
+     페이지 경계 3.86:1 로 둘 다 통과한다. */
   --accent: #3987e5;
   --accent-ink: #3987e5;
   --accent-solid: #2a6fc4;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink-1: #0b0b0b;
+  --ink-2: #52514e;
+  /* --ink-3 은 보조 텍스트(기준일·차트 부제·각주·'이 화면이 답하는 질문' 라벨) 전용이다.
+     예전 값 #898781 은 밝은 배경에서 대비 3.41:1 로 WCAG AA(4.5:1) 미달이었고,
+     실측상 화면에 가장 많이 쓰이는 색이었다 → 4.98:1(page)·5.11:1(surface)로 낮춘다. */
+  --ink-3: #6e6c67;
+  --grid: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
+  --up: #d03b3b;
+  --down: #1c5cab;
+  /* 델타 '글자' 전용. --up 자체는 다른 곳(칩 배경 틴트 등)에서도 쓰므로 건드리지 않는다.
+     #d03b3b 는 정지 상태 4.56:1 로 겨우 통과하지만, 요인 행에 hover 틴트가 깔리면
+     4.35:1 로 내려가 AA 미달이 된다(실제 렌더로 측정). #a02c2c 는 같은 빨강 계열이면서
+     7.17:1 이라 hover 상태에서도 여유가 있다. */
+  --up-ink: #a02c2c;
+  --down-ink: #1c5cab;
+  --accent: #2a78d6;
+  --accent-ink: #1b5fb0;   /* 흰 글자 6.34:1 · 배경 경계 6.2:1 */
+  --accent-solid: #1b5fb0;
 }
 
 * { box-sizing: border-box; }
@@ -366,11 +349,11 @@ table > tr > th.rowhead { color: var(--ink-2); white-space: normal; }
 .c-mid  { color: var(--ink-2);  background: color-mix(in srgb, var(--ink-3) 16%, transparent); }
 .c-warn { color: var(--g-warn); background: color-mix(in srgb, #fab219 18%, transparent); }
 .c-crit { color: var(--g-crit); background: color-mix(in srgb, #d03b3b 13%, transparent); }
-:root { --g-low: #006300; --g-warn: #8a6100; --g-crit: #a02c2c; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { --g-low: #3fbf3f; --g-warn: #e8b84a; --g-crit: #e66767; }
-}
-:root[data-theme="dark"] { --g-low: #3fbf3f; --g-warn: #e8b84a; --g-crit: #e66767; }
+/* 등급 칩도 명암(chrome) 축이다 — 기본 다크, [data-theme="light"] 가 라이트.
+   예전에는 이 세 토큰이 :root(라이트) + @media + [data-theme="dark"] 세 곳에 흩어져
+   있었고, 토큰 일치 테스트가 첫 블록만 봐서 이 쌍은 검사 범위 밖이었다. */
+:root { --g-low: #3fbf3f; --g-warn: #e8b84a; --g-crit: #e66767; }
+:root[data-theme="light"] { --g-low: #006300; --g-warn: #8a6100; --g-crit: #a02c2c; }
 
 .risk-top { display: grid; grid-template-columns: 1fr 400px; gap: 14px; align-items: stretch; }
 @media (max-width: 1000px) { .risk-top { grid-template-columns: 1fr; } }
@@ -687,23 +670,10 @@ button.vchip { cursor: pointer; }
 .vz[data-soon] { cursor: default; }
 .vz[data-soon] .vz-label { opacity: .62; }
 .vz[data-soon]:hover .vz-label { color: #17120c; }   /* 준비 중은 호버해도 반응 없음 */
-/* 다크 라벨 — 밝은 글자 + 어두운 할로. 이 파일의 테마 패턴을 그대로 따른다:
-   OS 선호는 미디어쿼리 안에서만 보고, 명시 토글(data-theme)은 밖에서 본다.
-   미디어쿼리 없이 :root:not([data-theme="light"]) 를 쓰면 라이트 OS + 토글 미사용
-   상태에서 어두운 라벨이 밝은 지도 위에 얹힌다. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .vz-label {
-    color: #fbf7ef;
-    text-shadow:
-      -1px -1px 0 rgba(8, 12, 18, .98), 1px -1px 0 rgba(8, 12, 18, .98),
-      -1px  1px 0 rgba(8, 12, 18, .98), 1px  1px 0 rgba(8, 12, 18, .98),
-       0 -2px 0 rgba(8, 12, 18, .88),  0  2px 0 rgba(8, 12, 18, .88),
-      -2px  0   0 rgba(8, 12, 18, .88), 2px  0  0 rgba(8, 12, 18, .88),
-       0 0 6px rgba(8, 12, 18, .95), 0 0 12px rgba(8, 12, 18, .85);
-  }
-  :root:not([data-theme="light"]) .vz[data-soon]:hover .vz-label { color: #fbf7ef; }
-}
-:root[data-theme="dark"] .vz-label {
+/* 밤 라벨 — 밝은 글자 + 어두운 할로. **명암(chrome)이 아니라 장면(scene) 축을 따른다.**
+   이 라벨의 대비 상대는 대시보드 배경이 아니라 **지도 그림**이다. chrome 에 묶어 두면
+   "다크 대시보드 + 낮 지도" 조합에서 밝은 라벨이 밝은 지도 위에 얹혀 안 읽힌다. */
+:root[data-scene="night"] .vz-label {
   color: #fbf7ef;
   text-shadow:
     -1px -1px 0 rgba(8, 12, 18, .98), 1px -1px 0 rgba(8, 12, 18, .98),
@@ -712,7 +682,7 @@ button.vchip { cursor: pointer; }
     -2px  0   0 rgba(8, 12, 18, .88), 2px  0  0 rgba(8, 12, 18, .88),
      0 0 6px rgba(8, 12, 18, .95), 0 0 12px rgba(8, 12, 18, .85);
 }
-:root[data-theme="dark"] .vz[data-soon]:hover .vz-label { color: #fbf7ef; }
+:root[data-scene="night"] .vz[data-soon]:hover .vz-label { color: #fbf7ef; }
 
 /* 저잣거리처럼 여러 화면을 품은 구역의 하위 메뉴 */
 .vz-menu {
@@ -773,18 +743,14 @@ button.vchip { cursor: pointer; }
 }
 @keyframes fx-flow { to { stroke-dashoffset: -34; } }  /* dash 주기(8+26)만큼 → 이음새 없음 */
 
-/* 낮에만: 새·구름 그림자 / 밤에만: 반딧불이. 테마 판정은 이 파일의 기존 패턴 그대로 */
+/* 낮에만: 새·구름 그림자 / 밤에만: 반딧불이. **장면(scene) 축이다** — 지도 위 레이어라
+   대시보드 명암과 무관하다. chrome 에 묶으면 다크 대시보드 + 낮 지도에서 반딧불이가
+   대낮에 난다. */
 .fx-fireflies { display: none; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .fx-birds,
-  :root:not([data-theme="light"]) .fx-cloud { display: none; }
-  :root:not([data-theme="light"]) .fx-fireflies { display: block; }
-  :root:not([data-theme="light"]) .fx-water path { stroke: rgba(205, 228, 255, .20); }
-}
-:root[data-theme="dark"] .fx-birds,
-:root[data-theme="dark"] .fx-cloud { display: none; }
-:root[data-theme="dark"] .fx-fireflies { display: block; }
-:root[data-theme="dark"] .fx-water path { stroke: rgba(205, 228, 255, .20); }
+:root[data-scene="night"] .fx-birds,
+:root[data-scene="night"] .fx-cloud { display: none; }
+:root[data-scene="night"] .fx-fireflies { display: block; }
+:root[data-scene="night"] .fx-water path { stroke: rgba(205, 228, 255, .20); }
 
 /* 접근성 — 움직임을 줄여 달라는 사용자에게는 레이어째 끈다.
    SMIL(SVG 내장 애니메이션)은 이 설정을 스스로 존중하지 않으므로 감추는 것이 유일한 방법 */

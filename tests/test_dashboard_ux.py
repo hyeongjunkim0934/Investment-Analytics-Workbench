@@ -267,34 +267,28 @@ def _tokens(block_re: str) -> dict[str, str]:
 
 
 @pytest.fixture(scope="module")
-def light() -> dict[str, str]:
+def dark() -> dict[str, str]:
+    """**기본** 테마(2026-08-04 지시). 속성이 하나도 없을 때 적용되는 한 벌이다.
+
+    `_tokens` 가 정규식 뒤에 `\\s*\\{` 를 붙이므로 `^:root` 는 `:root {` 만 잡고
+    `:root[data-theme="light"] {` 에는 걸리지 않는다 — 대괄호가 막는다.
+    """
     return _tokens(r"^:root")
 
 
 @pytest.fixture(scope="module")
-def dark() -> dict[str, str]:
-    """테마 토글로 고른 어두운 테마."""
-    return _tokens(r'^:root\[data-theme="dark"\]')
+def light() -> dict[str, str]:
+    """토글로 고른 밝은 테마. 이제 이쪽이 속성을 다는 쪽이다."""
+    return _tokens(r'^:root\[data-theme="light"\]')
 
 
-@pytest.fixture(scope="module")
-def dark_media() -> dict[str, str]:
-    """OS 가 어두운 테마이고 사용자가 토글을 만진 적 없을 때 적용되는 블록.
-
-    토큰이 **두 벌** 있다는 것이 함정이다 — 한쪽만 고치면 토글로 들어온 사람은
-    괜찮고 OS 설정으로 들어온 사람만 깨진다. 뮤테이션으로 실제로 이 구멍을 확인했다
-    (미디어쿼리 쪽 값만 되돌렸더니 테스트가 통과했다). 두 벌을 같이 본다.
-    """
-    return _tokens(r'^  :root:not\(\[data-theme="light"\]\)')
-
-
-def test_secondary_text_passes_aa_on_every_surface_it_lands_on(light, dark, dark_media):
+def test_secondary_text_passes_aa_on_every_surface_it_lands_on(light, dark):
     """--ink-3 는 화면 설명글 대부분을 칠하는 색이다(전부 11.5~12.5px).
 
     페이지·카드면만 보면 놓친다 — 행 hover 틴트(accent 6%) 위에도 얹히므로
     네 바탕 모두에서 4.5:1 을 넘어야 한다. 예전 값 #898781 은 3.41:1 이었다.
     """
-    for name, tk in (("light", light), ("dark", dark), ("dark-media", dark_media)):
+    for name, tk in (("light", light), ("dark", dark)):
         ink = tk["--ink-3"]
         surfaces = {
             "page": tk["--page"],
@@ -307,10 +301,10 @@ def test_secondary_text_passes_aa_on_every_surface_it_lands_on(light, dark, dark
             assert cr >= AA_TEXT, f"[{name}] --ink-3 {ink} on {where} {bg} = {cr:.3f}"
 
 
-def test_accent_text_and_filled_controls_pass_aa(light, dark, dark_media):
+def test_accent_text_and_filled_controls_pass_aa(light, dark):
     """--accent 는 차트 색이라 못 건드린다. 글자용(--accent-ink)과 면용(--accent-solid)을
     따로 두고, 각각 대비를 만족해야 한다."""
-    for name, tk in (("light", light), ("dark", dark), ("dark-media", dark_media)):
+    for name, tk in (("light", light), ("dark", dark)):
         for surf in ("--page", "--surface"):
             cr = contrast(tk["--accent-ink"], tk[surf])
             assert cr >= AA_TEXT, f"[{name}] --accent-ink on {surf} = {cr:.3f}"
@@ -322,7 +316,7 @@ def test_accent_text_and_filled_controls_pass_aa(light, dark, dark_media):
             assert cr >= AA_NONTEXT, f"[{name}] --accent-solid 경계 vs {surf} = {cr:.3f}"
 
 
-def test_delta_text_passes_aa_including_the_hover_tint(light, dark, dark_media):
+def test_delta_text_passes_aa_including_the_hover_tint(light, dark):
     """상승/하락 델타 글자(`▲ 8p`)는 요인 행 위에 있어서 hover 틴트가 깔린다.
 
     --up(#d03b3b) 은 정지 상태 4.56:1 로 겨우 통과하지만 hover 틴트 위에서는
@@ -330,7 +324,7 @@ def test_delta_text_passes_aa_including_the_hover_tint(light, dark, dark_media):
     --up 자체는 칩 배경 틴트 등에서 계속 쓰이므로 값이 그대로여야 한다.
     """
     assert light["--up"] == "#d03b3b" and light["--down"] == "#1c5cab", "시장 관례 색은 그대로"
-    for name, tk in (("light", light), ("dark", dark), ("dark-media", dark_media)):
+    for name, tk in (("light", light), ("dark", dark)):
         for ink in (tk["--up-ink"], tk["--down-ink"]):
             for where in ("--page", "--surface"):
                 bg = tk[where]
@@ -339,11 +333,10 @@ def test_delta_text_passes_aa_including_the_hover_tint(light, dark, dark_media):
                     assert cr >= AA_TEXT, f"[{name}] 델타 글자 {ink} on {label} = {cr:.3f}"
 
 
-def test_chart_accent_token_is_untouched(light, dark, dark_media):
+def test_chart_accent_token_is_untouched(light, dark):
     """차트 색은 1비트도 바뀌면 안 된다 — 대비 개선이 데이터 표현을 건드리지 않았다는 증거."""
     assert light["--accent"] == "#2a78d6"
     assert dark["--accent"] == "#3987e5"
-    assert dark_media["--accent"] == "#3987e5"
 
 
 def test_focus_ring_is_visible(light):
@@ -414,6 +407,126 @@ def test_reduced_motion_stops_scroll_animation():
         "모션 축소에서 scroll-behavior 를 auto 로 되돌리지 않는다"
 
 
+# ---- 마을 장면 자동 순환 (실행해서 확인) -----------------------------------
+# 사용자 지시(2026-08-04): "그냥 놔두면 15초 간격으로 낮↔밤이 바뀌고, 수기로 바꿔도
+# 그대로 두면 15초 뒤 다시 바뀐다." 이 지시가 옛 규약 「자동 낮밤순환 금지」를 해제했다.
+# 해제되지 않은 것이 `prefers-reduced-motion` 이라 그 가드가 여기 핵심이다.
+# 소스 문자열이 아니라 **타이머와 틱 본문을 실제로 돌려서** 본다 — 상수 이름만 남기고
+# 가드를 빼는 변경은 문자열 검사로 잡히지 않는다.
+
+def test_scene_cycle_interval_is_fifteen_seconds(probe):
+    """주기는 사용자가 정한 15초다. 임의로 고를 수 있는 수가 아니다."""
+    s = probe["sceneCycle"]
+    assert s["cycleMs"] == 15000
+    assert s["timerMs"] == [15000], f"실제로 걸린 타이머 주기: {s['timerMs']}"
+
+
+def test_scene_cycle_runs_only_when_the_village_is_actually_on_screen(probe):
+    """가드 5개 — 정상 상태 하나만 참이어야 한다.
+
+    보이지도 않는 지도를 15초마다 갈아끼우면 배터리와 디코딩만 태운다. 특히
+    ③ 관문(암구호 입력 중)은 화면을 덮고 있어 눈에 보이는 변화가 배경뿐인데도
+    전환 영상이 돌아 입력을 방해했다.
+    """
+    s = probe["sceneCycle"]
+    assert s["allowedOnVillage"] is True, "정상 상태에서 자동 순환이 안 돈다"
+    assert s["allowedWithGateOpen"] is False, "관문이 떠 있는데 순환이 돈다"
+    assert s["allowedOffVillage"] is False, "섹션 화면인데 마을 순환이 돈다"
+    assert s["allowedInBackgroundTab"] is False, "백그라운드 탭에서 순환이 돈다"
+    assert s["allowedWhenNarrow"] is False, "지도가 숨겨진 좁은 화면에서 순환이 돈다"
+
+
+def test_scene_cycle_respects_reduced_motion(probe):
+    """`prefers-reduced-motion` 은 해제되지 않았다 — 자동 순환은 명백한 모션이다.
+
+    배경 이미지 교체는 CSS 로 못 막으므로 **타이머를 만드는 지점에 JS 가드**가
+    있어야 한다. 판정만이 아니라 타이머가 실제로 안 걸리는 것까지 본다.
+    """
+    s = probe["sceneCycle"]
+    assert s["allowedUnderReducedMotion"] is False
+    assert s["timersUnderReducedMotion"] == 0, "reduced-motion 인데 타이머가 걸렸다"
+
+
+def test_scene_cycle_never_leaves_two_timers_running(probe):
+    """재시작은 언제나 stop 이 먼저다.
+
+    수동 토글·마을 복귀·visibilitychange 가 전부 restart 를 부르므로, 걷어내지 않으면
+    타이머가 누적되어 15초가 7.5초·5초로 빨라진다(누적될수록 더 빨라진다).
+    """
+    s = probe["sceneCycle"]
+    assert s["liveAfterStart"] == 1
+    assert s["liveAfterRestart"] == 1, "restart 가 앞 타이머를 걷어내지 않는다"
+    assert s["liveAfterStop"] == 0, "stop 이 타이머를 걷어내지 않는다"
+
+
+def test_scene_tick_flips_the_scene_without_touching_the_chrome_theme(probe):
+    """틱 한 번이 낮→밤을 실제로 바꾸되, 대시보드 명암은 건드리지 않는다.
+
+    두 축이 다시 합쳐지는 것을 막는 자리다 — 합치면 15초마다 대시보드가
+    밝아졌다 어두워지는 화면이 된다.
+    """
+    s = probe["sceneCycle"]
+    assert s["sceneBefore"] == "day" and s["sceneAfterOneTick"] == "night"
+    assert s["themeUntouchedByTick"] is None, "장면 전환이 명암 축을 건드렸다"
+
+
+def test_scene_tick_is_a_noop_while_a_transition_is_playing(probe):
+    """전환 연출(약 4초) 중에 다음 틱이 겹치면 화면이 얼어붙는다 — 실제로 난 사고다.
+
+    겹친 틱은 `data-transition` 요소를 엇갈리게 만들고, 그러면 mountVillageVideo 의
+    가드가 영구히 막혀 스스로 회복하지 못한다. sceneBusy 가 그 자리다.
+    """
+    s = probe["sceneCycle"]
+    assert s["sceneAfterOverlappingTick"] == "night", (
+        "전환 중에 들어온 틱이 장면을 또 바꿨다 — sceneBusy 가드가 없다"
+    )
+
+
+def test_a_stale_scene_timer_stops_itself(probe):
+    """마을을 떠났는데 타이머가 남아 있으면, 그 틱이 스스로 자기를 걷어야 한다.
+
+    routeView 의 정지 훅이 유일한 방어선이면 새 이탈 경로가 생길 때마다 훅을
+    빠뜨린다. 틱 본문 안의 재확인이 2차 방어선이다.
+    """
+    s = probe["sceneCycle"]
+    assert s["staleTickChangedScene"] is False, "마을 밖인데 장면이 바뀌었다"
+    assert s["staleTickClearedItself"] is True, "떠난 뒤에도 타이머가 계속 산다"
+
+
+def test_scene_cycle_follows_the_user_in_and_out_of_the_village(probe):
+    """routeView 훅 — 섹션으로 나가면 멈추고 마을로 돌아오면 다시 건다."""
+    s = probe["sceneCycle"]
+    assert s["liveBeforeLeaving"] == 1, "마을에 있는데 자동 순환이 안 걸렸다(측정 전제)"
+    assert s["liveOnSection"] == 0, "섹션으로 나갔는데 마을 타이머가 산 채로 남았다"
+    assert s["liveBackOnVillage"] == 1, "마을로 돌아왔는데 자동 순환이 안 돈다"
+
+
+def test_theme_button_says_what_it_will_do_on_this_screen(probe):
+    """토글 버튼은 화면에 따라 하는 일이 다르다 — 라벨이 따라가야 한다.
+
+    마을에서는 장면(낮↔밤), 섹션에서는 명암(라이트↔다크)이다. 라벨이 고정이면
+    한쪽 화면에서는 "눌러도 아무 일이 없는 버튼"으로 읽힌다.
+    """
+    s = probe["sceneCycle"]
+    assert "낮" in s["labelOnVillage"] and "밤" in s["labelOnVillage"], s["labelOnVillage"]
+    assert "15초" in s["labelOnVillage"], "자동 순환을 알리지 않으면 고장으로 읽힌다"
+    assert s["labelOnSection"] in ("화면을 밝게 전환", "화면을 어둡게 전환"), s["labelOnSection"]
+    assert "마을" not in s["labelOnSection"], "섹션에서 마을 장면 라벨이 나온다"
+
+
+def test_dark_is_the_default_with_no_attribute(probe):
+    """대시보드 기본 배경은 검정이다(사용자 지시 2026-08-04).
+
+    속성이 **없는** 상태가 다크여야 한다 — `data-theme="dark"` 를 달아서 맞추면
+    저장값이 없는 첫 방문자가 라이트로 떨어진다.
+    """
+    s = probe["sceneCycle"]
+    assert s["defaultThemeAttr"] is None, (
+        f"첫 방문 시 data-theme 이 붙어 있다: {s['defaultThemeAttr']!r}"
+    )
+    assert s["defaultScene"] == "day", "마을은 낮에서 시작한다"
+
+
 # ---- 외부 요청 0 ----------------------------------------------------------
 def test_dashboard_makes_no_external_requests():
     """현재 외부 요청이 0 이다 — CDN·웹폰트가 새로 들어오면 여기서 막는다."""
@@ -427,15 +540,63 @@ def test_dashboard_makes_no_external_requests():
         assert not hits, f"{f.name} 에 외부 주소가 있다: {hits[:5]}"
 
 
-def test_both_dark_token_blocks_agree(dark, dark_media):
-    """어두운 테마 토큰은 두 곳에 중복 기재돼 있다 — 토글용과 OS 설정용.
+# ---- 테마 축 --------------------------------------------------------------
+# 예전에는 다크 토큰이 **두 벌**(@media 안 + [data-theme="dark"])이라 한쪽만 고치면
+# 조용히 갈라졌고, 그래서 `test_both_dark_token_blocks_agree` 로 두 벌이 같은지만
+# 확인했다. 2026-08-04 지시로 다크가 기본값이 되면서 그 두 벌 자체가 사라졌다 —
+# 즉 **대조할 쌍이 없어졌으므로 그 테스트는 이제 아무것도 지키지 못한다.**
+# 그 자리를 아래 셋이 대신한다: ① 중복이 되살아나는 것을 막고 ② 토큰 집합이
+# 갈라지는 것을 막고 ③ 마을 낮/밤이 다시 명암 축에 얹히는 것을 막는다.
 
-    한쪽만 고치면 들어온 경로에 따라 화면이 달라진다. 두 벌이 같은지 못박아 둔다.
+def test_theme_is_a_single_attribute_axis():
+    """명암은 `data-theme` **하나**로만 정해진다.
+
+    `prefers-color-scheme` 이 되살아나면 토큰이 다시 두 벌이 되고(과거에 실제로
+    프로덕션까지 갈라져 나갔다), `[data-theme="dark"]` 가 되살아나면 "속성 없음 =
+    다크" 라는 기본값 규칙이 깨져 기본 화면과 토글 화면이 서로 다른 블록을 받는다.
+    주석은 지우고 본다 — 위 설명문에 든 이름에 걸리면 안 되기 때문이다.
     """
-    keys = set(dark) & set(dark_media)
-    assert len(keys) >= 10, "토큰을 제대로 못 읽었다"
-    diff = {k: (dark[k], dark_media[k]) for k in keys if dark[k] != dark_media[k]}
-    assert not diff, f"두 어두운 테마 블록의 값이 다르다: {diff}"
+    css = _css()
+    assert "prefers-color-scheme" not in css, \
+        "다크 토큰이 두 벌로 갈라진다 — 기본값은 :root 한 벌이어야 한다"
+    assert '[data-theme="dark"]' not in css, \
+        '다크는 속성이 없는 상태다 — [data-theme="dark"] 블록을 두면 기본값과 갈라진다'
+    assert '[data-theme="light"]' in css, "밝은 테마 블록이 없다"
+
+
+def test_theme_blocks_declare_the_same_token_set(dark, light):
+    """다크(기본)와 라이트가 **같은 토큰 이름**을 선언해야 한다.
+
+    값은 당연히 다르지만 집합이 갈라지면 한쪽 테마에서만 변수가 미정의가 되어
+    `var(--x)` 가 조용히 빈 값으로 떨어진다. 값 비교로는 절대 안 잡히는 자리다.
+    등급 칩(`--g-*`)처럼 뒤에 따로 붙는 블록까지 전부 모아서 본다.
+    """
+    per_selector: dict[str, set[str]] = {}
+    for m in re.finditer(r'^(:root(?:\[data-theme="light"\])?)\s*\{([^}]*)\}', _css(), re.M):
+        per_selector.setdefault(m.group(1), set()).update(re.findall(r"(--[\w-]+)\s*:", m.group(2)))
+    assert set(per_selector) == {":root", ':root[data-theme="light"]'}, sorted(per_selector)
+    d, l = per_selector[":root"], per_selector[':root[data-theme="light"]']
+    assert len(d) >= 20, f"토큰을 제대로 못 읽었다: {len(d)}개"
+    assert d == l, f"다크에만: {sorted(d - l)} / 라이트에만: {sorted(l - d)}"
+    # 픽스처가 같은 블록을 보고 있는지 — 정규식이 어긋나면 위 검사가 무의미해진다.
+    assert dark["--page"] != light["--page"], "두 픽스처가 같은 블록을 읽고 있다"
+
+
+def test_village_scene_is_a_separate_axis_from_chrome():
+    """마을의 낮/밤은 `data-scene`, 대시보드 명암은 `data-theme` — 축이 둘이다.
+
+    사용자 지시(2026-08-04): "대시보드 배경은 검은색을 디폴트로, 메인화면의 낮과
+    밤이랑은 별개로." 하나로 합치면 그 지시가 그대로 되돌아간다.
+    마을 전용 규칙(지도 라벨·주변 효과)이 명암 축에 얹히는 것을 막는다.
+    """
+    css = _css()
+    assert '[data-scene="night"]' in css, "마을 밤 규칙이 장면 축에 없다"
+    village_on_theme = [
+        m.group(0)
+        for m in re.finditer(r'^:root\[data-theme="[a-z]+"\][^{\n]*\{', css, re.M)
+        if re.search(r"\.vz|\.fx-|village", m.group(0))
+    ]
+    assert not village_on_theme, f"마을 규칙이 명암 축에 얹혀 있다: {village_on_theme}"
 
 
 # ==========================================================================
@@ -682,7 +843,7 @@ def test_section_notes_define_their_own_jargon():
         assert term in credit, term
 
 
-def test_signed_number_text_uses_the_text_only_ink_tokens(light, dark, dark_media):
+def test_signed_number_text_uses_the_text_only_ink_tokens(light, dark):
     """헤지비용·캐리 숫자는 hover 되는 표 안에 있다 — 델타 글자와 같은 규칙을 받아야 한다.
 
     `--up`(#d03b3b)은 행 hover 틴트 위에서 4.35:1 로 AA 미달인 것이 이미 실측·테스트돼
@@ -694,7 +855,7 @@ def test_signed_number_text_uses_the_text_only_ink_tokens(light, dark, dark_medi
     assert m, ".pos/.neg 선언을 못 찾았다"
     assert "--down-ink" in m.group(1), m.group(1)
     assert "--up-ink" in m.group(2), m.group(2)
-    for name, tk in (("light", light), ("dark", dark), ("dark-media", dark_media)):
+    for name, tk in (("light", light), ("dark", dark)):
         for ink in (tk["--up-ink"], tk["--down-ink"]):
             for surf in ("--page", "--surface"):
                 bg = tk[surf]

@@ -357,7 +357,7 @@ def _strip_js_comments(src: str) -> str:
     """JS 소스에서 주석을 걷어낸다 — 문자열 검사로 "호출이 있다"를 확인하기 전에 쓴다.
 
     app.js 는 주석이 아주 두꺼운 파일이라, 함수 본문을 통째로 `in` 검사하면 **주석에
-    이름이 적혀 있다는 이유만으로 통과**한다. 실제로 `playThemeTransition` 의 재마운트
+    이름이 적혀 있다는 이유만으로 통과**한다. 실제로 `playSceneTransition` 의 재마운트
     검사가 그랬다: `mountVillageVideo(frame)` 호출을 지워도 바로 위 주석의 같은 낱말이
     검사를 만족시켜 테스트가 초록으로 남고, 화면에서는 테마 토글 뒤 배경이 스틸로
     돌아가 사용자가 처음 지적한 "안 움직이는 마을"이 되돌아왔다.
@@ -464,21 +464,21 @@ def test_village_fx_people_paths_all_exist():
     assert not missing, f"정의되지 않은 도로를 걷는 행인: {sorted(missing)}"
 
 
-def test_theme_transition_disables_svg_fx_and_respects_reduced_motion():
+def test_scene_transition_disables_svg_fx_and_respects_reduced_motion():
     """전환 영상이 재생되는 동안 SVG 모션은 꺼지고, reduced-motion 이면 즉시 전환한다.
 
     움직임이 겹치면(영상 속 물결 + SVG 물결) 어색하고, SMIL 과 달리 영상은 사용자
-    접근성 설정을 코드가 직접 확인해야 한다. 어느 시점에 실패해도 applyTheme 는
-    반드시 호출돼야 한다(테마 토글이 조용히 무시되면 안 된다).
+    접근성 설정을 코드가 직접 확인해야 한다. 어느 시점에 실패해도 applyScene 는
+    반드시 호출돼야 한다(장면 토글이 조용히 무시되면 안 된다).
     """
     css = (ROOT / "dashboard" / "style.css").read_text(encoding="utf-8")
     assert re.search(r"\.has-video \.village-fx\s*\{\s*display:\s*none", css), (
         "영상 재생 중 SVG 모션을 끄는 규칙(.has-video .village-fx)이 없습니다"
     )
     js = _app_js()
-    fn = js.split("function playThemeTransition")[1].split("\nfunction ")[0]
+    fn = js.split("function playSceneTransition")[1].split("\nfunction ")[0]
     assert "prefers-reduced-motion" in fn, (
-        "playThemeTransition 이 reduced-motion 을 확인하지 않습니다"
+        "playSceneTransition 이 reduced-motion 을 확인하지 않습니다"
     )
     for evt in ("playing", "ended", "error"):
         assert f'"{evt}"' in fn, f"전환 영상의 {evt} 이벤트 처리가 없습니다"
@@ -529,9 +529,9 @@ def test_village_idle_video_respects_reduced_motion_and_falls_back():
     assert re.search(r"mountVillageVideo\s*\(", _strip_js_comments(rv)), (
         "renderVillage 가 상시 루프를 마운트하지 않습니다"
     )
-    tt = js.split("function playThemeTransition")[1].split("\nfunction ")[0]
+    tt = js.split("function playSceneTransition")[1].split("\nfunction ")[0]
     assert re.search(r"mountVillageVideo\s*\(", _strip_js_comments(tt)), (
-        "전환 연출이 끝난 뒤 새 테마의 루프를 재마운트하는 경로가 없습니다 — "
+        "전환 연출이 끝난 뒤 새 장면의 루프를 재마운트하는 경로가 없습니다 — "
         "주석에 이름만 적혀 있고 실제 호출이 없으면 토글 후 배경이 스틸로 돌아간다"
     )
     route = js.split("function routeView")[1].split("\nfunction ")[0]
@@ -558,7 +558,7 @@ def test_leaving_village_does_not_pause_the_theme_transition():
     broad = [ln.strip() for ln in route.splitlines()
              if "village-video" in ln and "data-idle" not in ln]
     assert not broad, f"전환 영상까지 걸리는 넓은 선택자가 routeView 에 있습니다: {broad}"
-    tt = js.split("function playThemeTransition")[1].split("\nfunction ")[0]
+    tt = js.split("function playSceneTransition")[1].split("\nfunction ")[0]
     assert '"ended"' in tt, "전환 영상의 ended 처리가 없습니다 — done() 이 실행될 경로가 필요합니다"
 
 

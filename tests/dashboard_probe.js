@@ -49,7 +49,12 @@ const SECTIONS = ["overview", "risk", "events", "panel", "hedge", "alloc", "rate
 const secNodes = {};
 SECTIONS.forEach((id) => { const n = elem("section", id, "section"); secNodes[id] = n; main.append(n); });
 const village = elem("section", "village", "village");
-village.append(elem("div", "village-frame"));
+const villageFrame = elem("div", "village-frame");
+/* renderVillage()/mountVillageVideo()/playSceneTransition() 이 전부 #village-map 을
+   기준으로 자기를 끼워 넣는다(`.after(v)`). 하나라도 없으면 그 자리에서 죽으므로
+   이 셋이 index.html 과의 계약이다. */
+villageFrame.append(elem("img", "village-map"), elem("p", "village-missing"));
+village.append(villageFrame, elem("nav", "village-list"));
 main.append(village);
 /* index.html 에서 #detail-overlay 는 <main> 안이 아니라 <body> 직계 자식이다
    (footer 뒤). 배경 inert 판정이 이 위치에 의존하므로 실제 구조를 그대로 흉내 낸다. */
@@ -80,6 +85,8 @@ secNodes.hedge.append(elem("details", "hedge-method"));
 secNodes.macro.append(elem("div", "macro-grid"));
 
 /* ---------- app.js 를 vm 안에서 통째로 실행 ---------- */
+let REDUCED = false;        // prefers-reduced-motion 스위치 (아래 sceneCycle 프로브가 쓴다)
+const INTERVALS = [];       // app.js 가 건 setInterval 기록 (실제로 걸지는 않는다)
 const sandbox = {
   document: DOC,
   window: null,
@@ -87,7 +94,12 @@ const sandbox = {
   location: shim.location,
   console: { log() {}, warn() {}, error() {}, info() {} },
   uPlot: shim.UPlotStub,
-  matchMedia: shim.win.matchMedia,
+  /* 기본은 셰이드와 같은 "항상 false" 다. reduced-motion 가드를 실제로 측정해야 하는
+     프로브만 REDUCED 를 켰다 끈다 — 켠 채로 두면 앞선 프로브들의 전제가 바뀐다. */
+  matchMedia: (q) => ({
+    matches: REDUCED && /reduced-motion/.test(String(q)),
+    addEventListener() {}, removeEventListener() {},
+  }),
   getComputedStyle: shim.win.getComputedStyle,
   requestAnimationFrame: shim.win.requestAnimationFrame,
   cancelAnimationFrame: shim.win.cancelAnimationFrame,
@@ -96,7 +108,11 @@ const sandbox = {
   fetch: () => Promise.reject(new Error("probe: no network")),
   ResizeObserver: class { observe() {} unobserve() {} disconnect() {} },
   IntersectionObserver: class { observe() {} unobserve() {} disconnect() {} },
-  setTimeout, clearTimeout, setInterval, clearInterval,
+  setTimeout, clearTimeout,
+  /* app.js 의 setInterval 은 마을 자동 순환 딱 하나다(grep 확인). 진짜로 걸지 않고
+     (fn, ms) 를 기록만 해 둔다 — 15초를 기다리지 않고 틱 본문을 직접 돌려 보기 위해서다. */
+  setInterval: (fn, ms) => { const h = { fn, ms, live: true }; INTERVALS.push(h); return h; },
+  clearInterval: (h) => { if (h) h.live = false; },
   Image: class { set src(_v) { setTimeout(() => this.onerror && this.onerror(), 0); } },
   navigator: { userAgent: "probe" },
   performance: { now: () => 0 },
@@ -118,7 +134,9 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "routeView", "openOverlayShell", "hideDetail", "overlayBackdrop", "renderCatalog",
   "bandInk", "relLum", "deltaText", "factorRow", "renderEvents", "renderMetaLine",
   "cardScaffold", "el", "registry", "DATA", "BANDS", "SECTION_IDS", "palette",
-  "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY"];
+  "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY",
+  "SCENE_CYCLE_MS", "sceneCycleAllowed", "restartSceneCycle", "stopSceneCycle",
+  "currentScene", "currentTheme", "syncThemeButton"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -496,6 +514,106 @@ safe("macroUnit", () => {
   P.renderMacro();
   const cards = DOC.getElementById("macro-grid").children;
   return { subs: cards.map((c) => c.querySelector(".card-sub").textContent) };
+});
+
+/* ====== P15. 마을 장면 15초 자동 순환 — 가드 5개와 틱 본문을 실제로 돌린다 ======
+   15초를 기다리지 않는다. setInterval 을 기록만 하도록 바꿔 두었으므로 (fn, ms) 를
+   꺼내 fn 을 직접 호출하면 틱 한 번이 그대로 재현된다. */
+safe("sceneCycle", () => {
+  const html = DOC.documentElement;
+  const gate = DOC.getElementById("gate");
+  const villageEl = DOC.getElementById("village");
+  const frame = DOC.getElementById("village-frame");
+  const map = DOC.getElementById("village-map");
+  const r = {};
+
+  /* 기본값 — bindTheme() 은 boot() 의 동기 구간에서 이미 돌았다. */
+  r.cycleMs = P.SCENE_CYCLE_MS;
+  r.defaultScene = html.getAttribute("data-scene");
+  r.defaultThemeAttr = html.getAttribute("data-theme");   // null = 다크(속성 없음)가 기본
+
+  /* 가드 5개(+reduced-motion). 하나씩만 어긋내고 되돌린다.
+     값은 전부 "돌아도 되는가?" 의 답이다 — 정상 상태 하나만 true 여야 한다. */
+  villageEl.hidden = false; gate.hidden = false; frame.clientWidth = 800;
+  r.allowedWithGateOpen = P.sceneCycleAllowed();
+  gate.hidden = true;
+  r.allowedOnVillage = P.sceneCycleAllowed();
+  villageEl.hidden = true;
+  r.allowedOffVillage = P.sceneCycleAllowed();
+  villageEl.hidden = false;
+  DOC.visibilityState = "hidden";
+  r.allowedInBackgroundTab = P.sceneCycleAllowed();
+  DOC.visibilityState = "visible";
+  frame.clientWidth = 0;
+  r.allowedWhenNarrow = P.sceneCycleAllowed();
+  frame.clientWidth = 800;
+  REDUCED = true;
+  r.allowedUnderReducedMotion = P.sceneCycleAllowed();
+  REDUCED = false;
+
+  /* 타이머 수명 — reduced-motion 이면 아예 걸지 않는다. */
+  INTERVALS.length = 0;
+  REDUCED = true; P.restartSceneCycle(); REDUCED = false;
+  r.timersUnderReducedMotion = INTERVALS.length;
+  P.restartSceneCycle();
+  r.timerMs = INTERVALS.map((h) => h.ms);
+  r.liveAfterStart = INTERVALS.filter((h) => h.live).length;
+  P.restartSceneCycle();                       // 재시작은 앞의 것을 반드시 걷어낸다
+  r.liveAfterRestart = INTERVALS.filter((h) => h.live).length;
+  P.stopSceneCycle();
+  r.liveAfterStop = INTERVALS.filter((h) => h.live).length;
+
+  /* 마을을 떠난 뒤에도 살아남은 틱은 아무 일도 하지 않고 자기 타이머를 걷는다
+     (routeView 가 못 멈춘 경우의 2차 방어선). 아래 flip 프로브보다 **먼저** 와야 한다 —
+     setScene 이 sceneBusy 를 5.2초 뒤에야 푸는데 프로브는 그 전에 끝나기 때문이다. */
+  INTERVALS.length = 0;
+  P.restartSceneCycle();
+  villageEl.hidden = true;
+  const staleTick = INTERVALS[INTERVALS.length - 1].fn;
+  const before = P.currentScene();
+  staleTick();
+  r.staleTickChangedScene = P.currentScene() !== before;
+  r.staleTickClearedItself = INTERVALS.filter((h) => h.live).length === 0;
+  villageEl.hidden = false;
+
+  /* 틱 본문 — 지도를 숨겨 두면 playSceneTransition 이 영상 없이 즉시 적용한다. */
+  map.hidden = true;
+  INTERVALS.length = 0;
+  P.restartSceneCycle();
+  const tick = INTERVALS[INTERVALS.length - 1].fn;
+  r.sceneBefore = P.currentScene();
+  tick();
+  r.sceneAfterOneTick = P.currentScene();
+  r.themeUntouchedByTick = html.getAttribute("data-theme");   // 장면 축이 명암 축을 건드리면 안 된다
+  /* 전환 연출이 도는 동안 다음 틱이 겹치면 data-transition 요소가 엇갈려 화면이
+     얼어붙은 적이 있다 — sceneBusy 가드가 그 자리다. 지금 막 전환했으므로 켜져 있어야 한다.
+     지도를 다시 숨기는 것이 이 측정의 핵심이다 — 위 틱 안의 renderVillage() 가 지도를
+     되살려 놓기 때문에, 그대로 두면 playSceneTransition 이 영상 경로(비동기)로 빠져
+     sceneBusy 를 없애도 장면이 안 바뀐다. 즉 가드를 지운 뮤테이션이 조용히 통과한다. */
+  map.hidden = true;
+  tick();
+  r.sceneAfterOverlappingTick = P.currentScene();
+
+  /* 토글 버튼의 의미 — 마을이면 장면, 섹션이면 명암 */
+  const btn = DOC.getElementById("theme-btn");
+  villageEl.hidden = false; P.syncThemeButton();
+  r.labelOnVillage = btn.getAttribute("aria-label");
+  villageEl.hidden = true; P.syncThemeButton();
+  r.labelOnSection = btn.getAttribute("aria-label");
+
+  /* routeView 훅 — 섹션으로 나가면 멈추고, 마을로 돌아오면 다시 건다.
+     반드시 **마을에서 타이머가 살아 있는 상태로** 나가야 정지 훅을 측정할 수 있다.
+     빈 상태에서 섹션으로 가면 정지 훅을 지워도 0 이라 뮤테이션이 통과한다. */
+  map.hidden = true; gate.hidden = true; frame.clientWidth = 800;
+  INTERVALS.length = 0;
+  shim.location.hash = "#village"; P.routeView();
+  r.liveBeforeLeaving = INTERVALS.filter((h) => h.live).length;
+  shim.location.hash = "#rates"; P.routeView();
+  r.liveOnSection = INTERVALS.filter((h) => h.live).length;
+  shim.location.hash = "#village"; P.routeView();
+  r.liveBackOnVillage = INTERVALS.filter((h) => h.live).length;
+  P.stopSceneCycle();
+  return r;
 });
 
 /* boot() 은 async 라 fetch 거부가 마이크로태스크로 나중에 돌아온다. 그때는 위 프로브가
