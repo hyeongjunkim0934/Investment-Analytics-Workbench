@@ -86,7 +86,6 @@ class Node {
     this.classList = new ClassList(this);
     this.style = new Style();
     this.listeners = {};
-    this.value = "";
     this.scrollTop = 0;
     this.clientWidth = 800;
     this._seq = NODE_SEQ++;
@@ -94,6 +93,13 @@ class Node {
   }
   get id() { return this.attrs.get("id") || ""; }
   set id(v) { this.attrs.set("id", v); }
+  /* `value` 는 속성과 프로퍼티가 갈린다 — HTML 도 그렇다(속성 = 초기값,
+     프로퍼티 = 현재값이며 사용자가 건드리면 속성과 무관해진다). 예전 셰이드는
+     프로퍼티를 항상 `""` 로 두어, `el("input", {value: "5000"})` 로 만든 칸을
+     app.js 가 `+node.value` 로 읽으면 **0 이 나왔다** — "사용자가 이미 고쳤다"로
+     오판하는 코드 경로가 프로브에서 검증 불가였다. */
+  get value() { return this._value !== undefined ? this._value : (this.attrs.get("value") || ""); }
+  set value(v) { this._value = v == null ? "" : String(v); }
   /* `hidden`/`inert` 는 프로퍼티로 읽고 쓴다 — app.js 가 `node.hidden = true` 로 쓴다. */
   get hidden() { return this.attrs.get("hidden") === true; }
   set hidden(v) { this.attrs.set("hidden", !!v); }
@@ -136,6 +142,23 @@ class Node {
     return n;
   }
   remove() { if (this.parentElement) this.parentElement.childNodes = this.parentElement.childNodes.filter((x) => x !== this); this.parentElement = null; }
+  /* 마을 영상(상시 루프·장면 전환)이 `$("#village-map").after(v)` 로 자기를 끼워 넣는다. */
+  after(...kids) {
+    const p = this.parentElement;
+    if (!p) return;
+    let at = p.childNodes.indexOf(this) + 1;
+    for (const k of kids) {
+      if (k == null) continue;
+      const n = k.nodeType ? k : DOC.createTextNode(String(k));
+      if (n.parentElement) n.parentElement.childNodes = n.parentElement.childNodes.filter((x) => x !== n);
+      n.parentElement = p;
+      p.childNodes.splice(at++, 0, n);
+    }
+  }
+  /* <video> 최소 셰이드. app.js 는 반환값에 .catch() 를 거므로 프로미스여야 한다.
+     `_playing` 은 "실제로 재생을 요청받았는가"를 테스트가 확인하는 자리다. */
+  play() { this._playing = true; return Promise.resolve(); }
+  pause() { this._playing = false; }
 
   get textContent() { return this.childNodes.map((c) => c.textContent).join(""); }
   set textContent(v) {
@@ -186,6 +209,9 @@ class Document {
     this.head = new Node("head");
     this.documentElement.append(this.head, this.body);
     this.activeElement = this.body;
+    /* 마을 자동 순환 가드가 백그라운드 탭을 이 값으로 판정한다 — 없으면
+       undefined 라 "항상 백그라운드"가 되어 가드 테스트가 무의미해진다. */
+    this.visibilityState = "visible";
     this.listeners = {};
   }
   createElement(t) { return new Node(t); }

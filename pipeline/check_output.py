@@ -12,7 +12,7 @@
 표준 라이브러리만 쓴다 — 의존성 설치가 깨진 상황에서도 돌아야 한다.
 
 검사 항목
-    1. JSON 파일 집합이 계약의 13개와 **정확히** 일치 (부족·초과 모두 실패)
+    1. JSON 파일 집합이 계약의 15개와 **정확히** 일치 (부족·초과 모두 실패)
     2. 전부 파싱 가능한 JSON 이고 비어 있지 않음
     3. meta.json 필수 필드 존재
     4. meta.json.warnings 개수 <= --max-warnings   (등호가 아니라 **상한**:
@@ -20,7 +20,8 @@
     5. meta.json.series_count >= --min-series      (고정값이 아니라 **바닥**)
     6. 모든 시계열 페이로드에서 len(t) == len(v)
     7. catalog.json 에 값 배열이 실려 있지 않음 (값 없이 메타데이터만 — 공개 범위 가드)
-    8. --dashboard 를 주면 dashboard/app.js 의 FILES 상수와 파일 집합이 일치하는지
+    8. 계산 페이로드(hedge·alloc·risk·panel)의 최소 스키마 — 화면이 이름으로 집는 키
+    9. --dashboard 를 주면 dashboard/app.js 의 FILES 상수와 파일 집합이 일치하는지
 """
 
 from __future__ import annotations
@@ -38,6 +39,40 @@ EXPECTED = [
     "irs", "credit", "fx", "inflation", "acwi", "macro", "catalog",
 ]
 META_FIELDS = ["built_at_utc", "last_observation", "series_count", "files", "warnings"]
+
+# 계산 페이로드의 **최소 스키마**. 파일이 있고 JSON 으로 파싱된다고 해서 내용이
+# 온전한 것은 아니다 — 실측: `hedge.json` 에서 `asof`·`curves`·`mtm`·`cost_stats`·
+# `backtest`·`sim` 을 통째로 지워도 게이트가 exit 0 이었고, 필드 하나를 개명한
+# 뮤테이션은 pytest·프로브·게이트 **세 관문 전부 초록**인데 화면의 헤지비용 열이
+# 전 통화 `—` 로 비었다. `alloc.json` 에는 이미 필수 키 검사가 있었는데
+# `hedge.json`·`risk.json` 에는 없었다.
+#
+# 여기 적는 것은 **화면이 이름으로 집는 키**뿐이다. 값의 타당성(범위·부호)은
+# 게이트의 일이 아니다 — 그건 pytest 와 프로브가 본다.
+REQUIRED_KEYS = {
+    "hedge": ["asof", "default_tenor_m", "matrix", "curves", "backtest",
+              "cost_hist_curve", "cost_hist_usd", "cost_stats", "mtm", "sim",
+              "acct_model", "limits"],
+    "alloc": ["asof", "sources", "sets", "rates", "cost_options", "anchor_ref",
+              "defaults", "boot", "checks", "acct_model", "limits"],
+    "risk":  ["asof", "grade_bands", "howto", "layers", "weights",
+              "validation", "factors", "limits"],
+    "panel": ["asof", "freq", "t", "risk", "risk_meta", "vars",
+              "defaults", "n_weeks", "method"],
+}
+# 배열 페이로드의 **행 스키마** — 행 하나만 봐도 개명·누락이 드러난다.
+REQUIRED_ROW_KEYS = {
+    ("hedge", "matrix"): ["c", "name", "vol_e", "mvh", "corr",
+                          "cost_12m", "cost_curve", "src", "active", "sample"],
+}
+# 중첩 객체의 필수 키 — 화면 부제가 이 값들로 자기 표본을 밝힌다(하드코딩 금지).
+REQUIRED_NESTED_KEYS = {
+    ("hedge", "cost_stats"): ["mean", "now", "min", "series", "start", "end",
+                              "n_months", "years"],
+    ("hedge", "mtm"): ["sigma_ds_3m", "worst_ds", "worst_date", "series",
+                       "start", "end", "n_months"],
+    ("hedge", "cost_read"): ["label", "window", "asof"],
+}
 
 _errors: list[str] = []
 _notes: list[str] = []
@@ -113,6 +148,42 @@ def check(out: Path, max_warnings: int, min_series: int, dashboard: Path | None)
             fail(f"시리즈 {n}개 < 바닥 {min_series}개 — 업로드가 깨졌을 수 있습니다")
         else:
             note(f"시리즈 {n}개 (바닥 {min_series})")
+
+    checked = 0
+    for name, keys in REQUIRED_KEYS.items():
+        obj = payloads.get(name)
+        if obj is None:
+            continue                       # 파일 누락은 위에서 이미 실패로 잡았다
+        if not isinstance(obj, dict):
+            fail(f"{name}.json: 최상위가 객체가 아닙니다 ({type(obj).__name__})")
+            continue
+        gone = [k for k in keys if k not in obj]
+        if gone:
+            fail(f"{name}.json: 필수 키 없음 — {', '.join(gone)} "
+                 f"(계산이 부분 실패했거나 필드명이 바뀌었습니다. "
+                 f"화면이 이 이름으로 집으므로 해당 카드가 빈 채로 배포됩니다)")
+        else:
+            checked += 1
+    for (name, arr), keys in REQUIRED_ROW_KEYS.items():
+        rows = (payloads.get(name) or {}).get(arr)
+        if not isinstance(rows, list):
+            continue                       # 위 REQUIRED_KEYS 가 이미 잡는다
+        if not rows:
+            fail(f"{name}.json: {arr} 가 비었습니다")
+            continue
+        gone = sorted({k for r in rows if isinstance(r, dict) for k in keys if k not in r})
+        if gone:
+            fail(f"{name}.json: {arr}[] 행에 필수 키 없음 — {', '.join(gone)}")
+    for (name, sub), keys in REQUIRED_NESTED_KEYS.items():
+        obj = (payloads.get(name) or {}).get(sub)
+        if not isinstance(obj, dict):
+            continue                       # 위 REQUIRED_KEYS 가 이미 잡는다
+        gone = [k for k in keys if k not in obj]
+        if gone:
+            fail(f"{name}.json: {sub} 에 필수 키 없음 — {', '.join(gone)} "
+                 f"(화면 부제가 이 값으로 자기 표본을 밝힙니다)")
+    if checked:
+        note(f"계산 페이로드 필수 키 {checked}/{len(REQUIRED_KEYS)}개 확인")
 
     seen = [0]
     for name, obj in payloads.items():

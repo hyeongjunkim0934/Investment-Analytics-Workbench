@@ -35,6 +35,7 @@ import math
 import numpy as np
 import pandas as pd
 
+import common
 import hedge as H
 
 # ---------------------------------------------------------------------------
@@ -161,14 +162,16 @@ def cost_options(S, rates, tenor_m) -> list[dict]:
     여기서는 비용 '수준'의 대안 읽기로만 제시한다(달러 실측과 상관 0.89 검증).
     """
     opts = []
-    hp = {m: S.get(f"info:USDKRW_HP_{m}") for m in ("3M", "6M", "12M")}
-    if all(v is not None and len(v.dropna()) for v in hp.values()):
-        hp = {m: v.dropna() for m, v in hp.items()}
-        curve = {m: round(float(v.iloc[-1]), 2) for m, v in hp.items()}
-        last = max(v.index[-1] for v in hp.values())
+    # HP 를 읽는 자리는 `common.hp_curve` **하나**다 — hedge.py 도 같은 함수를 부른다.
+    # 두 모듈이 각자 읽던 시절에는 산식이 우연히 같아 −0.975% 로 일치했을 뿐이고,
+    # 한쪽만 고치면 같은 화면의 두 숫자가 조용히 갈라진다.
+    hp = common.hp_curve(S, "USD")
+    if hp is not None:
+        curve = hp["curve"]
         opts.append({"key": "hp", "label": "실측 헤지 포인트(HP) — 가중평균 만기로 보간",
                      "v": hp_cost_at(curve, tenor_m), "curve": curve,
-                     "src": (f"info:USDKRW_HP_3M/6M/12M ({last:%Y-%m-%d}) · "
+                     "src": (f"info:USDKRW_HP_3M/6M/12M ({hp['asof']:%Y-%m-%d}, "
+                             f"{common.hp_read_label()}) · "
                              "12개월 초과 만기는 12M 값 고정(호가 없음)")})
     smb_m = S["info:SMB_USDKRW_3M"].dropna().resample("ME").last().dropna()
     opts += [

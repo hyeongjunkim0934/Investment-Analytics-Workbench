@@ -38,10 +38,23 @@ const FILES = ["meta", "overview", "risk", "events", "panel", "hedge", "alloc",
 
 /* ---------------- theme & palette ---------------- */
 
+/* ══ 테마는 축이 둘이다 (2026-08-04 사용자 지시) ═══════════════════════════
+   ① chrome — 대시보드 섹션·카드·헤더·차트 색.  <html data-theme>
+      **기본값 다크.** 속성이 없으면 다크, 사용자가 토글하면 "light".
+      localStorage 'iaw-theme' 에 영구 저장. prefers-color-scheme 은 보지 않는다.
+   ② scene  — 마을 지도의 낮/밤(스틸·루프영상·전환영상·SVG fx·구역 라벨). <html data-scene>
+      **저장하지 않는다** — 15초마다 뒤집히는 값이라 저장하면 쓰기 폭주이고,
+      "저장값 없으면 …" 분기가 무의미해진다. 페이지 수명 동안만 사는 런타임 상태다.
+
+   예전에는 data-theme 하나가 둘 다 몰았다. 그래서 대시보드를 어둡게 하면 마을이
+   밤이 됐고, 마을을 밤으로 보려면 대시보드까지 어두워졌다. 축을 쪼갠 이유가 그것이다.
+   ══════════════════════════════════════════════════════════════════════ */
 function currentTheme() {
-  const t = document.documentElement.getAttribute("data-theme");
-  if (t) return t;
-  return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+}
+
+function currentScene() {
+  return document.documentElement.getAttribute("data-scene") === "night" ? "night" : "day";
 }
 
 function cssVar(name) {
@@ -77,7 +90,10 @@ function el(tag, attrs = {}, ...children) {
     else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
     else n.setAttribute(k, v);
   }
-  for (const c of children) {
+  /* 배열은 펼친다 — `el("td", {}, rows.map(...))` 를 쓰면 예전에는 자식이
+     `String(배열)` 로 뭉개져 화면에 "[object HTMLSpanElement],..." 가 찍혔다.
+     오류가 안 나고 글자만 이상해지는 종류라 눈으로 잡기 전까지 살아남는다. */
+  for (const c of children.flat(Infinity)) {
     if (c == null) continue;
     n.append(c.nodeType ? c : document.createTextNode(String(c)));
   }
@@ -557,39 +573,6 @@ function renderFX() {
     });
   });
 
-  /* 이 두 카드의 숫자는 환헤지 화면 「통화별 한눈에 보기」의 헤지비용 열과 **같은 값**이다
-     (둘 다 info:*KRW_HP_* 실측 — 달러 12개월 값이 양쪽에서 일치하는 것을 실측 확인).
-     예전에는 한쪽은 "헤지비용", 한쪽은 "환헤지 프리미엄" 이라 불러 같은 숫자가 두 이름으로
-     돌아다녔고 부호 규약도 표에 없었으며 두 화면을 잇는 링크가 하나도 없었다.
-     이름은 파이프라인 어휘(「헤지비용」)로 통일하고, 서로 링크를 건다. */
-  tsCard($("#card-hedge-ts"), d.hedge_ts, {
-    title: "달러/원 스왑포인트(= 헤지비용) 추이", sub: `연율 %, ${COST_SIGN_KEY}`, unit: "%", dec: 2,
-  });
-
-  const hcard = $("#card-hedge-table");
-  hcard.textContent = "";
-  hcard.append(el("div", { class: "card-head" },
-    el("span", { class: "card-title" }, "통화별 스왑포인트 = 헤지비용 (연율)"),
-    el("span", { class: "card-sub" },
-      `${COST_SIGN_KEY} · 최신 호가 ${(d.hedge && d.hedge[0] && d.hedge[0].date) || ""}`)));
-  const rows = (d.hedge || []).map((h) =>
-    el("tr", {}, el("td", {}, h.label),
-      ...["3M", "6M", "12M"].map((k) =>
-        el("td", { class: "num" }, h[k] == null ? "–" : fmtCost(+(+h[k]).toFixed(2))))));
-  /* 부호 열쇠는 바로 위 카드 부제에 한 번만 — 세 열에 되풀이하면 표가 글자로 덮인다.
-     「비용인데 부호가 반대」인 함정을 실제로 판단에 쓰는 곳은 환헤지 화면이라
-     그쪽 표에서는 셀마다 받음/지불을 적는다. */
-  hcard.append(el("div", { class: "table-wrap" },
-    el("table", { class: "mini-table" },
-      el("thead", {}, el("tr", {}, el("th", {}, "통화"),
-        ...["3개월", "6개월", "12개월"].map((L) =>
-          el("th", {}, L, el("small", { class: "th-sub" }, "연 %"))))),
-      el("tbody", {}, ...rows))));
-  hcard.append(el("div", { class: "card-sub", style: "margin-top:6px;line-height:1.7" },
-    "이 12개월 값이 ", el("a", { href: "#hedge" }, "환헤지 화면"),
-    " 「통화별 한눈에 보기」의 헤지비용 열과 같은 숫자입니다. 이 화면은 ",
-    el("b", {}, "호가가 지금 어디에 있나"), " 를, 환헤지 화면은 ",
-    el("b", {}, "그래서 헤지비율을 얼마로 둘까"), " 를 답합니다."));
 }
 
 function renderInflation() {
@@ -1352,7 +1335,7 @@ function underlyingSection(hash) {
 const VILLAGE_EXTS = ["webp", "png", "jpg"];
 
 function villageImgUrl(ext = VILLAGE_EXTS[0]) {
-  return `assets/village-${currentTheme() === "dark" ? "night" : "day"}.${ext}`;
+  return `assets/village-${currentScene()}.${ext}`;
 }
 
 /* ---- 앰비언트 레이어 — 정적 지도 위에 코드로 얹는 "살아 있는 마을" ----------------
@@ -1486,14 +1469,14 @@ function buildVillageFx(frame) {
    생성 레시피는 dashboard/assets/README.md. 파일이 없거나 재생이 거부되면 조용히
    물러나 스틸 + SVG 모션이 그대로 남는다(영상은 장식이지 필수가 아니다). 재생 중에는
    .has-video 가 SVG 모션을 끈다 — 영상 자체에 새·구름·행인·연기 모션이 들어 있다. */
-const IDLE_VIDEO = { dark: "assets/village-night-loop", light: "assets/village-day-loop" };
+const IDLE_VIDEO = { night: "assets/village-night-loop", day: "assets/village-day-loop" };
 const IDLE_VIDEO_EXTS = ["webm", "mp4"];   // webm(VP9) 우선, 못 읽는 브라우저는 mp4(H.264)로
 
 function mountVillageVideo(frame) {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   if (!frame || !frame.clientWidth) return;              // ≤720px 에서는 지도째 숨김 — 마운트 안 함
   if (frame.querySelector(".village-video[data-transition]")) return;  // 전환 연출 중 — 끝나면 다시 불린다
-  const base = IDLE_VIDEO[currentTheme() === "dark" ? "dark" : "light"];
+  const base = IDLE_VIDEO[currentScene()];
   const existing = frame.querySelector(".village-video[data-idle]");
   if (existing) {
     if (existing.dataset.base === base) { existing.play().catch(() => {}); return; }
@@ -1548,14 +1531,17 @@ function mountVillageVideo(frame) {
    바꾼 뒤, 끝나면 영상을 걷는다 — 어느 시점에 실패해도 즉시 전환으로 떨어질 뿐이다.
    루프가 필요 없으므로 이음새 문제도 없다. dusk = 낮→밤, dawn = 밤→낮(역재생 인코딩본).
    reduced-motion 사용자는 영상 없이 즉시 전환한다. */
-const THEME_VIDEO = { dark: "assets/village-dusk.mp4", light: "assets/village-dawn.mp4" };
-const THEME_VIDEO_RATE = 2.5;            // 원본 10초 → 4초 연출
+/* dusk = 낮→밤, dawn = 밤→낮(역재생 인코딩본). **scene 축이다** — 정지 지도 2장이
+   이 영상의 첫/끝 프레임이라, chrome 에 붙이면 "대시보드를 어둡게 했더니 해가 진다"는
+   모순이 생긴다. */
+const SCENE_VIDEO = { night: "assets/village-dusk.mp4", day: "assets/village-dawn.mp4" };
+const SCENE_VIDEO_RATE = 2.5;            // 원본 10초 → 4초 연출
 
-function preloadThemeVideos() {
+function preloadSceneVideos() {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  if (preloadThemeVideos.done) return;
-  preloadThemeVideos.done = true;
-  Object.values(THEME_VIDEO).forEach((src) => {
+  if (preloadSceneVideos.done) return;
+  preloadSceneVideos.done = true;
+  Object.values(SCENE_VIDEO).forEach((src) => {
     const v = document.createElement("video");
     v.preload = "auto";
     v.muted = true;
@@ -1563,14 +1549,14 @@ function preloadThemeVideos() {
   });
 }
 
-function playThemeTransition(nextTheme, applyTheme) {
+function playSceneTransition(nextScene, applyScene) {
   const frame = $("#village-frame");
   const cinematic = frame && !$("#village").hidden && !$("#village-map").hidden &&
     !matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (!cinematic) { applyTheme(); return; }
+  if (!cinematic) { applyScene(); return; }
 
   /* 상시 루프를 걷어내고 전환 영상이 프레임을 덮는다. 끝나면(done) 새 테마의 루프를
-     다시 깐다 — applyTheme→renderAll→renderVillage 경로의 mountVillageVideo 는
+     다시 깐다 — applyScene→renderVillage 경로의 mountVillageVideo 는
      data-transition 가드에 막히므로, 재마운트 책임은 여기 done 하나뿐이다. */
   frame.querySelectorAll(".village-video").forEach((n) => n.remove());
   const v = document.createElement("video");
@@ -1582,7 +1568,7 @@ function playThemeTransition(nextTheme, applyTheme) {
   v.setAttribute("playsinline", "");
   v.setAttribute("aria-hidden", "true");
   let applied = false;
-  const apply = () => { if (!applied) { applied = true; applyTheme(); } };
+  const apply = () => { if (!applied) { applied = true; applyScene(); } };
   const done = () => {
     apply();
     v.remove();
@@ -1598,8 +1584,8 @@ function playThemeTransition(nextTheme, applyTheme) {
   });
   v.addEventListener("ended", done);
   v.addEventListener("error", () => { clearTimeout(guard); done(); });
-  v.src = THEME_VIDEO[nextTheme === "dark" ? "dark" : "light"];
-  v.playbackRate = THEME_VIDEO_RATE;
+  v.src = SCENE_VIDEO[nextScene === "night" ? "night" : "day"];
+  v.playbackRate = SCENE_VIDEO_RATE;
   $("#village-map").after(v);
   v.play().catch(() => { clearTimeout(guard); done(); });
 }
@@ -1608,6 +1594,10 @@ function playThemeTransition(nextTheme, applyTheme) {
    reduced-motion 이거나 지도가 없으면 연출 없이 바로 이동한다. */
 function enterZone(z, targetHash) {
   const frame = $("#village-frame");
+  /* 확대 연출(520ms)이 도는 동안 자동 순환이 끼어들면 확대 중인 지도가 통째로
+     낮↔밤 전환 영상에 덮인다. 해시가 바뀌면 routeView 가 어차피 멈추지만
+     그건 연출이 끝난 뒤라 늦다. */
+  stopSceneCycle();
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (reduced || $("#village-map").hidden || frame.classList.contains("vz-enter")) {
     location.hash = targetHash;
@@ -1647,7 +1637,7 @@ function renderVillage() {
     frame.classList.remove("has-video");
     $("#village-missing").hidden = false;
   };
-  img.onload = () => { buildVillageFx(frame); preloadThemeVideos(); };
+  img.onload = () => { buildVillageFx(frame); preloadSceneVideos(); };
   img.src = villageImgUrl();
   /* onload 안이 아니라 여기서 직접 마운트한다 — 같은 src 재할당은 브라우저에 따라
      load 이벤트를 다시 안 줄 수 있고, 마을로 돌아올 때마다 루프가 다시 돌아야 한다
@@ -1655,7 +1645,7 @@ function renderVillage() {
   mountVillageVideo(frame);
   /* 같은 이유로 폴백 SVG 도 캐시 경로에서 한 번 더 챙긴다 — 이미 붙어 있으면
      buildVillageFx 가 즉시 반환한다(멱등). 영상이 뜨면 어차피 .has-video 가 가린다. */
-  if (img.complete && img.naturalWidth) { buildVillageFx(frame); preloadThemeVideos(); }
+  if (img.complete && img.naturalWidth) { buildVillageFx(frame); preloadSceneVideos(); }
 
   VILLAGE_ZONES.forEach((z) => {
     const btn = el("button", {
@@ -1747,13 +1737,19 @@ function routeView() {
   });
   if (showVillage) {
     renderVillage();
+    /* 자동 순환은 마을이 보일 때만 돈다. hidden 을 위에서 이미 풀었으므로
+       sceneCycleAllowed() 의 ②·⑤(가시성·폭) 판정이 여기서 유효하다. */
+    restartSceneCycle();
   } else {
     /* 섹션으로 나가 있는 동안 상시 루프의 디코딩을 세운다 — 돌아오면
        renderVillage → mountVillageVideo 가 같은 요소를 다시 play 한다. */
     const iv = $("#village-frame video[data-idle]");
     if (iv) iv.pause();
+    stopSceneCycle();
     ensureVillageBack(sec);
   }
+  /* 토글 버튼의 의미가 화면에 따라 바뀐다(마을=장면, 섹션=명암) — 라벨을 같이 돌린다. */
+  syncThemeButton();
   window.scrollTo(0, 0);
 }
 
@@ -1778,6 +1774,9 @@ function bindGate() {
     if (fnv1a(val) === GATE_HASH) {
       localStorage.setItem(GATE_KEY, "1");
       gate.hidden = true;
+      /* 관문이 떠 있는 동안은 sceneCycleAllowed() ③ 이 막고 있었다.
+         통과한 지금이 자동 순환의 실제 시작점이다 — routeView 는 이미 지나갔다. */
+      restartSceneCycle();
     } else {
       $("#gate-err").hidden = false;
       $("#gate-pw").select();
@@ -2531,6 +2530,18 @@ function makeRatioChart(box, opts) {
   return trackChart(u, ro);
 }
 
+/* 매트릭스 표본 칸. 변동성 표본과 적합(MVH·상관) 표본이 다른 행에는 **둘 다** 적는다 —
+   같으면 한 줄로 줄인다. 뭉뚱그려 한 구간만 적으면 "같은 표본"으로 읽힌다. */
+function sampleTxt(sample) {
+  if (!sample) return "—";
+  const f = (x) => (x ? `${x.start}~${x.end} (${x.n})` : null);
+  const vol = f(sample.vol), fit = f(sample.fit);
+  if (!vol) return "—";
+  if (!fit) return `변동성 ${vol}`;
+  if (vol === fit) return vol;
+  return el("span", {}, `변동성 ${vol}`, el("br"), `MVH·상관 ${fit}`);
+}
+
 function renderHedge() {
   const H2 = DATA.hedge;
   if (!$("#hedge")) return;
@@ -2595,19 +2606,25 @@ function renderHedge() {
       "· 헤지하면 ", el("b", { class: "neg" }, "내는 통화"), " — ", listOf(paid), el("br"),
       "· 읽는 법 — 금액 × 이 비율 = 1년치 금액. ",
       el("b", {}, "다른 만기에는 다른 값입니다"), " — 3·6·12개월 커브와 만기 보간은 ",
-      el("a", { href: "#hedge-sim" }, "시뮬레이터"), " 와 ", el("a", { href: "#fx" }, "FX 화면"), " 에 있습니다.");
+      el("a", { href: "#hedge-sim" }, "시뮬레이터"), " 와 아래 표·커브 카드에 있습니다.");
     lead.append(box);
   }
 
+  /* 읽는 법 문자열 — 파이프라인 값. 없으면(옛 payload) 문장을 짧게 줄인다. */
+  const costRead = (H2.cost_read && H2.cost_read.label) || "실측 커브";
+
   const mx = $("#hedge-matrix");
   mx.textContent = "";
-  /* 기준일이 하나가 아니다 — 월간 통계(변동성·MVH·상관)와 최신 호가(헤지비용)와 환율
+  /* 기준일이 하나가 아니다 — 월간 통계(변동성·MVH·상관)와 헤지비용 커브와 환율
      최종 관측일이 서로 다른 날짜다. "기준일 …" 한 줄로 뭉뚱그리면 헤지비용 열이 그날
-     값인 줄로 읽힌다. 셋을 그대로 적는다. */
+     값인 줄로 읽힌다. 셋을 그대로 적는다.
+     읽는 법(최신 호가 / N영업일 중앙값)은 **파이프라인이 정해서 실어 준다** — 화면에
+     박아 두면 산식을 되돌려도 문장만 남는다. */
   mx.append(el("div", { class: "card-head" },
     el("span", { class: "card-title" }, "통화별 한눈에 보기 (7통화)"),
     el("span", { class: "card-sub" },
-      `변동성·MVH·상관 = 월간 수익률(완성된 달까지) · 헤지비용 = 최신 호가 · 환율 최종 관측 ${H2.asof}`)));
+      `변동성·MVH·상관 = 월간 수익률(완성된 달까지) · 헤지비용 = ${costRead}`
+      + ` · 환율 최종 관측 ${H2.asof}`)));
   const t = el("table", { class: "mini-table" },
     el("tr", {},
       el("th", {}, "통화"),
@@ -2616,9 +2633,19 @@ function renderHedge() {
       el("th", {}, "환-채권 상관", el("small", { class: "th-sub" }, "−면 환쿠션 있음")),
       /* 부호 열쇠를 **열 제목에** 붙인다. 예전에는 이 규약이 표에서 한참 위의 회색 한 줄
          ("비용 양수 = 프리미엄 수취")에만 있었고, 그 문장 자체가 "비용인데 양수면 받는다"는
-         모순 표현이었다. 만기도 열 제목이 스스로 들고 있어야 한다(다른 만기에는 다른 값). */
-      el("th", {}, "헤지비용 12개월", el("small", { class: "th-sub" }, `연 %, ${COST_SIGN_KEY}`)),
-      el("th", { style: "text-align:left" }, "근거")));
+         모순 표현이었다. 만기도 열 제목이 스스로 들고 있어야 한다(다른 만기에는 다른 값).
+         2026-08-04 이관: 예전에 FX 화면에 따로 있던 3·6·12개월 표를 여기로 흡수했다.
+         12M 열은 그 표와 **완전히 같은 숫자**였으므로(실측 4/4) 한 화면에 두 번 나올
+         이유가 없고, 흡수하면서 캐나다달러·파운드의 3/6M 이 처음으로 화면에 나온다. */
+      el("th", {}, "헤지비용 3개월", el("small", { class: "th-sub" }, `연 %, ${COST_SIGN_KEY}`)),
+      el("th", {}, "6개월", el("small", { class: "th-sub" }, "연 %")),
+      el("th", {}, "12개월", el("small", { class: "th-sub" }, "연 %")),
+      el("th", { style: "text-align:left" }, "근거"),
+      /* 표본을 통일하지 않고 게시한다 — 같은 행 안에서도 열마다 표본이 다르다.
+         `vol_e` 는 조인 전에, `mvh`/`corr` 은 채권 프록시와 조인한 뒤에 계산되므로
+         짧은 쪽에 맞춰 잘린다(실측: EUR·JPY 305 vs 294). 짧은 쪽에 통일하면 변동성이
+         11개월치를 버리고, 긴 쪽에 맞출 방법은 없다. */
+      el("th", { style: "text-align:left" }, "표본", el("small", { class: "th-sub" }, "월수"))));
   H2.matrix.forEach((m) => {
     /* 비활성 통화를 opacity 로 흐리게 하던 것을 색으로 바꾼다. pristine 빌드 실측 결과
        opacity .5 는 본문 대비를 3.67:1 로 떨어뜨려 WCAG AA(4.5:1) 미달이었다(활성 행 19.2:1).
@@ -2629,10 +2656,13 @@ function renderHedge() {
       el("td", { class: "num" }, `${fmtNum(m.vol_e, 1)}%`),
       el("td", { class: "num" }, m.mvh != null ? el("b", {}, `${m.mvh}%`) : "—"),
       el("td", { class: "num" }, m.corr != null ? String(m.corr) : "—"),
+      el("td", { class: "num" }, fmtCost(m.cost_curve ? m.cost_curve["3M"] : null, true)),
+      el("td", { class: "num" }, fmtCost(m.cost_curve ? m.cost_curve["6M"] : null)),
       el("td", { class: "num" }, fmtCost(m.cost_12m, true)),
       el("td", { style: "text-align:left;font-size:11.5px" },
         off ? "헤지비용·단기금리 데이터 확보 전 — 계산 대상 아님"
-            : `${m.src}${m.bond_kind ? " · 채권 " + m.bond_kind : ""}`)));
+            : `${m.src}${m.bond_kind ? " · 채권 " + m.bond_kind : ""}`),
+      el("td", { style: "text-align:left;font-size:11.5px" }, sampleTxt(m.sample))));
   });
   mx.append(wrapTable(t));
   mx.append(el("div", { class: "card-sub", style: "margin-top:8px;line-height:1.7" },
@@ -2641,7 +2671,10 @@ function renderHedge() {
     el("b", {}, "채권 MVH"), ": 경제 관점에서 변동이 가장 작아지는 헤지비율(100%보다 낮으면 그만큼 환율이 완충해 준다는 뜻). ",
     el("b", {}, "환-채권 상관"), ": 음수면 환율이 오를 때 그 나라 채권 수익이 낮아져 서로 상쇄된다는 뜻이고, MVH 가 100% 아래로 내려가는 이유입니다. ",
     el("b", {}, "헤지비용"), `: 헤지할 때 해마다 주고받는 연율 %, ${COST_SIGN_KEY}. `,
-    "같은 값의 일별 시계열과 3·6·12개월 커브는 ", el("a", { href: "#fx" }, "FX 화면"), "에 있습니다."));
+    el("b", {}, "표본"), ": 이 행의 통계를 뽑은 구간과 월 수입니다. ",
+    "변동성은 환율만 쓰므로 길고, MVH·상관은 채권 프록시와 겹치는 구간만 쓰므로 짧습니다 ",
+    "— 두 값이 다른 행에는 둘 다 적었습니다. ",
+    "달러 3·6·12개월의 일별 이력은 아래 ", el("b", {}, "「헤지비용 커브 추이」"), " 카드에 있습니다."));
 
   /* 두 관점 설명은 원래 9개 용어가 든 231자 산문 한 덩어리였다. 같은 내용을 4행 비교표로
      세운다 — "나는 어느 쪽을 봐야 하나"에 줄 하나로 답한다. 위치는 표 **뒤**다: 찾아온
@@ -2663,7 +2696,7 @@ function renderHedge() {
   const terms = el("details", { class: "terms" });
   terms.append(el("summary", {}, "이 화면에 나오는 말 다섯 개 (펼쳐 보기)"));
   [["헤지비율", "외화 자산 중 선물환·스왑으로 환위험을 덮은 비율. 0% = 환율에 그대로 노출, 100% = 환율이 움직여도 원화 손익은 그대로."],
-   ["헤지비용 (= 스왑레이트 = 스왑포인트)", `헤지할 때 해마다 주고받는 연율 %. ${COST_SIGN_KEY} — 이름은 '비용'이지만 부호가 양수면 받습니다. FX 화면·자산배분·시뮬레이터도 같은 부호 규약입니다.`],
+   ["헤지비용 (= 스왑레이트 = 스왑포인트)", `헤지할 때 해마다 주고받는 연율 %. ${COST_SIGN_KEY} — 이름은 '비용'이지만 부호가 양수면 받습니다. 자산배분·시뮬레이터도 같은 부호 규약입니다.`],
    ["MVH (최소분산 헤지비율)", "경제 관점에서 변동성이 가장 작아지는 헤지비율. 산식은 1 + Cov(자산수익, 환율변화) ÷ Var(환율변화)."],
    ["스왑 MTM (평가손익)", "이미 체결한 스왑의 평가손익. 시장 스왑레이트가 오르면 평가손실입니다(민감도 = 잔존만기 τ = 만기 ÷ 2)."],
    ["장부가 비중", "보유 채권 중 만기보유로 분류돼 가격변동이 손익에 안 잡히는 비율. 회계 관점 계산에만 씁니다."],
@@ -2738,22 +2771,79 @@ function renderHedge() {
   const sgn = (x) => (x == null ? "—" : `${x > 0 ? "+" : ""}${fmtNum(x, 2)}%`);
   const costBox = cardScaffold(cost, {
     title: "달러 헤지비용 이력 — 3개월 스왑레이트(월말)",
-    sub: `${COST_SIGN_KEY} · 25년 평균 ${sgn(cs.mean)}`
+    /* 「25년 평균」은 **하드코딩이었다.** 표본이 늘거나 줄어도 문장이 25년에 멈춰
+       있으면 거짓이 된다 — 파이프라인이 실어 주는 표본 길이를 쓴다. */
+    sub: `${COST_SIGN_KEY} · ${cs.years ? cs.years + "년" : "장기"} 평균 ${sgn(cs.mean)}`
       + (nowYm ? ` · ${nowYm} ${sgn(cs.now)}` : "")
-      + (minYm ? ` · 가장 많이 낸 달 ${minYm} ${sgn(cs.min)}` : ""),
+      + (minYm ? ` · 가장 많이 낸 달 ${minYm} ${sgn(cs.min)}` : "")
+      + (cs.start ? ` · ${cs.series || "이력"} ${cs.start}~${cs.end} (${cs.n_months}개월)` : ""),
     csvName: "달러-헤지비용.csv",
     tableFn: tsTableFn(["헤지비용 3개월 스왑레이트(%)"], [ch.t, ch.v], 2),
   });
-  makeTimeChart(costBox, { labels: ["3개월 스왑레이트"], colors: [pal.series[0]],
-    data: [ch.t, ch.v], dec: 2, unit: "%", fill: true, height: 230 });
+  /* HP 3M(2024-10~)을 보조 계열로 겹친다 — "같은 성격, 다른 계열"이라는 아래 문장을
+     그림이 증명한다. 추가 공개는 없다(같은 값이 바로 옆 커브 카드에 이미 있다). */
+  const hp3 = (H2.cost_hist_curve || {})["3M"];
+  const costGroups = [{ label: "3개월 스왑레이트(SMB, 월말)", t: ch.t, v: ch.v }];
+  if (hp3 && hp3.t && hp3.t.length) {
+    costGroups.push({ label: `HP 3개월(일별, ${costRead})`, t: hp3.t, v: hp3.v });
+  }
+  makeTimeChart(costBox, {
+    labels: costGroups.map((g) => g.label),
+    colors: costGroups.map((_, i) => pal.series[i === 0 ? 0 : 3]),
+    data: joinSeries(costGroups), dec: 2, unit: "%",
+    fill: costGroups.length === 1, height: 230,
+  });
   /* 같은 화면에 「헤지비용」이 두 개 있고 값이 다르다 — 위 표는 인포맥스 실측 스왑포인트
-     (HP, 일별 최신 호가), 이 차트는 3개월 스왑레이트(SMB, 월말)다. 어느 쪽을 보고 있는지
+     (HP), 이 차트는 3개월 스왑레이트(SMB, 월말)다. 어느 쪽을 보고 있는지
      화면이 말해 주지 않으면 두 숫자가 충돌한다(실측: 달러 3M −1.15% vs 월말 −0.45%). */
   cost.append(el("div", { class: "card-sub", style: "margin-top:6px;line-height:1.7" },
-    "위 「통화별 한눈에 보기」의 헤지비용 열은 ", el("b", {}, "일별 스왑포인트 최신 호가"),
+    "위 「통화별 한눈에 보기」의 헤지비용 열은 ", el("b", {}, `일별 스왑포인트 ${costRead}`),
     " 이고, 이 차트는 ", el("b", {}, "3개월 스왑레이트 월말값"),
-    " 입니다 — 같은 성격의 값이지만 계열과 시점이 달라 숫자가 일치하지 않습니다. 일별 호가 추이는 ",
-    el("a", { href: "#fx" }, "FX 화면"), " 에 있습니다."));
+    " 입니다 — 같은 성격의 값이지만 계열과 시점이 달라 숫자가 일치하지 않습니다. ",
+    hp3 ? el("span", {}, "위 차트에 ", el("b", {}, "HP 3개월을 보조선으로 겹쳐"),
+      " 두 계열이 같이 움직인다는 것을 그림으로 확인할 수 있습니다 — ",
+      "겹치는 구간 421일에서 상관 0.9644, 평균차 +0.04%p(sd 0.13, 범위 −1.35~+0.70)입니다. ") : null,
+    "수준은 HP, 이력은 SMB 로 역할이 나뉩니다 — HP 는 2024-10 시작이라 이력이 없고, ",
+    "공분산의 스왑레이트 요인은 그래서 SMB(2001~)를 씁니다. 일별 호가 추이는 ",
+    el("b", {}, "옆의 「헤지비용 커브 추이」"), " 카드에 있습니다."));
+
+  /* ── 이관 카드(2026-08-04): 달러 헤지비용 3·6·12개월 일별 커브 ─────────────
+     예전에는 FX 화면에 "달러/원 스왑포인트 추이"로 있었다. 여기 있어야 하는 이유는
+     이 세 계열이 **시뮬레이터의 만기 보간(hedgeCostAt)이 쓰는 곡선의 원자료**이기
+     때문이다 — 시세가 아니라 "만기별 비용"이고, 그것은 이 화면의 질문 안에 있다.
+     payload 도 fx.json 에서 hedge.json 으로 옮겼다(같은 값이 두 JSON 에 실리면
+     새 이중 진실이고, DATA.fx 를 읽으면 fx.json 하나가 깨질 때 이 화면까지 빈다). */
+  const tsCardEl = $("#hedge-ts-card");
+  tsCardEl.textContent = "";
+  const CH = H2.cost_hist_curve || {};
+  const curveGroups = [["3M", "3개월"], ["6M", "6개월"], ["12M", "12개월"]]
+    .filter(([k]) => CH[k] && CH[k].t && CH[k].t.length)
+    .map(([k, label]) => ({ label, t: CH[k].t, v: CH[k].v }));
+  if (curveGroups.length) {
+    const cdata = joinSeries(curveGroups);
+    const cbox = cardScaffold(tsCardEl, {
+      title: "달러 헤지비용 커브 추이 (3·6·12개월)",
+      /* 만기를 모르면 그 조각을 통째로 뺀다 — "undefined개월" 을 내보내지 않는다.
+         이 화면의 다른 문장들도 같은 규약이다(tenorM 이 없으면 문장 자체를 뺀다). */
+      sub: `연율 %, ${COST_SIGN_KEY}`
+        + (H2.default_tenor_m ? ` · 시뮬레이터가 ${H2.default_tenor_m}개월을 보간할 때 쓰는 원자료` : ""),
+      csvName: "달러-헤지비용-커브.csv",
+      tableFn: tsTableFn(curveGroups.map((g) => g.label), cdata, 2),
+    });
+    makeTimeChart(cbox, {
+      labels: curveGroups.map((g) => g.label),
+      colors: curveGroups.map((_, i) => pal.series[i % 8]),
+      data: cdata, dec: 2, unit: "%", height: 230,
+    });
+    tsCardEl.append(el("div", { class: "card-sub", style: "margin-top:6px;line-height:1.7" },
+      "세 선이 벌어져 있으면 만기에 따라 비용이 크게 다르다는 뜻입니다 — ",
+      el("a", { href: "#hedge-sim" }, "시뮬레이터"),
+      H2.default_tenor_m
+        ? ` 는 이 커브 위에서 ${H2.default_tenor_m}개월을 보간하므로, 위 표의 12개월 값과 다른 숫자가 나옵니다.`
+        : " 는 이 커브 위에서 만기를 보간하므로, 위 표의 12개월 값과 다른 숫자가 나옵니다."));
+  } else {
+    tsCardEl.append(el("p", { class: "card-sub" }, "헤지비용 커브 이력을 불러오지 못했습니다."));
+  }
 
   const mtm = $("#hedge-mtm-card");
   mtm.textContent = "";
@@ -2762,7 +2852,8 @@ function renderHedge() {
   const worstYm = String(MTM.worst_date || "").slice(0, 7);
   mtm.append(el("div", { class: "card-head" },
     el("span", { class: "card-title" }, "스왑을 몇 개월짜리로 굴릴 것인가 — 스왑 MTM"),
-    el("span", { class: "card-sub" }, "이미 체결한 스왑의 평가손익 — 회계 손익에 그대로 잡힙니다")));
+    el("span", { class: "card-sub" }, "이미 체결한 스왑의 평가손익 — 회계 손익에 그대로 잡힙니다"
+      + (MTM.start ? ` · ${MTM.series || "표본"} ${MTM.start}~${MTM.end} (${MTM.n_months}개월)` : ""))));
   /* 부호가 이 표의 전부다. MTM = 잔존만기 × (−Δ스왑레이트) 이므로 **스왑레이트가 오르는
      달에 평가손**이 난다(hedge.py 주석과 동일). 예전 표는 최악월을 부호 없는 양수로 찍어
      "손실"이라는 말이 두 줄 아래 회색 글씨에만 있었다 — 손실을 손실로 적는다. */
@@ -2813,8 +2904,46 @@ function renderHedge() {
 
 const HEDGE_LS_KEY = "iaw-hedge-input";
 
-function hedgeRows(H2) {
+/* 시뮬레이터 금액의 출처 3단 — 사용자 지시(2026-08-04) 3번 "시뮬레이터 기본금액 연결".
+   ① 표에 직접 입력한 값  ② 총 운용자산 × 자산배분 화면의 비중  ③ 예시값.
+   ②가 왜 총자산 한 칸인가: `iaw-alloc` 스키마에는 **금액 필드가 하나도 없다**(비중 %·
+   밴드·헤지비율 총계뿐). 통화별 구성 분해는 §7.3 미구현분이라 이번 범위를 넘는다.
+   총자산 하나만 있으면 해외채권·해외주식 비중과 곱해 달러 금액을 유도할 수 있고,
+   그것이 지금 하드코딩된 5000/3000 이 하던 일 전부다. */
+const AMT_SRC = { input: "우리 값", derived: "자산배분에서 유도", sample: "예시값" };
+
+/* `iaw-alloc` 은 **읽기만** 한다. allocSaveState() 가 저장 시 state 전체를 덮어쓰므로,
+   hedge 가 alloc 에 쓰면 자산배분 화면의 다음 저장에 조용히 지워진다. */
+function allocMixReadOnly() {
+  try { return (JSON.parse(localStorage.getItem(ALLOC_LS_KEY)) || {}).mix_acct || null; }
+  catch { return null; }
+}
+
+/* 총 운용자산(억원) — hedge 자신의 저장소에만 둔다(스키마는 추가만 하므로 하위 호환). */
+function hedgeTotalAum(saved) {
+  const v = saved && +saved.total_aum;
+  return isFinite(v) && v > 0 ? v : null;
+}
+
+function hedgeRows(H2, saved) {
   const rows = [];
+  const aum = hedgeTotalAum(saved);
+  const mix = aum ? allocMixReadOnly() : null;
+  /* 유도 매핑 — 통화 구성 정보가 없으므로 **달러 두 줄만** 유도한다.
+     장부가 해외채권 + 시가 해외채권 → USD_b, 해외주식 → USD_e. */
+  const pct = (...keys) => {
+    if (!mix) return null;
+    const vals = keys.map((k) => +mix[k]).filter((x) => isFinite(x));
+    return vals.length === keys.length ? vals.reduce((a, b) => a + b, 0) : null;
+  };
+  const derive = (...keys) => {
+    const w = pct(...keys);
+    return w == null ? null : Math.round(aum * w / 100);
+  };
+  const pick = (derived, sample) => (derived != null
+    ? { amt: derived, src: AMT_SRC.derived }
+    : { amt: sample, src: AMT_SRC.sample });
+
   /* 주식 참고치는 곡선의 최소점에서 뽑는다 — 예전의 "경제 10~30%" 는 산식이 만들어 낸 수가
      아니었다(실측: 10% 지점은 최소점보다 변동성이 0.20%p 높다). 곡선이 없으면 아예 안 적는다. */
   const eq = (H2.curves || {}).equity;
@@ -2827,14 +2956,18 @@ function hedgeRows(H2) {
   H2.matrix.forEach((m) => {
     if (m.c === "USD") {
       rows.push({ id: "USD_b", cur: "USD", kind: "bond", name: "달러 — 채권",
-                  ref: `경제 ${m.mvh}% · 회계 100%`, amt: 5000, book: 70, h: 90 });
+                  ref: `경제 ${m.mvh}% · 회계 100%`, book: 70, h: 90,
+                  ...pick(derive("장부가 해외채권", "시가 해외채권"), 5000) });
       rows.push({ id: "USD_e", cur: "USD", kind: "eq", name: "달러 — 해외주식(ACWI)",
                   ref: eqMinH == null ? "경제 —" : `경제 ${eqMinH}% (변동성 최소)`,
-                  amt: 3000, book: null, h: 30 });
+                  book: null, h: 30,
+                  ...pick(derive("해외주식"), 3000) });
     } else {
+      /* 통화 구성 정보가 없어 유도하지 않는다 — 0 으로 두고 사용자가 넣는다.
+         (예전에는 `amt: m.active ? 0 : 0` 이라는 죽은 삼항이 있었다.) */
       rows.push({ id: m.c + "_b", cur: m.c, kind: "bond", name: `${m.name} — 채권`,
                   ref: m.active ? `경제 ${m.mvh}% · 회계 100%` : "데이터 확보 전",
-                  amt: m.active ? 0 : 0, book: 100, h: 100, dis: !m.active });
+                  amt: 0, src: AMT_SRC.sample, book: 100, h: 100, dis: !m.active });
     }
   });
   return rows;
@@ -2867,13 +3000,43 @@ function openHedgeSim() {
     try { return JSON.parse(localStorage.getItem(HEDGE_LS_KEY)) || {}; }
     catch { return {}; }
   })();
-  const rows = hedgeRows(H2).map((r) => ({ ...r, ...(saved.rows && saved.rows[r.id]) }));
+  const rows = hedgeRows(H2, saved).map((r) => {
+    const mine = saved.rows && saved.rows[r.id];
+    /* 표에 금액을 직접 넣었으면 그것이 이긴다 — 배지도 함께 바뀌어야 한다.
+       배지와 실제 쓰인 값의 출처가 어긋나면 배지가 거짓말이 된다. */
+    const amtGiven = mine && mine.amt != null;
+    return { ...r, ...mine, src: amtGiven ? AMT_SRC.input : r.src };
+  });
   const tenor0 = saved.tenor || H2.default_tenor_m || 9;
+  const aum0 = hedgeTotalAum(saved);
 
   const panel = el("div", { class: "card" });
   panel.append(el("div", { class: "card-head" },
     el("span", { class: "card-title" }, "① 우리 숫자를 넣습니다"),
     el("span", { class: "card-sub" }, "금액 = 억원 · 장부가 비중 = 채권 중 만기보유 비율(회계 관점 계산에만 씀) · 파란 글씨 = 모델 참고치")));
+  /* 총 운용자산 한 칸 — 자산배분 화면의 비중과 곱해 달러 두 줄의 초기값을 유도한다.
+     통화별 금액은 지금처럼 표에서 직접 넣는다(§7.3 통화 구성 분해는 미구현). */
+  const aumInput = el("input", { type: "number", id: "hg-aum", min: "0", step: "100",
+                                 value: aum0 == null ? "" : String(aum0),
+                                 placeholder: "예: 20000",
+                                 "aria-label": "총 운용자산(억원)" });
+  const aumNote = el("span", { style: "color:var(--ink-3);font-size:12px" });
+  const setAumNote = () => {
+    const mix = allocMixReadOnly();
+    aumNote.textContent = !aumInput.value
+      ? "— 넣으면 아래 달러 두 줄의 금액을 자산배분 화면의 비중으로 유도합니다(빈칸이면 예시값)."
+      : mix
+        ? "— 자산배분 화면에 저장된 비중으로 달러 채권·주식 금액을 유도했습니다. 표에서 직접 고치면 그 값이 이깁니다."
+        : "— 자산배분 화면에서 비중을 먼저 저장해야 유도됩니다. 지금은 예시값입니다.";
+  };
+  setAumNote();
+  /* 클래스를 `tenor-row` 와 나눈다 — 같은 줄 모양이지만 다른 입력이고,
+     프로브·테스트가 `.tenor-row` 로 만기 줄을 집기 때문이다(합치면 이 줄이 먼저
+     잡혀 만기 설명 검사가 엉뚱한 문장을 본다 — 실제로 그렇게 깨졌다). */
+  panel.append(el("div", { class: "tenor-row aum-row" },
+    el("b", {}, "총 운용자산"), aumInput, "억원", aumNote));
+  panel.append(el("p", { class: "card-sub", style: "margin:4px 0 10px" },
+    "입력값은 이 브라우저에만 저장되며 서버로 전송되지 않습니다 — 이 페이지는 정적 호스팅이라 보낼 상대가 없습니다."));
   /* 헤지비용 열의 제목은 **지금 만기**를 스스로 들고 있어야 한다. 기본 만기와 매트릭스의
      12개월은 다른 값이므로(엔 9개월 +2.36% vs 12개월 +2.30%), 만기를 밝히지 않은 문장은
      같은 통화가 두 숫자로 보이게 만든다. 만기 입력이 바뀌면 이 제목도 같이 바뀐다. */
@@ -2906,7 +3069,9 @@ function openHedgeSim() {
     if (r.dis) { amt.disabled = true; if (book) book.disabled = true; slider.disabled = true; }
     inputs[r.id] = { amt, book, slider, hlbl, costCell, carryCell, cfg: r };
     tr.append(
-      el("td", {}, r.name, el("span", { class: "refbadge" }, r.ref)),
+      el("td", {}, r.name, el("span", { class: "refbadge" }, r.ref),
+        /* 이 금액이 어디서 왔는지 — 「모든 숫자는 그 자리에서 한 줄로 설명한다」 */
+        el("span", { class: "amtbadge", id: `hg-s-${r.id}` }, r.src || AMT_SRC.sample)),
       el("td", {}, amt),
       el("td", {}, book ? book : el("span", { style: "color:var(--ink-3)" }, "—"), book ? "%" : ""),
       el("td", {}, slider, hlbl),
@@ -3017,12 +3182,18 @@ function openHedgeSim() {
   function recalc(save = true) {
     const tenor = Math.min(12, Math.max(3, +tenorInput.value || H2.default_tenor_m || 9));
     costTh.textContent = `만기 ${tenor}개월, 연 %, ${COST_SIGN_KEY}`;
-    const state = { rows: {}, tenor };
+    const aum = Math.max(0, +aumInput.value || 0);
+    const state = { rows: {}, tenor, total_aum: aum || null };
     for (const [id, o] of Object.entries(inputs)) {
       const h = Math.min(1, Math.max(0, (+o.slider.value || 0) / 100));
       o.hlbl.textContent = `${Math.round(h * 100)}%`;
       state.rows[id] = { amt: Math.max(0, +o.amt.value || 0),
         book: o.book ? Math.min(100, Math.max(0, +o.book.value || 0)) : null, h: h * 100 };
+      /* 배지는 **지금 그 칸에 들어 있는 값의 출처**를 말해야 한다. 사용자가 손대는
+         순간 유도·예시가 아니라 「우리 값」이 된다 — 배지와 실제 값의 출처가
+         어긋나면 배지가 거짓말이 된다. */
+      const badge = document.getElementById(`hg-s-${id}`);
+      if (badge && +o.amt.value !== o.cfg.amt) badge.textContent = AMT_SRC.input;
     }
     const cur = assemble(tenor, null);
     /* 행별 헤지비용·캐리 — 세 번째 타일의 근거를 그 자리에서 보여준다 */
@@ -3034,7 +3205,12 @@ function openHedgeSim() {
       o.costCell.append(fmtCost(+p.cost.toFixed(2), true));
       o.carryCell.append(el("span", { class: p.carry >= 0 ? "pos" : "neg" }, carryTxt(p.carry)));
     }
-    if (save) { try { localStorage.setItem(HEDGE_LS_KEY, JSON.stringify(state)); } catch {} }
+    if (save) {
+      /* `iaw-hedge-input` 에만 쓴다 — `iaw-alloc` 은 읽기 전용이다.
+         allocSaveState() 가 저장 시 state 전체를 덮어쓰므로, 여기서 alloc 에 쓰면
+         자산배분 화면의 다음 저장에 조용히 지워진다. */
+      try { localStorage.setItem(HEDGE_LS_KEY, JSON.stringify(state)); } catch {}
+    }
     const spanBox = $("#hg-span");
     const setAmt = (id, txt) => { const n = $("#" + id); if (n) n.textContent = txt; };
     if (!cur.tot) {
@@ -3082,6 +3258,20 @@ function openHedgeSim() {
         "양 끝은 임의 기준선이 아니라 이 모형이 낼 수 있는 헤지비율의 하한·상한입니다(장부가 비중·금액·만기는 지금 입력 그대로)."));
     }
   }
+  /* 총자산을 고치면 **아직 손대지 않은** 행의 금액만 다시 유도한다.
+     직접 넣은 값을 덮으면 사용자가 방금 입력한 숫자가 사라진다. */
+  aumInput.addEventListener("input", () => {
+    const fresh = hedgeRows(H2, { total_aum: +aumInput.value || null });
+    fresh.forEach((f) => {
+      const o = inputs[f.id];
+      if (!o) return;
+      const untouched = +o.amt.value === o.cfg.amt;      // cfg.amt = 직전에 유도/제시한 값
+      if (untouched) { o.amt.value = String(f.amt); o.cfg.amt = f.amt; }
+      const badge = document.getElementById(`hg-s-${f.id}`);
+      if (badge && untouched) badge.textContent = f.src || AMT_SRC.sample;
+    });
+    setAumNote();
+  });
   inner.querySelectorAll("input").forEach((i) => i.addEventListener("input", () => recalc()));
   recalc(false);
   /* 맨 위로 올리는 것은 openOverlayShell() 이 이미 한다 — 여기서 지역변수 ov 를 다시
@@ -4102,44 +4292,147 @@ function openAllocDetail(topic) {
 
 /* ---------------- render all / boot ---------------- */
 
+/* 섹션 id → 그 섹션을 그리는 함수. SECTION_IDS 와 1:1 이며 계약 테스트가 강제한다.
+   순서는 화면 순서(마을 구역 순)와 같게 둔다 — 읽는 사람이 대조하기 쉽게. */
+const RENDERERS = {
+  overview: renderOverview, risk: renderRisk, events: renderEvents,
+  panel: renderPanel, hedge: renderHedge, alloc: renderAlloc,
+  rates: renderRates, irs: renderIRS, credit: renderCredit,
+  fx: renderFX, inflation: renderInflation, acwi: renderACWI,
+  macro: renderMacro, catalog: renderCatalog,
+};
+
+/* ── 렌더 격리 ────────────────────────────────────────────────────────────
+   JSON 로딩(Promise.allSettled)과 파이프라인(risk/hedge 의 try/except)은 이미
+   격리돼 있는데 **렌더 계층에만 그 규약이 없었다**. 렌더러 하나가 던지면
+   renderAll 이 거기서 끊겨 그 뒤의 섹션이 전부 안 그려진다 — 실측으로
+   index.html 의 id 하나(`#card-curve`)를 지웠더니 렌더된 섹션이 10 → 5 로
+   줄었고(rates·irs·credit·fx·inflation·acwi·macro 전멸), 화면은 오류 없이
+   그냥 비어 보였다. 여기서 섹션 단위로 가둔다. */
+function renderSection(id) {
+  const fn = RENDERERS[id];
+  if (!fn) return;
+  try {
+    fn();
+  } catch (e) {
+    console.error(`render failed: ${id}`, e);
+    const node = document.getElementById(id);
+    if (!node || node.querySelector(".render-error")) return;
+    /* 빈 화면은 "데이터가 없다"로 읽힌다 — 고장임을 화면에 적는다. */
+    node.prepend(el("p", { class: "render-error", role: "status" },
+      "이 화면을 그리는 중 오류가 났습니다. 다른 화면은 정상입니다 — ",
+      "브라우저 콘솔의 ", el("code", {}, `render failed: ${id}`), " 를 확인하세요."));
+  }
+}
+
 function renderAll() {
   destroyAllCharts();
   overlayCharts = [];
   registry.length = 0;
-  renderOverview();
-  renderRisk();
-  renderEvents();
-  renderPanel();
-  renderHedge();
-  renderAlloc();
-  renderRates();
-  renderIRS();
-  renderCredit();
-  renderFX();
-  renderInflation();
-  renderACWI();
-  renderMacro();
-  if (!$("#village").hidden) renderVillage();       // 테마 전환 시 낮/밤 지도 교체
-  if (!$("#detail-overlay").hidden) handleHash();   // 테마 전환 시 열린 상세 재구성
+  SECTION_IDS.forEach(renderSection);
+  if (!$("#village").hidden) renderVillage();       // 장면 전환 시 낮/밤 지도 교체
+  if (!$("#detail-overlay").hidden) handleHash();   // 명암 전환 시 열린 상세 재구성
+}
+
+/* ── 마을 장면(scene) 15초 자동 순환 ─────────────────────────────────────
+   사용자 지시(2026-08-04): "그냥 놔두면 15초 간격으로 낮↔밤이 바뀌고, 수기로 바꿔도
+   그대로 두면 15초 뒤 다시 바뀐다."
+   **이 지시는 이 저장소의 옛 규약 「자동 낮밤순환 금지」를 명시적으로 해제한다** —
+   몰래 어긴 것이 아니라 사용자가 바꾼 것이다(docs/HANDOVER.md §3.3 에 기록).
+   해제되지 않은 것: prefers-reduced-motion. 자동 순환은 모션이고, 배경 이미지 교체는
+   CSS 로 막을 수 없으므로 **타이머를 만드는 지점에 JS 가드**가 있어야 한다. */
+const SCENE_CYCLE_MS = 15000;      // 사용자가 정한 수. 임의 상수가 아니다.
+let sceneTimer = null;
+let sceneBusy = false;             // 전환 연출(약 4초) 진행 중
+
+/* 타이머가 살아 있어도 되는 조건 5개 — 하나라도 어긋나면 돌리지 않는다. */
+function sceneCycleAllowed() {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return false;  // ① 접근성
+  const village = $("#village");
+  if (!village || village.hidden) return false;                              // ② 마을이 안 보임
+  const gate = $("#gate");
+  if (gate && !gate.hidden) return false;                                    // ③ 암구호 입력 중
+  if (document.visibilityState !== "visible") return false;                  // ④ 백그라운드 탭
+  const frame = $("#village-frame");
+  return !!(frame && frame.clientWidth);                                     // ⑤ ≤720px 는 지도째 숨김
+}
+
+function stopSceneCycle() {
+  if (sceneTimer) { clearInterval(sceneTimer); sceneTimer = null; }
+}
+
+/* 항상 stop 후 start — 수동 토글이 주기를 리셋한다("바꾼 뒤 15초"). */
+function restartSceneCycle() {
+  stopSceneCycle();
+  if (!sceneCycleAllowed()) return;
+  sceneTimer = setInterval(() => {
+    if (sceneBusy) return;                    // 전환 중이면 이번 틱은 건너뛴다
+    if (!sceneCycleAllowed()) { stopSceneCycle(); return; }
+    setScene(currentScene() === "day" ? "night" : "day");
+  }, SCENE_CYCLE_MS);
+}
+
+/* 장면 전환. 전환 영상이 현재 화면을 덮은 뒤에 밑을 갈아끼운다.
+   renderAll() 이 아니라 renderVillage() 만 부른다 — 15초마다 14개 화면의 차트를
+   전부 다시 그릴 이유가 없고, chrome 은 이 축과 무관하다. */
+function setScene(next, opts) {
+  const reset = !opts || opts.resetCycle !== false;
+  sceneBusy = true;
+  playSceneTransition(next, () => {
+    document.documentElement.setAttribute("data-scene", next);
+    if (!$("#village").hidden) renderVillage();
+    syncThemeButton();
+  });
+  /* 연출이 끝나는 시점을 정확히 알 수 없으므로(영상 실패 시 즉시 전환) 여유를 두고 푼다.
+     이 플래그가 없으면 전환 중에 다음 틱이 겹쳐 data-transition 요소가 엇갈리고,
+     mountVillageVideo 의 가드가 영구히 막혀 화면이 정지한다 — 실제로 한 번 난 사고다. */
+  setTimeout(() => { sceneBusy = false; }, 5200);
+  if (reset) restartSceneCycle();
+}
+
+/* ── 토글 버튼(◐) — 지금 보고 있는 것을 바꾼다 ───────────────────────────
+   마을이 보이면 장면(낮↔밤), 섹션이 보이면 명암(라이트↔다크).
+   반대로 배정하면 "눌러도 아무 일이 없는 버튼"이 된다 — 섹션에서 장면을 토글하면
+   지도가 안 보이니 변화가 없고, 마을에서 명암을 토글하면 헤더 색만 바뀐다.
+   이 저장소는 이미 같은 이유로 효과 없는 기간 버튼을 숨긴 적이 있다. */
+function syncThemeButton() {
+  const btn = $("#theme-btn");
+  if (!btn) return;
+  const onVillage = !$("#village").hidden;
+  const label = onVillage
+    ? "마을 낮/밤 전환 (그냥 두면 15초마다 자동으로 바뀝니다)"
+    : (currentTheme() === "dark" ? "화면을 밝게 전환" : "화면을 어둡게 전환");
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
 }
 
 function bindTheme() {
   const btn = $("#theme-btn");
-  const saved = localStorage.getItem("iaw-theme");
-  if (saved) document.documentElement.setAttribute("data-theme", saved);
+  /* 기본값은 다크다 — 속성을 붙이지 않으면 :root 가 다크 토큰이다.
+     저장된 값이 "light" 일 때만 속성을 단다. 기존 사용자의 'iaw-theme' 키·값을
+     그대로 재사용하므로 마이그레이션 코드가 필요 없다. */
+  if (localStorage.getItem("iaw-theme") === "light") {
+    document.documentElement.setAttribute("data-theme", "light");
+  }
+  document.documentElement.setAttribute("data-scene", "day");
+
   btn.addEventListener("click", () => {
-    const next = currentTheme() === "dark" ? "light" : "dark";
-    /* 마을이 보이면 밤이 내리는(걷히는) 영상이 현재 화면을 덮은 "뒤에" 실제 테마를
-       바꾼다 — 영상 첫 프레임이 곧 현재 지도라 이음새가 없다. 그 외에는 즉시 전환. */
-    playThemeTransition(next, () => {
-      document.documentElement.setAttribute("data-theme", next);
-      localStorage.setItem("iaw-theme", next);
-      renderAll();
-    });
+    if (!$("#village").hidden) {            // 마을 → 장면 토글 + 주기 리셋
+      setScene(currentScene() === "day" ? "night" : "day");
+      return;
+    }
+    const next = currentTheme() === "dark" ? "light" : "dark";   // 섹션 → 명암 토글
+    if (next === "light") document.documentElement.setAttribute("data-theme", "light");
+    else document.documentElement.removeAttribute("data-theme");
+    localStorage.setItem("iaw-theme", next);
+    renderAll();
+    syncThemeButton();
   });
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    if (!localStorage.getItem("iaw-theme")) renderAll();
-  });
+
+  /* 탭이 백그라운드로 가면 영상 디코드·타이머를 멈추고, 돌아오면 다시 건다. */
+  document.addEventListener("visibilitychange", restartSceneCycle);
+  matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", restartSceneCycle);
+  syncThemeButton();
 }
 
 function bindSkipLink() {
@@ -4174,8 +4467,7 @@ async function boot() {
     return;
   }
   renderMetaLine();
-  renderAll();
-  renderCatalog();
+  renderAll();          // 카탈로그도 RENDERERS 에 있으므로 따로 부르지 않는다
   window.addEventListener("hashchange", handleHash);
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !$("#detail-overlay").hidden) {

@@ -2,7 +2,7 @@
 """출력 JSON 계약 + 배포 게이트.
 
 여기서 지키는 계약: `process.py` 의 `payloads` = `dashboard/app.js` 의 `FILES`
-= `pipeline/check_output.py` 의 `EXPECTED` = **같은 14개**. 셋 중 하나만 고치면
+= `pipeline/check_output.py` 의 `EXPECTED` = **같은 15개**. 셋 중 하나만 고치면
 대시보드의 한 섹션이 조용히 사라진다.
 
 개수 assert 는 교차 대조와 별개로 남겨 둔다 — 세 곳을 일관되게 고치면 교차 대조는
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -349,15 +350,41 @@ def test_process_globals_are_not_leaked_by_tests():
 # 도달 불가능한 섹션이 조용히 생긴다. 사람 눈으로는 안 보이는 종류의 결함이다.
 # --------------------------------------------------------------------------
 
-def _app_js() -> str:
+def _app_js_raw() -> str:
+    """주석까지 포함한 app.js 원문. **코드가 있는지** 보는 검사에는 쓰지 말 것."""
     return (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+
+def _app_js() -> str:
+    """주석을 걷어낸 app.js — 이 파일의 문자열 검사는 **전부** 이것을 쓴다.
+
+    예전에는 이 함수가 원문을 돌려주고 `_strip_js_comments()` 를 **5개 중 2개**에만
+    걸었다. 그 결과 `mountVillageVideo` 의 reduced-motion 가드를 지우고 주석만 남긴
+    뮤테이션이 141개 전부 초록으로 통과했다 — 접근성 불변식이 실제로는 보호되지
+    않고 있었다는 뜻이다. 기본값을 뒤집어 그 실수가 다시 나올 수 없게 한다.
+    """
+    return _strip_js_comments(_app_js_raw())
+
+
+def _fn(name: str) -> str:
+    """app.js 에서 함수 하나의 본문을 잘라 온다(주석 제거 후).
+
+    같은 `split("function X")[1].split("\nfunction ")[0]` 관용구가 여덟 군데에
+    복사돼 있었고, 그중 일부만 주석을 걷었다 — 한 곳으로 모아 그 갈림을 없앤다.
+    """
+    js = _app_js()
+    # 이름 뒤에 `(` 를 요구한다 — 없으면 `renderAll` 이 `renderAlloc` 에 먼저 걸려
+    # **엉뚱한 함수 본문**을 조용히 돌려준다(실제로 한 번 그랬다).
+    m = re.search(rf"function {re.escape(name)}\s*\(", js)
+    assert m, f"app.js 에 function {name}( 이 없습니다"
+    return js[m.end():].split("\nfunction ")[0]
 
 
 def _strip_js_comments(src: str) -> str:
     """JS 소스에서 주석을 걷어낸다 — 문자열 검사로 "호출이 있다"를 확인하기 전에 쓴다.
 
     app.js 는 주석이 아주 두꺼운 파일이라, 함수 본문을 통째로 `in` 검사하면 **주석에
-    이름이 적혀 있다는 이유만으로 통과**한다. 실제로 `playThemeTransition` 의 재마운트
+    이름이 적혀 있다는 이유만으로 통과**한다. 실제로 `playSceneTransition` 의 재마운트
     검사가 그랬다: `mountVillageVideo(frame)` 호출을 지워도 바로 위 주석의 같은 낱말이
     검사를 만족시켜 테스트가 초록으로 남고, 화면에서는 테마 토글 뒤 배경이 스틸로
     돌아가 사용자가 처음 지적한 "안 움직이는 마을"이 되돌아왔다.
@@ -444,8 +471,7 @@ def test_village_fx_respects_reduced_motion():
         css,
     )
     assert block, "reduced-motion 에서 .village-fx 를 감추는 규칙이 없습니다"
-    js = _app_js()
-    assert "prefers-reduced-motion" in js.split("function enterZone")[1].split("function ")[0], (
+    assert "prefers-reduced-motion" in _fn("enterZone"), (
         "enterZone 이 reduced-motion 을 확인하지 않습니다"
     )
 
@@ -464,21 +490,20 @@ def test_village_fx_people_paths_all_exist():
     assert not missing, f"정의되지 않은 도로를 걷는 행인: {sorted(missing)}"
 
 
-def test_theme_transition_disables_svg_fx_and_respects_reduced_motion():
+def test_scene_transition_disables_svg_fx_and_respects_reduced_motion():
     """전환 영상이 재생되는 동안 SVG 모션은 꺼지고, reduced-motion 이면 즉시 전환한다.
 
     움직임이 겹치면(영상 속 물결 + SVG 물결) 어색하고, SMIL 과 달리 영상은 사용자
-    접근성 설정을 코드가 직접 확인해야 한다. 어느 시점에 실패해도 applyTheme 는
-    반드시 호출돼야 한다(테마 토글이 조용히 무시되면 안 된다).
+    접근성 설정을 코드가 직접 확인해야 한다. 어느 시점에 실패해도 applyScene 는
+    반드시 호출돼야 한다(장면 토글이 조용히 무시되면 안 된다).
     """
     css = (ROOT / "dashboard" / "style.css").read_text(encoding="utf-8")
     assert re.search(r"\.has-video \.village-fx\s*\{\s*display:\s*none", css), (
         "영상 재생 중 SVG 모션을 끄는 규칙(.has-video .village-fx)이 없습니다"
     )
-    js = _app_js()
-    fn = js.split("function playThemeTransition")[1].split("\nfunction ")[0]
+    fn = _fn("playSceneTransition")
     assert "prefers-reduced-motion" in fn, (
-        "playThemeTransition 이 reduced-motion 을 확인하지 않습니다"
+        "playSceneTransition 이 reduced-motion 을 확인하지 않습니다"
     )
     for evt in ("playing", "ended", "error"):
         assert f'"{evt}"' in fn, f"전환 영상의 {evt} 이벤트 처리가 없습니다"
@@ -517,24 +542,21 @@ def test_village_idle_video_respects_reduced_motion_and_falls_back():
     루프가 겹쳐 돈다) ③ 소스 사다리(webm→mp4)가 다 실패하면 요소를 걷어 스틸+SVG 로
     물러난다 ④ 마을을 떠나면 디코딩을 세운다(pause).
     """
-    js = _app_js()
-    fn = js.split("function mountVillageVideo")[1].split("\nfunction ")[0]
+    fn = _fn("mountVillageVideo")
     assert "prefers-reduced-motion" in fn, "mountVillageVideo 가 reduced-motion 을 확인하지 않습니다"
     assert "data-transition" in fn or "[data-transition]" in fn, (
         "전환 연출 중 이중 마운트를 막는 가드가 없습니다"
     )
     for evt in ("error", "playing"):
         assert f'"{evt}"' in fn, f"상시 루프의 {evt} 이벤트 처리가 없습니다"
-    rv = js.split("function renderVillage")[1].split("\nfunction ")[0]
-    assert re.search(r"mountVillageVideo\s*\(", _strip_js_comments(rv)), (
+    assert re.search(r"mountVillageVideo\s*\(", _fn("renderVillage")), (
         "renderVillage 가 상시 루프를 마운트하지 않습니다"
     )
-    tt = js.split("function playThemeTransition")[1].split("\nfunction ")[0]
-    assert re.search(r"mountVillageVideo\s*\(", _strip_js_comments(tt)), (
-        "전환 연출이 끝난 뒤 새 테마의 루프를 재마운트하는 경로가 없습니다 — "
+    assert re.search(r"mountVillageVideo\s*\(", _fn("playSceneTransition")), (
+        "전환 연출이 끝난 뒤 새 장면의 루프를 재마운트하는 경로가 없습니다 — "
         "주석에 이름만 적혀 있고 실제 호출이 없으면 토글 후 배경이 스틸로 돌아간다"
     )
-    route = js.split("function routeView")[1].split("\nfunction ")[0]
+    route = _fn("routeView")
     assert "pause" in route, "마을을 떠날 때 상시 루프를 pause 하지 않습니다"
 
 
@@ -548,8 +570,7 @@ def test_leaving_village_does_not_pause_the_theme_transition():
     회복하지 못한다(브라우저 실측: currentTime 2.5s 고정, 4초 후에도 동일). 사용자가 처음
     문제 삼은 "정지 화면" 그 자체이므로, pause 대상은 반드시 상시 루프로 한정한다.
     """
-    js = _app_js()
-    route = js.split("function routeView")[1].split("\nfunction ")[0]
+    route = _fn("routeView")
     assert "pause" in route, "routeView 에 pause 호출이 없습니다"
     assert "data-idle" in route, (
         "routeView 의 pause 대상이 상시 루프(data-idle)로 한정되지 않았습니다 — "
@@ -558,7 +579,7 @@ def test_leaving_village_does_not_pause_the_theme_transition():
     broad = [ln.strip() for ln in route.splitlines()
              if "village-video" in ln and "data-idle" not in ln]
     assert not broad, f"전환 영상까지 걸리는 넓은 선택자가 routeView 에 있습니다: {broad}"
-    tt = js.split("function playThemeTransition")[1].split("\nfunction ")[0]
+    tt = _fn("playSceneTransition")
     assert '"ended"' in tt, "전환 영상의 ended 처리가 없습니다 — done() 이 실행될 경로가 필요합니다"
 
 
@@ -577,3 +598,348 @@ def test_hidden_attribute_is_not_defeated_by_display_rules():
     # 방어선이 실제로 필요한 상태인지도 함께 확인한다(규칙만 남고 이유가 사라지는 것 방지)
     js = _app_js() + _index_html()
     assert 'id="gate"' in js and re.search(r"\.gate\s*\{[^}]*display:\s*flex", css)
+
+
+# --------------------------------------------------------------------------
+# app.js 가 이름으로 집는 DOM id 가 index.html 에 실재하는가
+#
+# app.js 는 index.html 의 id 를 82곳에서 정적으로 참조하는데, 그중 실재를 확인하는
+# 검사는 프로브 뼈대(tests/dashboard_probe.js)의 **수기 목록** 몇 개뿐이었다.
+# id 하나를 지우거나 오타를 내면 `$("#x")` 가 null 을 돌려주고 그 다음 줄에서 죽는데,
+# 죽는 자리가 렌더러 안이라 **그 섹션만 조용히 비고** 나머지는 정상으로 보인다.
+# (실측: `#card-curve` 하나를 지우자 렌더된 섹션이 10 → 5 로 줄었다.)
+# --------------------------------------------------------------------------
+
+#: app.js 가 **자기가 만들어 붙이는** id — index.html 에 없는 것이 정상이다.
+#: 여기에 이름을 더할 때는 아래 테스트가 "실제로 만드는지"까지 확인한다.
+DYNAMIC_IDS = {
+    "village-fx":  'setAttribute("id", "village-fx")',   # 마을 앰비언트 SVG 레이어
+    "hg-econ":     'tile("hg-econ"',                     # 시뮬레이터 결과 타일 3개
+    "hg-acct":     'tile("hg-acct"',
+    "hg-carry":    'tile("hg-carry"',
+    "hg-span":     'id: "hg-span"',                      # 시뮬레이터 표본기간 줄
+}
+
+
+def _referenced_ids() -> set[str]:
+    js = _app_js()          # 주석 제거본 — 주석에 적힌 id 는 참조가 아니다
+    return (set(re.findall(r'\$\("#([A-Za-z0-9_-]+)', js))
+            | set(re.findall(r'getElementById\("([A-Za-z0-9_-]+)"', js)))
+
+
+def test_every_id_app_js_reaches_for_exists_in_index_html():
+    """`$("#x")` / `getElementById("x")` 의 x 가 index.html 에 있거나 동적 생성이어야 한다."""
+    html_ids = set(re.findall(r'id="([A-Za-z0-9_-]+)"', _index_html()))
+    missing = sorted(_referenced_ids() - html_ids - set(DYNAMIC_IDS))
+    assert not missing, (
+        f"app.js 가 집는데 index.html 에 없는 id: {missing} — 그 섹션이 조용히 빕니다. "
+        "app.js 가 직접 만드는 id 라면 DYNAMIC_IDS 에 생성 근거와 함께 등록하세요."
+    )
+
+
+def test_dynamic_id_allowlist_is_not_a_dumping_ground():
+    """허용 목록의 id 는 **실제로 app.js 가 만들어야** 한다.
+
+    이 확인이 없으면 오타난 id 를 목록에 적어 넣는 것만으로 위 테스트가 무력화된다 —
+    허용 목록은 검사를 끄는 스위치가 아니라 "여기 있다"는 주장이고, 주장은 검사한다.
+    """
+    js = _app_js()
+    for name, evidence in DYNAMIC_IDS.items():
+        assert evidence in js, f"{name} 을 만드는 코드({evidence!r})가 app.js 에 없습니다"
+    stale = sorted(set(DYNAMIC_IDS) & set(re.findall(r'id="([A-Za-z0-9_-]+)"', _index_html())))
+    assert not stale, f"index.html 에 실재하므로 허용 목록에서 빼야 합니다: {stale}"
+
+
+def test_probe_skeleton_covers_the_ids_its_renderers_touch():
+    """프로브 뼈대가 렌더러가 집는 id 를 갖고 있는지 — 수기 계약의 자동화.
+
+    `tests/dashboard_probe.js` 는 index.html 구조를 손으로 흉내 낸다. 새 카드를
+    index.html 에 추가하고 뼈대에 안 넣으면 프로브가 **그 자리에서 죽는데**, 그
+    실패 메시지는 "Cannot read properties of null" 이라 원인이 안 보인다.
+    여기서 먼저 이름으로 잡아 준다.
+    """
+    probe = (Path(__file__).resolve().parent / "dashboard_probe.js").read_text(encoding="utf-8")
+    renderers = ("renderHedge", "renderMacro", "renderEvents", "renderCatalog", "renderVillage")
+    need = set()
+    for fn in renderers:
+        need |= set(re.findall(r'\$\("#([A-Za-z0-9_-]+)', _fn(fn)))
+    missing = sorted(i for i in need if f'"{i}"' not in probe and i not in DYNAMIC_IDS)
+    assert not missing, (
+        f"프로브 뼈대에 없는 id 를 렌더러가 집습니다: {missing} — "
+        "tests/dashboard_probe.js 의 해당 섹션 뼈대에 추가하세요."
+    )
+
+
+# --------------------------------------------------------------------------
+# 배포 게이트의 최소 스키마 — 파일이 있다고 내용이 온전한 것은 아니다
+#
+# 실측: `hedge.json` 에서 asof·curves·mtm·cost_stats·backtest·sim 을 통째로
+# 지워도 게이트가 exit 0 이었다. 필드 하나를 개명한 뮤테이션은 pytest·프로브·게이트
+# **세 관문 전부 초록**인데 화면의 헤지비용 열이 전 통화 `—` 로 비었다.
+# --------------------------------------------------------------------------
+
+def _run_gate(out: Path) -> int:
+    """게이트를 서브프로세스로 돌린다 — 모듈 전역(_errors)이 테스트 간에 누적되므로."""
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "pipeline" / "check_output.py"),
+         # 합성 픽스처는 실데이터에 없는 시리즈를 대량으로 못 찾아 경고가 140건대다
+         # (`series not found:`). 여기서 보려는 것은 경고 수가 아니라 **최소 스키마**이므로
+         # 상한을 넉넉히 준다 — 경고 상한 자체는 CI 인자(20)가 지킨다.
+         "--out", str(out), "--max-warnings", "1000", "--min-series", "10",
+         "--dashboard", str(ROOT / "dashboard" / "app.js")],
+        capture_output=True, text=True)
+    return r.returncode
+
+
+def test_gate_passes_on_a_healthy_build(built):
+    out, _ = built
+    assert _run_gate(out) == 0, "정상 산출물인데 게이트가 막습니다"
+
+
+@pytest.mark.parametrize("payload,key", [
+    ("hedge", "matrix"), ("hedge", "curves"), ("hedge", "mtm"),
+    ("hedge", "cost_stats"), ("hedge", "sim"), ("hedge", "default_tenor_m"),
+    ("alloc", "sources"), ("risk", "factors"), ("panel", "vars"),
+])
+def test_gate_rejects_a_payload_missing_a_required_key(built, tmp_path, payload, key):
+    """필수 키 하나만 사라져도 배포를 막아야 한다.
+
+    이것이 실제로 일어나는 방식은 삭제가 아니라 **개명**이다 — 파이프라인만 고치고
+    화면을 안 고치면 그 카드가 조용히 빈다. 게이트에서 키 이름을 못박아 둔다.
+    """
+    out, _ = built
+    tmp = tmp_path / "data"
+    shutil.copytree(out, tmp)
+    p = tmp / f"{payload}.json"
+    obj = json.loads(p.read_text(encoding="utf-8"))
+    assert key in obj, f"테스트 전제가 깨졌다 — {payload}.json 에 {key} 가 원래 없다"
+    del obj[key]
+    p.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+    assert _run_gate(tmp) == 1, f"{payload}.json 의 {key} 가 사라졌는데 게이트가 통과시켰습니다"
+
+
+def test_gate_rejects_a_renamed_matrix_column(built, tmp_path):
+    """매트릭스 행의 열 이름 개명 — B-4 조사에서 세 관문을 전부 통과했던 바로 그 뮤테이션."""
+    out, _ = built
+    tmp = tmp_path / "data"
+    shutil.copytree(out, tmp)
+    p = tmp / "hedge.json"
+    obj = json.loads(p.read_text(encoding="utf-8"))
+    for row in obj["matrix"]:
+        row["swap_rate_12m"] = row.pop("cost_12m")
+    p.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+    assert _run_gate(tmp) == 1, "cost_12m 이 개명됐는데 게이트가 통과시켰습니다"
+
+
+#: 화면이 이름으로 읽지 **않는데도** 게이트가 지키는 키 — 그 이유를 여기 적는다.
+#: 목록에 넣는 것 자체가 "왜 지키는가"를 답하는 행위이므로, 이유 없이 늘어나지 않는다.
+PUBLISH_ONLY_KEYS = {
+    ("alloc", "anchor_ref"): "동일 샤프 앵커의 기준(자국통화)·값. 방법론 재현용 게시물",
+    ("alloc", "checks"):     "자기검증 결과. 값이 사라지면 검증 없이 배포된 것과 같다",
+    ("risk", "grade_bands"): "등급 밴드 정본(app.js 는 자체 BANDS 상수를 쓴다 — 3중 진실이 남아 있다)",
+}
+
+
+def test_required_keys_are_keys_the_dashboard_actually_reads():
+    """게이트의 필수 키 목록이 **허구가 되지 않게** 한다.
+
+    화면이 더 이상 읽지 않는 키를 지키면 게이트는 죽은 계약을 강제하는 셈이고,
+    반대로 목록이 낡으면 아무것도 못 지킨다. 원칙은 "app.js 가 이 이름을 실제로
+    집는가"이고(주석 제거본에서), 예외는 위 목록에 **이유와 함께** 적는다.
+    """
+    js = _app_js()
+    for payload, keys in check_output.REQUIRED_KEYS.items():
+        for k in keys:
+            if (payload, k) in PUBLISH_ONLY_KEYS:
+                continue
+            assert re.search(rf"[.\[]\"?'?{re.escape(k)}\b", js), (
+                f"check_output.REQUIRED_KEYS['{payload}'] 의 '{k}' 를 app.js 가 읽지 않습니다 — "
+                "화면에서 사라진 키라면 목록에서 빼고, 게시 전용이라면 "
+                "PUBLISH_ONLY_KEYS 에 이유와 함께 등록하세요"
+            )
+
+
+def test_publish_only_exceptions_are_still_required_keys():
+    """예외 목록이 **검사를 끄는 스위치**가 되지 않게 한다.
+
+    게이트가 더 이상 지키지 않는 키가 예외 목록에만 남아 있으면, 목록은 지키는
+    척하는 문서가 된다. 예외는 반드시 REQUIRED_KEYS 안에 있어야 한다.
+    """
+    stale = [(p, k) for (p, k) in PUBLISH_ONLY_KEYS
+             if k not in check_output.REQUIRED_KEYS.get(p, [])]
+    assert not stale, f"REQUIRED_KEYS 에 없는 예외: {stale}"
+
+
+# --------------------------------------------------------------------------
+# 렌더 격리 — 렌더러 하나가 던져도 나머지 섹션은 그려져야 한다
+#
+# JSON 로딩(Promise.allSettled)과 파이프라인(risk/hedge 의 try/except)은 이미
+# 격리돼 있는데 렌더 계층에만 그 규약이 없었다. 실측: index.html 의 id 하나
+# (`#card-curve`)를 지우자 렌더된 섹션이 10 → 5 로 줄었다(rates·irs·credit·fx·
+# inflation·acwi·macro 전멸). 화면은 오류 없이 그냥 비어 보였다.
+# --------------------------------------------------------------------------
+
+def _renderer_map() -> dict[str, str]:
+    block = re.search(r"const RENDERERS = \{(.*?)\n\};", _app_js(), re.S)
+    assert block, "app.js 에서 RENDERERS 를 찾지 못했습니다"
+    return dict(re.findall(r"(\w+):\s*(\w+)", block.group(1)))
+
+
+def test_every_section_has_a_renderer():
+    """SECTION_IDS 의 14개가 전부 RENDERERS 에 있어야 한다.
+
+    빠뜨리면 그 섹션은 **아무 오류 없이 영영 비어 있다** — 클릭해서 들어가야만
+    보이는 구조라 눈으로 알아채기까지 오래 걸린다.
+    """
+    ids = re.findall(r'"([a-z]+)"', re.search(
+        r"const SECTION_IDS = \[(.*?)\];", _app_js(), re.S).group(1))
+    r = _renderer_map()
+    assert set(ids) - set(r) == set(), f"렌더러가 없는 섹션: {sorted(set(ids) - set(r))}"
+    assert set(r) - set(ids) == set(), f"섹션에 없는 렌더러: {sorted(set(r) - set(ids))}"
+    assert len(ids) == 14
+
+
+def test_renderers_named_in_the_map_actually_exist():
+    """맵의 값이 실재하는 함수여야 한다 — 오타는 조용히 그 섹션만 지운다."""
+    js = _app_js()
+    for sec, fn in _renderer_map().items():
+        assert f"function {fn}(" in js, f"{sec} 의 렌더러 {fn} 가 app.js 에 없습니다"
+
+
+def test_render_all_isolates_each_section():
+    """renderAll 이 섹션을 하나씩 가둬서 부르는지.
+
+    예전처럼 `renderOverview(); renderRisk(); …` 를 나열하면 앞에서 던진 순간
+    뒤가 통째로 멈춘다. 격리 함수를 거치고, 그 안에 try/catch 가 있어야 한다.
+    """
+    ra = _fn("renderAll")
+    assert "SECTION_IDS.forEach(renderSection)" in ra, (
+        "renderAll 이 섹션을 개별 호출로 나열합니다 — 하나가 던지면 뒤가 전부 멈춥니다"
+    )
+    rs = _fn("renderSection")
+    assert "try {" in rs and "catch" in rs, "renderSection 에 try/catch 가 없습니다"
+    assert "render-error" in rs, (
+        "실패한 섹션에 안내를 붙이지 않습니다 — 빈 화면은 '데이터 없음'으로 읽힙니다"
+    )
+
+
+def test_no_payload_is_published_twice():
+    """같은 값이 두 JSON 에 실리면 새 이중 진실이 된다.
+
+    헤지비용 커브는 2026-08-04 에 `fx.json` → `hedge.json` 으로 이사했다. 옮기면서
+    원본을 안 지우면 한쪽만 고치는 사고가 그대로 재발한다 — 이 저장소는 이미
+    "같은 값이 두 이름으로 돌아다니는" 문제를 한 번 겪었다.
+    """
+    js = _app_js()
+    assert "DATA.fx" in js, "테스트 전제가 깨졌다 — #fx 렌더러가 사라졌다"
+    fx_fn = _fn("renderFX")
+    for gone in ("hedge_ts", "hedge_rows", "card-hedge-ts", "card-hedge-table"):
+        assert gone not in fx_fn, f"renderFX 가 아직 {gone} 를 그립니다"
+    build_fx = (ROOT / "pipeline" / "process.py").read_text(encoding="utf-8")
+    build_fx = build_fx.split("def build_fx()")[1].split("\ndef ")[0]
+    for gone in ("hedge_ts", "hedge_rows"):
+        assert gone not in build_fx, f"build_fx 가 아직 {gone} 를 싣습니다"
+    hedge_py = (ROOT / "pipeline" / "hedge.py").read_text(encoding="utf-8")
+    assert "cost_hist_curve" in hedge_py, "hedge.py 가 이사받은 커브를 싣지 않습니다"
+
+
+def test_hedge_matrix_row_carries_its_sample(built):
+    """매트릭스 각 행이 자기 표본을 들고 있어야 한다 (B-6).
+
+    통일하지 않고 게시한다 — 짧은 쪽에 맞추면 변동성 표본을 버리고, 긴 쪽에 맞출
+    방법은 없다. 게시만 하면 자의성이 0이다.
+    """
+    out, _ = built
+    H = json.loads((out / "hedge.json").read_text(encoding="utf-8"))
+    assert H["matrix"], "매트릭스가 비었습니다"
+    for row in H["matrix"]:
+        sp = row.get("sample")
+        assert isinstance(sp, dict), f"{row['c']} 행에 sample 이 없습니다"
+        assert "vol" in sp and "fit" in sp, f"{row['c']}: {sorted(sp)}"
+        vol = sp["vol"]
+        assert vol and {"start", "end", "n"} <= set(vol), f"{row['c']} vol: {vol}"
+        assert isinstance(vol["n"], int) and vol["n"] > 0
+        if row.get("mvh") is not None:
+            assert sp["fit"], f"{row['c']}: MVH 는 있는데 적합 표본이 없습니다"
+            assert sp["fit"]["n"] <= vol["n"], (
+                f"{row['c']}: 적합 표본이 변동성 표본보다 깁니다 — 조인은 짧게만 만듭니다"
+            )
+
+
+@pytest.mark.parametrize("sub,key", [
+    ("cost_stats", "series"), ("cost_stats", "n_months"), ("cost_stats", "years"),
+    ("mtm", "series"), ("mtm", "n_months"), ("cost_read", "label"),
+])
+def test_gate_rejects_a_hedge_payload_missing_a_nested_key(built, tmp_path, sub, key):
+    """중첩 객체의 필수 키도 지킨다.
+
+    화면 부제가 이 값들로 **자기 표본을 밝힌다**. 빠지면 부제가 조용히 짧아지고,
+    그 자리에 예전처럼 하드코딩된 「25년 평균」이 되돌아올 여지가 생긴다.
+    """
+    out, _ = built
+    tmp = tmp_path / "data"
+    shutil.copytree(out, tmp)
+    p = tmp / "hedge.json"
+    obj = json.loads(p.read_text(encoding="utf-8"))
+    assert key in obj[sub], f"테스트 전제가 깨졌다 — hedge.json.{sub} 에 {key} 가 없다"
+    del obj[sub][key]
+    p.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+    assert _run_gate(tmp) == 1, f"hedge.json.{sub}.{key} 가 사라졌는데 게이트가 통과시켰습니다"
+
+
+# --------------------------------------------------------------------------
+# 문서 드리프트 — 문서는 다음 세션의 유일한 지도인데 읽는 테스트가 하나도 없었다
+#
+# 이 저장소는 방향 이탈로 56커밋 프로젝트를 폐기한 전력이 있고, 뮤테이션 커버리지
+# 주장을 이미 두 번 하향했다(2d2a46f · 9a34c2d). 기계로 확인 가능한 수만이라도
+# 여기서 잠근다 — 사람이 세는 수는 반드시 어긋난다.
+# --------------------------------------------------------------------------
+
+def _docs() -> dict[str, str]:
+    return {p.name: p.read_text(encoding="utf-8")
+            for p in [ROOT / "CLAUDE.md", ROOT / "docs" / "HANDOVER.md"]}
+
+
+def test_docs_state_the_real_test_count():
+    """문서가 적은 "N개 통과" 가 실제 수집 개수와 같아야 한다."""
+    r = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q"],
+                       cwd=ROOT, capture_output=True, text=True)
+    m = re.search(r"(\d+) tests? collected", r.stdout)
+    assert m, r.stdout[-1500:]
+    real = int(m.group(1))
+    for name, txt in _docs().items():
+        for claimed in re.findall(r"(?:현재|정상)?\s*(\d+)개\s*(?:통과|테스트)", txt):
+            assert int(claimed) == real, (
+                f"{name} 이 테스트 {claimed}개라고 적었지만 실제는 {real}개입니다"
+            )
+
+
+def test_docs_state_the_real_json_contract_size():
+    """JSON 계약 크기(15)는 코드가 정한 수다 — 문서의 다른 수를 잡는다."""
+    n = len(check_output.EXPECTED)
+    for name, txt in _docs().items():
+        for claimed in re.findall(r"JSON\s*(\d+)개", txt):
+            assert int(claimed) == n, f"{name}: JSON {claimed}개라고 적혀 있으나 계약은 {n}개"
+
+
+def test_docs_do_not_point_at_line_numbers_of_moving_code():
+    """`process.py` 의 행 번호를 문서에 적지 않는다.
+
+    실측으로 11건이 전부 −1 만큼 어긋나 있었다. 코드가 한 줄만 움직여도 전부
+    거짓이 되고, 어긋났다는 사실은 아무도 모른다 — 이름이나 grep 명령으로 적는다.
+    """
+    bad = []
+    for name, txt in _docs().items():
+        for m in re.finditer(r"`?(process|risk|hedge|alloc|panel|app)\.(py|js)`?[^\n]{0,40}?(\d{2,4})\s*행", txt):
+            bad.append(f"{name}: {m.group(0)[:60]}")
+        for m in re.finditer(r"(\d{2,4})(?:·\d{2,4})+\s*행", txt):
+            bad.append(f"{name}: {m.group(0)[:60]}")
+    assert not bad, "문서가 코드 행 번호를 가리킵니다(이름·grep 으로 바꾸세요): " + "; ".join(bad)
+
+
+def test_ci_runs_tests_when_only_docs_change():
+    """문서의 수치를 테스트가 검사하므로, 문서만 고친 커밋도 CI 를 타야 한다."""
+    wf = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    paths = wf.split("paths:", 1)[1].split("workflow_dispatch", 1)[0]
+    for need in ('"docs/**"', '"CLAUDE.md"'):
+        assert need in paths, f"tests.yml 의 paths 에 {need} 가 없습니다"

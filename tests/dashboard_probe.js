@@ -49,7 +49,12 @@ const SECTIONS = ["overview", "risk", "events", "panel", "hedge", "alloc", "rate
 const secNodes = {};
 SECTIONS.forEach((id) => { const n = elem("section", id, "section"); secNodes[id] = n; main.append(n); });
 const village = elem("section", "village", "village");
-village.append(elem("div", "village-frame"));
+const villageFrame = elem("div", "village-frame");
+/* renderVillage()/mountVillageVideo()/playSceneTransition() 이 전부 #village-map 을
+   기준으로 자기를 끼워 넣는다(`.after(v)`). 하나라도 없으면 그 자리에서 죽으므로
+   이 셋이 index.html 과의 계약이다. */
+villageFrame.append(elem("img", "village-map"), elem("p", "village-missing"));
+village.append(villageFrame, elem("nav", "village-list"));
 main.append(village);
 /* index.html 에서 #detail-overlay 는 <main> 안이 아니라 <body> 직계 자식이다
    (footer 뒤). 배경 inert 판정이 이 위치에 의존하므로 실제 구조를 그대로 흉내 낸다. */
@@ -72,7 +77,8 @@ secNodes.events.append(elem("details", "events-rules"));
    renderHedge() 가 만지는 컨테이너가 하나라도 없으면 그 자리에서 죽으므로,
    이 목록 자체가 index.html 과의 계약이다. */
 ["hedge-headline", "hedge-views", "hedge-lead", "hedge-matrix",
- "hedge-curve-card", "hedge-bt-card", "hedge-cost-card", "hedge-mtm-card"]
+ "hedge-curve-card", "hedge-bt-card", "hedge-cost-card", "hedge-mtm-card",
+ "hedge-ts-card"]
   .forEach((id) => secNodes.hedge.append(elem("div", id, "card")));
 secNodes.hedge.append(elem("details", "hedge-method"));
 
@@ -80,6 +86,9 @@ secNodes.hedge.append(elem("details", "hedge-method"));
 secNodes.macro.append(elem("div", "macro-grid"));
 
 /* ---------- app.js 를 vm 안에서 통째로 실행 ---------- */
+let REDUCED = false;        // prefers-reduced-motion 스위치 (아래 sceneCycle 프로브가 쓴다)
+const INTERVALS = [];       // app.js 가 건 setInterval 기록 (실제로 걸지는 않는다)
+const FETCH_CALLS = [];     // 네트워크 호출 기록 (시뮬레이터 유출 검사용)
 const sandbox = {
   document: DOC,
   window: null,
@@ -87,16 +96,27 @@ const sandbox = {
   location: shim.location,
   console: { log() {}, warn() {}, error() {}, info() {} },
   uPlot: shim.UPlotStub,
-  matchMedia: shim.win.matchMedia,
+  /* 기본은 셰이드와 같은 "항상 false" 다. reduced-motion 가드를 실제로 측정해야 하는
+     프로브만 REDUCED 를 켰다 끈다 — 켠 채로 두면 앞선 프로브들의 전제가 바뀐다. */
+  matchMedia: (q) => ({
+    matches: REDUCED && /reduced-motion/.test(String(q)),
+    addEventListener() {}, removeEventListener() {},
+  }),
   getComputedStyle: shim.win.getComputedStyle,
   requestAnimationFrame: shim.win.requestAnimationFrame,
   cancelAnimationFrame: shim.win.cancelAnimationFrame,
   /* fetch 는 전부 거부시킨다 → boot() 이 "데이터를 불러오지 못했습니다" 가지로 빠져
      조기 종료한다. 렌더링은 우리가 필요한 것만 직접 호출한다. */
-  fetch: () => Promise.reject(new Error("probe: no network")),
+  /* 호출 **횟수**를 센다 — 시뮬레이터 입력이 브라우저 밖으로 나가지 않는다는 것을
+     "코드에 fetch 가 없다"가 아니라 실행으로 확인하기 위해서다. */
+  fetch: (...a) => { FETCH_CALLS.push(a[0]); return Promise.reject(new Error("probe: no network")); },
   ResizeObserver: class { observe() {} unobserve() {} disconnect() {} },
   IntersectionObserver: class { observe() {} unobserve() {} disconnect() {} },
-  setTimeout, clearTimeout, setInterval, clearInterval,
+  setTimeout, clearTimeout,
+  /* app.js 의 setInterval 은 마을 자동 순환 딱 하나다(grep 확인). 진짜로 걸지 않고
+     (fn, ms) 를 기록만 해 둔다 — 15초를 기다리지 않고 틱 본문을 직접 돌려 보기 위해서다. */
+  setInterval: (fn, ms) => { const h = { fn, ms, live: true }; INTERVALS.push(h); return h; },
+  clearInterval: (h) => { if (h) h.live = false; },
   Image: class { set src(_v) { setTimeout(() => this.onerror && this.onerror(), 0); } },
   navigator: { userAgent: "probe" },
   performance: { now: () => 0 },
@@ -118,7 +138,10 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "routeView", "openOverlayShell", "hideDetail", "overlayBackdrop", "renderCatalog",
   "bandInk", "relLum", "deltaText", "factorRow", "renderEvents", "renderMetaLine",
   "cardScaffold", "el", "registry", "DATA", "BANDS", "SECTION_IDS", "palette",
-  "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY"];
+  "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY",
+  "SCENE_CYCLE_MS", "sceneCycleAllowed", "restartSceneCycle", "stopSceneCycle",
+  "currentScene", "currentTheme", "syncThemeButton",
+  "RENDERERS", "renderAll", "renderSection"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -343,15 +366,26 @@ const HEDGE_FIXTURE = (() => {
   const mk = (y, m) => Math.floor(Date.UTC(y, m, 1) / 1000) - 86400;   // 전달 말일
   return {
     asof: "2030-01-31", default_tenor_m: 6,
+    /* 읽는 법은 파이프라인이 정한다 — 실데이터와 **일부러 다른** 라벨을 태워
+       화면이 문자열을 박아 두면 여기서 옛 문구가 그대로 나와 잡히게 한다. */
+    cost_read: { label: "프로브전용읽기", window: 7, asof: "2030-01-30" },
     matrix: [
       { c: "USD", name: "달러", vol_e: 9.1, mvh: 71, corr: -0.4, cost_12m: -0.5,
         cost_curve: { "3M": -0.6, "6M": -0.55, "12M": -0.5 }, src: "실측(HP)",
-        bond_kind: "실지수", active: true },
+        bond_kind: "실지수", active: true,
+        /* 두 표본이 같은 행 — 한 줄로 줄어야 한다 */
+        sample: { vol: { start: "2002-01", end: "2029-12", n: 294 },
+                  fit: { start: "2002-01", end: "2029-12", n: 294 } } },
       { c: "JPY", name: "엔", vol_e: 12.3, mvh: 118, corr: 0.2, cost_12m: 3.25,
         cost_curve: { "3M": 3.4, "6M": 3.3, "12M": 3.25 }, src: "실측(HP)",
-        bond_kind: "합성(5y 커브)", active: true },
+        bond_kind: "합성(5y 커브)", active: true,
+        /* 두 표본이 다른 행 — 둘 다 적혀야 한다(뭉뚱그리면 같은 표본으로 읽힌다) */
+        sample: { vol: { start: "2001-02", end: "2029-12", n: 305 },
+                  fit: { start: "2002-01", end: "2029-12", n: 294 } } },
       { c: "CNY", name: "위안", vol_e: 8.0, mvh: null, corr: null, cost_12m: null,
-        cost_curve: null, src: "데이터 필요", bond_kind: null, active: false },
+        cost_curve: null, src: "데이터 필요", bond_kind: null, active: false,
+        /* 적합 표본이 없는 행 — 변동성만 적는다 */
+        sample: { vol: { start: "2002-01", end: "2029-12", n: 294 }, fit: null } },
     ],
     curves: { bond, equity },
     backtest: { "테스트 자산": { period: "2010-01 ~ 2029-12",
@@ -360,8 +394,18 @@ const HEDGE_FIXTURE = (() => {
     /* 최저(= 가장 많이 낸 달)는 2021-07 */
     cost_hist_usd: { t: [mk(2021, 5), mk(2021, 6), mk(2021, 7), mk(2021, 8)],
                      v: [0.5, -0.2, -5.5, 0.1] },
-    cost_stats: { mean: 0.1, now: -0.2, min: -5.5 },
-    mtm: { sigma_ds_3m: 0.4, worst_ds: 3.3, worst_date: "2019-03-31", corr_ds_e: -0.1 },
+    /* FX 화면에서 이관된 일별 커브 — 세 계열이 서로 다른 값이어야 흡수 검사가 의미 있다 */
+    cost_hist_curve: {
+      "3M":  { t: [mk(2029, 10), mk(2029, 11)], v: [-0.61, -0.60] },
+      "6M":  { t: [mk(2029, 10), mk(2029, 11)], v: [-0.56, -0.55] },
+      "12M": { t: [mk(2029, 10), mk(2029, 11)], v: [-0.51, -0.50] },
+    },
+    /* 표본 길이·계열명도 payload 에서 온다 — 실데이터(25.2년 · 303개월)와 **일부러
+       다른** 수를 태워, 화면이 「25년 평균」처럼 박아 두면 여기서 잡히게 한다. */
+    cost_stats: { mean: 0.1, now: -0.2, min: -5.5, series: "프로브전용계열",
+                  start: "2027-01", end: "2029-12", n_months: 36, years: 3.0 },
+    mtm: { sigma_ds_3m: 0.4, worst_ds: 3.3, worst_date: "2019-03-31", corr_ds_e: -0.1,
+           series: "프로브전용MTM계열", start: "2027-02", end: "2029-12", n_months: 35 },
     sim: { labels: ["e_USD", "b_USD", "eq", "ds_USD", "e_JPY", "b_JPY"],
            cov: Array.from({ length: 6 }, (_, i) => Array.from({ length: 6 }, (_, j) => (i === j ? 0.01 : 0.001))),
            sample: "2010-01 ~ 2029-12", n_months: 240 },
@@ -370,6 +414,7 @@ const HEDGE_FIXTURE = (() => {
 })();
 
 safe("hedgeScreen", () => {
+  shim.UPlotStub.made.length = 0;          // 이 렌더에서 만들어진 차트만 본다
   P.DATA.hedge = HEDGE_FIXTURE;
   P.DATA.meta = { last_observation: "2030-01-31" };
   P.renderHedge();
@@ -380,6 +425,13 @@ safe("hedgeScreen", () => {
   const jpy = mxRows.find((r) => /엔 \(/.test(r.textContent));
   const usd = mxRows.find((r) => /달러 \(/.test(r.textContent));
   const cny = mxRows.find((r) => /위안/.test(r.textContent));
+  /* 헤더 텍스트에 이름이 들어 있는 열을 찾아 그 행의 같은 위치를 돌려준다. */
+  const heads = mxRows[0].children.map((c) => c.textContent);
+  const col = (row, name) => {
+    if (!row) return null;
+    const i = heads.findIndex((h) => h.includes(name));
+    return i < 0 ? `열없음:${name}` : row.children[i].textContent;
+  };
   const mtmRows = rowsOf("hedge-mtm-card");
   const boldRow = mtmRows.find((r) => /700/.test(r.getAttribute("style") || ""));
   return {
@@ -388,14 +440,31 @@ safe("hedgeScreen", () => {
     views: txt("hedge-views"),
     lead: txt("hedge-lead"),
     matrixHeader: mxRows[0].children.map((c) => c.textContent),
-    /* 부호 방향은 **글자**로 나와야 한다 — 색만으로는 전달되지 않고, 뒤집히면 여기서 잡힌다 */
-    jpyCost: jpy ? cell(jpy, 4) : null,
-    usdCost: usd ? cell(usd, 4) : null,
+    matrixSub: DOC.getElementById("hedge-matrix").querySelector(".card-sub").textContent,
+    matrixCosts: HEDGE_FIXTURE.matrix.map((m) => ({ name: m.name, cost: m.cost_12m })),
+    /* 부호 방향은 **글자**로 나와야 한다 — 색만으로는 전달되지 않고, 뒤집히면 여기서 잡힌다.
+       열은 인덱스가 아니라 **헤더 이름**으로 집는다 — 예전에는 `cell(row, 4)` 라
+       3·6개월 열을 흡수하자 조용히 다른 열을 재고 있었다. */
+    jpyCost: col(jpy, "12개월"), usdCost: col(usd, "12개월"),
+    jpyCost3m: col(jpy, "헤지비용 3개월"), jpyCost6m: col(jpy, "6개월"),
+    cnyCost3m: col(cny, "헤지비용 3개월"),
+    usdSample: col(usd, "표본"), jpySample: col(jpy, "표본"), cnySample: col(cny, "표본"),
+    tsCardText: txt("hedge-ts-card"),
+    tsCardSeries: DOC.getElementById("hedge-ts-card")
+      .querySelectorAll(".legend-item, .chart-legend span").map((n) => n.textContent),
     cnyClass: cny ? cny.className : null,
     cnyStyle: cny ? cny.getAttribute("style") : null,
     cnyText: cny ? cny.textContent : null,
     curveSub: DOC.getElementById("hedge-curve-card").querySelector(".card-sub").textContent,
     costSub: DOC.getElementById("hedge-cost-card").querySelector(".card-sub").textContent,
+    mtmSub: DOC.getElementById("hedge-mtm-card").querySelector(".card-sub").textContent,
+    /* 차트에 **실제로 그려진 계열**. 설명 문장만 보면 "겹쳐 그렸다"고 적어 두고
+       그리지 않는 변경이 통과한다 — uPlot 에 넘어간 series 를 직접 센다. */
+    chartSeries: shim.UPlotStub.made.map((u) => ({
+      title: (u.opts && u.opts.title) || "",
+      labels: ((u.opts && u.opts.series) || []).slice(1).map((sr) => sr.label),
+      rows: (u.data && u.data[0] && u.data[0].length) || 0,
+    })),
     costNote: txt("hedge-cost-card"),
     mtmHeader: mtmRows[0].children.map((c) => c.textContent),
     /* τ 열 — 만기 ÷ 2 (년). 3/6/9/12 개월 → 0.125/0.250/0.375/0.500 */
@@ -428,7 +497,7 @@ safe("hedgeSim", () => {
   P.openHedgeSim();
   const ov = DOC.getElementById("detail-overlay");
   const inputs = ov.querySelectorAll("input");
-  const rows = P.hedgeRows(HEDGE_FIXTURE);
+  const rows = P.hedgeRows(HEDGE_FIXTURE, {});
   const gridHead = ov.querySelector(".grid-inp").querySelectorAll("tr")[0];
   const g = (id) => { const n = DOC.getElementById(id); return n ? n.textContent : null; };
   const tenorInput = DOC.getElementById("hg-tenor");
@@ -449,6 +518,23 @@ safe("hedgeSim", () => {
     econAmt: g("hg-econ-amt"), acctAmt: g("hg-acct-amt"),
     usdCost: g("hg-c-USD_b"), jpyCost: g("hg-c-JPY_b"),
     usdCarry: g("hg-k-USD_b"), span: g("hg-span"),
+    /* E-6 — 부호를 **문자열 존재**가 아니라 **계산된 값과의 대응**으로 본다.
+       화면에 찍힌 부호 문자와, 같은 입력에서 산식이 내는 부호가 일치해야 한다.
+       이 저장소는 부호 반전으로 최악월을 1.8배 과소 발표한 전력이 있다. */
+    perRow: Object.fromEntries(["USD_b", "USD_e", "JPY_b"].map((id) => {
+      const amt = +(DOC.getElementById(`hg-a-${id}`) || {}).value || 0;
+      const h = +(DOC.getElementById(`hg-h-${id}`) || {}).value || 0;
+      const cur = id.split("_")[0];
+      const m = HEDGE_FIXTURE.matrix.find((x) => x.c === cur);
+      const cost = P.hedgeCostAt(m, +tenorInput.value || 6);
+      return [id, {
+        shown: g(`hg-k-${id}`),
+        costShown: g(`hg-c-${id}`),
+        // 캐리 = 금액 × 헤지비율 × 헤지비용 (hedge.py 회계모형 ④ 와 같은 식)
+        expect: amt * (h / 100) * cost / 100,
+        expectCost: cost,
+      }];
+    })),
   });
   const atDefault = read();
   /* 만기를 바꾸면 헤지비용 열 제목·값이 함께 따라와야 한다 */
@@ -468,7 +554,7 @@ safe("hedgeSim", () => {
     eqRef: (rows.find((r) => r.id === "USD_e") || {}).ref,
     tiles: ov.querySelectorAll(".rt").map((t) => t.querySelector(".l").textContent),
     amtLines: ov.querySelectorAll(".amt").length,
-    tenorNote: ov.querySelector(".tenor-row").textContent,
+    tenorNote: ov.querySelectorAll(".tenor-row").filter((n) => !n.classList.contains("aum-row"))[0].textContent,
     /* hedgeCostAt 의 만기 보간을 프로브가 직접 계산해 화면값과 대조한다 */
     jpyAt6: P.hedgeCostAt(HEDGE_FIXTURE.matrix[1], 6),
     jpyAt12: P.hedgeCostAt(HEDGE_FIXTURE.matrix[1], 12),
@@ -496,6 +582,205 @@ safe("macroUnit", () => {
   P.renderMacro();
   const cards = DOC.getElementById("macro-grid").children;
   return { subs: cards.map((c) => c.querySelector(".card-sub").textContent) };
+});
+
+/* ====== P17. 시뮬레이터 금액의 출처 3단 + 비공개 정보 유출 없음 (지시 3) ======
+   ① 표 직접 입력 ② 총자산 × 자산배분 비중 ③ 예시값. 배지와 실제 쓰인 값의 출처가
+   어긋나면 배지가 거짓말이 된다 — 그 대응을 값으로 확인한다. */
+safe("hedgeAmounts", () => {
+  const r = {};
+  const store = shim.localStorage;
+  const wrote = [];
+  const realSet = store.setItem;
+  store.setItem = (k, v) => { wrote.push(k); return realSet(k, v); };
+  const fetchesBefore = FETCH_CALLS.length;
+
+  /* ③ 예시값 — 총자산도 자산배분 저장값도 없을 때 */
+  store.removeItem("iaw-alloc");
+  const sample = P.hedgeRows(HEDGE_FIXTURE, {});
+  const pick = (rows, id) => rows.find((x) => x.id === id) || {};
+  r.sampleUsdB = pick(sample, "USD_b").amt;
+  r.sampleUsdBSrc = pick(sample, "USD_b").src;
+  r.sampleUsdE = pick(sample, "USD_e").amt;
+
+  /* 총자산만 있고 자산배분 저장값이 없으면 여전히 예시값이어야 한다 */
+  r.aumOnlySrc = pick(P.hedgeRows(HEDGE_FIXTURE, { total_aum: 20000 }), "USD_b").src;
+
+  /* ② 유도 — 자산배분 화면이 저장해 둔 비중을 읽는다(쓰지는 않는다) */
+  realSet("iaw-alloc", JSON.stringify({ mix_acct: {
+    "장부가 해외채권": 12, "시가 해외채권": 6, "해외주식": 5 } }));
+  const derived = P.hedgeRows(HEDGE_FIXTURE, { total_aum: 20000 });
+  r.derivedUsdB = pick(derived, "USD_b").amt;        // 20000 × (12+6)/100 = 3600
+  r.derivedUsdBSrc = pick(derived, "USD_b").src;
+  r.derivedUsdE = pick(derived, "USD_e").amt;        // 20000 × 5/100 = 1000
+  r.derivedUsdESrc = pick(derived, "USD_e").src;
+  /* 통화 구성 정보가 없는 통화는 유도하지 않는다 */
+  r.jpyAmt = pick(derived, "JPY_b").amt;
+  r.jpySrc = pick(derived, "JPY_b").src;
+
+  /* 시뮬레이터를 실제로 굴렸을 때 — 저장은 hedge 키에만, 네트워크는 0 */
+  P.DATA.hedge = HEDGE_FIXTURE;
+  shim.location.hash = "#hedge-sim";
+  store.removeItem("iaw-hedge-input");     // 앞 프로브가 남긴 상태를 지운다
+  wrote.length = 0;
+  P.openHedgeSim();
+  /* **최초 렌더 시점의 배지**. 총자산을 아직 안 넣었으므로 예시값이어야 한다.
+     이 측정이 없으면 "배지를 항상 「우리 값」으로" 같은 뮤테이션이 통과한다 —
+     총자산 입력 뒤의 배지만 보면 그 경로는 별도 리스너가 다시 쓰기 때문이다. */
+  r.badgeAtOpen = (DOC.getElementById("hg-s-USD_b") || {}).textContent;
+  r.badgeAtOpenJpy = (DOC.getElementById("hg-s-JPY_b") || {}).textContent;
+  const aum = DOC.getElementById("hg-aum");
+  aum.value = "20000";
+  aum.dispatchEvent({ type: "input", target: aum });
+  r.aumInputExists = !!aum;
+  r.aumHasLabel = !!(aum && aum.getAttribute("aria-label"));
+  r.rowAmtAfterAum = DOC.getElementById("hg-a-USD_b").value;
+  r.badgeAfterAum = (DOC.getElementById("hg-s-USD_b") || {}).textContent;
+  /* 직접 고치면 배지가 「우리 값」으로 바뀐다 */
+  const cell = DOC.getElementById("hg-a-USD_b");
+  cell.value = "7777";
+  cell.dispatchEvent({ type: "input", target: cell });
+  r.badgeAfterEdit = (DOC.getElementById("hg-s-USD_b") || {}).textContent;
+
+  r.storageKeysWritten = Array.from(new Set(wrote));
+  r.wroteAllocStore = wrote.includes("iaw-alloc");
+  r.savedTotalAum = JSON.parse(store.getItem("iaw-hedge-input") || "{}").total_aum;
+  r.fetchCalls = FETCH_CALLS.length - fetchesBefore;
+  r.hashHasNoNumbers = !/\d{3,}/.test(shim.location.hash);
+  store.setItem = realSet;
+  return r;
+});
+
+/* ====== P15. 마을 장면 15초 자동 순환 — 가드 5개와 틱 본문을 실제로 돌린다 ======
+   15초를 기다리지 않는다. setInterval 을 기록만 하도록 바꿔 두었으므로 (fn, ms) 를
+   꺼내 fn 을 직접 호출하면 틱 한 번이 그대로 재현된다. */
+safe("sceneCycle", () => {
+  const html = DOC.documentElement;
+  const gate = DOC.getElementById("gate");
+  const villageEl = DOC.getElementById("village");
+  const frame = DOC.getElementById("village-frame");
+  const map = DOC.getElementById("village-map");
+  const r = {};
+
+  /* 기본값 — bindTheme() 은 boot() 의 동기 구간에서 이미 돌았다. */
+  r.cycleMs = P.SCENE_CYCLE_MS;
+  r.defaultScene = html.getAttribute("data-scene");
+  r.defaultThemeAttr = html.getAttribute("data-theme");   // null = 다크(속성 없음)가 기본
+
+  /* 가드 5개(+reduced-motion). 하나씩만 어긋내고 되돌린다.
+     값은 전부 "돌아도 되는가?" 의 답이다 — 정상 상태 하나만 true 여야 한다. */
+  villageEl.hidden = false; gate.hidden = false; frame.clientWidth = 800;
+  r.allowedWithGateOpen = P.sceneCycleAllowed();
+  gate.hidden = true;
+  r.allowedOnVillage = P.sceneCycleAllowed();
+  villageEl.hidden = true;
+  r.allowedOffVillage = P.sceneCycleAllowed();
+  villageEl.hidden = false;
+  DOC.visibilityState = "hidden";
+  r.allowedInBackgroundTab = P.sceneCycleAllowed();
+  DOC.visibilityState = "visible";
+  frame.clientWidth = 0;
+  r.allowedWhenNarrow = P.sceneCycleAllowed();
+  frame.clientWidth = 800;
+  REDUCED = true;
+  r.allowedUnderReducedMotion = P.sceneCycleAllowed();
+  REDUCED = false;
+
+  /* 타이머 수명 — reduced-motion 이면 아예 걸지 않는다. */
+  INTERVALS.length = 0;
+  REDUCED = true; P.restartSceneCycle(); REDUCED = false;
+  r.timersUnderReducedMotion = INTERVALS.length;
+  P.restartSceneCycle();
+  r.timerMs = INTERVALS.map((h) => h.ms);
+  r.liveAfterStart = INTERVALS.filter((h) => h.live).length;
+  P.restartSceneCycle();                       // 재시작은 앞의 것을 반드시 걷어낸다
+  r.liveAfterRestart = INTERVALS.filter((h) => h.live).length;
+  P.stopSceneCycle();
+  r.liveAfterStop = INTERVALS.filter((h) => h.live).length;
+
+  /* 마을을 떠난 뒤에도 살아남은 틱은 아무 일도 하지 않고 자기 타이머를 걷는다
+     (routeView 가 못 멈춘 경우의 2차 방어선). 아래 flip 프로브보다 **먼저** 와야 한다 —
+     setScene 이 sceneBusy 를 5.2초 뒤에야 푸는데 프로브는 그 전에 끝나기 때문이다. */
+  INTERVALS.length = 0;
+  P.restartSceneCycle();
+  villageEl.hidden = true;
+  const staleTick = INTERVALS[INTERVALS.length - 1].fn;
+  const before = P.currentScene();
+  staleTick();
+  r.staleTickChangedScene = P.currentScene() !== before;
+  r.staleTickClearedItself = INTERVALS.filter((h) => h.live).length === 0;
+  villageEl.hidden = false;
+
+  /* 틱 본문 — 지도를 숨겨 두면 playSceneTransition 이 영상 없이 즉시 적용한다. */
+  map.hidden = true;
+  INTERVALS.length = 0;
+  P.restartSceneCycle();
+  const tick = INTERVALS[INTERVALS.length - 1].fn;
+  r.sceneBefore = P.currentScene();
+  tick();
+  r.sceneAfterOneTick = P.currentScene();
+  r.themeUntouchedByTick = html.getAttribute("data-theme");   // 장면 축이 명암 축을 건드리면 안 된다
+  /* 전환 연출이 도는 동안 다음 틱이 겹치면 data-transition 요소가 엇갈려 화면이
+     얼어붙은 적이 있다 — sceneBusy 가드가 그 자리다. 지금 막 전환했으므로 켜져 있어야 한다.
+     지도를 다시 숨기는 것이 이 측정의 핵심이다 — 위 틱 안의 renderVillage() 가 지도를
+     되살려 놓기 때문에, 그대로 두면 playSceneTransition 이 영상 경로(비동기)로 빠져
+     sceneBusy 를 없애도 장면이 안 바뀐다. 즉 가드를 지운 뮤테이션이 조용히 통과한다. */
+  map.hidden = true;
+  tick();
+  r.sceneAfterOverlappingTick = P.currentScene();
+
+  /* 토글 버튼의 의미 — 마을이면 장면, 섹션이면 명암 */
+  const btn = DOC.getElementById("theme-btn");
+  villageEl.hidden = false; P.syncThemeButton();
+  r.labelOnVillage = btn.getAttribute("aria-label");
+  villageEl.hidden = true; P.syncThemeButton();
+  r.labelOnSection = btn.getAttribute("aria-label");
+
+  /* routeView 훅 — 섹션으로 나가면 멈추고, 마을로 돌아오면 다시 건다.
+     반드시 **마을에서 타이머가 살아 있는 상태로** 나가야 정지 훅을 측정할 수 있다.
+     빈 상태에서 섹션으로 가면 정지 훅을 지워도 0 이라 뮤테이션이 통과한다. */
+  map.hidden = true; gate.hidden = true; frame.clientWidth = 800;
+  INTERVALS.length = 0;
+  shim.location.hash = "#village"; P.routeView();
+  r.liveBeforeLeaving = INTERVALS.filter((h) => h.live).length;
+  shim.location.hash = "#rates"; P.routeView();
+  r.liveOnSection = INTERVALS.filter((h) => h.live).length;
+  shim.location.hash = "#village"; P.routeView();
+  r.liveBackOnVillage = INTERVALS.filter((h) => h.live).length;
+  P.stopSceneCycle();
+  return r;
+});
+
+/* ====== P16. 렌더 격리 — 렌더러 하나가 던져도 뒤 섹션이 그려지는가 ============
+   SECTION_IDS 순서상 macro 가 catalog 보다 **앞**이다. 예전 renderAll 은 호출을
+   나열했으므로 macro 에서 던지면 catalog 는 영영 안 그려졌다. */
+safe("renderIsolation", () => {
+  const r = {};
+  P.DATA.macro = { items: [{ key: "k", label: "격리 테스트", unit: "%", last: 1,
+    date: "2030-01-31", t: [1700000000], v: [1] }] };
+  P.DATA.catalog = { series: [
+    { key: "bb:격리", source: "bb", category: "테스트", start: "2020-01-01",
+      end: "2030-01-01", n: 10 },
+  ] };
+  const real = P.RENDERERS.macro;
+  P.RENDERERS.macro = () => { throw new Error("probe: 일부러 던진다"); };
+  P.renderAll();
+  P.RENDERERS.macro = real;
+
+  const macro = DOC.getElementById("macro");
+  const notes = macro.querySelectorAll(".render-error");
+  r.failedSectionIsMarked = notes.length === 1;
+  r.noticeMentionsTheSection = notes.length ? notes[0].textContent.includes("macro") : false;
+  r.noticeSaysOthersAreFine = notes.length ? notes[0].textContent.includes("다른 화면은 정상") : false;
+  /* macro 뒤에 오는 catalog 가 그려졌는가 — 이것이 격리의 전부다. */
+  r.laterSectionStillRendered =
+    DOC.getElementById("catalog-table").querySelectorAll("tr").length > 0;
+  /* 두 번 던져도 안내가 겹쳐 쌓이지 않는다 */
+  P.RENDERERS.macro = () => { throw new Error("probe: 또 던진다"); };
+  P.renderSection("macro");
+  P.RENDERERS.macro = real;
+  r.noticeNotDuplicated = macro.querySelectorAll(".render-error").length === 1;
+  return r;
 });
 
 /* boot() 은 async 라 fetch 거부가 마이크로태스크로 나중에 돌아온다. 그때는 위 프로브가

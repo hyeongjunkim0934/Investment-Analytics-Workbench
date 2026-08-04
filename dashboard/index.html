@@ -156,6 +156,9 @@
       <div class="card" id="hedge-bt-card"></div>
       <div class="card" id="hedge-cost-card"></div>
       <div class="card" id="hedge-mtm-card"></div>
+      <!-- FX 화면에서 이관(2026-08-04). 여기 있어야 하는 이유: 이 세 계열이
+           시뮬레이터의 만기 보간(hedgeCostAt)이 쓰는 곡선의 원자료다. -->
+      <div class="card" id="hedge-ts-card"></div>
     </div>
     <p style="margin-top:14px"><a id="hedge-sim-btn" href="#hedge-sim" class="btn-primary">우리 포트폴리오 숫자로 계산해 보기 (7통화 시뮬레이터) →</a>
        <span class="filter-note" style="margin-left:10px">통화별 금액·헤지비율을 넣으면 두 관점의 변동성과 연간 헤지 캐리가 바로 나옵니다</span></p>
@@ -214,18 +217,16 @@
   <!-- 제목이 「환헤지」 섹션과 겹쳐 있었다(둘 다 "환헤지"). 실측하면 겹치는 것은 '값'이
        아니라 '이름'이었다 — 여기의 표와 환헤지 화면의 헤지비용 열은 같은 시리즈
        (info:*KRW_HP_*)의 같은 값인데 이름이 서로 달랐고 두 화면을 잇는 링크가 없었다.
-       화면은 그대로 나누되(여기 = 시세·원자료, 환헤지 = 판단·시뮬레이션) 이름·부호
-       규약을 통일하고 서로 링크를 건다. 병합은 사용자 승인 사항으로 남긴다. -->
+       2026-08-04 사용자 승인으로 **헤지 관련 카드를 환헤지 화면으로 이관**했다:
+       일별 커브 차트는 #hedge 의 카드로, 통화별 표는 매트릭스의 3M·6M 열로 흡수
+       (실측 4/4 동일한 12M 열이 한 화면에 두 번 나오는 것을 없애고, 덤으로
+       캐나다달러·파운드의 3/6/12M 이 처음으로 화면에 나온다).
+       이 화면은 순수 시세로 남는다. -->
   <section id="fx" class="section">
-    <h2>FX · 환율과 스왑포인트</h2>
-    <p class="section-note">이 화면이 답하는 질문 — 환율과 스왑포인트(= 헤지비용)의 <b>시세가 지금 어디에 있나</b>.
-       <b>＋면 헤지할 때 받고, −면 냅니다.</b> 그 값으로 <b>헤지비율을 얼마로 둘지</b> 판단·시뮬레이션하는 화면은
-       <a href="#hedge">환헤지</a>입니다.</p>
+    <h2>FX · 환율</h2>
+    <p class="section-note">이 화면이 답하는 질문 — 환율 <b>시세가 지금 어디에 있나</b>.
+       헤지비용(스왑포인트)과 <b>헤지비율을 얼마로 둘지</b>는 <a href="#hedge">환헤지</a> 화면입니다.</p>
     <div class="grid-2" id="fx-grid"></div>
-    <div class="grid-2">
-      <div class="card" id="card-hedge-ts"></div>
-      <div class="card" id="card-hedge-table"></div>
-    </div>
   </section>
 
   <section id="inflation" class="section">

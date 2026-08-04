@@ -93,14 +93,18 @@ def build(series_store: dict, warn) -> dict:
            "AUD": "bb:호주_3m", "CAD": "bb:캐나다_3m", "GBP": "bb:영국_3m"}
 
     # ----- 헤지비용: 통화별 현재 커브(3/6/12M) + 출처 -----
+    # 읽는 법은 `common.hp_curve` **한 곳**에만 있다 — alloc.py 도 같은 함수를 부른다.
+    # 예전에는 두 모듈이 같은 시리즈를 각자 `iloc[-1]` 로 읽었고, 우연히 같은 값이
+    # 나와 문제가 안 보였다. 한쪽만 바꾸면 같은 화면의 두 숫자가 조용히 갈라진다.
+    hp_label = common.hp_read_label()
     cost_curve, cost_src = {}, {}
+    hp_asof = None
     for c in CURRENCIES:
-        # 인포맥스 HP 시리즈 키: USDKRW_HP_3M / JPYKRW_HP_3M ...
-        hp = {m: S.get(f"info:{'USDKRW' if c == 'USD' else c + 'KRW'}_HP_{m}")
-              for m in ["3M", "6M", "12M"]}
-        if all(v is not None for v in hp.values()):
-            cost_curve[c] = {m: round(float(hp[m].dropna().iloc[-1]), 2) for m in hp}
-            cost_src[c] = "실측(HP)"
+        hp = common.hp_curve(S, c)
+        if hp is not None:
+            cost_curve[c] = hp["curve"]
+            cost_src[c] = f"실측(HP) · {hp_label}"
+            hp_asof = hp["asof"] if hp_asof is None else max(hp_asof, hp["asof"])
         elif c in R3M and g(R3M[c]) is not None:
             v = round(float((kr3m - S[R3M[c]]).dropna().iloc[-1]), 2)
             cost_curve[c] = {"3M": v, "6M": v, "12M": v}
@@ -110,6 +114,22 @@ def build(series_store: dict, warn) -> dict:
             cost_src[c] = "데이터 필요"
 
     # ----- 통화 매트릭스 -----
+    def span(idx) -> dict | None:
+        """표본 구간을 그대로 게시한다 — 통일하지 않는다.
+
+        같은 행 안에서도 열마다 표본이 다르다. `vol_e` 는 환율 월수익률만 쓰므로
+        조인 **전**에 계산되고, `mvh`/`corr` 은 채권 프록시와 조인한 **뒤**라
+        짧은 쪽에 맞춰 잘린다(실측: EUR·JPY 는 305 vs 294, AUD 는 267 vs 267).
+        표에는 「변동성·MVH·상관 = 월간 수익률」 한 줄만 있어 같은 표본으로 읽혔다.
+
+        통일하지 말 것 — 짧은 쪽에 맞추면 EUR·JPY 변동성이 11개월치를 버리고,
+        긴 쪽에 맞출 방법은 없다. 게시만 하면 자의성이 0이다.
+        """
+        if idx is None or not len(idx):
+            return None
+        return {"start": idx[0].strftime("%Y-%m"),
+                "end": idx[-1].strftime("%Y-%m"), "n": int(len(idx))}
+
     matrix = []
     for c in CURRENCIES:
         e = cutm(mret(FX[c]))
@@ -119,8 +139,9 @@ def build(series_store: dict, warn) -> dict:
             j.columns = ["r", "e"]
             mvh = float(1 + j["r"].cov(j["e"]) / j["e"].var()) * 100
             corr = float(j["r"].corr(j["e"]))
+            fit_idx = j.index
         else:
-            mvh, corr = None, None
+            mvh, corr, fit_idx = None, None, None
         cc = cost_curve[c]
         matrix.append({
             "c": c, "name": NAME[c], "vol_e": round(vol_e, 1),
@@ -130,6 +151,7 @@ def build(series_store: dict, warn) -> dict:
             "cost_curve": cc, "src": cost_src[c],
             "bond_kind": "실지수" if c == "USD" else ("합성(5y 커브)" if c in BONDS else None),
             "active": cc is not None and c in BONDS,
+            "sample": {"vol": span(e.index), "fit": span(fit_idx)},
         })
 
     # ----- 달러: 헤지비율-변동성 곡선, 백테스트, 비용 25년 -----
@@ -168,6 +190,10 @@ def build(series_store: dict, warn) -> dict:
     mtm_stats = {"sigma_ds_3m": round(float(ds_usd.std()), 2),
                  "worst_ds": round(float(ds_usd.max()), 2),
                  "worst_date": str(ds_usd.idxmax().date()),
+                 "series": "3개월 스왑레이트 월간 변화(SMB)",
+                 "start": ds_usd.index[0].strftime("%Y-%m"),
+                 "end": ds_usd.index[-1].strftime("%Y-%m"),
+                 "n_months": int(len(ds_usd)),
                  "corr_ds_e": round(float(ds_usd.corr(e_usd.loc[e_usd.index.intersection(ds_usd.index)] * 100)), 2)}
 
     # ----- 시뮬레이터 공분산 (월간, 연율화) -----
@@ -188,16 +214,44 @@ def build(series_store: dict, warn) -> dict:
     labels = list(Mx.columns)
     cov = (Mx.cov() * 12).round(8)
 
+    # ----- 헤지비용 일별 이력 (달러 3/6/12M) -----
+    # 예전에는 `fx.json` 이 실었다. 이 값은 시세가 아니라 **시뮬레이터가 만기를
+    # 보간하는 곡선의 원자료**이므로(hedgeCostAt 이 쓰는 3/6/12M 이 바로 이것),
+    # 환헤지 화면의 질문 안에 있다. 무엇보다 `renderHedge` 가 `DATA.fx` 를 읽으면
+    # fx.json 하나가 깨질 때 #hedge 까지 「데이터 없음」이 된다 —
+    # Promise.allSettled 의 부분 실패는 정상 경로이므로 그 전파를 끊는다.
+    # **fx.json 쪽에서는 제거한다** — 같은 값이 두 JSON 에 실리면 새 이중 진실이다.
+    cost_hist_curve = {}
+    for m in ["3M", "6M", "12M"]:
+        s = g(f"info:USDKRW_HP_{m}")
+        if s is not None:
+            cost_hist_curve[m] = pack(s.dropna(), 3)
+
     payload = {
         "asof": usdkrw.index[-1].strftime("%Y-%m-%d"),
         "default_tenor_m": DEFAULT_TENOR_M,
+        # 헤지비용 커브를 어떻게 읽었는지 — 화면 부제가 이 값을 그대로 쓴다.
+        # 하드코딩하면 `HP_MEDIAN_N` 을 되돌려도 화면 문장만 남는다
+        # (이 저장소는 「25년 평균」 하드코딩으로 같은 사고를 한 번 겪었다).
+        "cost_read": {"label": hp_label, "window": common.HP_MEDIAN_N,
+                      "asof": None if hp_asof is None else hp_asof.strftime("%Y-%m-%d")},
         "matrix": matrix,
         "curves": curves,
         "backtest": backtest,
+        "cost_hist_curve": cost_hist_curve,
         "cost_hist_usd": pack(smb_m),
+        # 계열명·표본기간·관측수를 함께 싣는다 — 화면이 「25년 평균」을 하드코딩하고
+        # 있었다. 표본이 늘거나 줄어도 문장이 25년에 멈춰 있으면 거짓이 된다
+        # (이 저장소는 「주식 10%는 어느 산식에서도 나오지 않는 수」로 같은 사고를
+        # 한 번 겪었다). 수준은 HP, 이력은 SMB 라는 역할 분담도 여기서 밝힌다.
         "cost_stats": {"mean": round(float(smb_m.mean()), 2),
                        "now": round(float(smb_m.iloc[-1]), 2),
-                       "min": round(float(smb_m.min()), 2)},
+                       "min": round(float(smb_m.min()), 2),
+                       "series": "3개월 스왑레이트(SMB, 월말)",
+                       "start": smb_m.index[0].strftime("%Y-%m"),
+                       "end": smb_m.index[-1].strftime("%Y-%m"),
+                       "n_months": int(len(smb_m)),
+                       "years": round(len(smb_m) / 12, 1)},
         "mtm": mtm_stats,
         "sim": {"labels": labels, "cov": cov.values.tolist(),
                 "sample": f"{Mx.index[0].strftime('%Y-%m')} ~ {Mx.index[-1].strftime('%Y-%m')}",
@@ -209,12 +263,20 @@ def build(series_store: dict, warn) -> dict:
             "④ 스왑레이트 캐리 = 장부금액 × 헤지비율 × 체결 스왑레이트 (계약 기간 확정)",
             "⑤ 스왑 MTM = 장부금액 × 헤지비율 × 잔존만기 × (−Δ시장 스왑레이트)",
         ],
-        "limits": ("유로·엔·호주·캐나다·파운드 채권은 5년 국채 커브 합성 수익률(실지수 확보 시 교체, "
+        "limits": (f"유로·엔·호주·캐나다·파운드 채권은 5년 국채 커브 합성 수익률(실지수 확보 시 교체, "
                    "달러 검증: 실지수와 상관 0.85). 위안은 단기금리·헤지비용 데이터 확보 전까지 비활성. "
                    "캐나다·파운드 헤지비용 '수준'은 금리차 프록시(달러 실측과 상관 0.89 검증). "
                    "스왑 MTM의 Δ스왑레이트는 전 통화에 달러 실측(2001~)을 공통 적용 — 금리차 '변화' "
                    "프록시는 실측과 상관 0.07로 검증에 실패해 채택하지 않았습니다(통화별 실측 확보 시 교체). "
                    "월간 통계는 완성된 달까지만 사용. 스왑 MTM 손실은 스왑레이트 상승 시 발생합니다. "
+                   f"헤지비용 커브는 {hp_label}입니다 — 일간 호가 변화의 1차 자기상관이 "
+                   "12계열 전부 음수(−0.15~−0.63)라 되돌아오는 측정잡음이고, 최신 호가를 "
+                   "그대로 쓰면 한 번의 빌드로 게시값이 최대 5.50%p 움직입니다(중앙값 적용 후 0.53%p). "
+                   "대신 표시가 2영업일 뒤처집니다. "
+                   "중앙값은 커브의 비단조성을 고치지 못합니다 — 3/6/12개월이 한 방향으로 "
+                   "정렬되지 않는 날이 달러 34.2%→34.8%, 유로 26.4%→28.8%, 엔 10.0%→10.6%, "
+                   "호주 23.0%→23.0% 로 오히려 늘거나 그대로입니다(비단조성은 잡음이 아니라 "
+                   "커브의 실제 성질입니다). "
                    "K-ICS 요구자본·증거금·중도 청산 관점은 미반영. 기대수익 예측이 아닌 변동성·비용 계산기입니다."),
     }
     return payload
