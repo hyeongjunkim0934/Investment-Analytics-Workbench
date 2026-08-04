@@ -144,15 +144,21 @@
   <section id="hedge" class="section">
     <h2>환헤지</h2>
     <div class="qa" id="hedge-headline"></div>
+    <!-- 순서가 이 화면의 절반이다. ① 질문·답 → ② 결론 두 줄(#hedge-lead) → ③ 통화별 표
+         → ④ 관점 비교표·용어(#hedge-views). 예전에는 231자 산문이 표 위에, 결론 상자가
+         표 아래에 있어서 첫 화면이 결론도 숫자도 아닌 해설이었다. 순서를 되돌리려면
+         아래 세 줄의 자리만 맞바꾸면 된다 — 렌더 코드는 위치에 의존하지 않는다. -->
+    <div id="hedge-lead"></div>
+    <div class="card" id="hedge-matrix" style="margin:12px 0 14px"></div>
     <div class="howto" id="hedge-views"></div>
-    <div class="card" id="hedge-matrix" style="margin-bottom:14px"></div>
-    <div class="grid-2">
+    <div class="grid-2" style="margin-top:14px">
       <div class="card" id="hedge-curve-card"></div>
       <div class="card" id="hedge-bt-card"></div>
       <div class="card" id="hedge-cost-card"></div>
       <div class="card" id="hedge-mtm-card"></div>
     </div>
-    <p style="margin-top:14px"><a id="hedge-sim-btn" href="#hedge-sim" class="btn-primary">내 포트폴리오로 시뮬레이션 (7통화) →</a></p>
+    <p style="margin-top:14px"><a id="hedge-sim-btn" href="#hedge-sim" class="btn-primary">우리 포트폴리오 숫자로 계산해 보기 (7통화 시뮬레이터) →</a>
+       <span class="filter-note" style="margin-left:10px">통화별 금액·헤지비율을 넣으면 두 관점의 변동성과 연간 헤지 캐리가 바로 나옵니다</span></p>
     <details class="method" id="hedge-method"></details>
   </section>
 
@@ -184,7 +190,8 @@
 
   <section id="irs" class="section">
     <h2>IRS 포워드</h2>
-    <p class="section-note">이 화면이 답하는 질문 — 시장은 앞으로의 금리를 몇 %로 보고 있나 (포워드 = 예측이 아니라 현재 가격의 함의)</p>
+    <p class="section-note">이 화면이 답하는 질문 — 시장은 앞으로의 금리를 몇 %로 보고 있나 (포워드 = 예측이 아니라 현재 가격의 함의).
+       <b>표기 읽는 법: <code>1y1y</code> = 1년 뒤 시작하는 1년짜리 금리, <code>5y5y</code> = 5년 뒤 시작하는 5년짜리 금리.</b></p>
     <div class="grid-2">
       <div class="card" id="card-irs-fwd"></div>
       <div class="card" id="card-irs-ts"></div>
@@ -193,7 +200,9 @@
 
   <section id="credit" class="section">
     <h2>크레딧</h2>
-    <p class="section-note">이 화면이 답하는 질문 — 신용 스프레드가 벌어지고 있나, 어느 등급부터인가</p>
+    <p class="section-note">이 화면이 답하는 질문 — 신용 스프레드가 벌어지고 있나, 어느 등급부터인가.
+       <b>용어: 스프레드 = 같은 만기 국채보다 더 얹어 주는 금리(1bp = 0.01%p) · IG = 투자등급 ·
+       HY = 하이일드(투기등급) · CDS = 부도 위험을 사고파는 값(높을수록 위험하게 본다).</b></p>
     <div class="grid-2">
       <div class="card" id="card-credit-kr1"></div>
       <div class="card" id="card-credit-kr2"></div>
@@ -202,9 +211,16 @@
     </div>
   </section>
 
+  <!-- 제목이 「환헤지」 섹션과 겹쳐 있었다(둘 다 "환헤지"). 실측하면 겹치는 것은 '값'이
+       아니라 '이름'이었다 — 여기의 표와 환헤지 화면의 헤지비용 열은 같은 시리즈
+       (info:*KRW_HP_*)의 같은 값인데 이름이 서로 달랐고 두 화면을 잇는 링크가 없었다.
+       화면은 그대로 나누되(여기 = 시세·원자료, 환헤지 = 판단·시뮬레이션) 이름·부호
+       규약을 통일하고 서로 링크를 건다. 병합은 사용자 승인 사항으로 남긴다. -->
   <section id="fx" class="section">
-    <h2>FX · 환헤지</h2>
-    <p class="section-note">이 화면이 답하는 질문 — 환율과 헤지비용(스왑 포인트)이 지금 어디에 있나</p>
+    <h2>FX · 환율과 스왑포인트</h2>
+    <p class="section-note">이 화면이 답하는 질문 — 환율과 스왑포인트(= 헤지비용)의 <b>시세가 지금 어디에 있나</b>.
+       <b>＋면 헤지할 때 받고, −면 냅니다.</b> 그 값으로 <b>헤지비율을 얼마로 둘지</b> 판단·시뮬레이션하는 화면은
+       <a href="#hedge">환헤지</a>입니다.</p>
     <div class="grid-2" id="fx-grid"></div>
     <div class="grid-2">
       <div class="card" id="card-hedge-ts"></div>

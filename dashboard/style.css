@@ -282,8 +282,52 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); 
 .chart-table { margin-top: 10px; }
 .chart-table.hidden { display: none; }
 
+/* app.js 가 DOM 으로 조립하는 표에는 `<tbody>` 가 **없다** — `document.createElement("table")`
+   에 `<tr>` 을 직접 붙이면 HTML 파서와 달리 브라우저가 tbody 를 끼워 넣지 않기 때문이다.
+   그래서 바로 위 `thead th` · `tbody td` 규칙이 그 표들에는 **한 줄도 적용되지 않았다**.
+   실측(pristine 빌드, 1440×900, Chromium): DOM 조립 표 8개, `td.num` 117칸이 전부
+   text-align=start(왼쪽 정렬) · padding 1px · border-bottom 0px 였다
+   — #hedge 60칸 · #alloc 42칸 · #panel 15칸. 파싱된 표(#fx·카탈로그)는 정상이었기 때문에
+   같은 페이지 안에서 서식이 갈렸다. 아래 세 줄이 그 표들에 같은 서식을 준다
+   (선택자를 `> tr >` 로 좁혀 thead/tbody 가 있는 표의 계산 결과는 건드리지 않는다). */
+table > tr > th {
+  text-align: left; color: var(--ink-2); font-weight: 600;
+  padding: 7px 10px; border-bottom: 1px solid var(--baseline); white-space: nowrap;
+  vertical-align: bottom;
+}
+table > tr > td { padding: 5px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+table > tr > td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table > tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+
 /* hedge table */
 .mini-table td, .mini-table th { font-size: 13px; }
+/* 열 제목 아래 붙는 단위·부호 열쇠 — "이 열은 무슨 단위이고 부호가 어느 쪽인가"를
+   열에서 바로 읽게 한다. --ink-3 는 네 바탕에서 AA 를 넘는 것이 테스트로 강제된 토큰. */
+.th-sub { display: block; font-weight: 400; font-size: 10.5px; color: var(--ink-3); }
+/* 헤지비용 부호를 색이 아니라 **글자**로 전한다(WCAG 1.4.1 — 색만으로 정보 전달 금지).
+   "헤지비용 −0.92%" 는 색을 봐도 "비용이 마이너스니 이득"으로 읽히기 때문이다. */
+.cost-dir { margin-left: 5px; font-size: 11px; font-weight: 600; color: var(--ink-2); }
+/* 왼쪽 행 제목이 있는 비교표(경제/회계 관점, 시뮬레이터 양 끝점) */
+table > tr > th.rowhead { color: var(--ink-2); white-space: normal; }
+.view-table > tr > td { white-space: normal; vertical-align: top; }
+.view-table > tr > th:first-child { width: 26%; }
+/* 표 안의 출처 꼬리표 (통화 이름 아래) */
+.mini-table .src-note { display: block; font-size: 11px; color: var(--ink-3); font-weight: 400; }
+/* 비활성(데이터 확보 전) 행. opacity 로 흐리게 하면 본문 대비가 3.67:1 로 떨어져 WCAG
+   AA(4.5:1)에 미달한다 — pristine 빌드에서 실측해 확인한 자리다(활성 행 19.2:1).
+   색만 낮추고(--ink-3) 상태는 「계산 대상 아님」이라는 **글자**로도 적는다. */
+.mini-table tr.row-off td { color: var(--ink-3); }
+/* 가로로 넘치는 표에는 넘친다는 사실을 알린다 — 스크롤 막대가 겹쳐 그려지는 플랫폼에서는
+   열이 잘린 것을 알 방법이 없다. JS 가 실측해 .is-scrollable 을 붙인다. */
+.table-wrap.is-scrollable { position: relative; }
+.scroll-hint { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; }
+/* 좁은 화면에서는 열 제목이 접히도록 풀어 준다. nowrap 인 채로 두면 단위·부호 열쇠까지
+   한 줄에 늘어서서 표가 888px 로 불고, 390px 화면에서 세 열이 화면 밖으로 나간다
+   (실측). 값 셀은 숫자라 계속 nowrap 이어야 읽힌다. */
+@media (max-width: 820px) {
+  .mini-table > tr > th, .mini-table thead th { white-space: normal; }
+  .mini-table > tr > td, .mini-table tbody td { white-space: normal; }
+}
 
 /* 조작부 최소 크기 — WCAG 2.5.8(24×24). 화면별 규칙이 흩어져 있어 여기서 바닥을 깐다.
    높이만 올리고 글꼴·너비·값은 건드리지 않으므로 표의 배치는 그대로다. */
@@ -479,7 +523,11 @@ button.vchip { cursor: pointer; }
 .hl-box { background: color-mix(in srgb, #0ca30c 8%, var(--surface));
   border: 1px solid var(--border); border-radius: 10px; padding: 11px 15px;
   font-size: 12.5px; line-height: 1.7; margin-top: 12px; }
-.pos { color: var(--down); } .neg { color: var(--up); }
+/* 부호 있는 '글자'는 --up/--down 이 아니라 글자 전용 --up-ink/--down-ink 를 쓴다.
+   --up(#d03b3b)은 행 hover 틴트 위에서 4.35:1 로 AA 미달인 것이 이미 실측·테스트돼 있고
+   (그래서 델타 글자용 -ink 토큰이 따로 있다), 헤지비용·캐리 숫자도 hover 되는 표 안에
+   있으므로 같은 규칙을 받아야 한다. 칩 배경·차트에 쓰는 --up/--down 자체는 그대로다. */
+.pos { color: var(--down-ink); } .neg { color: var(--up-ink); }
 .grid-inp { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .grid-inp th { color: var(--ink-3); font-weight: 600; padding: 6px 8px; text-align: right;
   border-bottom: 1px solid var(--baseline); white-space: nowrap; }
@@ -489,14 +537,18 @@ button.vchip { cursor: pointer; }
   border-radius: 6px; color: var(--ink-1); padding: 4px 7px; min-height: 26px; font-size: 12.5px; text-align: right; font-family: inherit; }
 .grid-inp input[type=range] { width: 120px; height: 26px; accent-color: var(--accent); vertical-align: middle; }
 .grid-inp .hlbl { display: inline-block; width: 42px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
-.grid-inp tr.dis { opacity: .45; }
+/* 매트릭스 비활성 행과 같은 이유로 opacity(.45 → 대비 미달) 대신 색으로 낮춘다.
+   입력 자체는 disabled 라 UA 가 알아서 흐리게 그리고, 통화 이름은 읽을 수 있어야 한다. */
+.grid-inp tr.dis td { color: var(--ink-3); }
 .grid-inp .refbadge { display: block; font-size: 10.5px; color: var(--accent-ink); font-weight: 500; }
 .res { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
 .res .rt { flex: 1; min-width: 170px; background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 12px 16px; }
 .res .rt .l { font-size: 12.5px; color: var(--ink-2); }
 .res .rt .v { font-size: 24px; font-weight: 700; }
-.res .rt .n { font-size: 11.5px; color: var(--ink-3); }
+/* 퍼센트 바로 아래 억원 환산 — 보조 각주가 아니라 "그래서 얼마"라는 답이다. */
+.res .rt .amt { font-size: 13px; font-weight: 600; color: var(--ink-2); margin-top: 1px; }
+.res .rt .n { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; }
 .tenor-row { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; font-size: 13px; }
 .tenor-row input { width: 70px; background: var(--page); border: 1px solid var(--border);
   border-radius: 6px; color: var(--ink-1); padding: 5px 8px; text-align: right; font-family: inherit; }
