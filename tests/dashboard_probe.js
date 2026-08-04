@@ -82,6 +82,10 @@ secNodes.events.append(elem("details", "events-rules"));
   .forEach((id) => secNodes.hedge.append(elem("div", id, "card")));
 secNodes.hedge.append(elem("details", "hedge-method"));
 
+/* ACWI 뼈대 — 시장 폭 카드 포함 */
+["acwi-stats", "card-acwi-price", "card-acwi-dd", "card-breadth"]
+  .forEach((id) => secNodes.acwi.append(elem("div", id, "card")));
+
 /* 매크로 뼈대 */
 secNodes.macro.append(elem("div", "macro-grid"));
 
@@ -141,7 +145,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY",
   "SCENE_CYCLE_MS", "sceneCycleAllowed", "restartSceneCycle", "stopSceneCycle",
   "currentScene", "currentTheme", "syncThemeButton",
-  "RENDERERS", "renderAll", "renderSection"];
+  "RENDERERS", "renderAll", "renderSection", "renderACWI"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -648,6 +652,72 @@ safe("hedgeAmounts", () => {
   r.fetchCalls = FETCH_CALLS.length - fetchesBefore;
   r.hashHasNoNumbers = !/\d{3,}/.test(shim.location.hash);
   store.setItem = realSet;
+  return r;
+});
+
+/* ====== P18. 미국 시장 폭 카드 — 관측 1일이면 차트를 그리지 않는다 ==========
+   점 하나짜리 차트는 정보가 0인데 "이력이 있다"고 읽힌다. 그 구분이 이 카드의
+   전부라 값으로 확인한다. 판정 문구도 **두 수의 대소**에서 나와야 한다. */
+safe("breadth", () => {
+  const r = {};
+  const card = DOC.getElementById("card-breadth");
+  const mk = (n) => ({
+    asof: "2030-05-17", n, src: "합성 출처",
+    rows: [
+      { key: "ad_ratio", label: "상승/하락 종목수 비율", unit: "배", note: "합성",
+        last: 3.0, date: "2030-05-17", n },
+      { key: "net_new_high", label: "52주 신고가권 − 신저가권", unit: "종목",
+        note: "합성", last: -300, date: "2030-05-17", n },
+      { key: "net_new_high_pct", label: "신고가권 − 신저가권 (전체 대비)", unit: "%",
+        note: "합성", last: -7.5, date: "2030-05-17", n },
+      { key: "skew_sp500", label: "S&P500 쏠림", unit: "%p", note: "합성",
+        last: 0.5, date: "2030-05-17", n },
+    ],
+    ts: n >= 2 ? {
+      ad_ratio: { t: [1900000000, 1900086400], v: [2.0, 3.0] },
+      net_new_high_pct: { t: [1900000000, 1900086400], v: [-5, -7.5] },
+    } : {},
+  });
+
+  /* 관측 1일 */
+  shim.UPlotStub.made.length = 0;
+  P.DATA.acwi = { breadth: mk(1) };
+  P.renderACWI();
+  r.oneDayText = card.textContent;
+  r.oneDayCharts = shim.UPlotStub.made.length;
+  r.oneDaySaysSoManyDays = card.textContent.includes("관측 1일");
+  r.oneDaySaysItIsOneDayOnly = card.textContent.includes("아직 하루치");
+  /* 판정은 두 수의 대소에서 나온다 — 상승 우세(3.0배)인데 신고가−신저가가 음수 */
+  r.verdictOnDivergence = card.textContent.includes("겉은 상승, 속은 갈라짐");
+
+  /* 이력 2일 */
+  shim.UPlotStub.made.length = 0;
+  P.DATA.acwi = { breadth: mk(2) };
+  P.renderACWI();
+  r.twoDayCharts = shim.UPlotStub.made.length;
+  r.twoDaySeries = shim.UPlotStub.made.map((u) =>
+    ((u.opts && u.opts.series) || []).slice(1).map((x) => x.label));
+  /* rows 에 없는 키는 그리지 않는다 — 범례에 내부 키가 찍히는 것을 막는다 */
+  shim.UPlotStub.made.length = 0;
+  const orphan = mk(2);
+  orphan.rows = orphan.rows.filter((x) => x.key !== "net_new_high_pct");
+  P.DATA.acwi = { breadth: orphan };
+  P.renderACWI();
+  r.orphanSeries = shim.UPlotStub.made.map((u) =>
+    ((u.opts && u.opts.series) || []).slice(1).map((x) => x.label));
+  r.twoDayStillSaysOneDayOnly = card.textContent.includes("아직 하루치");
+
+  /* 판정이 데이터 따라 뒤집히는가 — 같은 화면 코드로 반대 상황 */
+  const wide = mk(1);
+  wide.rows[1].last = 120;                    // 신고가 − 신저가 양수
+  P.DATA.acwi = { breadth: wide };
+  P.renderACWI();
+  r.verdictOnBroadRally = card.textContent.includes("넓은 상승");
+
+  /* payload 가 없으면 카드를 숨긴다 — 빈 카드는 고장으로 읽힌다 */
+  P.DATA.acwi = {};
+  P.renderACWI();
+  r.hiddenWhenAbsent = card.hidden === true;
   return r;
 });
 

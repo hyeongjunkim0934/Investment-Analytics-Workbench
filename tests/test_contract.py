@@ -943,3 +943,38 @@ def test_ci_runs_tests_when_only_docs_change():
     paths = wf.split("paths:", 1)[1].split("workflow_dispatch", 1)[0]
     for need in ('"docs/**"', '"CLAUDE.md"'):
         assert need in paths, f"tests.yml 의 paths 에 {need} 가 없습니다"
+
+
+def test_single_day_breadth_publishes_no_chartable_series(built):
+    """관측이 하루면 `ts` 를 싣지 않는다 — 점 하나짜리 시계열은 차트가 될 수 없다.
+
+    실려 있으면 화면이 "이력이 있다"고 판단해 점 하나로 추이 차트를 그린다.
+    합성 픽스처는 리포트를 **한 부**만 만들므로 여기가 그 조건이다.
+    """
+    out, _ = built
+    A = json.loads((out / "acwi.json").read_text(encoding="utf-8"))
+    b = A.get("breadth")
+    assert b, "acwi.json 에 breadth 가 없습니다"
+    assert b["n"] == 1, f"픽스처는 리포트 1부다: n={b['n']}"
+    assert b["ts"] == {}, f"관측 1일인데 시계열이 실렸습니다: {sorted(b['ts'])}"
+    assert b["rows"], "스냅샷 행이 비었습니다"
+    for r in b["rows"]:
+        assert r["label"] and r["unit"] is not None, r
+        assert r["n"] == 1
+
+
+def test_breadth_publishes_no_ticker_level_field(built):
+    """파이프라인을 통과한 뒤에도 종목 단위 필드가 없어야 한다 (공개 범위 가드).
+
+    파서 쪽 계약은 `tests/test_breadth.py` 가 지킨다. 여기서는 **게시물**을 본다 —
+    파서를 고치지 않고 빌더에서 종목을 실어 버리는 경로를 막는다.
+    """
+    out, _ = built
+    A = json.loads((out / "acwi.json").read_text(encoding="utf-8"))
+    blob = json.dumps(A.get("breadth", {}), ensure_ascii=False)
+    for banned in ("티커", "회사명", "ticker", "현재가", "시가총액"):
+        assert banned not in blob, f"종목 단위 필드가 게시물에 있습니다: {banned}"
+    cat = json.loads((out / "catalog.json").read_text(encoding="utf-8"))
+    us = [r for r in cat["series"] if r["key"].startswith("us:")]
+    assert us, "카탈로그에 us: 시리즈가 없습니다"
+    assert all(r["source"] == "kiwoom" for r in us)

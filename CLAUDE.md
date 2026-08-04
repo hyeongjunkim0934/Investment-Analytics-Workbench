@@ -20,6 +20,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `pipeline/hedge.py` | `build(SERIES, warn)` → `hedge.json` (7통화 헤지 매트릭스·백테스트·시뮬레이터 공분산) |
 | `pipeline/alloc.py` | `build(SERIES, warn)` → `alloc.json` (자산배분 원천 10개 공분산·현재 금리·동일 샤프 앵커·블록 부트스트랩 사전계산. **원본 수익률 미게시** — 공분산·평균·분위수만) |
 | `pipeline/panel.py` | `build(SERIES, risk_weekly, warn)` → `panel.json` (관계분석용 주간 정렬 패널. 공개 변수는 `VARS` 화이트리스트로만 통제) |
+| `pipeline/breadth.py` | 미국 증시 데일리 리포트 → **집계 지표만** (`us:*` 12개). 파일 하나 = 관측 하루라 이력은 날짜별 파일이 쌓여야 생긴다. **종목 단위(티커·회사명·현재가)는 한 줄도 읽지 않는다** — 공개 저장소이므로 그 계약이 값 정확도만큼 중요하고, `tests/test_breadth.py` 가 상세 시트를 일부러 넣고 유출이 없는지 확인한다 |
 | `pipeline/common.py` | 공용 산식 한 벌 — `epoch_seconds`/`pack_values`/`spearman`/`auc`. 위 넷과 연구 하네스가 전부 여기서 가져온다 |
 | `pipeline/check_output.py` | **배포 게이트**. 산출물이 JSON 계약을 지키는지 보고 아니면 exit 1. 표준 라이브러리만 씀 |
 | `pipeline/research/wf_validation.py` | 가중치 방식 비교용 수동 연구 하네스. **CI에서 실행되지 않음**. 요인 정의는 `risk.factor_specs` 에서 import |
@@ -44,7 +45,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 209개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 229개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (1초 미만)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js
 python -m pytest
@@ -68,8 +69,10 @@ python pipeline/research/wf_validation.py --data-dir ../Data
   (합계 약 2.1MB), 마지막 줄 `N warning(s) — see meta.json`.
 - **15는 코드가 정한 수**(아래 JSON 계약)라 달라지면 그 자체가 버그다. 반대로 `N`·`M`·경고 건수는
   `--data-dir` 의 엑셀에서 오는 수라 데이터를 갱신하면 정상적으로 바뀐다 — 현재 `../Data` 기준선은
-  **444 시리즈 / 4 파일 / 경고 7건**(전부 stderr의 `data_bb.xlsx/D: duplicate column …`)이며, 이 기준선의
+  **456 시리즈 / 5 파일 / 경고 7건**(전부 stderr의 `data_bb.xlsx/D: duplicate column …`)이며, 이 기준선의
   정본은 Data 저장소 쪽(`../Data/CLAUDE.md`)이다. 급감이나 경고 성격 변화만 신호로 볼 것.
+  데일리 리포트를 더 올려도 **시리즈 수는 456 그대로**이고 각 `us:*` 의 관측 수만 는다 —
+  파일 하나가 하루치이기 때문이다(파일 수와 `meta.json.files` 항목은 는다).
 - 서빙 확인: `curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/data/meta.json` → `200`.
 - `python -m pipeline.process` 는 **실패한다**(`No module named 'hedge'`). `pipeline/` 에 `__init__.py` 가
   없고 `process.py` 가 `import risk` / `import hedge` 를 평면으로 하므로 반드시 스크립트 경로로 실행할 것.
@@ -99,11 +102,18 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 `load_data_dir()` 은 `.xlsx`·`.xlsm` **양쪽**을 대상으로 삼고, 확장자와 무관하게 소문자 파일명 **접두사**로만
 파서를 고른다(`data_bb2.xlsm` 도 1행). 고른 파서가 곧 키 접두사를 정한다.
 
-| 파일명(소문자) | 파서 | 키 형식 |
+| 판정 | 파서 | 키 형식 |
 |---|---|---|
-| `data_bb` 로 시작 | `parse_wide(p, "bb")` | `bb:<Notation>` |
-| `data_info` 로 시작 | `parse_wide(p, "info")` | `info:<Notation>` |
+| 파일명이 `data_bb` 로 시작 | `parse_wide(p, "bb")` | `bb:<Notation>` |
+| 파일명이 `data_info` 로 시작 | `parse_wide(p, "info")` | `info:<Notation>` |
+| **시트에 `Market Overview` 가 있음** | `breadth.parse(p, warn)` | `us:<지표>` (집계만) |
 | 그 외 전부 | `parse_index_export(p)` | `idx:<A1 첫 공백 토큰>` (예: `ACWI08.xlsx` → `idx:ACWI`) |
+
+- **데일리 리포트만 파일명이 아니라 내용으로 판정한다**(`breadth.is_stock_report`). 그 파일은
+  `Daily_Stock_Report_26.08.04.xlsx` 처럼 **날짜가 박힌 이름으로 배포**되므로 접두사 규약을 매일
+  지키게 하면 언젠가 반드시 잊고, 잊은 날의 파일은 조용히 지수 익스포트 파서로 흘러가 버려진다.
+- **리포트의 관측일은 파일명이 아니라 본문**("미국 2026-08-03 종가 기준")에서 온다. 파일명 날짜는
+  작성일이라 하루 뒤다 — 파일명을 믿으면 모든 관측이 하루씩 밀린다.
 
 - 키의 뒷부분은 엑셀 헤더 문자열 **그대로**다 — 한글·`&`·`_` 가 그대로 들어간다(`bb:미국_S&P500_TR`).
   코드에 키를 적을 때 정규화하지 말 것.
