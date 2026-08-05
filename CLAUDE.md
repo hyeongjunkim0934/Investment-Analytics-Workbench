@@ -45,7 +45,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 259개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 265개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (1초 미만)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js
 python -m pytest
@@ -174,6 +174,13 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   내규 숫자를 여기 박지 말 것(공개 저장소 — 사용자 입력은 브라우저 localStorage 에만 남는다).
   `h_tol_hi`(일시 초과 허용선)는 **결정범위와 다른 칸**이다: 펀드 NAV 감소로 헤지 계약을
   즉시 줄이지 못해 생기는 운영 허용오차이지 최적화가 고를 선택지가 아니다.
+- **ALM 듀레이션 갭은 제약이 아니라 결과 표시다.** 사용자 확인 결과 내규 한도가 없어
+  허용 괴리폭을 지어낼 수 없다(자의성 금지). `app.js` 의 `ALLOC_DUR_KEYS`/
+  `allocAssetDuration()`/`allocDurGap()` 이 정본이며, 자산 듀레이션을 **배분에서 계산**하므로
+  배분을 바꾸면 갭이 따라 움직인다. 자산군별 듀레이션(`dur_by`)을 하나도 입력하지 않으면
+  `null` 을 돌려주고 화면이 수기 `dur_asset` 으로 물러난다 — **0 을 만들어내지 않는다.**
+  주식·대체는 표준 근사대로 0이고, 해외채권은 해외 금리 민감도라 원화 부채와 같은
+  위험요인이 아니어서 사용자가 0으로 빼도록 화면에 안내한다(우리가 정하지 않는다).
 - **환헤지 통화·프록시** = `hedge.py` 의 `CURRENCIES`/`FX`/`BONDS`/`R3M`.
 - **헤지비용의 이름·부호는 파이프라인이 정한다.** `hedge.py` 의 `cost_curve`/`cost_12m` 을 문서·`limits` 가 일관되게 「헤지비용」이라 부르고 `alloc.py` 도 같다 — 화면에서 새 이름을 만들면 방법론 패널이 출력하는 `limits` 문장과 어긋난다. 부호는 산식이 정한다(캐리 = A×h×cost, 회계모형 ④, 백테스트 `+h*f`) → **양수 = 받음**. 화면 쪽 정본은 `app.js` 의 `COST_SIGN_KEY` **한 상수**이며 #hedge·#fx·#alloc·시뮬레이터·방법론이 공유한다. 값을 표시하는 모든 문장은 **자기 만기를 밝혀야 한다** — 매트릭스는 12개월, 시뮬레이터는 `default_tenor_m`(9개월) 보간이라 같은 통화가 다른 숫자로 나온다(엔 +2.30% vs +2.3550%).
 - **관계분석 변수 목록·기본 선택** = `panel.py` 의 `VARS`/`DEFAULT_VARS`. 통계(상관·교차상관·OLS+HAC)는

@@ -1321,3 +1321,53 @@ def test_lever_text_states_the_one_axis_not_a_single_optimal_pair(probe):
 def test_lever_text_warns_when_the_band_is_what_picks_the_answer(probe):
     """밴드가 물면 그 사실을 화면에 적어야 한다 — 그 숫자는 모형이 아니라 내규가 정한 값이다."""
     assert probe["hedgeLeverText"]["warnsWhenBandBinds"] is True
+
+
+# ---- ALM 듀레이션 갭 (실행해서 확인) ----------------------------------------
+def test_asset_duration_is_computed_from_the_allocation(probe):
+    """자산 듀레이션 = Σ(비중 × 자산군 듀레이션) — 손 재계산과 일치해야 한다.
+
+    수기 `dur_asset` 한 칸만 쓰던 시절에는 배분을 바꿔도 갭이 그대로였다.
+    갭 축소가 내부 목표인데 그러면 화면이 그 목표에 아무 답도 못 준다.
+    """
+    d = probe["durationGap"]
+    assert abs(d["assetDuration"] - d["assetDurationHand"]) < 1e-12
+    assert abs(d["gap"] - d["gapHand"]) < 1e-12
+    assert d["movesWithAllocation"] is True, "배분을 채권 쪽으로 옮겼는데 자산 듀레이션이 안 는다"
+
+
+def test_duration_inputs_are_never_invented(probe):
+    """입력이 없으면 계산하지 않는다 — 0 이나 임의값을 만들어내지 않는다."""
+    d = probe["durationGap"]
+    assert d["nullWithoutInputs"] is True
+    assert d["gapNullWithoutLiability"] is True
+
+
+def test_equity_and_alternatives_carry_no_duration(probe):
+    """주식·대체는 표준 근사대로 듀레이션 0 이다."""
+    assert probe["durationGap"]["equityHasNoDuration"] is True
+
+
+def test_foreign_bond_duration_can_be_separated(probe):
+    """해외채권 듀레이션은 해외 금리 민감도라 원화 부채와 같은 위험요인이 아니다.
+
+    사용자가 0 으로 두어 갭에서 뺄 수 있어야 하고, 빠지는 양이 정확히 그 항이어야 한다.
+    """
+    assert probe["durationGap"]["foreignCanBeExcluded"] is True
+
+
+def test_duration_gap_is_shown_as_an_outcome_not_a_constraint(probe):
+    """내규 한도가 없으므로 제약으로 걸지 않는다 — 화면이 그 사실을 밝혀야 한다.
+
+    허용 괴리폭 α 를 지어내 제약으로 걸면 「자의성 금지」 위반이다.
+    """
+    d = probe["durationGap"]
+    assert d["renderErrors"] == 0
+    assert d["cardShown"] is True
+    assert d["saysNotAConstraint"] is True, "갭이 제약이 아니라 결과 표시임을 화면이 말하지 않는다"
+    assert d["showsReferenceGaps"] is True, "참고치 배분의 갭을 같이 보여주지 않으면 비교가 안 된다"
+
+
+def test_alloc_state_survives_states_saved_by_older_versions(probe):
+    """신규 입력 키가 없던 시절의 localStorage 로도 화면이 죽지 않아야 한다."""
+    assert probe["durationGap"]["survivesLegacyState"] is True

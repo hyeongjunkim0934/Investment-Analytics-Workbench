@@ -3641,6 +3641,35 @@ function allocHBands(st) {
           [g("해외주식", 0, 0), g("해외주식", 1, 100)]];
 }
 
+/* ---- ALM 듀레이션 갭 --------------------------------------------------------
+   내규 한도가 **없다**(사용자 확인, 2026-08-05). 따라서 최적화 **제약으로 걸지 않는다**
+   — 허용 괴리폭을 지어내면 「자의성 금지」 위반이다. 대신 각 후보 배분의 자산
+   듀레이션을 **계산해서 함께 표시**한다: 갭 축소가 내부 목표이므로 "이 배분을 택하면
+   갭이 얼마가 되나"가 보이면 그것만으로 의사결정에 쓰인다. 새 계수는 0개다.
+   금리위험이 없는 자산군(주식·대체)의 듀레이션은 표준 근사대로 0이다. */
+const ALLOC_DUR_KEYS = ["국내채권", "해외채권", "단기자금"];
+
+/* 후보 배분 w(경제 관점 6축, 소수)의 자산 듀레이션 = Σ wᵢ·Dᵢ.
+   자산군별 듀레이션을 하나도 입력하지 않았으면 null — 그때는 수기 `dur_asset` 을 쓴다. */
+function allocAssetDuration(st, w) {
+  const by = st.dur_by || {};
+  const has = ALLOC_DUR_KEYS.some((k) => by[k] != null && isFinite(by[k]));
+  if (!has) return null;
+  let d = 0;
+  ALLOC_ECON.forEach((k, i) => {
+    const v = ALLOC_DUR_KEYS.includes(k) && by[k] != null && isFinite(by[k]) ? +by[k] : 0;
+    d += (w[i] || 0) * v;
+  });
+  return d;
+}
+
+/* 갭 = 자산 듀레이션 − (부채/자산)×부채 듀레이션 (표준 근사). 입력이 없으면 null. */
+function allocDurGap(st, dAsset) {
+  if (st.dur_liab == null || dAsset == null) return null;
+  const laR = st.la_ratio != null ? st.la_ratio : 1;
+  return dAsset - laR * st.dur_liab;
+}
+
 /* 밴드가 허용하는 Xe 구간 — pipeline/alloc.py xe_range 와 같은 산식. */
 function allocXeRange(E, bands) {
   const [[blo, bhi], [elo, ehi]] = bands;
@@ -3687,6 +3716,7 @@ function allocDefaults(A) {
     cap_foreign: null, cap_equity: null, target_ret: null, risk_cap: null,
     by_kr: null, by_fx: null, book_mat_m: null,
     dur_liab: null, dur_asset: null, la_ratio: null,
+    dur_by: { 국내채권: null, 해외채권: null, 단기자금: null },
     saved: false,
   };
 }
@@ -3694,7 +3724,17 @@ function allocDefaults(A) {
 function allocState(A) {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(ALLOC_LS_KEY)) || {}; } catch { saved = {}; }
-  return { ...allocDefaults(A), ...saved };
+  const st = { ...allocDefaults(A), ...saved };
+  /* 예전 버전이 저장한 상태에는 아래 세 객체가 없다 — 없거나 모양이 깨졌으면 기본값으로
+     되돌린다. 여기서 막지 않으면 저장 핸들러가 undefined 에 인덱싱하며 죽는다. */
+  const d = allocDefaults(A);
+  if (!st.h_bands || typeof st.h_bands !== "object") st.h_bands = d.h_bands;
+  ["해외채권", "해외주식"].forEach((k) => {
+    if (!Array.isArray(st.h_bands[k])) st.h_bands[k] = [0, 100];
+  });
+  if (!st.h_tol_hi || typeof st.h_tol_hi !== "object") st.h_tol_hi = d.h_tol_hi;
+  if (!st.dur_by || typeof st.dur_by !== "object") st.dur_by = d.dur_by;
+  return st;
 }
 
 function allocSaveState(st) {
@@ -3825,19 +3865,28 @@ function renderAlloc() {
       cardsBox.append(card("현재 배분 — 손익변동성 (연)", muCur, sigCur,
         "손익에 인식되는 변동만 집계 — 장부가 채권의 가격변동은 포함되지 않습니다", capW(sigCur)));
       const gapCard = el("div", { class: "card", style: "padding:14px 16px" });
-      if (st.dur_liab != null && st.dur_asset != null) {
+      /* 자산군별 듀레이션을 입력했으면 **배분에서 계산**하고, 없으면 수기 dur_asset 으로
+         물러난다. 계산 경로여야 배분을 바꿀 때 갭이 따라 움직인다. */
+      const dComputed = allocAssetDuration(st, E.mixEcon
+        ? ALLOC_ECON.map((k) => (E.mixEcon[k] || 0) / 100) : w0);
+      const dAsset = dComputed != null ? dComputed : st.dur_asset;
+      if (st.dur_liab != null && dAsset != null) {
         const laR = st.la_ratio != null ? st.la_ratio : 1;
-        const gap = st.dur_asset - laR * st.dur_liab;
+        const gap = dAsset - laR * st.dur_liab;
         gapCard.append(el("div", { class: "card-title" }, "ALM 듀레이션 갭 (표준 근사)"),
           el("div", { style: "font-size:20px;font-weight:700;margin:6px 0 2px" }, `${fmtNum(gap, 2)}년`),
           el("div", { style: "font-size:12px" },
-            `갭 = 자산 ${fmtNum(st.dur_asset, 1)} − 부채/자산 ${fmtNum(laR, 2)} × 부채 ${fmtNum(st.dur_liab, 1)}`),
+            `갭 = 자산 ${fmtNum(dAsset, 2)} − 부채/자산 ${fmtNum(laR, 2)} × 부채 ${fmtNum(st.dur_liab, 1)}`),
           el("div", { style: "color:var(--ink-3);font-size:11.5px;margin-top:4px" },
+            dComputed != null
+              ? "자산 듀레이션은 자산군별 입력값과 비중으로 계산합니다 — 배분을 바꾸면 함께 움직입니다. "
+              : "자산 듀레이션은 수기 입력값입니다 — 자산군별 듀레이션을 넣으면 배분에 따라 자동으로 움직입니다. ",
             `금리 +100bp 시 순자산가치 변화 ≈ ${fmtNum(-gap, 2)}%p (총자산 대비). 장부가 자산의 진짜 위험은 가격이 아니라 재투자·ALM입니다.`));
       } else {
         gapCard.append(el("div", { class: "card-title" }, "ALM 듀레이션 갭"),
           el("div", { style: "font-size:12.5px;margin-top:6px" },
-            "부채 듀레이션·자산 듀레이션·부채/자산 비율을 입력하면 여기서 갭과 금리 ±100bp 민감도를 보여줍니다."),
+            "부채 듀레이션 + (자산군별 듀레이션 또는 자산 듀레이션) + 부채/자산 비율을 입력하면 " +
+            "여기서 갭과 금리 ±100bp 민감도를 보여줍니다."),
           el("div", { style: "margin-top:6px" }, el("a", { href: "#alloc-sim" }, "수기 입력 →")));
       }
       const whyCard = el("div", { class: "card", style: "padding:14px 16px" });
@@ -3858,6 +3907,26 @@ function renderAlloc() {
         card("② 수익 유지 참고치", muKeep, sigKeep,
           st.target_ret != null ? `목표수익 ${fmtNum(target, 2)}% 입력값 기준` : "기대수익을 현재와 같게 두고 위험만 축소",
           capW(sigKeep)));
+      /* ALM 듀레이션 갭 — **제약이 아니라 결과 표시**. 배분을 바꾸면 갭이 따라 움직인다. */
+      const dCur = allocAssetDuration(st, w0);
+      if (dCur != null && st.dur_liab != null) {
+        const gCur = allocDurGap(st, dCur);
+        const gapCard = el("div", { class: "card", style: "padding:14px 16px" });
+        gapCard.append(el("div", { class: "card-title" }, "ALM 듀레이션 갭 — 이 배분을 택하면"),
+          el("div", { style: "font-size:20px;font-weight:700;margin:6px 0 2px" }, `${fmtNum(gCur, 2)}년`));
+        if (doOpt) {
+          const gMin = allocDurGap(st, allocAssetDuration(st, wMin));
+          const gKeep = allocDurGap(st, allocAssetDuration(st, wKeep));
+          gapCard.append(el("div", { style: "font-size:12px" },
+            `① 참고치 ${fmtNum(gMin, 2)}년 · ② 참고치 ${fmtNum(gKeep, 2)}년`));
+        }
+        gapCard.append(el("div", { style: "color:var(--ink-3);font-size:11.5px;margin-top:4px" },
+          `자산 듀레이션 ${fmtNum(dCur, 2)}년 = Σ(비중 × 자산군 듀레이션), 주식·대체는 0. `,
+          `부채 ${fmtNum(st.dur_liab, 1)}년 × 부채/자산 ${fmtNum(st.la_ratio != null ? st.la_ratio : 1, 2)}. `,
+          el("b", {}, "최적화 제약이 아니라 결과 표시입니다"),
+          " — 내규 한도가 없어 허용 괴리폭을 임의로 정하지 않았습니다."));
+        cardsBox.append(gapCard);
+      }
     }
 
     /* ----- 레버 두 개 (경제 관점) / 진단 안내 (회계 관점) ----- */
@@ -4165,8 +4234,18 @@ function openAllocDetail(topic) {
         "잔존만기는 지금 수집만 합니다 — 재투자 위험 재정의(§7.2-1 차기)에 쓸 예정이며, 현재 계산에는 들어가지 않습니다.")));
     form.append(el("div", { class: "tenor-row" },
       "부채 듀레이션(년)", numIn("dur_liab", st.dur_liab, 0.1),
-      " 자산 듀레이션(년)", numIn("dur_asset", st.dur_asset, 0.1),
+      " 자산 듀레이션(년)", numIn("dur_asset", st.dur_asset, 0.1, "자산군별 입력 시 무시"),
       " 부채/자산 비율", numIn("la_ratio", st.la_ratio, 0.01, "예: 0.9")));
+    form.append(el("div", { class: "tenor-row" },
+      "자산군별 듀레이션(년) — 국내채권", numIn("dby:국내채권", (st.dur_by || {})["국내채권"], 0.1, "미입력"),
+      " 해외채권", numIn("dby:해외채권", (st.dur_by || {})["해외채권"], 0.1, "미입력"),
+      " 단기자금", numIn("dby:단기자금", (st.dur_by || {})["단기자금"], 0.1, "미입력")));
+    form.append(el("div", { class: "section-note" },
+      "자산군별 듀레이션을 넣으면 자산 듀레이션을 **배분에서 계산**하므로, 배분을 바꿀 때 갭이 함께 움직입니다 " +
+      "(주식·대체는 표준 근사대로 0). 듀레이션 갭은 **최적화 제약이 아니라 결과 표시**입니다 — " +
+      "내규에 허용 괴리폭이 없어 임의의 폭을 만들지 않았습니다. " +
+      "해외채권 듀레이션은 해외 금리에 대한 민감도라 원화 부채의 할인율과 같은 위험요인이 아닙니다 — " +
+      "그 부분을 갭에서 빼고 보시려면 해외채권 칸을 0으로 두십시오."));
 
     form.append(secHead("④ 통화·헤지·가정"));
     form.append(el("div", { class: "tenor-row" },
@@ -4213,6 +4292,7 @@ function openAllocDetail(topic) {
           else if (key.startsWith("hlo:")) { st.h_bands[key.slice(4)][0] = v == null ? 0 : v; }
           else if (key.startsWith("hhi:")) { st.h_bands[key.slice(4)][1] = v == null ? 100 : v; }
           else if (key.startsWith("htol:")) { st.h_tol_hi[key.slice(5)] = v; }
+          else if (key.startsWith("dby:")) { st.dur_by[key.slice(4)] = v; }
           else st[key] = v;
         });
         ["h_bond", "h_eq"].forEach((k) => { st[k] = Math.min(100, Math.max(0, st[k] == null ? 90 : st[k])); });

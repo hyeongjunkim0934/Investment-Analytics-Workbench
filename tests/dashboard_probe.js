@@ -152,7 +152,8 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "SCENE_CYCLE_MS", "sceneCycleAllowed", "restartSceneCycle", "stopSceneCycle",
   "currentScene", "currentTheme", "syncThemeButton",
   "RENDERERS", "renderAll", "renderSection", "renderACWI",
-  "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON"];
+  "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
+  "allocAssetDuration", "allocDurGap"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -1018,6 +1019,61 @@ safe("hedgeLeverText", () => {
   P.renderSection("alloc");
   const txt2 = DOC.getElementById("alloc-levers").textContent;
   r.warnsWhenBandBinds = /밴드가 물고 있습니다/.test(txt2);
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
+/* ====== P19. ALM 듀레이션 갭 — 제약이 아니라 **결과 표시**인가 ==============
+   내규 한도가 없으므로 최적화 제약으로 걸지 않는다(허용 괴리폭을 지어내면 자의성
+   금지 위반). 대신 자산군별 듀레이션에서 자산 듀레이션을 **계산**해 배분을 바꾸면
+   갭이 따라 움직여야 한다 — 수기 dur_asset 만 쓰던 예전에는 움직이지 않았다. */
+safe("durationGap", () => {
+  const r = {};
+  const A = ALLOC_FIXTURE;
+  const st = P.allocDefaults(A);
+  const w = P.ALLOC_ECON.map((k) => (A.defaults.mix[k] || 0) / 100);
+
+  /* 입력이 없으면 계산하지 않는다 — 0 을 만들어내지 않는다 */
+  r.nullWithoutInputs = P.allocAssetDuration(st, w) === null;
+
+  const st2 = { ...st, dur_by: { 국내채권: 4.5, 해외채권: 6.0, 단기자금: 0.25 },
+                dur_liab: 9.0, la_ratio: 0.9 };
+  const d = P.allocAssetDuration(st2, w);
+  /* 손으로 재계산: 0.42×4.5 + 0.18×6.0 + 0.05×0.25 (주식·대체는 0) */
+  r.assetDuration = d;
+  r.assetDurationHand = 0.42 * 4.5 + 0.18 * 6.0 + 0.05 * 0.25;
+  r.gap = P.allocDurGap(st2, d);
+  r.gapHand = d - 0.9 * 9.0;
+
+  /* 배분을 채권 쪽으로 옮기면 자산 듀레이션이 **늘어야** 한다 */
+  const wLong = P.ALLOC_ECON.map((k) => (k === "국내채권" ? 0.62 : k === "해외주식" ? 0 : (A.defaults.mix[k] || 0) / 100));
+  r.movesWithAllocation = P.allocAssetDuration(st2, wLong) > d;
+
+  /* 주식·대체는 듀레이션 0 — 주식만 담은 배분의 자산 듀레이션은 0 */
+  const wEq = P.ALLOC_ECON.map((k) => (k === "해외주식" ? 1 : 0));
+  r.equityHasNoDuration = P.allocAssetDuration(st2, wEq) === 0;
+
+  /* 해외채권을 0 으로 두면 그만큼만 빠진다(사용자가 위험요인을 분리할 수 있는 길) */
+  const stNoFx = { ...st2, dur_by: { ...st2.dur_by, 해외채권: 0 } };
+  r.foreignCanBeExcluded = Math.abs((d - P.allocAssetDuration(stNoFx, w)) - 0.18 * 6.0) < 1e-12;
+
+  /* 부채 입력이 없으면 갭도 없다 */
+  r.gapNullWithoutLiability = P.allocDurGap({ ...st2, dur_liab: null }, d) === null;
+
+  /* 화면 — 경제 관점 카드에 갭이 붙고, **제약이 아님**을 명시하는가 */
+  P.DATA.alloc = A;
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
+    dur_by: { 국내채권: 4.5, 해외채권: 6.0, 단기자금: 0.25 }, dur_liab: 9.0, la_ratio: 0.9 }));
+  P.renderSection("alloc");
+  const cards = DOC.getElementById("alloc-cards").textContent;
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  r.cardShown = /ALM 듀레이션 갭/.test(cards);
+  r.saysNotAConstraint = /최적화 제약이 아니라 결과 표시입니다/.test(cards);
+  r.showsReferenceGaps = /① 참고치/.test(cards);
+  /* 옛 저장 상태(신규 키 없음)로도 죽지 않는가 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, h_bond: 90 }));
+  P.renderSection("alloc");
+  r.survivesLegacyState = DOC.getElementById("alloc").querySelectorAll(".render-error").length === 0;
   shim.localStorage.removeItem("iaw-alloc");
   return r;
 });
