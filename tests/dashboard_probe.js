@@ -157,7 +157,8 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "currentScene", "currentTheme", "syncThemeButton",
   "RENDERERS", "renderAll", "renderSection", "renderACWI",
   "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
-  "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256"];
+  "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256",
+  "allocCcySum", "ALLOC_CCY", "allocState"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -906,7 +907,16 @@ const ALLOC_FIXTURE = (() => {
       h_bond: 90, h_eq: 90,
       h_bands: { 해외채권: [0, 100], 해외주식: [0, 100] },
       h_tol_hi: { 해외채권: null, 해외주식: null },
+      ccy: { 해외채권: {}, 해외주식: {} },
       start_key: "full", proxy: "acwi", cost_key: "hp", block_len: 24,
+    },
+    ccy_bench: {
+      해외채권: { asof: "2026-08-03", src: "probe", basis: "표시통화 직접 집계",
+        w: { USD: 45.77, EUR: 22.95, CNY: 10.56, JPY: 7.54, GBP: 3.96, CAD: 2.61, AUD: 1.51 },
+        krw: 0.99, other: 4.11, dur: {}, dur_all: 5.93, note: "" },
+      해외주식: { asof: "2026-06-30", src: "probe", basis: "국가→통화 근사",
+        w: { USD: 62.49, JPY: 4.94, CNY: 4.08, EUR: 3.89, GBP: 2.99, CAD: 2.89, AUD: 0 },
+        krw: 2.83, other: 15.89, dur: {}, dur_all: null, note: "" },
     },
     boot: { rows: [], note: "probe" }, checks: {}, acct_model: [], limits: "probe",
   };
@@ -1082,6 +1092,50 @@ safe("durationGap", () => {
   return r;
 });
 
+/* ====== P21. 통화 구성 — 벤치마크 디폴트와 커버리지 =========================
+   기관 실제 비중은 수기입력이고 저장소에 없다. 화면이 채워 주는 것은 **공개 벤치마크**
+   뿐이며, 두 자산군의 근거 품질이 달라(채권=표시통화 직접 집계 / 주식=국가→통화 근사)
+   커버리지를 숨기지 않고 그대로 세는지 확인한다. */
+safe("ccyMix", () => {
+  const r = {};
+  const A = ALLOC_FIXTURE;
+  const st = P.allocDefaults(A);
+
+  /* 기본은 **미입력** — 벤치마크를 몰래 적용하지 않는다 */
+  r.emptyByDefault = P.allocCcySum(st, "해외채권").entered === false;
+
+  /* 모형 통화 집합이 hedge.py 와 같은 7개인가 */
+  r.currencies = P.ALLOC_CCY;
+
+  const b = A.ccy_bench["해외채권"];
+  const st2 = { ...st, ccy: { 해외채권: { ...b.w, KRW: b.krw, OTHER: b.other }, 해외주식: {} } };
+  const s = P.allocCcySum(st2, "해외채권");
+  r.bondInModel = +s.inModel.toFixed(4);
+  r.bondKrw = s.krw;
+  r.bondOther = s.other;
+  r.bondTotal = +s.total.toFixed(4);
+  r.bondEntered = s.entered;
+
+  const be = A.ccy_bench["해외주식"];
+  const st3 = { ...st, ccy: { 해외채권: {}, 해외주식: { ...be.w, KRW: be.krw, OTHER: be.other } } };
+  const se = P.allocCcySum(st3, "해외주식");
+  r.eqInModel = +se.inModel.toFixed(4);
+  r.eqTotal = +se.total.toFixed(4);
+  /* 채권 커버리지가 주식보다 높아야 한다 — 근거 품질 차이가 숫자로 드러나는 자리 */
+  r.bondCoverageBeatsEquity = s.inModel > se.inModel;
+
+  /* 부분 입력이어도 합계를 100 으로 **부풀리지 않는다** */
+  const st4 = { ...st, ccy: { 해외채권: { USD: 50 }, 해외주식: {} } };
+  r.partialStaysPartial = P.allocCcySum(st4, "해외채권").total === 50;
+
+  /* 구버전 저장 상태(ccy 키 없음)로도 죽지 않는가 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, h_bond: 90 }));
+  const legacy = P.allocState(A);
+  r.legacyStateGetsCcy = !!(legacy.ccy && legacy.ccy["해외채권"] && legacy.ccy["해외주식"]);
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
 /* ====== P20. 관문 — **접속할 때마다** 묻는가 ================================
    예전에는 통과 사실을 localStorage 에 영구 저장해 처음 한 번만 물었다. 사용자
    지시로 매 접속마다 묻도록 바꿨으므로, "저장하지 않는다"와 "옛 키를 지운다"가
@@ -1130,6 +1184,15 @@ const submitGate = async (pw) => {
     gate.hidden = true;
     P.bindGate();
     r.shownEvenWithLegacyKey = gate.hidden === false;
+    /* 두 번 불러도 리스너가 두 벌 걸리면 안 된다 — 제출 한 번에 async 핸들러가
+       두 벌 돌고 늦게 끝난 쪽이 판정을 덮어쓴다(실제로 테스트가 간헐 실패했다). */
+    let submits = 0;
+    const form0 = DOC.getElementById("gate-form");
+    form0.addEventListener("submit", () => { submits++; });
+    P.bindGate(); P.bindGate();
+    form0.dispatchEvent({ type: "submit", preventDefault() {}, target: form0 });
+    await new Promise((r2) => setTimeout(r2, 30));
+    r.listenerBoundOnce = submits === 1;
     r.legacyKeyCleared = store.getItem("iaw-gate") == null;
 
     /* 해시가 알려진 값과 맞는가 (구현이 SHA-256 인지 직접 확인) */

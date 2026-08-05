@@ -54,7 +54,7 @@ REQUIRED_KEYS = {
               "cost_hist_curve", "cost_hist_usd", "cost_stats", "mtm", "sim",
               "acct_model", "limits"],
     "alloc": ["asof", "sources", "sets", "rates", "cost_options", "anchor_ref",
-              "defaults", "boot", "checks", "acct_model", "limits"],
+              "defaults", "ccy_bench", "boot", "checks", "acct_model", "limits"],
     "risk":  ["asof", "grade_bands", "howto", "layers", "weights",
               "validation", "factors", "limits"],
     "panel": ["asof", "freq", "t", "risk", "risk_meta", "vars",

@@ -1866,7 +1866,13 @@ function bindGate() {
   /* 접속할 때마다 묻는다 — 통과 상태를 저장하지 않고, 예전 버전이 남긴 키는 지운다. */
   try { localStorage.removeItem(GATE_STALE_KEY); } catch { /* 사생활 모드 등 */ }
   gate.hidden = false;
-  $("#gate-form").addEventListener("submit", async (e) => {
+  /* 리스너는 **한 번만** 건다. 두 번 걸리면 제출 한 번에 async 핸들러가 두 벌 돌고,
+     늦게 끝난 쪽이 뒤늦게 gate.hidden 을 덮어써 판정이 뒤집힌다(테스트에서 실측).
+     지금은 boot() 이 한 번만 부르지만, 재초기화 경로가 생기면 그대로 재현된다. */
+  const form = $("#gate-form");
+  if (form.dataset && form.dataset.bound === "1") return;
+  if (form.dataset) form.dataset.bound = "1";
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const val = gateNormalize($("#gate-pw").value);
     let ok = false;
@@ -3737,6 +3743,7 @@ function allocDefaults(A) {
     tenor_m: d.tenor_m, h_bond: d.h_bond, h_eq: d.h_eq,
     h_bands: JSON.parse(JSON.stringify(d.h_bands || { 해외채권: [0, 100], 해외주식: [0, 100] })),
     h_tol_hi: { ...(d.h_tol_hi || { 해외채권: null, 해외주식: null }) },
+    ccy: JSON.parse(JSON.stringify(d.ccy || { 해외채권: {}, 해외주식: {} })),
     cost_key: d.cost_key, proxy: d.proxy, start_key: d.start_key,
     cap_foreign: null, cap_equity: null, target_ret: null, risk_cap: null,
     by_kr: null, by_fx: null, book_mat_m: null,
@@ -3759,7 +3766,32 @@ function allocState(A) {
   });
   if (!st.h_tol_hi || typeof st.h_tol_hi !== "object") st.h_tol_hi = d.h_tol_hi;
   if (!st.dur_by || typeof st.dur_by !== "object") st.dur_by = d.dur_by;
+  if (!st.ccy || typeof st.ccy !== "object") st.ccy = d.ccy;
+  ["해외채권", "해외주식"].forEach((k) => {
+    if (!st.ccy[k] || typeof st.ccy[k] !== "object") st.ccy[k] = {};
+  });
   return st;
+}
+
+/* 모형이 아는 통화. hedge.py CURRENCIES 와 같은 집합이며 순서도 맞춘다. */
+const ALLOC_CCY = ["USD", "EUR", "JPY", "CNY", "AUD", "CAD", "GBP"];
+const ALLOC_CCY_NAME = { USD: "달러", EUR: "유로", JPY: "엔", CNY: "위안",
+                         AUD: "호주달러", CAD: "캐나다달러", GBP: "파운드" };
+
+/* 입력된 통화 구성의 합계·커버리지. **원화는 환노출이 0** 이라 헤지 대상이 아니고
+   (원화 투자자에게는 정의상 그렇다), 모형 밖 통화는 「기타」로 따로 세어 화면에 밝힌다.
+   합계를 100 으로 강제하거나 임의로 비례배분하지 않는다 — 숨기면 커버리지가 안 보인다. */
+function allocCcySum(st, sleeve) {
+  const src = (st.ccy && st.ccy[sleeve]) || {};
+  let inModel = 0, any = false;
+  ALLOC_CCY.forEach((c) => {
+    const v = src[c];
+    if (v != null && isFinite(v)) { inModel += +v; any = true; }
+  });
+  const krw = src.KRW != null && isFinite(src.KRW) ? +src.KRW : 0;
+  const other = src.OTHER != null && isFinite(src.OTHER) ? +src.OTHER : 0;
+  if (src.KRW != null || src.OTHER != null) any = true;
+  return { inModel, krw, other, total: inModel + krw + other, entered: any };
 }
 
 function allocSaveState(st) {
@@ -4211,8 +4243,16 @@ function openAllocDetail(topic) {
         el("small", {}, "서버·저장소로 전송되지 않습니다. 공용 PC에서는 사용 후 초기화를 누르십시오."))));
     const form = el("div", { class: "card" });
     const fields = [];
-    const numIn = (key, val, step, ph) => {
-      const i = el("input", { type: "number", step: String(step || 0.1), value: val == null ? "" : String(val), placeholder: ph || "" });
+    /* 입력칸에 id·aria-label 을 붙인다. 예전에는 둘 다 없어서 스크린리더에 "숫자 입력"
+       으로만 읽혔다(표의 행 머리글은 보조기술이 자동으로 이어 주지 않는다).
+       id 는 `:` 를 빼고 만든다 — CSS 선택자에서 이스케이프가 필요해지기 때문이다. */
+    const numIn = (key, val, step, ph, label) => {
+      const i = el("input", {
+        type: "number", step: String(step || 0.1),
+        value: val == null ? "" : String(val), placeholder: ph || "",
+        id: "in-" + key.replace(/[^\w가-힣]+/g, "-"),
+        "aria-label": label || key,
+      });
       fields.push([key, i]);
       return i;
     };
@@ -4304,6 +4344,57 @@ function openAllocDetail(topic) {
       "저장소·페이지에는 올라가지 않습니다. 일시 초과 허용선은 결정범위에 넣지 않습니다: " +
       "펀드 NAV가 줄어 헤지 계약을 즉시 줄이지 못할 때 생기는 운영상 허용오차이지, 최적화가 고를 선택지가 아니기 때문입니다."));
 
+    /* ----- 통화 구성 ----- */
+    const bench = A.ccy_bench || {};
+    const tw4 = el("table", { class: "mini-table" },
+      el("tr", {}, ...["통화", "해외채권 %", "해외주식 %"].map((h) => el("th", {}, h))));
+    const ccyRow = (code, label, note) => {
+      const tr = el("tr", {},
+        el("td", { style: "text-align:left" }, label,
+          note ? el("small", { style: "color:var(--ink-3);margin-left:6px" }, note) : ""));
+      ["해외채권", "해외주식"].forEach((sl) => {
+        tr.append(el("td", {}, numIn(`ccy:${sl}:${code}`, (st.ccy[sl] || {})[code], 0.1,
+                                     "미입력", `${sl} ${label} 비중 %`)));
+      });
+      tw4.append(tr);
+    };
+    ALLOC_CCY.forEach((c) => ccyRow(c, `${c} ${ALLOC_CCY_NAME[c]}`));
+    ccyRow("KRW", "KRW 원화", "환노출 0");
+    ccyRow("OTHER", "기타", "모형 밖 통화");
+    form.append(el("div", { class: "table-wrap", style: "max-height:none;border:0;overflow:visible" }, tw4));
+
+    /* 벤치마크 채우기 — 공개 벤치마크 값을 입력칸에 **써 넣기만** 한다(자동 적용 아님).
+       사용자가 저장을 눌러야 반영되므로, 기관 실제 비중을 덮어쓸 위험이 없다. */
+    const fillRow = el("div", { class: "tenor-row" });
+    ["해외채권", "해외주식"].forEach((sl) => {
+      const b = bench[sl];
+      if (!b) return;
+      fillRow.append(el("button", { type: "button", class: "btn-ghost", onclick: () => {
+        const put = (code, v) => {
+          const f = fields.find(([k]) => k === `ccy:${sl}:${code}`);
+          if (f) f[1].value = v == null ? "" : String(v);
+        };
+        ALLOC_CCY.forEach((c) => put(c, (b.w || {})[c] || 0));
+        put("KRW", b.krw); put("OTHER", b.other);
+      } }, `${sl} 벤치마크 채우기`));
+    });
+    form.append(fillRow);
+    /* 출처·기준일·근거 품질을 그대로 적는다 — 두 자산군의 품질이 다르다. */
+    ["해외채권", "해외주식"].forEach((sl) => {
+      const b = bench[sl];
+      if (!b) return;
+      const cov = ALLOC_CCY.reduce((a, c) => a + ((b.w || {})[c] || 0), 0);
+      form.append(el("div", { class: "section-note" },
+        el("b", {}, `${sl} 벤치마크`), ` — ${b.src} · 기준일 ${b.asof} · 모형 7통화 커버리지 `,
+        el("b", {}, `${fmtNum(cov, 2)}%`),
+        `(원화 ${fmtNum(b.krw, 2)}% 는 환노출 0, 기타 ${fmtNum(b.other, 2)}% 는 모형 밖). `,
+        b.basis, b.note ? el("span", {}, " ", el("b", {}, "주의"), " — " + b.note) : ""));
+    });
+    form.append(el("div", { class: "section-note" },
+      "여기 값은 **공개 벤치마크**이며 귀 기관 실제 비중이 아닙니다 — 실제 값을 넣으시면 " +
+      "이 브라우저에만 저장되고 저장소·페이지에는 올라가지 않습니다. " +
+      "합계를 100%로 강제하지 않습니다: 모형이 덮는 범위를 그대로 보이게 두는 편이 낫기 때문입니다."));
+
     const btnRow = el("div", { style: "margin-top:12px;display:flex;gap:10px" });
     btnRow.append(
       el("button", { class: "btn-primary", onclick: () => {
@@ -4318,6 +4409,11 @@ function openAllocDetail(topic) {
           else if (key.startsWith("hhi:")) { st.h_bands[key.slice(4)][1] = v == null ? 100 : v; }
           else if (key.startsWith("htol:")) { st.h_tol_hi[key.slice(5)] = v; }
           else if (key.startsWith("dby:")) { st.dur_by[key.slice(4)] = v; }
+          else if (key.startsWith("ccy:")) {
+            const [, sl, code] = key.split(":");
+            if (!st.ccy[sl]) st.ccy[sl] = {};
+            if (v == null) delete st.ccy[sl][code]; else st.ccy[sl][code] = v;
+          }
           else st[key] = v;
         });
         ["h_bond", "h_eq"].forEach((k) => { st[k] = Math.min(100, Math.max(0, st[k] == null ? 90 : st[k])); });

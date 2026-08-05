@@ -540,6 +540,12 @@ button.vchip { cursor: pointer; }
 /* ---------- 환헤지 ---------- */
 .btn-primary { display: inline-block; background: var(--accent-solid); color: #fff;
   padding: 10px 20px; border-radius: 9px; text-decoration: none; font-size: 14px; }
+/* 보조 버튼(벤치마크 채우기 등) — 저장 버튼과 위계를 나누되 조작부 최소 크기
+   24×24(WCAG 2.5.8)는 지킨다. min-height 로 보장한다. */
+.btn-ghost { display: inline-block; background: var(--surface); color: var(--ink-2);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px;
+  font-size: 12.5px; font-family: inherit; cursor: pointer; min-height: 30px; }
+.btn-ghost:hover { border-color: var(--accent-ink); color: var(--ink); }
 .hl-box { background: color-mix(in srgb, #0ca30c 8%, var(--surface));
   border: 1px solid var(--border); border-radius: 10px; padding: 11px 15px;
   font-size: 12.5px; line-height: 1.7; margin-top: 12px; }

@@ -1464,3 +1464,94 @@ def test_event_title_span_carries_the_class_the_css_targets():
     m = re.search(r"function evMini\(e\)\s*\{.*?\n\}", src, re.S)
     assert m, "evMini 를 찾지 못했다"
     assert 'class: "t"' in m.group(0), "evMini 의 제목 span 에 class:\"t\" 가 없다"
+
+
+# ---- 통화 구성 (실행해서 확인) ----------------------------------------------
+def test_currency_mix_is_empty_until_the_user_enters_it(probe):
+    """벤치마크를 몰래 적용하지 않는다 — 기본은 미입력이다.
+
+    기관 실제 비중은 수기입력이고, 벤치마크는 사용자가 「채우기」를 눌러야 들어간다.
+    """
+    assert probe["ccyMix"]["emptyByDefault"] is True
+
+
+def test_currency_set_matches_the_hedge_model():
+    """화면의 통화 집합이 hedge.py CURRENCIES 와 같아야 한다.
+
+    한쪽만 늘리면 입력칸은 생기는데 계산이 못 받는 통화가 조용히 생긴다.
+    """
+    src = (ROOT / "pipeline" / "hedge.py").read_text(encoding="utf-8")
+    m = re.search(r"^CURRENCIES\s*=\s*\[([^\]]*)\]", src, re.M)
+    assert m, "hedge.py CURRENCIES 를 찾지 못했다"
+    py = [x.strip().strip('"\'') for x in m.group(1).split(",") if x.strip()]
+    assert probe_currencies() == py, f"화면 {probe_currencies()} vs hedge.py {py}"
+
+
+def probe_currencies():
+    src = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
+    m = re.search(r"const ALLOC_CCY\s*=\s*\[([^\]]*)\]", src)
+    assert m, "app.js ALLOC_CCY 를 찾지 못했다"
+    return [x.strip().strip('"\'') for x in m.group(1).split(",") if x.strip()]
+
+
+def test_currency_coverage_is_counted_not_hidden(probe):
+    """합계를 100%로 강제하거나 임의 비례배분하지 않는다.
+
+    모형이 덮지 못하는 부분(원화·기타)을 따로 세어야 커버리지가 화면에 드러난다.
+    부분 입력이면 부분 합계 그대로여야 한다.
+    """
+    c = probe["ccyMix"]
+    assert c["bondTotal"] == 100 and c["eqTotal"] == 100, "벤치마크 표가 100%로 안 맞는다"
+    assert c["bondInModel"] + c["bondKrw"] + c["bondOther"] == c["bondTotal"]
+    assert c["partialStaysPartial"] is True, "부분 입력을 100%로 부풀리고 있다"
+
+
+def test_bond_currency_evidence_is_stronger_than_equity(probe):
+    """채권은 표시통화 직접 집계(커버리지 ~95%), 주식은 국가→통화 근사(~81%)다.
+
+    이 차이를 화면이 숨기면 두 값이 같은 품질로 읽힌다.
+    """
+    c = probe["ccyMix"]
+    assert c["bondCoverageBeatsEquity"] is True
+    assert c["bondInModel"] > 90, c["bondInModel"]
+    assert c["eqInModel"] < 90, c["eqInModel"]
+
+
+def test_currency_state_survives_older_saved_states(probe):
+    assert probe["ccyMix"]["legacyStateGetsCcy"] is True
+
+
+def test_benchmark_currency_tables_carry_provenance():
+    """공개 벤치마크 값은 **출처·기준일·근거 방식**을 함께 싣는다.
+
+    두 표의 기준일이 다르고(채권 2026-08, 주식 2026-06) 근거 품질도 다르므로,
+    숫자만 두면 같은 자료로 오해된다.
+    """
+    src = (ROOT / "pipeline" / "alloc.py").read_text(encoding="utf-8")
+    m = re.search(r"CCY_BENCH\s*=\s*\{.*?\n\}", src, re.S)
+    assert m, "CCY_BENCH 를 찾지 못했다"
+    block = m.group(0)
+    for sleeve in ["해외채권", "해외주식"]:
+        assert sleeve in block
+    for field in ['"asof"', '"src"', '"basis"', '"krw"', '"other"']:
+        assert field in block, f"CCY_BENCH 에 {field} 가 없다"
+    # 기관 내부 정보가 섞여 들어가지 않았는지 — 공개 저장소 가드
+    assert "우정" not in block and "보험사업단" not in block
+
+
+def test_manual_input_fields_are_labelled_for_screen_readers():
+    """수기 입력칸은 aria-label 을 갖는다 — 표의 행 머리글은 자동으로 이어지지 않는다."""
+    src = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
+    m = re.search(r"const numIn = \(.*?\n    \};", src, re.S)
+    assert m, "numIn 을 찾지 못했다"
+    assert "aria-label" in m.group(0), "numIn 이 aria-label 을 붙이지 않는다"
+    assert '"id"' in m.group(0) or "id:" in m.group(0), "numIn 이 id 를 붙이지 않는다"
+
+
+def test_gate_binds_its_submit_listener_only_once(probe):
+    """bindGate 를 두 번 불러도 리스너는 한 벌이어야 한다.
+
+    두 벌이면 제출 한 번에 async 핸들러가 두 번 돌고, 늦게 끝난 쪽이 뒤늦게
+    관문 상태를 덮어써 판정이 뒤집힌다 — 실제로 이 검사가 간헐 실패해서 찾았다.
+    """
+    assert probe["passGate"]["listenerBoundOnce"] is True
