@@ -21,11 +21,13 @@ function matchSimple(node, sel) {
   sel = sel.trim();
   if (!sel) return false;
   if (sel === "*") return true;
-  const parts = sel.match(/^([a-zA-Z][\w-]*)?((?:[.#][\w-]+)*)$/);
+  /* id 에 한글이 들어간다 — 시뮬레이션 콘솔 입력칸이 `#sim-mix-해외주식` 처럼
+     자산군 이름을 그대로 쓰기 때문이다. `\w` 만 받으면 그 선택자가 조용히 0건이 된다. */
+  const parts = sel.match(/^([a-zA-Z][\w-]*)?((?:[.#][\w가-힣-]+)*)$/);
   if (!parts) return false;
   const [, tag, rest] = parts;
   if (tag && node.tagName !== tag.toUpperCase()) return false;
-  for (const tok of rest.match(/[.#][\w-]+/g) || []) {
+  for (const tok of rest.match(/[.#][\w가-힣-]+/g) || []) {
     if (tok[0] === "#") { if (node.id !== tok.slice(1)) return false; }
     else if (!node.classList.contains(tok.slice(1))) return false;
   }

@@ -1555,3 +1555,66 @@ def test_gate_binds_its_submit_listener_only_once(probe):
     관문 상태를 덮어써 판정이 뒤집힌다 — 실제로 이 검사가 간헐 실패해서 찾았다.
     """
     assert probe["passGate"]["listenerBoundOnce"] is True
+
+
+# ---- 시뮬레이션 콘솔 (실행해서 확인) — 담당자의 두 메인 용례 ------------------
+def test_summary_answers_both_optima_in_one_table(probe):
+    """기능 1: "최적 배분·최적 헤지가 얼마인가"의 답이 최상단 표 **한 자리**에 있다.
+
+    예전에는 최적 배분이 카드·표에, 최적 헤지가 레버 **문단 속**에 흩어져 있었다.
+    """
+    s = probe["simConsole"]
+    assert s["summaryRendered"] is True
+    assert s["summaryHasBothAnswers"] is True, "요약에 배분 참고치와 헤지(Xe·대표점)가 함께 없다"
+
+
+def test_summary_admits_the_answers_are_partial_optima(probe):
+    """배분 참고치는 헤지 고정, 헤지 참고치는 배분 고정 — **동시 최적해가 아니다.**
+
+    이 사실을 숨기면 두 부분해가 동시해로 읽힌다(패널 검증에서 동시화 순이득
+    +0.38%p·|t| 4.13 이 확인돼 있으므로 차이는 실재한다).
+    """
+    assert probe["simConsole"]["summaryAdmitsPartiality"] is True
+
+
+def test_allocation_inputs_recalc_immediately_without_saving(probe):
+    """기능 2: 배분을 바꾸면 **즉시** 다시 계산되고, 저장은 일어나지 않는다.
+
+    예전 동선은 수기입력 오버레이 → 저장 → 복귀의 왕복이라 시뮬레이션이 아니라
+    설정 변경이었다. 조정과 저장의 분리가 이 콘솔의 계약이다.
+    """
+    s = probe["simConsole"]
+    assert s["mixInputExists"] is True
+    assert s["recalcIsImmediate"] is True, "배분 입력이 즉시 반영되지 않는다"
+    assert s["notSavedOnChange"] is True, "조정이 몰래 저장된다 — 저장은 버튼으로만"
+    assert s["sliderNotAutoSaved"] is True, "헤지 슬라이더가 예전처럼 자동 저장한다"
+
+
+def test_adjustment_is_visibly_marked_and_compared_to_baseline(probe):
+    """조정 중임이 배지로 보이고, 요약에 기준(저장값) 행이 함께 나타나야 한다.
+
+    비교 대상 없이 숫자만 바뀌면 "지금 보는 게 저장값인가 조정값인가"를 알 수 없다.
+    """
+    s = probe["simConsole"]
+    assert s["dirtyBadgeShown"] is True
+    assert s["showsBaselineRowWhenDirty"] is True
+
+
+def test_sum_guard_warns_and_never_silently_fixes(probe):
+    """합계가 목표(100−대출)와 다르면 경고한다. 잔여 채우기는 **명시적 버튼**이고,
+    과다 배분은 버튼으로도 못 맞추므로 경고가 남아야 한다 — 조용히 맞추면
+    "합계가 맞는 줄 알았다"는 사고가 된다."""
+    s = probe["simConsole"]
+    assert s["sumBadgeWarns"] is True
+    assert s["fillCashCannotFixOverAllocation"] is True
+    assert s["fillCashFixesUnderAllocation"] is True
+
+
+def test_save_and_revert_are_explicit_buttons(probe):
+    """저장 버튼이 눌린 뒤에야 localStorage 에 남고, 기준선이 갱신되며,
+    되돌리기는 저장 안 된 조정을 버리고 저장값으로 복귀한다."""
+    s = probe["simConsole"]
+    assert s["saveButtonExists"] is True
+    assert s["saveWritesStorage"] is True
+    assert s["baselineResetAfterSave"] is True
+    assert s["revertRestoresSaved"] is True

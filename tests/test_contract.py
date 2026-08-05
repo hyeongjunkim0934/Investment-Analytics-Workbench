@@ -618,6 +618,9 @@ DYNAMIC_IDS = {
     "hg-acct":     'tile("hg-acct"',
     "hg-carry":    'tile("hg-carry"',
     "hg-span":     'id: "hg-span"',                      # 시뮬레이터 표본기간 줄
+    # 시뮬레이션 콘솔 배분 입력칸 — `"sim-mix-" + 자산군명` 으로 만들어 같은 접두사로 집는다.
+    # (참조 정규식이 [A-Za-z0-9_-]+ 라 한글 뒷부분이 잘려 접두사만 남는다)
+    "sim-mix-":    'id: "sim-mix-" + k.replace',
 }
 
 

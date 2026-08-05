@@ -2639,6 +2639,39 @@ function makeRatioChart(box, opts) {
       ctx.restore();
     }] };
   }
+  /* 점 마커 — 효율적 투자선 위의 「기준 × · 조정 ▲ · 참고치 ●」 처럼, 선이 아니라
+     **한 점**인 상태를 라벨과 함께 그린다. 시리즈로 넣지 않는 이유: uPlot 은 x 배열이
+     공유라 선 밖 임의 좌표를 못 받는다 — draw 훅에서 좌표 변환으로 직접 찍는다. */
+  if (opts.markers && opts.markers.length) {
+    cfg.hooks = cfg.hooks || {};
+    (cfg.hooks.draw = cfg.hooks.draw || []).push((u) => {
+      const { ctx } = u;
+      const dpr = devicePixelRatio || 1;
+      ctx.save();
+      ctx.font = `${11 * dpr}px sans-serif`;
+      opts.markers.forEach((m) => {
+        const px = u.valToPos(m.x, "x", true), py = u.valToPos(m.y, "y", true);
+        if (!isFinite(px) || !isFinite(py)) return;
+        ctx.strokeStyle = m.color || pal.ink;
+        ctx.fillStyle = m.color || pal.ink;
+        ctx.lineWidth = 2 * dpr;
+        const r = 5 * dpr;
+        ctx.beginPath();
+        if (m.kind === "x") {
+          ctx.moveTo(px - r, py - r); ctx.lineTo(px + r, py + r);
+          ctx.moveTo(px + r, py - r); ctx.lineTo(px - r, py + r);
+          ctx.stroke();
+        } else if (m.kind === "tri") {
+          ctx.moveTo(px, py - r); ctx.lineTo(px + r, py + r); ctx.lineTo(px - r, py + r);
+          ctx.closePath(); ctx.fill();
+        } else {
+          ctx.arc(px, py, r * 0.8, 0, Math.PI * 2); ctx.fill();
+        }
+        if (m.label) ctx.fillText(m.label, px + r + 3 * dpr, py + 4 * dpr);
+      });
+      ctx.restore();
+    });
+  }
   const u = new uPlot(cfg, [xs, ...seriesDefs.map((sd) => sd.v)], box);
   const ro = new ResizeObserver(() => u.setSize({ width: Math.max(280, box.clientWidth), height }));
   ro.observe(box);
@@ -3822,6 +3855,15 @@ function renderAlloc() {
   const pal = palette();
   const st = allocState(A);
 
+  /* 기준선 = 마지막으로 **저장된** 상태(없으면 예시값). 시뮬레이션 조정(st)이 여기서
+     얼마나 벗어났는지를 요약·투자선 마커가 이 스냅숏과 비교해 보여준다.
+     저장 버튼 → renderAlloc 재실행 → 기준선이 새 저장값으로 갱신되는 구조다. */
+  const baseSt = allocState(A);
+  const baseE = allocEngine(A, { ...baseSt, view: "econ" });
+  const baseSig = baseE.sigmaW(baseE.w0, baseE.V.C);
+  const baseMu = amDot(baseE.V.mu, baseE.w0);
+  const baseXe = baseE.xeOf(baseSt.h_bond / 100, baseSt.h_eq / 100);
+
   const hl = $("#alloc-headline");
   hl.textContent = "";
   hl.append(el("div", { class: "q" }, "이 화면이 답하는 질문 — 지금 배분·헤지에서 무엇을 얼마나 바꾸면 위험이 얼마나 줄어드나"));
@@ -3844,28 +3886,96 @@ function renderAlloc() {
         ? "손익에 잡히는 변동만 봅니다 — 장부가 채권의 가격변동은 손익에 오지 않습니다"
         : "시가 기준 경제적 가치의 변동을 봅니다 — 장부가/시가 구분이 없습니다")));
 
+  /* ---- 시뮬레이션 콘솔 — 조정은 즉시 반영, 저장은 버튼으로만 (2026-08-05 사용자 승인) ----
+     예전에는 배분을 바꾸려면 수기입력 오버레이 → 저장 → 복귀의 왕복이 필요했고,
+     헤지 슬라이더는 놓는 순간 자동 저장됐다. 지금은 배분·헤지 모두 이 자리에서
+     즉시 반영되고, **만져보는 것(조정)과 남기는 것(저장)이 분리**된다 —
+     저장 전의 조정은 이 화면에만 존재하고 새로고침하면 사라진다.
+     (표본·프록시·비용 선택은 "어떤 모형으로 보나"라서 이전처럼 즉시 저장된다 —
+     그건 시뮬레이션 대상이 아니라 관측 설정이다.) */
+  let dirty = false;
+  const dirtyBadge = el("span", { class: "sim-dirty", hidden: true },
+    "조정 중 — 저장 전 (새로고침하면 사라집니다)");
+  const markDirty = () => { dirty = true; dirtyBadge.hidden = false; };
+
   const sliders = el("div", { style: "display:flex;gap:26px;flex-wrap:wrap;margin-top:10px" });
   const mkSlider = (label, key) => {
     const wrap = el("div", {});
     const lbl = el("span", { class: "hlbl" }, `${st[key]}%`);
-    const inp = el("input", { type: "range", min: "0", max: "100", step: "5", value: String(st[key]) });
+    const inp = el("input", { type: "range", min: "0", max: "100", step: "5",
+      value: String(st[key]), "aria-label": label });
     inp.addEventListener("input", () => {
       st[key] = +inp.value;
       lbl.textContent = `${st[key]}%`;
+      markDirty();
       recalc(false);
     });
-    inp.addEventListener("change", () => { allocSaveState(st); recalc(true); });
+    inp.addEventListener("change", () => recalc(true));
     wrap.append(el("div", { style: "font-size:12.5px" }, el("b", {}, label),
-      el("span", { style: "color:var(--ink-3)" }, " — 모델이 고른 값이 아니라 지금 귀사의 상태입니다")),
+      el("span", { style: "color:var(--ink-3)" }, " — 조정해 보십시오. 저장 전에는 이 화면에만 적용됩니다")),
       el("div", {}, inp, " ", lbl));
     return wrap;
   };
   sliders.append(mkSlider("해외채권 헤지비율", "h_bond"), mkSlider("해외주식 헤지비율", "h_eq"));
-  ctl.append(sliders,
-    el("div", { style: "margin-top:8px" },
-      el("a", { href: "#alloc-sim", class: "btn-primary" }, "우리 기관 숫자로 계산 (수기 입력) →"),
-      el("span", { style: "color:var(--ink-3);font-size:12px;margin-left:10px" },
-        st.saved ? "저장된 수기 입력을 사용 중" : "예시값 표시 중 — 수기 입력을 저장하면 대체됩니다 (이 브라우저에만 저장)")));
+  ctl.append(sliders);
+
+  /* 배분 비중 — 회계 구분 8칸 그대로 받는다(경제 관점은 자동 합산). 경제 6칸으로
+     받으면 장부가/시가로 쪼개는 규칙을 지어내야 해서(자의성) 회계 구분을 유지한다. */
+  const mixRow = el("div", { class: "sim-mix" });
+  const sumBadge = el("span", { class: "sim-sum" });
+  const refreshSum = () => {
+    const target = 100 - (st.loan_w || 0);
+    const sum = ALLOC_ACCT.reduce((a, k) => a + (st.mix_acct[k] || 0), 0);
+    const off = Math.abs(sum - target) > 0.05;
+    sumBadge.textContent = `합계 ${fmtNum(sum, 1)}% / 목표 ${fmtNum(target, 1)}% (대출 ${fmtNum(st.loan_w || 0, 1)}% 제외)`;
+    sumBadge.classList.toggle("warn", off);
+    return off;
+  };
+  ALLOC_ACCT.forEach((k) => {
+    const inp = el("input", { type: "number", step: "1",
+      value: String(st.mix_acct[k] != null ? st.mix_acct[k] : 0),
+      id: "sim-mix-" + k.replace(/\s+/g, "-"), "aria-label": `${k} 비중 %` });
+    inp.addEventListener("input", () => {
+      st.mix_acct[k] = inp.value === "" ? 0 : +inp.value;
+      markDirty();
+      refreshSum();
+      recalc(false);
+    });
+    inp.addEventListener("change", () => recalc(true));
+    mixRow.append(el("label", { class: "sim-cell" },
+      el("span", {}, k), inp));
+  });
+  const fillCash = el("button", { type: "button", class: "btn-ghost", onclick: () => {
+    /* 합계를 몰래 맞추지 않는다 — 사용자가 눌렀을 때만 잔여를 단기자금으로 채운다 */
+    const target = 100 - (st.loan_w || 0);
+    const others = ALLOC_ACCT.filter((k) => k !== "단기자금")
+      .reduce((a, k) => a + (st.mix_acct[k] || 0), 0);
+    st.mix_acct["단기자금"] = Math.max(0, +(target - others).toFixed(2));
+    const inp = $("#sim-mix-단기자금");
+    if (inp) inp.value = String(st.mix_acct["단기자금"]);
+    markDirty();
+    refreshSum();
+    recalc(true);
+  } }, "잔여 → 단기자금");
+  ctl.append(el("div", { style: "margin-top:10px;font-size:12.5px" },
+      el("b", {}, "배분 비중 (%)"),
+      el("span", { style: "color:var(--ink-3)" }, " — 바꾸는 즉시 위 요약과 아래 카드·차트가 다시 계산됩니다")),
+    mixRow,
+    el("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px" },
+      sumBadge, fillCash));
+  refreshSum();
+
+  ctl.append(el("div", { style: "margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap" },
+    el("button", { class: "btn-primary", style: "border:0;cursor:pointer;font-family:inherit",
+      onclick: () => { allocSaveState(st); renderAlloc(); } },
+      "이 상태를 기본값으로 저장"),
+    el("button", { type: "button", class: "btn-ghost",
+      onclick: () => renderAlloc() },                       // 저장 안 된 조정을 버리고 저장값으로
+      "저장값으로 되돌리기"),
+    dirtyBadge,
+    el("a", { href: "#alloc-sim", style: "font-size:12.5px" }, "상세 수기 입력 (밴드·듀레이션·통화 구성) →"),
+    el("span", { style: "color:var(--ink-3);font-size:12px" },
+      st.saved ? "저장된 수기 입력 기준" : "예시값 기준 — 저장하면 대체됩니다 (이 브라우저에만)")));
 
   const cardsBox = $("#alloc-cards");
   const leverBox = $("#alloc-levers");
@@ -3893,6 +4003,97 @@ function renderAlloc() {
     const sigMin = doOpt ? E.sigmaW(wMin, V.C) : 0, muMin = doOpt ? amDot(V.mu, wMin) : 0;
     const sigKeep = doOpt ? E.sigmaW(wKeep, V.C) : 0, muKeep = doOpt ? amDot(V.mu, wKeep) : 0;
     const turnover = doOpt ? w0.reduce((a, w, i) => a + Math.abs(wKeep[i] - w), 0) / 2 * 100 : 0;
+
+    /* 헤지 참고치(위험 최소 Xe·대표점) — 요약과 레버 문단이 **같은 계산 한 벌**을 쓴다.
+       두 곳에서 따로 계산하면 언젠가 어긋난 두 "최적"이 화면에 공존하게 된다. */
+    let hq = null;
+    if (doOpt) {
+      const q = E.xeQuad();
+      const hbnds = allocHBands(st);
+      const [xeLo, xeHi] = allocXeRange(E, hbnds);
+      const xeFree = E.xeStar(null, null, q);
+      const xeBand = E.xeStar(xeLo, xeHi, q);
+      hq = {
+        q, hbnds, xeLo, xeHi, xeFree, xeBand,
+        xeCur: E.xeOf(st.h_bond / 100, st.h_eq / 100),
+        sBand: E.sigmaXe(xeBand, q),
+        pair: E.hedgePairForXe(xeBand, [st.h_bond / 100, st.h_eq / 100], hbnds),
+        bound: Math.abs(xeBand - xeFree) > 1e-9,
+      };
+    }
+
+    /* ----- 요약 — 「그래서 얼마인데?」의 답 한 표 (기능 1) ----- */
+    const sumBox = $("#alloc-summary");
+    sumBox.textContent = "";
+    if (acct) {
+      sumBox.append(el("div", { class: "card-title" }, "현재 vs 참고치 — 경제 관점 전용"),
+        el("div", { class: "card-sub", style: "margin-top:4px" },
+          "배분·헤지 참고치는 경제(시가) 관점에서만 계산합니다 — 위 관점 버튼으로 전환하면 표가 나타납니다. " +
+          "회계 관점의 진단(손익변동성·ALM 듀레이션 갭)은 아래 카드에 있습니다."));
+    } else if (!doOpt) {
+      sumBox.append(el("div", { class: "card-title d-up" }, "현재 vs 참고치 — 제약 모순으로 보류"),
+        el("div", { class: "card-sub", style: "margin-top:4px" },
+          "밴드·그룹 한도가 서로 모순되어 참고치를 계산하지 않았습니다 — 아래 경고 카드를 보십시오."));
+    } else {
+      const gCur = allocDurGap(st, allocAssetDuration(st, w0));
+      const gKeep = allocDurGap(st, allocAssetDuration(st, wKeep));
+      const hasGap = gCur != null && gKeep != null;
+      const heads = ["", ...V.keys, "헤지 채권/주식", "미헤지 환노출 Xe", "수익", "위험",
+                     ...(hasGap ? ["듀레이션 갭"] : [])];
+      const tS = el("table", { class: "mini-table" },
+        el("tr", {}, ...heads.map((h, i) => el("th", { style: i === 0 ? "text-align:left" : "" }, h))));
+      const row = (name, ws, hedgeTxt, xe, mu, sig, gap, bold) => {
+        const tr = el("tr", { style: bold ? "font-weight:650" : "" });
+        tr.append(el("td", { style: "text-align:left" }, name));
+        ws.forEach((x) => tr.append(el("td", { class: "num" }, x == null ? "–" : fmtNum(x, 1))));
+        tr.append(el("td", { class: "num" }, hedgeTxt),
+          el("td", { class: "num" }, xe == null ? "–" : fmtNum(xe, 2) + "%"),
+          el("td", { class: "num" }, fmtNum(mu, 2) + "%"),
+          el("td", { class: "num" }, fmtNum(sig, 2) + "%"));
+        if (hasGap) tr.append(el("td", { class: "num" }, gap == null ? "–" : fmtNum(gap, 2) + "년"));
+        tS.append(tr);
+      };
+      if (dirty) {
+        const bw = ALLOC_ECON.map((k) => (baseE.mixEcon[k] || 0));
+        row("기준(저장값)", bw, `${baseSt.h_bond}/${baseSt.h_eq}%`, baseXe * 100,
+            baseMu, baseSig, hasGap ? allocDurGap(baseSt, allocAssetDuration(baseSt, baseE.w0)) : null);
+      }
+      row(dirty ? "지금 조정" : "현재", w0.map((x) => x * 100),
+          `${st.h_bond}/${st.h_eq}%`, hq.xeCur * 100, muCur, sigCur, gCur, dirty);
+      const pairTxt = hq.pair
+        ? `${fmtNum(hq.pair[0] * 100, 0)}/${fmtNum(hq.pair[1] * 100, 0)}%`
+        : "밴드 내 불가";
+      row("참고치", wKeep.map((x) => x * 100), pairTxt, hq.xeBand * 100, muKeep, sigKeep, gKeep, true);
+      const dtr = el("tr", { class: "sum-delta" });
+      dtr.append(el("td", { style: "text-align:left;color:var(--ink-3)" }, "참고치 − 현재"));
+      wKeep.forEach((x, i) => {
+        const d = (x - w0[i]) * 100;
+        dtr.append(el("td", { class: "num " + (d > 0.05 ? "d-down" : d < -0.05 ? "d-up" : "d-flat") },
+          `${d > 0 ? "+" : ""}${fmtNum(d, 1)}`));
+      });
+      /* −0.00 방지 — 반올림해 0 이 되는 차이는 부호 없이 0 으로 적는다 */
+      const z2 = (x) => (Math.abs(x) < 0.005 ? 0 : x);
+      const dXe = z2((hq.xeBand - hq.xeCur) * 100), dMu = z2(muKeep - muCur), dSig = z2(sigKeep - sigCur);
+      dtr.append(el("td", { class: "num" }, "→"),
+        el("td", { class: "num" }, `${dXe > 0 ? "+" : ""}${fmtNum(dXe, 2)}%p`),
+        el("td", { class: "num" }, `${dMu > 0 ? "+" : ""}${fmtNum(dMu, 2)}%p`),
+        el("td", { class: "num " + (dSig < 0 ? "d-down" : dSig > 0 ? "d-up" : "d-flat") },
+          `${dSig > 0 ? "+" : ""}${fmtNum(dSig, 2)}%p`));
+      if (hasGap) dtr.append(el("td", { class: "num" },
+        `${gKeep - gCur > 0 ? "+" : ""}${fmtNum(gKeep - gCur, 2)}년`));
+      tS.append(dtr);
+      sumBox.append(el("div", { class: "card-head" },
+        el("span", { class: "card-title" }, "현재 vs 참고치 — 한눈에"),
+        el("span", { class: "card-sub" }, `±표본오차 ${fmtNum(se, 2)}%p · 아래 조작을 움직이면 즉시 다시 계산`)),
+        el("div", { class: "table-wrap", style: "max-height:none;border:0" }, tS),
+        el("div", { class: "card-sub", style: "margin-top:5px" },
+          "배분 참고치는 헤지 고정(수익 유지 ②), 헤지 참고치는 배분 고정(위험 최소 Xe의 현재값 최근접 대표점) — ",
+          el("b", {}, "두 부분해이며 동시 최적해가 아닙니다"),
+          "(동시해는 통화축 확장 후 제공). ",
+          hq.bound ? el("b", {}, `헤지 밴드가 물고 있습니다(무제약 Xe ${fmtNum(hq.xeFree * 100, 2)}%). `) : "",
+          "같은 Xe를 만드는 헤지 조합은 위험이 정확히 같습니다 — ",
+          el("a", { href: "#alloc-hedge" }, "왜? ›")));
+    }
 
     /* ----- 3칸 카드 ----- */
     cardsBox.textContent = "";
@@ -4001,29 +4202,20 @@ function renderAlloc() {
         " — 위 카드의 항목을 수기 입력에서 고치면 자동으로 다시 계산됩니다.");
     } else {
       /* 헤지 레버의 자유도는 실질 1개(총 미헤지 환노출 Xe)다 — 한 점을 "최적"이라
-         적으면 무한한 동점 중 하나를 임의로 고른 것이 된다. Xe 를 1급 결과로 올리고,
-         화면에 적는 (채권,주식) 쌍은 **현재값 최근접 대표점**임을 밝힌다. */
-      const q = E.xeQuad();
-      const hb = allocHBands(st);
-      const [xeLo, xeHi] = allocXeRange(E, hb);
-      const xeCur = E.xeOf(st.h_bond / 100, st.h_eq / 100);
-      const xeFree = E.xeStar(null, null, q);
-      const xeBand = E.xeStar(xeLo, xeHi, q);
-      const sBand = E.sigmaXe(xeBand, q);
-      const pair = E.hedgePairForXe(xeBand, [st.h_bond / 100, st.h_eq / 100], hb);
-      const bound = Math.abs(xeBand - xeFree) > 1e-9;
+         적으면 무한한 동점 중 하나를 임의로 고른 것이 된다. 수치는 위 요약과 같은
+         계산 한 벌(hq)이다 — 여기는 그 숫자가 왜 그런지를 설명하는 자리다. */
       leverBox.append(el("b", {}, "레버는 두 개뿐입니다 — 겹쳐 세지 마십시오"), el("br"),
         "· ", el("b", {}, "레버 1 (배분 고정, 헤지만 이동)"),
         " — 위험이 보는 것은 헤지비율 2개가 아니라 ",
         el("b", {}, "총 미헤지 환노출 Xe 하나뿐"), "입니다(총자산 대비). ",
-        `현재 Xe ${fmtNum(xeCur * 100, 2)}% → 위험 최소 Xe ${fmtNum(xeBand * 100, 2)}%: `,
-        `위험 ${fmtNum(sigCur, 2)}→${fmtNum(sBand, 2)}%. `,
-        pair
+        `현재 Xe ${fmtNum(hq.xeCur * 100, 2)}% → 위험 최소 Xe ${fmtNum(hq.xeBand * 100, 2)}%: `,
+        `위험 ${fmtNum(sigCur, 2)}→${fmtNum(hq.sBand, 2)}%. `,
+        hq.pair
           ? el("span", {}, "같은 Xe 를 만드는 조합은 무수히 많고 ",
               el("b", {}, "위험이 정확히 같습니다"),
-              ` — 현재값에 가장 가까운 대표점은 (채권 ${fmtNum(pair[0] * 100, 0)}%, 주식 ${fmtNum(pair[1] * 100, 0)}%)입니다.`)
+              ` — 현재값에 가장 가까운 대표점은 (채권 ${fmtNum(hq.pair[0] * 100, 0)}%, 주식 ${fmtNum(hq.pair[1] * 100, 0)}%)입니다.`)
           : el("b", {}, "다만 이 Xe 는 지금 밴드 안에서 만들 수 없습니다 — 밴드를 확인하십시오."),
-        bound ? el("b", {}, ` ⚠ 밴드가 물고 있습니다(무제약 최소 Xe ${fmtNum(xeFree * 100, 2)}%).`) : "",
+        hq.bound ? el("b", {}, ` ⚠ 밴드가 물고 있습니다(무제약 최소 Xe ${fmtNum(hq.xeFree * 100, 2)}%).`) : "",
         el("a", { href: "#alloc-hedge", style: "margin-left:6px" }, "헤지 곡면 상세 ›"), el("br"),
         "· ", el("b", {}, "레버 2 (헤지 고정, 배분만 이동)"),
         ` — 같은 기대수익 ${fmtNum(target, 2)}%를 유지하며 위험 ${fmtNum(sigCur, 2)}→${fmtNum(sigKeep, 2)}% (±표본오차 ${fmtNum(se, 2)}%p 병기 · 매매회전 ${fmtNum(turnover, 1)}%p).`,
@@ -4170,15 +4362,34 @@ function renderAlloc() {
           }),
         });
         const xsF = pts.map((p) => +p.sig.toFixed(3));
+        /* 점 마커 — "내가 지금 어디에 있고, 어디로 움직였고, 참고치는 어디인가"를
+           선 위에 직접 찍는다. 조정 중이면 기준(저장값)과 조정점이 따로 보인다. */
+        const markers = [
+          { x: sigMin, y: muMin, kind: "dot", label: "①", color: pal.series[1] },
+          { x: sigKeep, y: muKeep, kind: "dot", label: "②", color: pal.series[1] },
+        ];
+        if (dirty) {
+          markers.push({ x: baseSig, y: baseMu, kind: "x", label: "기준(저장값)" },
+                       { x: sigCur, y: muCur, kind: "tri", label: "조정" });
+        } else {
+          markers.push({ x: sigCur, y: muCur, kind: "x", label: "현재" });
+        }
+        const mxs = markers.map((m) => m.x), mys = markers.map((m) => m.y);
+        const yAll = [...pts.map((p) => p.mu), ...mys];
         allocCharts.push(makeRatioChart(fbox, {
           seriesDefs: [
             { label: "투자선", color: pal.series[0], x: xsF, v: pts.map((p) => +p.mu.toFixed(3)) },
           ],
-          xLabel: "위험(연)", xRange: [Math.min(sigMin, sigCur) * 0.9, Math.max(sigCur, ...xsF) * 1.05],
-          unit: "%", height: 260,
+          xLabel: "위험(연)",
+          xRange: [Math.min(sigMin, ...mxs) * 0.9, Math.max(...xsF, ...mxs) * 1.05],
+          yRange: [Math.min(...yAll) - 0.08, Math.max(...yAll) + 0.08],
+          unit: "%", height: 260, markers,
         }));
         frontierCard.append(el("div", { class: "card-sub", style: "margin-top:6px" },
-          `× 현재 (위험 ${fmtNum(sigCur, 2)} · 수익 ${fmtNum(muCur, 2)}) · ① (${fmtNum(sigMin, 2)} · ${fmtNum(muMin, 2)}) · ② (${fmtNum(sigKeep, 2)} · ${fmtNum(muKeep, 2)}) — 표 버튼에서 선 위 각 점의 배분(%)을 볼 수 있습니다.`));
+          (dirty
+            ? `× 기준(저장값) (${fmtNum(baseSig, 2)} · ${fmtNum(baseMu, 2)}) · ▲ 조정 (${fmtNum(sigCur, 2)} · ${fmtNum(muCur, 2)})`
+            : `× 현재 (위험 ${fmtNum(sigCur, 2)} · 수익 ${fmtNum(muCur, 2)})`)
+          + ` · ① (${fmtNum(sigMin, 2)} · ${fmtNum(muMin, 2)}) · ② (${fmtNum(sigKeep, 2)} · ${fmtNum(muKeep, 2)}) — 표 버튼에서 선 위 각 점의 배분(%)을 볼 수 있습니다.`));
         /* 이행 경로 */
         const steps = [];
         for (let k = 0; k <= 20; k++) {

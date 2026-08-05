@@ -65,7 +65,7 @@ footer.append(elem("p", "build-line"), elem("div", "build-warnings"));
 
 /* 자산배분 뼈대 — renderAlloc 이 $("#alloc-…") 로 집는 자리들(index.html 과의 계약).
    하나라도 빠지면 그 자리에서 죽으므로 실제 마크업과 같은 목록을 둔다. */
-["alloc-headline", "alloc-controls", "alloc-cards", "alloc-levers",
+["alloc-headline", "alloc-summary", "alloc-controls", "alloc-cards", "alloc-levers",
  "alloc-frontier-card", "alloc-path-card", "alloc-table-card",
  "alloc-inputs-box", "alloc-method"].forEach((id) => secNodes.alloc.append(elem("div", id)));
 
@@ -1133,6 +1133,91 @@ safe("ccyMix", () => {
   const legacy = P.allocState(A);
   r.legacyStateGetsCcy = !!(legacy.ccy && legacy.ccy["해외채권"] && legacy.ccy["해외주식"]);
   shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
+/* ====== P22. 시뮬레이션 콘솔 — 즉시 반영·저장 분리 (기능 2의 동선) ==========
+   담당자의 두 메인 용례: ① 최적 배분·헤지가 얼마인가(요약 표) ② 마음대로 조정하며
+   수익·위험 변화를 보기(즉시 반영 + 저장 분리). 아래는 그 동선이 실제로 성립하는지를
+   **실행으로** 잰다 — 특히 "조정이 localStorage 에 몰래 저장되지 않는다"가 계약이다. */
+safe("simConsole", () => {
+  const r = {};
+  P.DATA.alloc = ALLOC_FIXTURE;
+  const store = shim.localStorage;
+  store.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+
+  const summary = DOC.getElementById("alloc-summary");
+  const txt0 = summary.textContent;
+  r.summaryRendered = txt0.length > 0;
+  r.summaryHasBothAnswers = /참고치/.test(txt0) && /미헤지 환노출 Xe/.test(txt0) && /헤지 채권\/주식/.test(txt0);
+  r.summaryAdmitsPartiality = /동시 최적해가 아닙니다/.test(txt0);
+
+  /* ① 배분 입력 즉시 반영 — 해외주식을 5→20 으로 올리면 요약 위험이 변해야 한다 */
+  const sigOf = (t) => {
+    const m = t.match(/(\d+\.\d+)%/g);           // 셀 텍스트에서 숫자만 — 위치 비교는 아래에서
+    return m ? m.join("|") : "";
+  };
+  const inp = DOC.getElementById("sim-mix-해외주식");
+  r.mixInputExists = !!inp;
+  const before = summary.textContent;
+  inp.value = "20";
+  inp.dispatchEvent({ type: "input", target: inp });
+  const after = summary.textContent;
+  r.recalcIsImmediate = before !== after;
+  r.dirtyBadgeShown = Array.from(DOC.body.querySelectorAll(".sim-dirty")).some((n) => !n.hidden);
+  r.showsBaselineRowWhenDirty = /기준\(저장값\)/.test(after) && /지금 조정/.test(after);
+
+  /* ② 조정은 저장되지 않는다 — change 이벤트까지 보내도 localStorage 는 빈 채여야 한다 */
+  inp.dispatchEvent({ type: "change", target: inp });
+  r.notSavedOnChange = store.getItem("iaw-alloc") == null;
+
+  /* 헤지 슬라이더도 같은 계약 — range input 을 움직여도 저장 안 됨 */
+  const range = Array.from(DOC.getElementById("alloc-controls").querySelectorAll("input"))
+    .find((n) => n.getAttribute("type") === "range");
+  r.sliderExists = !!range;
+  if (range) {
+    range.value = "40";
+    range.dispatchEvent({ type: "input", target: range });
+    range.dispatchEvent({ type: "change", target: range });
+  }
+  r.sliderNotAutoSaved = store.getItem("iaw-alloc") == null;
+
+  /* ③ 합계 가드 — 20 으로 올렸으니 목표(100−대출12=88)와 어긋나 경고여야 한다 */
+  const badge = DOC.body.querySelector(".sim-sum");
+  r.sumBadgeWarns = !!badge && badge.classList.contains("warn");
+  /* 과다 배분(합계 98 > 목표 88)은 단기자금을 0 으로 눌러도 못 맞춘다 — 버튼이
+     조용히 "맞췄다"고 하면 안 된다. 눌러도 warn 이 남아야 한다. */
+  const fillBtn = Array.from(DOC.getElementById("alloc-controls").querySelectorAll("button"))
+    .find((n) => n.textContent.includes("잔여"));
+  if (fillBtn) fillBtn.click();
+  r.fillCashCannotFixOverAllocation = !!badge && badge.classList.contains("warn");
+  /* 과소 배분(해외주식 2 → 합계 80)은 잔여 8%p 를 단기자금에 채워 목표에 맞는다 */
+  inp.value = "2";
+  inp.dispatchEvent({ type: "input", target: inp });
+  if (fillBtn) fillBtn.click();
+  r.fillCashFixesUnderAllocation = !!badge && !badge.classList.contains("warn");
+
+  /* ④ 저장은 버튼으로만 — 누르면 비로소 localStorage 에 남고 기준선이 갱신된다 */
+  const saveBtn = Array.from(DOC.getElementById("alloc-controls").querySelectorAll("button"))
+    .find((n) => n.textContent.includes("기본값으로 저장"));
+  r.saveButtonExists = !!saveBtn;
+  if (saveBtn) saveBtn.click();
+  const saved = JSON.parse(store.getItem("iaw-alloc") || "null");
+  r.saveWritesStorage = !!saved && saved.mix_acct && saved.mix_acct["해외주식"] === 2;
+  /* 저장 후 재렌더 — 기준선 = 새 저장값이므로 「기준(저장값)」 행이 사라져야 한다 */
+  r.baselineResetAfterSave = !/기준\(저장값\)/.test(DOC.getElementById("alloc-summary").textContent);
+
+  /* ⑤ 되돌리기 — 조정 후 누르면 저장값으로 복귀 */
+  const inp2 = DOC.getElementById("sim-mix-해외주식");
+  inp2.value = "7";
+  inp2.dispatchEvent({ type: "input", target: inp2 });
+  const revertBtn = Array.from(DOC.getElementById("alloc-controls").querySelectorAll("button"))
+    .find((n) => n.textContent.includes("되돌리기"));
+  if (revertBtn) revertBtn.click();
+  r.revertRestoresSaved = (DOC.getElementById("sim-mix-해외주식") || {}).value === "2";
+
+  store.removeItem("iaw-alloc");
   return r;
 });
 
