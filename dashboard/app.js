@@ -943,7 +943,10 @@ function evMini(e) {
   const d = el("div", { class: "evmini" });
   d.append(el("span", { class: "d" }, e.date),
            el("span", { class: `chip ${sevCls}` }, e.sev),
-           el("span", {}, e.title),
+           /* 제목에 클래스가 필요하다 — 없으면 flex 기본값(min-width:auto)이 min-content 로
+              풀려서, 값이 긴 이벤트가 오면 제목이 **한글 한 글자 폭**까지 짜부라진다
+              (실측: 16px × 413px 세로 텍스트). 회귀 테스트 있음. */
+           el("span", { class: "t" }, e.title),
            el("b", {}, e.value));
   return d;
 }
@@ -1367,18 +1370,22 @@ function openDetail(key) {
    해시를 쓰는 이유는 소스에서 평문이 바로 눈에 띄지 않게 하는 것뿐이며, 보안이 아니다.
    진짜 "공유한 사람만"이 필요하면 접근제어 되는 호스팅으로 옮겨야 한다(§3.3).            */
 
-const GATE_KEY = "iaw-gate";
-/* FNV-1a 32bit. 기본 암구호는 "postvillage" — 바꾸려면 아래 값을 새 해시로 교체한다.
-   콘솔에서: __iaw.gateHash("새암구호") */
-const GATE_HASH = 0xc46adc51;
+/* 예전에는 통과 사실을 localStorage(`iaw-gate`)에 영구 저장해 **처음 한 번만** 물었다.
+   사용자 지시(2026-08-05)로 **접속할 때마다** 묻는다 — 그래서 저장하지 않는다.
+   남아 있던 옛 키는 켜질 때 지운다(안 지우면 예전 방문자는 계속 통과된다).
+   해시 탐색을 다시 넣고 싶으면 sessionStorage 한 줄이면 되지만, 그건 "탭을 닫을 때까지"
+   기억하는 것이라 지시와 다르다. */
+const GATE_STALE_KEY = "iaw-gate";
 
-function fnv1a(str) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h >>> 0;
+/* SHA-256 16진수. 예전엔 FNV-1a 32bit 이었는데 값 공간이 43억뿐이라 **충돌하는 다른
+   문자열로도 열렸다** — 같은 상수를 어차피 바꾸는 김에 교체했다. Web Crypto 라 의존성 0.
+   기본 암구호는 "postvillage". 바꾸려면 아래 한 줄만 새 해시로 교체한다.
+   콘솔에서: await __iaw.gateHash("새암구호")  */
+const GATE_SHA256 = "51f13b0f7b8887148793ca87c1f459a60971b9651483acd81a711479a1936654";
+
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /* 건물 ↔ 화면. x/y 는 지도 이미지 기준 백분율(좌상단 0,0).
@@ -1850,18 +1857,30 @@ function bindGate() {
      떠 있으므로 여기서 먼저 변수를 채운다. */
   document.documentElement.style.setProperty("--village-img", `url("${villageImgUrl()}")`);
 
-  if (localStorage.getItem(GATE_KEY) === "1") { gate.hidden = true; return; }
+  /* 접속할 때마다 묻는다 — 통과 상태를 저장하지 않고, 예전 버전이 남긴 키는 지운다. */
+  try { localStorage.removeItem(GATE_STALE_KEY); } catch { /* 사생활 모드 등 */ }
   gate.hidden = false;
-  $("#gate-form").addEventListener("submit", (e) => {
+  $("#gate-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const val = $("#gate-pw").value.trim();
-    if (fnv1a(val) === GATE_HASH) {
-      localStorage.setItem(GATE_KEY, "1");
+    let ok = false;
+    try {
+      ok = (await sha256Hex(val)) === GATE_SHA256;
+    } catch {
+      /* crypto.subtle 은 보안 컨텍스트(https·localhost)에서만 산다. 없으면 **열지 않는다** —
+         조용히 통과시키면 관문이 있다는 표시만 남고 실제로는 없는 상태가 된다. */
+      $("#gate-err").textContent = "이 브라우저에서는 암구호를 확인할 수 없습니다 (https 로 접속하십시오).";
+      $("#gate-err").hidden = false;
+      return;
+    }
+    if (ok) {
       gate.hidden = true;
       /* 관문이 떠 있는 동안은 sceneCycleAllowed() ③ 이 막고 있었다.
          통과한 지금이 자동 순환의 실제 시작점이다 — routeView 는 이미 지나갔다. */
       restartSceneCycle();
     } else {
+      /* 앞선 시도가 crypto 오류 문구를 남겼을 수 있다 — 매번 제자리로 되돌린다. */
+      $("#gate-err").textContent = "암구호가 다릅니다.";
       $("#gate-err").hidden = false;
       $("#gate-pw").select();
     }
@@ -4817,7 +4836,7 @@ async function boot() {
     }
   });
   handleHash();
-  window.__iaw = { registry, state, gateHash: fnv1a };   // 디버그/테스트 훅
+  window.__iaw = { registry, state, gateHash: sha256Hex };   // 디버그·테스트 훅 (await 필요)
 }
 
 boot();

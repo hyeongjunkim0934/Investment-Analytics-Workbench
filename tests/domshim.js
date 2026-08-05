@@ -188,6 +188,9 @@ class Node {
   click() { this.dispatchEvent({ type: "click", target: this, preventDefault() { this.defaultPrevented = true; } }); }
   focus() { DOC.activeElement = this; }
   blur() { if (DOC.activeElement === this) DOC.activeElement = DOC.body; }
+  /* 관문이 틀린 암구호에서 입력칸 전체를 다시 선택한다(재입력 편의). 선택 범위 자체는
+     측정 대상이 아니라 초점만 옮기면 충분하다 — 없으면 그 자리에서 TypeError 로 죽는다. */
+  select() { DOC.activeElement = this; }
   getBoundingClientRect() { return { top: 0, left: 0, width: this.clientWidth, height: 20, bottom: 20, right: this.clientWidth }; }
   scrollIntoView() {}
   getContext() { return null; }

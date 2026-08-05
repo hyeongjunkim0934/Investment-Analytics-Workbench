@@ -45,7 +45,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 265개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 271개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (1초 미만)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js
 python -m pytest

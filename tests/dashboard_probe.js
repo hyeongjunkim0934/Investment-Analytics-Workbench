@@ -130,6 +130,10 @@ const sandbox = {
   Image: class { set src(_v) { setTimeout(() => this.onerror && this.onerror(), 0); } },
   navigator: { userAgent: "probe" },
   performance: { now: () => 0 },
+  /* 관문 암구호는 SHA-256(Web Crypto)으로 검증한다 — 브라우저에서는 전역이라
+     여기서도 전역으로 넣어 준다(노드 22 내장, 외부 의존성 0). */
+  crypto: globalThis.crypto,
+  TextEncoder, TextDecoder,
 };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
@@ -153,7 +157,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "currentScene", "currentTheme", "syncThemeButton",
   "RENDERERS", "renderAll", "renderSection", "renderACWI",
   "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
-  "allocAssetDuration", "allocDurGap"];
+  "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -1078,9 +1082,78 @@ safe("durationGap", () => {
   return r;
 });
 
-/* boot() 은 async 라 fetch 거부가 마이크로태스크로 나중에 돌아온다. 그때는 위 프로브가
-   DATA 를 이미 채워 놓았기 때문에 boot 이 조기 종료 가지를 타지 않고 renderAll() 로
-   들어가 버린다(뼈대에 없는 카드에서 죽는다). 측정은 전부 동기로 끝났으므로
-   여기서 바로 끝낸다 — fs.writeSync 로 확실히 흘려보내고 나간다. */
-fs.writeSync(1, JSON.stringify(out, null, 1));
-process.exit(0);
+/* ====== P20. 관문 — **접속할 때마다** 묻는가 ================================
+   예전에는 통과 사실을 localStorage 에 영구 저장해 처음 한 번만 물었다. 사용자
+   지시로 매 접속마다 묻도록 바꿨으므로, "저장하지 않는다"와 "옛 키를 지운다"가
+   문구가 아니라 동작으로 지켜지는지 실행해서 확인한다. 암구호 검증은 async 다. */
+const safeAsync = async (name, fn) => {
+  try { out[name] = await fn(); } catch (e) { out[name] = { ERROR: String(e && e.stack || e) }; }
+};
+
+/* 제출 핸들러는 async 다(crypto.subtle.digest). setTimeout 한 번으로는 끝났다는 보장이
+   없어 실제로 **간헐적으로 빈 값을 읽었다** — 판정이 DOM 에 반영될 때까지 기다린다.
+   상한을 둬서 영영 안 끝나면 그대로 실패로 드러나게 한다(조용히 통과시키지 않는다). */
+const settled = async (pred, tries = 200) => {
+  for (let i = 0; i < tries; i++) {
+    if (pred()) return true;
+    await new Promise((r) => setTimeout(r, 1));
+  }
+  return false;
+};
+const submitGate = async (pw) => {
+  const err = DOC.getElementById("gate-err");
+  const gate = DOC.getElementById("gate");
+  err.textContent = "";
+  err.hidden = true;
+  const before = gate.hidden;
+  DOC.getElementById("gate-pw").value = pw;
+  const form = DOC.getElementById("gate-form");
+  form.dispatchEvent({ type: "submit", preventDefault() {}, target: form });
+  /* 결과는 둘 중 하나다: 관문이 닫히거나(통과) 오류 문구가 뜨거나(거부) */
+  return settled(() => gate.hidden !== before || err.hidden === false);
+};
+
+(async () => {
+  /* **await 하는 순간 boot() 의 뒷부분이 이어서 돈다.** 지금까지는 마지막 write 가
+     동기라 boot 을 앞질렀는데, 여기서 처음으로 마이크로태스크를 양보하기 때문이다.
+     boot 은 renderMetaLine() 을 먼저 부르고 그건 renderSection 의 try/catch 밖이라,
+     meta 가 없으면 프로브가 통째로 죽는다. 측정 대상이 아니므로 형태만 맞춰 둔다. */
+  P.DATA.meta = { last_observation: "2030-06-30", built_at_kst: "2030-07-01 09:00 KST",
+                  built_at_utc: "2030-07-01T00:00:00Z", series_count: 456,
+                  files: [], warnings: [] };
+  await safeAsync("passGate", async () => {
+    const r = {};
+    const store = shim.localStorage;
+    /* 예전 버전이 남긴 '기억' 키를 심어 둔다 — 그래도 관문이 떠야 한다 */
+    store.setItem("iaw-gate", "1");
+    const gate = DOC.getElementById("gate");
+    gate.hidden = true;
+    P.bindGate();
+    r.shownEvenWithLegacyKey = gate.hidden === false;
+    r.legacyKeyCleared = store.getItem("iaw-gate") == null;
+
+    /* 해시가 알려진 값과 맞는가 (구현이 SHA-256 인지 직접 확인) */
+    r.sha256Known = await P.sha256Hex("abc");
+    r.sha256Expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    /* 32bit 해시(FNV-1a)로 되돌아가지 않았는가 — 길이로 바로 드러난다 */
+    r.hashIsWide = typeof P.GATE_SHA256 === "string" && P.GATE_SHA256.length === 64;
+
+    r.wrongSettled = await submitGate("wrong-passphrase");
+    r.blockedOnWrong = gate.hidden === false;
+    r.errShown = DOC.getElementById("gate-err").hidden === false;
+    r.errText = DOC.getElementById("gate-err").textContent;
+
+    r.rightSettled = await submitGate("postvillage");
+    r.opensOnRight = gate.hidden === true;
+    /* 통과해도 아무것도 저장하지 않는다 — 이것이 "접속할 때마다"의 실체다 */
+    r.nothingRemembered = store.getItem("iaw-gate") == null;
+    return r;
+  });
+
+  /* boot() 은 async 라 fetch 거부가 마이크로태스크로 나중에 돌아온다. 그때는 위 프로브가
+     DATA 를 이미 채워 놓았기 때문에 boot 이 조기 종료 가지를 타지 않고 renderAll() 로
+     들어가 버린다(뼈대에 없는 카드에서 죽는다). 측정이 끝났으므로 여기서 바로 끝낸다
+     — fs.writeSync 로 확실히 흘려보내고 나간다. */
+  fs.writeSync(1, JSON.stringify(out, null, 1));
+  process.exit(0);
+})();

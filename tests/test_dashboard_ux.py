@@ -1371,3 +1371,75 @@ def test_duration_gap_is_shown_as_an_outcome_not_a_constraint(probe):
 def test_alloc_state_survives_states_saved_by_older_versions(probe):
     """신규 입력 키가 없던 시절의 localStorage 로도 화면이 죽지 않아야 한다."""
     assert probe["durationGap"]["survivesLegacyState"] is True
+
+
+# ---- 관문 암구호 (실행해서 확인) --------------------------------------------
+def test_gate_asks_on_every_visit(probe):
+    """통과 사실을 저장하지 않는다 — 사용자 지시(2026-08-05)로 접속할 때마다 묻는다.
+
+    예전에는 localStorage `iaw-gate` 에 영구 저장해 **처음 한 번만** 물었다.
+    "저장하지 않는다"는 문구가 아니라 동작으로 지켜져야 한다.
+    """
+    g = probe["passGate"]
+    assert g["shownEvenWithLegacyKey"] is True, "예전 버전이 남긴 기억 키가 있으면 관문을 건너뛴다"
+    assert g["legacyKeyCleared"] is True, "옛 키를 지우지 않으면 예전 방문자는 계속 통과된다"
+    assert g["nothingRemembered"] is True, "통과 후 무언가를 저장한다 — 다음 접속에 안 묻게 된다"
+
+
+def test_gate_rejects_a_wrong_passphrase(probe):
+    """틀린 암구호는 막고, 그 사실을 화면에 적어야 한다."""
+    g = probe["passGate"]
+    assert g["wrongSettled"] is True, "제출 판정이 끝나지 않았다 — 검사가 성립하지 않는다"
+    assert g["blockedOnWrong"] is True
+    assert g["errShown"] is True
+    assert g["errText"] == "암구호가 다릅니다.", g["errText"]
+
+
+def test_gate_opens_on_the_right_passphrase(probe):
+    g = probe["passGate"]
+    assert g["rightSettled"] is True
+    assert g["opensOnRight"] is True
+
+
+def test_gate_uses_a_wide_hash(probe):
+    """SHA-256 이어야 한다 — 옛 FNV-1a 32bit 은 값 공간이 43억뿐이라
+    **충돌하는 다른 문자열로도 열렸다**. 알려진 시험 벡터로 구현 자체를 확인한다."""
+    g = probe["passGate"]
+    assert g["sha256Known"] == g["sha256Expected"], "SHA-256 구현이 표준 벡터와 다르다"
+    assert g["hashIsWide"] is True, "관문 해시 상수가 64자리 16진수(SHA-256)가 아니다"
+
+
+def test_recent_event_title_is_never_squeezed_to_one_character(probe):
+    """긴 값이 붙은 이벤트에서 제목이 세로로 쌓이면 안 된다.
+
+    실측 사고: 시장 폭 이벤트(값 문장이 길다)가 들어오자 `.evmini` 의 제목 span 이
+    flex 기본 `min-width:auto` → min-content 로 풀려 **16px × 413px** 이 됐다
+    (한글 한 글자씩 세로로). 값(`b`)이 `white-space:nowrap` 이라 행 폭을 다 먹은 탓이다.
+    """
+    css = (ROOT / "dashboard" / "style.css").read_text(encoding="utf-8")
+    m = re.search(r"\.evmini\s*\{([^}]*)\}", css)
+    assert m, ".evmini 규칙이 없다"
+    assert "flex-wrap" in m.group(1) and "wrap" in m.group(1), (
+        "`.evmini` 가 줄바꿈하지 않으면 긴 값이 제목을 min-content 까지 짜부라뜨린다"
+    )
+    t = re.search(r"\.evmini\s+\.t\s*\{([^}]*)\}", css)
+    assert t, "`.evmini .t` 규칙이 없다 — 제목에 최소폭을 주지 않으면 다시 세로로 쌓인다"
+    assert "min-width" in t.group(1), "`.evmini .t` 에 min-width 가 없다"
+    # 값 셀이 nowrap 으로 되돌아가면 좁은 화면에서 카드를 뚫는다(실측 390px 에서 186px 넘침)
+    for sel in [r"\.evmini\s+b", r"\.ecard\s+\.v"]:
+        r = re.search(sel + r"\s*\{([^}]*)\}", css)
+        assert r, f"{sel} 규칙이 없다"
+        assert "nowrap" not in r.group(1), (
+            f"{sel} 가 다시 nowrap 이다 — 좁은 화면에서 가로로 넘친다"
+        )
+
+
+def test_event_title_span_carries_the_class_the_css_targets():
+    """CSS 가 `.evmini .t` 를 잡으므로 마크업이 그 클래스를 붙여야 한다.
+
+    한쪽만 고치면 스타일이 조용히 안 걸리고 예전 증상으로 돌아간다.
+    """
+    src = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
+    m = re.search(r"function evMini\(e\)\s*\{.*?\n\}", src, re.S)
+    assert m, "evMini 를 찾지 못했다"
+    assert 'class: "t"' in m.group(0), "evMini 의 제목 span 에 class:\"t\" 가 없다"

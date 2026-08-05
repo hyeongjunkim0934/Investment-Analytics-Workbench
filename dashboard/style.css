@@ -439,13 +439,27 @@ a.kpi:hover { border-color: var(--baseline); }
 .tlbody { flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 6px 0 16px; min-width: 0; }
 .ecard { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
   padding: 9px 14px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-.ecard .t { font-weight: 650; }
-.ecard .v { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+.ecard .t { font-weight: 650; min-width: 0; word-break: keep-all; overflow-wrap: anywhere; }
+/* 값에 `white-space:nowrap` 을 두면 좁은 화면에서 카드를 **가로로 뚫고 나간다**
+   (실측: 390px 뷰포트에서 186px 넘침 — 시장 폭 이벤트처럼 값 문장이 긴 경우).
+   숫자는 어차피 토큰 중간에서 끊기지 않으므로 nowrap 없이도 안전하고,
+   keep-all 이 한글을 단어 단위로만 끊는다. */
+.ecard .v { font-variant-numeric: tabular-nums; font-weight: 700;
+  min-width: 0; word-break: keep-all; overflow-wrap: anywhere; }
 .ecard .r { color: var(--ink-3); font-size: 11.5px; margin-left: auto; }
-.evmini { font-size: 12.5px; display: flex; gap: 8px; align-items: baseline; padding: 5px 0; border-bottom: 1px solid var(--grid); }
+/* 최근 이벤트 미니 행 — 날짜 · 등급칩 · 제목 · 값.
+   **줄바꿈을 허용해야 한다.** 예전에는 한 줄 고정에 값(`b`)이 `white-space:nowrap` 이라,
+   값이 긴 이벤트(시장 폭 이벤트가 그렇다)가 오면 값이 행 폭을 거의 다 먹고 제목이
+   flex 기본 `min-width:auto` → min-content 로 풀려 **한글 한 글자 폭**까지 짜부라졌다
+   (실측 16px × 413px — 제목이 세로로 한 글자씩 쌓였다). 값을 다음 줄로 넘기는 것이
+   제목을 세로로 만드는 것보다 언제나 낫다. 회귀 테스트 있음. */
+.evmini { font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; padding: 5px 0; border-bottom: 1px solid var(--grid); }
 .evmini:last-child { border-bottom: 0; }
 .evmini .d { color: var(--ink-3); font-variant-numeric: tabular-nums; flex: none; font-size: 11.5px; }
-.evmini b { margin-left: auto; white-space: nowrap; }
+/* 제목은 남는 폭을 갖되 최소폭을 보장한다. keep-all 은 한글이 단어 중간에서 끊기는 것을
+   막고(기본값은 글자 단위로 끊는다), overflow-wrap:anywhere 는 그래도 넘칠 때만 끊는다. */
+.evmini .t { flex: 1 1 12em; min-width: 0; word-break: keep-all; overflow-wrap: anywhere; }
+.evmini b { margin-left: auto; max-width: 100%; word-break: keep-all; overflow-wrap: anywhere; }
 
 /* ---------- 요인 상세 오버레이 ---------- */
 .detail-overlay { position: fixed; inset: 0; z-index: 60; background: var(--page); overflow-y: auto; }
