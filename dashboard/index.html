@@ -20,7 +20,10 @@
     <p class="gate-sub">Post Village · 투자 분석 워크벤치</p>
     <form class="gate-form" id="gate-form">
       <label class="gate-label" for="gate-pw">입장 암구호</label>
-      <input type="password" id="gate-pw" autocomplete="current-password" spellcheck="false">
+      <!-- 암구호에 공백이 있어 모바일 키보드가 첫 글자를 대문자로 바꾸면 그대로 막힌다.
+           autocapitalize/autocorrect 를 끄고, 앞뒤·연속 공백은 JS 가 하나로 접는다. -->
+      <input type="password" id="gate-pw" autocomplete="current-password" spellcheck="false"
+             autocapitalize="none" autocorrect="off">
       <button type="submit">입장</button>
       <p class="gate-err" id="gate-err" hidden>암구호가 다릅니다.</p>
     </form>

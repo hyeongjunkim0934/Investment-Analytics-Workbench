@@ -1379,9 +1379,15 @@ const GATE_STALE_KEY = "iaw-gate";
 
 /* SHA-256 16진수. 예전엔 FNV-1a 32bit 이었는데 값 공간이 43억뿐이라 **충돌하는 다른
    문자열로도 열렸다** — 같은 상수를 어차피 바꾸는 김에 교체했다. Web Crypto 라 의존성 0.
-   기본 암구호는 "postvillage". 바꾸려면 아래 한 줄만 새 해시로 교체한다.
-   콘솔에서: await __iaw.gateHash("새암구호")  */
-const GATE_SHA256 = "51f13b0f7b8887148793ca87c1f459a60971b9651483acd81a711479a1936654";
+   바꾸려면 아래 한 줄만 새 해시로 교체한다.
+   콘솔에서: await __iaw.gateHash("새암구호")
+   또는:     python3 -c "import hashlib;print(hashlib.sha256('새암구호'.encode()).hexdigest())" */
+const GATE_SHA256 = "ad1eb115d256a4ad6d7b0b47747888f39286869bc23079d67df26a2cd99d15a6";
+
+/* 암구호에 **공백이 들어 있다**. 앞뒤 공백과 중간 연속 공백은 오타이지 다른 암구호가
+   아니므로 하나로 접는다 — 대소문자는 접지 않는다(그건 실제로 값 공간을 줄인다).
+   모바일 자동 대문자화는 입력칸의 autocapitalize/autocorrect 속성으로 막는다. */
+const gateNormalize = (s) => String(s).trim().replace(/\s+/g, " ");
 
 async function sha256Hex(str) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
@@ -1862,7 +1868,7 @@ function bindGate() {
   gate.hidden = false;
   $("#gate-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const val = $("#gate-pw").value.trim();
+    const val = gateNormalize($("#gate-pw").value);
     let ok = false;
     try {
       ok = (await sha256Hex(val)) === GATE_SHA256;

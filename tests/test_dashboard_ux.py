@@ -1401,6 +1401,27 @@ def test_gate_opens_on_the_right_passphrase(probe):
     assert g["opensOnRight"] is True
 
 
+def test_gate_forgives_stray_whitespace_but_not_case(probe):
+    """암구호에 **공백이 들어 있다** — 앞뒤·연속 공백은 오타이지 다른 암구호가 아니다.
+
+    반대로 대소문자까지 접으면 값 공간이 실제로 줄어드므로 접지 않는다.
+    (모바일 자동 대문자화는 입력칸의 autocapitalize/autocorrect 로 막는다.)
+    """
+    g = probe["passGate"]
+    assert g["sloppySettled"] is True
+    assert g["opensOnSloppyWhitespace"] is True, "앞뒤·연속 공백 때문에 막힌다"
+    assert g["caseStillMatters"] is True, "대소문자를 접고 있다 — 값 공간이 줄었다"
+
+
+def test_gate_input_disables_mobile_autocapitalize():
+    """공백이 든 암구호라 모바일 키보드가 첫 글자를 대문자로 바꾸면 그대로 막힌다."""
+    html = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
+    m = re.search(r"<input[^>]*id=\"gate-pw\"[^>]*>", html, re.S)
+    assert m, "#gate-pw 입력칸을 찾지 못했다"
+    assert 'autocapitalize="none"' in m.group(0), m.group(0)
+    assert 'autocorrect="off"' in m.group(0), m.group(0)
+
+
 def test_gate_uses_a_wide_hash(probe):
     """SHA-256 이어야 한다 — 옛 FNV-1a 32bit 은 값 공간이 43억뿐이라
     **충돌하는 다른 문자열로도 열렸다**. 알려진 시험 벡터로 구현 자체를 확인한다."""

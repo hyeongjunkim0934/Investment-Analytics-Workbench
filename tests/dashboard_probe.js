@@ -1143,8 +1143,16 @@ const submitGate = async (pw) => {
     r.errShown = DOC.getElementById("gate-err").hidden === false;
     r.errText = DOC.getElementById("gate-err").textContent;
 
-    r.rightSettled = await submitGate("postvillage");
+    /* 공백이 든 암구호다 — 앞뒤·연속 공백은 오타로 보고 접는지 함께 확인한다 */
+    r.sloppySettled = await submitGate("  postal   village  ");
+    r.opensOnSloppyWhitespace = gate.hidden === true;
+    gate.hidden = false;
+    r.rightSettled = await submitGate("postal village");
     r.opensOnRight = gate.hidden === true;
+    gate.hidden = false;
+    await submitGate("Postal Village");
+    r.caseStillMatters = gate.hidden === false;
+    gate.hidden = true;
     /* 통과해도 아무것도 저장하지 않는다 — 이것이 "접속할 때마다"의 실체다 */
     r.nothingRemembered = store.getItem("iaw-gate") == null;
     return r;
