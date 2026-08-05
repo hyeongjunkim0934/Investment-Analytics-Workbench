@@ -3567,10 +3567,84 @@ function allocEngine(A, st) {
       const B = build(view, hbX, heX);
       return sigmaW(w0, B.C);
     },
+    /* --- 헤지 레버의 자유도는 실질 1개다 (pipeline/alloc.py 와 같은 항등식) ---
+       로딩에서 두 레버는 같은 방향 g = e_usd − swap 의 스칼라배로만 들어간다:
+         x(hb,he) = x1 + [w채(1−hb) + w주(1−he)]·g = x1 + Xe·g
+       따라서 같은 Xe 를 만드는 (hb,he) 는 위험이 **정확히** 같다(근사가 아니다).
+       한 점을 최적이라 적으면 무한한 동점 중 하나를 임의로 고른 것이 된다. */
+    xeOf(hbX, heX) { return w0[1] * (1 - hbX) + w0[3] * (1 - heX); },
+    xeOpen() { return w0[1] + w0[3]; },
+    /* σ²(Xe) = a0 + 2·a1·Xe + a2·Xe². 정확히 2차식이므로 **세 점이면 계수가 확정**된다
+       — 로딩 산식을 여기서 다시 쓰지 않고 sigmaHedge 를 세 번 부르는 편이 어긋날 여지가 없다.
+       (hb,he) = (1−t, 1−t) 로 잡으면 Xe = (w채+w주)·t 라 t = 0 / ½ / 1 을 쓴다.
+       회계 관점은 d_swap 의 −h·τ 때문에 이 붕괴가 성립하지 **않으므로** 쓰지 말 것. */
+    xeQuad() {
+      /* 주석이 아니라 실제 가드다 — 회계 관점에서 이 붕괴는 성립하지 않으므로
+         조용히 틀린 2차식을 돌려주느니 호출 자체를 막는다. */
+      if (view !== "econ") throw new Error("xeQuad: 경제 관점 전용 (회계는 d_swap 때문에 붕괴하지 않음)");
+      const X = w0[1] + w0[3];
+      if (!(X > 0)) return { a0: sigmaW(w0, build(view, 1, 1).C) ** 2, a1: 0, a2: 0, span: 0 };
+      const sq = (t) => this.sigmaHedge(1 - t, 1 - t) ** 2;
+      const s0 = sq(0), s1 = sq(0.5), s2 = sq(1);
+      const a2 = 2 * (s2 - 2 * s1 + s0) / (X * X);
+      const a1 = (s2 - s0 - a2 * X * X) / (2 * X);
+      return { a0: s0, a1, a2, span: X };
+    },
+    sigmaXe(xe, q) {
+      const { a0, a1, a2 } = q || this.xeQuad();
+      return Math.sqrt(Math.max(a0 + 2 * a1 * xe + a2 * xe * xe, 0));
+    },
+    /* 위험 최소 Xe — 폐형. 밴드가 주어지면 실행 가능 구간으로 자른다(볼록이라 그것이 제약 하 최소). */
+    xeStar(loXe, hiXe, q) {
+      const { a1, a2 } = q || this.xeQuad();
+      let xe = a2 > 0 ? -a1 / a2 : 0;
+      if (loXe != null) xe = Math.max(xe, loXe);
+      if (hiXe != null) xe = Math.min(xe, hiXe);
+      return xe;
+    },
+    /* 목표 Xe 를 만드는 (hb,he) 중 **현재값에 가장 가까운** 한 점 — 유클리드 정사영.
+       임의 계수 0개이고 해가 폐형이다. 밴드 안에서 불가능하면 null.
+       pipeline/alloc.py 의 hedge_pair_for_xe 와 같은 규칙. */
+    hedgePairForXe(xe, cur, bands) {
+      const wb = w0[1], we = w0[3];
+      const [hb0, he0] = cur;
+      const [[blo, bhi], [elo, ehi]] = bands;
+      const c = wb + we - xe;
+      const cl = (v, a, b) => Math.min(Math.max(v, a), b);
+      if (wb <= 1e-12 && we <= 1e-12) return [hb0, he0];
+      if (we <= 1e-12) return [cl(c / wb, blo, bhi), he0];
+      if (wb <= 1e-12) return [hb0, cl(c / we, elo, ehi)];
+      const r = wb / we;
+      let hb = (hb0 + r * (c / we - he0)) / (1 + r * r);
+      const lo = Math.max(blo, (c - we * ehi) / wb);
+      const hi = Math.min(bhi, (c - we * elo) / wb);
+      if (lo > hi + 1e-12) return null;
+      hb = cl(hb, lo, hi);
+      return [hb, (c - wb * hb) / we];
+    },
     optimize(mu, C, target, iters) {
       return amOptimize(mu, C, lo, hi, total, target, groups, iters);
     },
   };
+}
+
+/* 헤지비율 밴드(내규) — 기관 내부정보이므로 **수기 입력**이고, 기본값은 중립(0~100)이다.
+   pipeline/alloc.py DEFAULTS.h_bands 와 같은 규약: 코드에 특정 기관의 내규를 박지 않는다.
+   반환은 소수 [[채권lo,채권hi],[주식lo,주식hi]]. */
+function allocHBands(st) {
+  const g = (k, i, dflt) => {
+    const b = st.h_bands && st.h_bands[k];
+    const v = Array.isArray(b) ? b[i] : null;
+    return (v == null || !isFinite(v)) ? dflt : Math.min(Math.max(v, 0), 100) / 100;
+  };
+  return [[g("해외채권", 0, 0), g("해외채권", 1, 100)],
+          [g("해외주식", 0, 0), g("해외주식", 1, 100)]];
+}
+
+/* 밴드가 허용하는 Xe 구간 — pipeline/alloc.py xe_range 와 같은 산식. */
+function allocXeRange(E, bands) {
+  const [[blo, bhi], [elo, ehi]] = bands;
+  return [E.xeOf(bhi, ehi), E.xeOf(blo, elo)];
 }
 
 /* 실행 불가능한 제약 입력을 침묵 속에 흡수하지 않는다 — pipeline/alloc.py
@@ -3607,6 +3681,8 @@ function allocDefaults(A) {
     loan_w: d.loan_w, loan_y: d.loan_y,
     alt_alpha: d.alt_alpha, alt_vol: d.alt_vol,
     tenor_m: d.tenor_m, h_bond: d.h_bond, h_eq: d.h_eq,
+    h_bands: JSON.parse(JSON.stringify(d.h_bands || { 해외채권: [0, 100], 해외주식: [0, 100] })),
+    h_tol_hi: { ...(d.h_tol_hi || { 해외채권: null, 해외주식: null }) },
     cost_key: d.cost_key, proxy: d.proxy, start_key: d.start_key,
     cap_foreign: null, cap_equity: null, target_ret: null, risk_cap: null,
     by_kr: null, by_fx: null, book_mat_m: null,
@@ -3798,20 +3874,30 @@ function renderAlloc() {
       leverBox.append(el("b", {}, "제약 모순으로 레버 계산을 보류했습니다"),
         " — 위 카드의 항목을 수기 입력에서 고치면 자동으로 다시 계산됩니다.");
     } else {
-      const sEq0 = E.sigmaHedge(st.h_bond / 100, 0);
-      let bestHb = 0, bestS = Infinity;
-      for (let h = 0; h <= 100; h += 5) {
-        const s = E.sigmaHedge(h / 100, 0);
-        if (s < bestS) { bestS = s; bestHb = h; }
-      }
-      const flat = [];
-      for (let h = 0; h <= 100; h += 5) {
-        if (E.sigmaHedge(h / 100, 0) - bestS < 0.02) flat.push(h);
-      }
+      /* 헤지 레버의 자유도는 실질 1개(총 미헤지 환노출 Xe)다 — 한 점을 "최적"이라
+         적으면 무한한 동점 중 하나를 임의로 고른 것이 된다. Xe 를 1급 결과로 올리고,
+         화면에 적는 (채권,주식) 쌍은 **현재값 최근접 대표점**임을 밝힌다. */
+      const q = E.xeQuad();
+      const hb = allocHBands(st);
+      const [xeLo, xeHi] = allocXeRange(E, hb);
+      const xeCur = E.xeOf(st.h_bond / 100, st.h_eq / 100);
+      const xeFree = E.xeStar(null, null, q);
+      const xeBand = E.xeStar(xeLo, xeHi, q);
+      const sBand = E.sigmaXe(xeBand, q);
+      const pair = E.hedgePairForXe(xeBand, [st.h_bond / 100, st.h_eq / 100], hb);
+      const bound = Math.abs(xeBand - xeFree) > 1e-9;
       leverBox.append(el("b", {}, "레버는 두 개뿐입니다 — 겹쳐 세지 마십시오"), el("br"),
         "· ", el("b", {}, "레버 1 (배분 고정, 헤지만 이동)"),
-        ` — 주식헤지 ${st.h_eq}→0%: 위험 ${fmtNum(sigCur, 2)}→${fmtNum(sEq0, 2)}% · 이어서 채권헤지 ${st.h_bond}→${bestHb}%: →${fmtNum(bestS, 2)}%. `,
-        el("b", {}, `채권헤지는 ${flat[0]}~${flat[flat.length - 1]}%에서 사실상 평평합니다(차이 0.02%p 미만) — 한 점을 고르지 마십시오.`),
+        " — 위험이 보는 것은 헤지비율 2개가 아니라 ",
+        el("b", {}, "총 미헤지 환노출 Xe 하나뿐"), "입니다(총자산 대비). ",
+        `현재 Xe ${fmtNum(xeCur * 100, 2)}% → 위험 최소 Xe ${fmtNum(xeBand * 100, 2)}%: `,
+        `위험 ${fmtNum(sigCur, 2)}→${fmtNum(sBand, 2)}%. `,
+        pair
+          ? el("span", {}, "같은 Xe 를 만드는 조합은 무수히 많고 ",
+              el("b", {}, "위험이 정확히 같습니다"),
+              ` — 현재값에 가장 가까운 대표점은 (채권 ${fmtNum(pair[0] * 100, 0)}%, 주식 ${fmtNum(pair[1] * 100, 0)}%)입니다.`)
+          : el("b", {}, "다만 이 Xe 는 지금 밴드 안에서 만들 수 없습니다 — 밴드를 확인하십시오."),
+        bound ? el("b", {}, ` ⚠ 밴드가 물고 있습니다(무제약 최소 Xe ${fmtNum(xeFree * 100, 2)}%).`) : "",
         el("a", { href: "#alloc-hedge", style: "margin-left:6px" }, "헤지 곡면 상세 ›"), el("br"),
         "· ", el("b", {}, "레버 2 (헤지 고정, 배분만 이동)"),
         ` — 같은 기대수익 ${fmtNum(target, 2)}%를 유지하며 위험 ${fmtNum(sigCur, 2)}→${fmtNum(sigKeep, 2)}% (±표본오차 ${fmtNum(se, 2)}%p 병기 · 매매회전 ${fmtNum(turnover, 1)}%p).`,
@@ -4094,6 +4180,26 @@ function openAllocDetail(topic) {
       "헤지비용(HP 곡선 보간, 12개월 초과는 12M 값 고정)과 스왑 MTM 잔존만기(만기/2) 계산에 쓰입니다. " +
       "통화별(유로·엔 등) 구성 분해는 차기 확장입니다 — 현재 해외자산은 달러 프록시 기준이며, 통화별 헤지 판단은 환헤지 시뮬레이터를 함께 쓰십시오."));
 
+    /* 헤지비율 밴드 — 내규는 기관 내부정보라 기본값을 중립(0~100)으로 두고 여기서만 받는다.
+       '일시 초과 허용선'은 NAV 감소로 계약을 즉시 줄이지 못해 생기는 운영 허용오차이지
+       최적화가 고를 수 있는 값이 아니므로 결정범위와 칸을 나눈다. */
+    const tw3 = el("table", { class: "mini-table" },
+      el("tr", {}, ...["헤지비율 밴드", "하한 %", "상한 %(결정범위)", "일시 초과 허용선 %"]
+        .map((h) => el("th", {}, h))));
+    ["해외채권", "해외주식"].forEach((k) => {
+      const b = (st.h_bands && st.h_bands[k]) || [0, 100];
+      tw3.append(el("tr", {},
+        el("td", { style: "text-align:left" }, k),
+        el("td", {}, numIn(`hlo:${k}`, b[0], 5)),
+        el("td", {}, numIn(`hhi:${k}`, b[1], 5)),
+        el("td", {}, numIn(`htol:${k}`, (st.h_tol_hi || {})[k], 5, "없음"))));
+    });
+    form.append(el("div", { class: "table-wrap", style: "max-height:none;border:0;overflow:visible" }, tw3));
+    form.append(el("div", { class: "section-note" },
+      "기본값은 「밴드 없음」(0~100)입니다 — 기관 내규 값은 여기에 입력하시면 이 브라우저에만 저장되고 " +
+      "저장소·페이지에는 올라가지 않습니다. 일시 초과 허용선은 결정범위에 넣지 않습니다: " +
+      "펀드 NAV가 줄어 헤지 계약을 즉시 줄이지 못할 때 생기는 운영상 허용오차이지, 최적화가 고를 선택지가 아니기 때문입니다."));
+
     const btnRow = el("div", { style: "margin-top:12px;display:flex;gap:10px" });
     btnRow.append(
       el("button", { class: "btn-primary", onclick: () => {
@@ -4104,6 +4210,9 @@ function openAllocDetail(topic) {
           else if (key.startsWith("bhi:")) { st.bands_acct[key.slice(4)][1] = v == null ? 100 : v; }
           else if (key.startsWith("elo:")) { st.bands[key.slice(4)][0] = v == null ? 0 : v; }
           else if (key.startsWith("ehi:")) { st.bands[key.slice(4)][1] = v == null ? 100 : v; }
+          else if (key.startsWith("hlo:")) { st.h_bands[key.slice(4)][0] = v == null ? 0 : v; }
+          else if (key.startsWith("hhi:")) { st.h_bands[key.slice(4)][1] = v == null ? 100 : v; }
+          else if (key.startsWith("htol:")) { st.h_tol_hi[key.slice(5)] = v; }
           else st[key] = v;
         });
         ["h_bond", "h_eq"].forEach((k) => { st[k] = Math.min(100, Math.max(0, st[k] == null ? 90 : st[k])); });
@@ -4175,8 +4284,8 @@ function openAllocDetail(topic) {
     const inner = allocOverlayShell("헤지 곡면 — 배분 고정, 헤지만 움직일 때");
     inner.append(el("div", { class: "qa" },
       el("div", { class: "q" }, "채권·주식 헤지비율을 함께 움직이면 총위험이 어떻게 변하나"),
-      el("div", { class: "a" }, "곡면이 평평한 능선을 갖습니다 ",
-        el("small", {}, "총 환오픈이 비슷하면 어느 쪽에서 열든 위험이 거의 같습니다 — 한 점 고르기보다 구간으로 판단"))));
+      el("div", { class: "a" }, "곡면에 완전히 평평한 능선이 있습니다 ",
+        el("small", {}, "총 미헤지 환노출 Xe 가 같으면 어느 쪽에서 열든 위험이 정확히 같습니다 — 근사가 아니라 항등식입니다"))));
     const hs = [];
     for (let h = 0; h <= 100; h += 5) hs.push(h);
     const mk = (title, fn) => {
@@ -4198,15 +4307,83 @@ function openAllocDetail(topic) {
     const covBE = amDot(rowUsLocal, amMv(E.S, rowE));
     const varE = E.S[E.ix.e_usd][E.ix.e_usd];
     const mvhBond = (1 + covBE / varE) * 100;
-    let best = { s: Infinity, hb: 0, he2: 0 };
-    for (let hb2 = 0; hb2 <= 100; hb2 += 5) for (let he2 = 0; he2 <= 100; he2 += 5) {
-      const s = E.sigmaHedge(hb2 / 100, he2 / 100);
-      if (s < best.s) best = { s, hb: hb2, he2 };
+    /* 왜 해외주식은 열어 두는 쪽이 위험을 낮추나 — 부호를 표본별로 직접 보여 준다.
+       (위험자산이 빠질 때 달러가 오르는 '자연헤지'가 데이터에 있는지 확인하는 자리.) */
+    const corrOf = (cov, a, b) => {
+      const d = Math.sqrt(cov[a][a] * cov[b][b]);
+      return d > 0 ? cov[a][b] / d : NaN;
+    };
+    const cNat = el("div", { class: "card", style: "margin-top:12px" });
+    const tNat = el("table", { class: "mini-table" },
+      el("tr", {}, ...["표본", "해외주식 ↔ 달러/원", "해외채권 ↔ 달러/원"].map((h) => el("th", {}, h))));
+    A.sets.forEach((s) => {
+      const cE = corrOf(s.cov, E.ix[s.proxy_only || E.proxy], E.ix.e_usd);
+      const cB = corrOf(s.cov, E.ix.us_bond, E.ix.e_usd);
+      tNat.append(el("tr", { style: s.key === (st.start_key || "full") ? "font-weight:700" : "" },
+        el("td", { style: "text-align:left" }, s.label + (s.key === (st.start_key || "full") ? " (선택됨)" : "")),
+        el("td", { class: "num" }, isFinite(cE) ? fmtNum(cE, 3) : "—"),
+        el("td", { class: "num" }, isFinite(cB) ? fmtNum(cB, 3) : "—")));
+    });
+    cNat.append(el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, "자연헤지가 실제로 있는가 — 달러/원과의 상관"),
+      el("span", { class: "card-sub" }, "음(−)이면 환을 열어 두는 쪽이 총위험을 낮춥니다")),
+      el("div", { class: "table-wrap", style: "max-height:none;border:0" }, tNat),
+      el("div", { class: "card-sub", style: "margin-top:6px" },
+        "해외주식이 빠질 때 달러/원이 오르는 관계가 음의 상관으로 나타납니다 — 미헤지 해외주식이 " +
+        "그 자체로 완충 역할을 한다는 실무 통념과 같은 방향이며, 표본을 바꿔도 부호가 유지되는지 여기서 확인하십시오. " +
+        "부호가 뒤집히면 위 Xe 곡선의 기울기도 함께 뒤집힙니다."));
+    inner.append(cNat);
+
+    /* 진짜 1차원 축 — σ vs Xe. 위의 두 곡면은 이 곡선을 (hb,he) 로 다시 그린 것뿐이다. */
+    const q = E.xeQuad();
+    const xeOpen = E.xeOpen();
+    const xeFree = E.xeStar(null, null, q);
+    const hbands = allocHBands(st);
+    const [xeLo, xeHi] = allocXeRange(E, hbands);
+    const xeBand = E.xeStar(xeLo, xeHi, q);
+    const xeCur = E.xeOf(st.h_bond / 100, st.h_eq / 100);
+    const xs = [];
+    for (let i = 0; i <= 40; i++) xs.push(+(xeOpen * 100 * i / 40).toFixed(4));
+    const cardXe = el("div", { class: "card", style: "margin-top:12px" });
+    const boxXe = cardScaffold(cardXe, {
+      title: "총위험 vs 총 미헤지 환노출 Xe — 헤지 레버의 진짜 축은 이것 하나입니다",
+      csvName: "헤지_Xe곡선.csv",
+      tableFn: () => ({ headers: ["Xe %", "총위험 %"],
+        rows: xs.map((x) => [fmtNum(x, 2), fmtNum(E.sigmaXe(x / 100, q), 3)]) }) });
+    overlayCharts.push(makeRatioChart(boxXe, {
+      seriesDefs: [{ label: "총위험", color: pal.series[0], x: xs,
+        v: xs.map((x) => +E.sigmaXe(x / 100, q).toFixed(3)) }],
+      xLabel: "총 미헤지 환노출 Xe (총자산 대비 %)", unit: "%", height: 250 }));
+    inner.append(cardXe);
+    /* 동률 능선을 표로 직접 보여 준다 — "같은 Xe 면 위험이 같다"를 눈으로 확인시키는 자리 */
+    const tie = el("table", { class: "mini-table" },
+      el("tr", {}, ...["채권헤지 %", "주식헤지 %", `Xe %`, "총위험 %"].map((h) => el("th", {}, h))));
+    const wbb = E.w0[1], wee = E.w0[3];
+    if (wbb > 1e-12 && wee > 1e-12) {
+      const cc = wbb + wee - xeBand;
+      for (let hb2 = 0; hb2 <= 100; hb2 += 5) {
+        const he2 = (cc - wbb * hb2 / 100) / wee;
+        if (he2 < -1e-9 || he2 > 1 + 1e-9) continue;
+        tie.append(el("tr", {},
+          el("td", { class: "num" }, fmtNum(hb2, 0)),
+          el("td", { class: "num" }, fmtNum(he2 * 100, 1)),
+          el("td", { class: "num" }, fmtNum(E.xeOf(hb2 / 100, he2) * 100, 4)),
+          el("td", { class: "num" }, fmtNum(E.sigmaHedge(hb2 / 100, he2), 6))));
+      }
     }
+    const cardTie = el("div", { class: "card", style: "margin-top:12px" });
+    cardTie.append(el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, "동률 능선 — 위험 최소 Xe 를 만드는 조합들"),
+      el("span", { class: "card-sub" }, "마지막 열이 소수점 여섯 자리까지 같습니다 — 한 점을 최적이라 적으면 임의 선택입니다")),
+      el("div", { class: "table-wrap", style: "max-height:none;border:0" }, tie));
+    inner.append(cardTie);
     inner.append(el("div", { class: "howto", style: "margin-top:12px" },
       el("b", {}, "왜 자산별 참고치와 다른가"),
-      ` — 채권만 떼어 본 최소분산 헤지(MVH)는 ${fmtNum(mvhBond, 0)}%지만, 포트폴리오 전체의 격자 최소는 (채권 ${best.hb}%, 주식 ${best.he2}%)입니다. 총위험에는 국내주식·환율의 상쇄까지 들어오기 때문입니다. `,
-      "회계(손익) 관점은 방향이 정반대 — 장부가 해외채권은 상쇄해줄 가격변동이 손익에 없어 헤지 100%가 언제나 손익변동 최소입니다(판단 변수는 비용)."));
+      ` — 채권만 떼어 본 최소분산 헤지(MVH)는 ${fmtNum(mvhBond, 0)}%지만, 포트폴리오 전체의 위험 최소 Xe 는 ${fmtNum(xeBand * 100, 2)}%입니다(현재 ${fmtNum(xeCur * 100, 2)}%). 총위험에는 국내주식·환율의 상쇄까지 들어오기 때문입니다. `,
+      Math.abs(xeBand - xeFree) > 1e-9
+        ? el("b", {}, `밴드가 물고 있습니다 — 무제약 최소 Xe 는 ${fmtNum(xeFree * 100, 2)}%입니다. `) : "",
+      "회계(손익) 관점은 방향이 정반대 — 장부가 해외채권은 상쇄해줄 가격변동이 손익에 없어 헤지 100%가 언제나 손익변동 최소입니다(판단 변수는 비용). ",
+      el("b", {}, "회계 관점에서는 이 Xe 붕괴가 성립하지 않습니다"), " — 스왑 MTM(−h·만기/2)이 채권 축을 따로 남기기 때문입니다."));
     $("#detail-overlay").scrollTop = 0;
     return;
   }
@@ -4257,10 +4434,10 @@ function openAllocDetail(topic) {
       el("tr", {}, ...["블록", "지표", "5%", "25%", "중앙값", "75%", "95%"].map((h) => el("th", {}, h))));
     A.boot.rows.forEach((r) => {
       [["anchor", "앵커"], ["d1", "레버1 위험 감소 %p"], ["d2", "레버2 위험 감소 %p"],
-       ["hb_star", "위험최소 채권헤지 %"], ["he_star", "위험최소 주식헤지 %"]].forEach(([k, lbl], i) => {
+       ["xe_star", "위험최소 Xe % (총 미헤지 환노출)"]].forEach(([k, lbl], i) => {
         const q = r[k];
         const tr = el("tr", { style: i === 0 ? "border-top:2px solid var(--border)" : "" });
-        if (i === 0) tr.append(el("td", { rowspan: "5" }, `${r.block_len}개월`));
+        if (i === 0) tr.append(el("td", { rowspan: "4" }, `${r.block_len}개월`));
         tr.append(el("td", { style: "text-align:left" }, lbl),
           ...["q05", "q25", "q50", "q75", "q95"].map((qq) => el("td", { class: "num" }, fmtNum(q[qq], k === "anchor" ? 3 : 2))));
         t.append(tr);

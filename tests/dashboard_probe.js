@@ -63,6 +63,12 @@ overlayNode.hidden = true;
 DOC.body.append(overlayNode);
 footer.append(elem("p", "build-line"), elem("div", "build-warnings"));
 
+/* 자산배분 뼈대 — renderAlloc 이 $("#alloc-…") 로 집는 자리들(index.html 과의 계약).
+   하나라도 빠지면 그 자리에서 죽으므로 실제 마크업과 같은 목록을 둔다. */
+["alloc-headline", "alloc-controls", "alloc-cards", "alloc-levers",
+ "alloc-frontier-card", "alloc-path-card", "alloc-table-card",
+ "alloc-inputs-box", "alloc-method"].forEach((id) => secNodes.alloc.append(elem("div", id)));
+
 /* 카탈로그 뼈대 */
 const catTable = elem("table", "catalog-table");
 const tbody = elem("tbody");
@@ -145,7 +151,8 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY",
   "SCENE_CYCLE_MS", "sceneCycleAllowed", "restartSceneCycle", "stopSceneCycle",
   "currentScene", "currentTheme", "syncThemeButton",
-  "RENDERERS", "renderAll", "renderSection", "renderACWI"];
+  "RENDERERS", "renderAll", "renderSection", "renderACWI",
+  "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -850,6 +857,168 @@ safe("renderIsolation", () => {
   P.renderSection("macro");
   P.RENDERERS.macro = real;
   r.noticeNotDuplicated = macro.querySelectorAll(".render-error").length === 1;
+  return r;
+});
+
+/* ====== P17. 헤지 레버의 자유도는 실질 1개(Xe)인가 =========================
+   화면이 "최적 헤지비율 (35%, 100%)" 처럼 한 점을 적던 시절, 그 점은 무한한 동점
+   중 격자 스캔 순서가 고른 구석이었고 하필 가장 반직관적인 값이 나왔다. 아래는
+   ① 붕괴가 실제로 성립하는지 ② 폐형 최소가 진짜 최소인지 ③ 대표점 규칙이
+   현재값 최근접인지 ④ 회계 관점에서 가드가 실제로 막는지를 **실행으로** 잰다. */
+const ALLOC_FIXTURE = (() => {
+  const L = ["kr_bond", "us_bond", "kospi", "acwi", "spx", "alt", "cash", "e_usd", "swap", "d_swap"];
+  /* 대각 + 몇 개의 실제 공분산. 해외주식↔달러원은 **음(−)** 으로 둔다(자연헤지). */
+  const sd = { kr_bond: 0.038, us_bond: 0.043, kospi: 0.223, acwi: 0.161, spx: 0.155,
+               alt: 0.010, cash: 0.001, e_usd: 0.113, swap: 0.005, d_swap: 0.004 };
+  const rho = { "acwi|e_usd": -0.63, "spx|e_usd": -0.54, "us_bond|e_usd": -0.31,
+                "kospi|e_usd": -0.44, "kr_bond|e_usd": -0.28, "acwi|kospi": 0.62,
+                "acwi|spx": 0.95, "swap|d_swap": 0.30, "us_bond|kr_bond": 0.45 };
+  const cov = L.map((a) => L.map((b) => {
+    if (a === b) return sd[a] * sd[a];
+    const r = rho[`${a}|${b}`] != null ? rho[`${a}|${b}`] : (rho[`${b}|${a}`] || 0);
+    return r * sd[a] * sd[b];
+  }));
+  return {
+    asof: "2030-06-30",
+    sources: { labels: L, desc: {} },
+    sets: [{ key: "full", label: "공통 표본 전체", cov, n_months: 234 },
+           { key: "y2015", label: "2015년 이후", cov, n_months: 138 }],
+    rates: { kr3m: { v: 3.0 }, kr5y: { v: 3.6 }, us3m: { v: 4.2 },
+             us_ytm: { v: 4.8 }, cpi: { v: 2.0 } },
+    cost_options: [{ key: "hp", label: "실측 HP", v: -0.8, src: "probe",
+                     curve: { "3M": -0.9, "6M": -0.85, "12M": -0.7 } }],
+    anchor_ref: {},
+    defaults: {
+      mix: { 국내채권: 42, 해외채권: 18, 국내주식: 3, 해외주식: 5, 대체투자: 15, 단기자금: 5 },
+      bands: { 국내채권: [20, 55], 해외채권: [0, 30], 국내주식: [0, 10],
+               해외주식: [0, 15], 대체투자: [5, 25], 단기자금: [2, 15] },
+      mix_acct: { "장부가 국내채권": 30, "시가 국내채권": 12, "장부가 해외채권": 12,
+                  "시가 해외채권": 6, 국내주식: 3, 해외주식: 5, 대체투자: 15, 단기자금: 5 },
+      bands_acct: { "장부가 국내채권": [15, 45], "시가 국내채권": [0, 25],
+                    "장부가 해외채권": [0, 25], "시가 해외채권": [0, 20],
+                    국내주식: [0, 10], 해외주식: [0, 15], 대체투자: [5, 25], 단기자금: [2, 15] },
+      loan_w: 12, loan_y: 4, alt_alpha: 3, alt_vol: 8, tenor_m: 9,
+      h_bond: 90, h_eq: 90,
+      h_bands: { 해외채권: [0, 100], 해외주식: [0, 100] },
+      h_tol_hi: { 해외채권: null, 해외주식: null },
+      start_key: "full", proxy: "acwi", cost_key: "hp", block_len: 24,
+    },
+    boot: { rows: [], note: "probe" }, checks: {}, acct_model: [], limits: "probe",
+  };
+})();
+
+safe("hedgeXe", () => {
+  const r = {};
+  const A = ALLOC_FIXTURE;
+  const st = P.allocDefaults(A);
+  const E = P.allocEngine(A, st);
+  const q = E.xeQuad();
+
+  /* ① 3점 적합이 sigmaHedge 를 그대로 재현하는가 — 계수를 손으로 다시 쓰지 않았다는 증거 */
+  let worst = 0;
+  for (let hb = 0; hb <= 1.0001; hb += 0.1) {
+    for (let he = 0; he <= 1.0001; he += 0.1) {
+      const d = Math.abs(E.sigmaXe(E.xeOf(hb, he), q) - E.sigmaHedge(hb, he));
+      if (d > worst) worst = d;
+    }
+  }
+  r.quadFitMaxErr = worst;
+
+  /* ② 붕괴 — 같은 Xe 면 위험이 **정확히** 같은가 */
+  const wb = E.w0[1], we = E.w0[3];
+  const target = E.xeOf(0.35, 1.0);
+  const ring = [];
+  for (let hb = 0; hb <= 1.0001; hb += 0.05) {
+    const he = 1 - (target - wb * (1 - hb)) / we;
+    if (he < -1e-9 || he > 1 + 1e-9) continue;
+    ring.push(E.sigmaHedge(hb, he));
+  }
+  r.tieCount = ring.length;
+  r.tieSpread = ring.length ? Math.max(...ring) - Math.min(...ring) : -1;
+
+  /* ③ 폐형 최소가 격자 전수보다 낮은가 */
+  const xeFree = E.xeStar(null, null, q);
+  const sFree = E.sigmaXe(xeFree, q);
+  let gridMin = Infinity;
+  for (let hb = 0; hb <= 1.0001; hb += 0.05) {
+    for (let he = 0; he <= 1.0001; he += 0.05) gridMin = Math.min(gridMin, E.sigmaHedge(hb, he));
+  }
+  r.closedFormBeatsGrid = sFree <= gridMin + 1e-12;
+  r.xeStarPct = xeFree * 100;
+
+  /* ④ 자연헤지 부호 — 해외주식만 담았을 때 최소점이 '거의 오픈' 쪽인가 */
+  const stEq = { ...st, mix_acct: { "장부가 국내채권": 0, "시가 국내채권": 0,
+    "장부가 해외채권": 0, "시가 해외채권": 0, 국내주식: 0, 해외주식: 100,
+    대체투자: 0, 단기자금: 0 } };
+  const Eq = P.allocEngine(A, stEq);
+  const xeEq = Eq.xeStar(null, null, Eq.xeQuad());
+  r.equityOnlyHedgePct = 100 - xeEq * 100;     // Xe=w(1−h), w=1 → h = 1−Xe
+  r.equityFullHedgeIsWorse = Eq.sigmaHedge(0, 1) > Eq.sigmaHedge(0, 0);
+
+  /* ⑤ 대표점 — 목표 Xe 를 만들고, 밴드 안이고, 현재값에 가장 가깝다 */
+  const bandsFree = [[0, 1], [0, 1]];
+  const cur = [0.98, 0.0];
+  const pair = E.hedgePairForXe(target, cur, bandsFree);
+  r.pairKeepsXe = Math.abs(E.xeOf(pair[0], pair[1]) - target) < 1e-12;
+  const dPair = (pair[0] - cur[0]) ** 2 + (pair[1] - cur[1]) ** 2;
+  let closest = true;
+  for (let hb = 0; hb <= 1.0001; hb += 0.005) {
+    const he = 1 - (target - wb * (1 - hb)) / we;
+    if (he < 0 || he > 1) continue;
+    if ((hb - cur[0]) ** 2 + (he - cur[1]) ** 2 < dPair - 1e-12) closest = false;
+  }
+  r.pairIsClosest = closest;
+  /* 현재값이 이미 그 Xe 위면 움직이지 않는다 */
+  const same = E.hedgePairForXe(E.xeOf(cur[0], cur[1]), cur, bandsFree);
+  r.pairStaysPutWhenAlreadyOnTarget =
+    Math.abs(same[0] - cur[0]) < 1e-12 && Math.abs(same[1] - cur[1]) < 1e-12;
+
+  /* ⑥ 밴드 — 자르고, 불가능하면 null 로 알린다 */
+  const stB = { ...st, h_bands: { 해외채권: [70, 100], 해외주식: [0, 20] } };
+  const EB = P.allocEngine(A, stB);
+  const hb2 = P.allocHBands(stB);
+  r.bandsRead = hb2;
+  const [xeLo, xeHi] = P.allocXeRange(EB, hb2);
+  const xeBand = EB.xeStar(xeLo, xeHi, EB.xeQuad());
+  r.bandClips = xeBand >= xeLo - 1e-12 && xeBand <= xeHi + 1e-12;
+  r.bandActuallyBinds = Math.abs(xeBand - xeFree) > 1e-9;
+  r.infeasibleReturnsNull = EB.hedgePairForXe(xeHi + 0.01, cur, hb2) === null;
+  /* 기본값은 **중립**이어야 한다 — 기관 내규를 코드에 박지 않았다는 계약 */
+  r.defaultBandsAreNeutral = JSON.stringify(P.allocHBands(st)) === JSON.stringify([[0, 1], [0, 1]]);
+
+  /* ⑦ 회계 관점 가드가 주석이 아니라 실제로 막는가 */
+  const EA = P.allocEngine(A, { ...st, view: "acct" });
+  let threw = false;
+  try { EA.xeQuad(); } catch (e) { threw = /경제 관점 전용/.test(String(e.message)); }
+  r.acctViewGuardThrows = threw;
+  return r;
+});
+
+/* ====== P18. 레버 문구가 실제로 렌더되는가 (DOM 경로) ======================
+   위 P17 은 엔진만 본다. 화면에 나가는 문장은 별도 경로이며, 여기서 실제로
+   #alloc 을 그려 그 문단을 읽는다 — "최적 헤지비율 한 점"이 되살아나면 잡힌다. */
+safe("hedgeLeverText", () => {
+  const r = {};
+  P.DATA.alloc = ALLOC_FIXTURE;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const box = DOC.getElementById("alloc-levers");
+  const txt = box ? box.textContent : "";
+  r.rendered = txt.length > 0;
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  r.mentionsXe = /총 미헤지 환노출/.test(txt);
+  r.saysRiskIsOneAxis = /헤지비율 2개가 아니라/.test(txt);
+  r.saysTiesAreEqual = /위험이 정확히 같습니다/.test(txt);
+  r.labelsPairAsRepresentative = /대표점/.test(txt);
+  /* 되살아나면 안 되는 옛 문구 */
+  r.noFlatnessThreshold = !/사실상 평평합니다/.test(txt);
+  /* 밴드를 걸면 경고가 붙는가 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({
+    saved: true, h_bands: { 해외채권: [70, 100], 해외주식: [0, 20] } }));
+  P.renderSection("alloc");
+  const txt2 = DOC.getElementById("alloc-levers").textContent;
+  r.warnsWhenBandBinds = /밴드가 물고 있습니다/.test(txt2);
+  shim.localStorage.removeItem("iaw-alloc");
   return r;
 });
 

@@ -143,7 +143,7 @@ def test_alloc_sets_psd_and_boot_quantiles_monotone(built):
         eig = float(np.linalg.eigvalsh(C)[0])
         assert eig > -1e-8, f"{s['key']}: 비양반정치 (min eig {eig:.3g})"
     for r in A["boot"]["rows"]:
-        for k in ["anchor", "d1", "d2", "hb_star", "he_star"]:
+        for k in ["anchor", "d1", "d2", "xe_star"]:
             q = r[k]
             vals = [q["q05"], q["q25"], q["q50"], q["q75"], q["q95"]]
             assert vals == sorted(vals), f"boot {r['block_len']}/{k}: 분위수 비단조"

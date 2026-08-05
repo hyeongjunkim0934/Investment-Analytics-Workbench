@@ -1213,3 +1213,111 @@ def test_breadth_chart_never_shows_an_internal_key_as_a_legend(probe):
 def test_breadth_card_hides_itself_when_there_is_no_report(probe):
     """리포트를 안 올렸으면 카드를 숨긴다 — 빈 카드는 고장으로 읽힌다."""
     assert probe["breadth"]["hiddenWhenAbsent"] is True
+
+
+# ---- 헤지 레버의 자유도 (실행해서 확인) --------------------------------------
+def test_hedge_levers_collapse_to_one_axis_exactly(probe):
+    """같은 Xe 를 만드는 (채권헤지, 주식헤지) 는 총위험이 **정확히** 같다.
+
+    이 성질이 성립하는 한 "최적 헤지비율 (35%, 100%)" 처럼 한 점을 적는 것은
+    무한한 동점 중 임의 선택이다 — 실제로 그렇게 적었다가 가장 반직관적인
+    구석(주식 100% 헤지)이 화면에 나갔다. 문구가 아니라 **이 성질**이 근거이므로
+    여기서 실행으로 잰다.
+    """
+    h = probe["hedgeXe"]
+    assert h["tieCount"] >= 5, f"동률 능선 위의 표본이 너무 적다: {h['tieCount']}"
+    assert h["tieSpread"] == 0, f"같은 Xe 인데 위험이 갈린다: {h['tieSpread']}"
+
+
+def test_hedge_xe_quadratic_reproduces_the_risk_function(probe):
+    """σ²(Xe) 계수를 3점으로 잡아낸 것이 sigmaHedge 와 일치해야 한다.
+
+    로딩 산식을 화면에서 다시 쓰지 않았다는 증거다 — 다시 썼다면 둘이 갈라진다.
+    """
+    assert probe["hedgeXe"]["quadFitMaxErr"] < 1e-12
+
+
+def test_hedge_closed_form_optimum_is_not_worse_than_a_grid(probe):
+    """폐형 Xe* 가 격자 전수보다 낮거나 같다 — 격자 argmin 을 버린 근거."""
+    assert probe["hedgeXe"]["closedFormBeatsGrid"] is True
+
+
+def test_unhedged_foreign_equity_is_the_low_risk_side(probe):
+    """해외주식은 달러/원과 음의 상관이라 **열어 두는 쪽**이 위험이 낮다.
+
+    실무 통념(위험자산이 빠질 때 달러 강세가 완충)과 같은 방향이며, 화면이
+    이것을 뒤집어 보여주던 것이 이 작업의 발단이다. 부호가 뒤집히면 실패한다.
+    """
+    h = probe["hedgeXe"]
+    assert h["equityFullHedgeIsWorse"] is True, "전량헤지가 오픈보다 낫게 나온다 — 부호 확인"
+    assert h["equityOnlyHedgePct"] < 50, (
+        f"해외주식만 담은 포트폴리오의 위험최소 헤지비율이 {h['equityOnlyHedgePct']:.1f}% — "
+        "자연헤지 방향과 반대다"
+    )
+
+
+def test_hedge_representative_pair_is_the_closest_feasible_point(probe):
+    """동점 중 화면에 적는 한 점은 **현재값 최근접**이어야 한다(임의 계수 0개)."""
+    h = probe["hedgeXe"]
+    assert h["pairKeepsXe"] is True, "대표점이 목표 Xe 를 만들지 못한다"
+    assert h["pairIsClosest"] is True, "더 가까운 실행 가능점이 있는데 다른 점을 골랐다"
+    assert h["pairStaysPutWhenAlreadyOnTarget"] is True, (
+        "현재값이 이미 최적 Xe 위인데 헤지비율을 움직이라고 한다"
+    )
+
+
+def test_hedge_bands_clip_and_report_infeasibility(probe):
+    """밴드는 Xe 를 자르고, 만들 수 없는 Xe 는 조용히 아무 점이나 주지 않는다."""
+    h = probe["hedgeXe"]
+    assert h["bandClips"] is True
+    assert h["bandActuallyBinds"] is True, "밴드를 걸었는데 아무것도 물지 않는다 — 검사가 무의미"
+    assert h["infeasibleReturnsNull"] is True
+
+
+def test_hedge_band_defaults_do_not_hardcode_an_institution(probe):
+    """헤지 밴드 기본값은 **중립(0~100)** 이다 — 기관 내규는 공개 저장소에 박지 않는다."""
+    assert probe["hedgeXe"]["defaultBandsAreNeutral"] is True, (
+        f"기본 밴드가 중립이 아니다: {probe['hedgeXe']['bandsRead']}"
+    )
+
+
+def test_xe_collapse_guard_is_real_not_a_comment(probe):
+    """회계 관점에서 Xe 붕괴는 성립하지 않는다 — 가드가 실제로 던져야 한다.
+
+    주석만 남기고 가드를 지우는 회귀는 조용히 통과한다(이 저장소에서 이미 겪었다).
+    """
+    assert probe["hedgeXe"]["acctViewGuardThrows"] is True
+
+
+def test_no_arbitrary_flatness_threshold_survives():
+    """「차이 0.02%p 미만이면 평평」 같은 **임의 임계값**을 되살리지 않는다.
+
+    붕괴가 항등식이라 임계값 자체가 필요 없다 — 다시 등장하면 자의성 금지 위반이다.
+    """
+    src = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
+    assert "사실상 평평합니다" not in src
+    assert "hb_star" not in src and "he_star" not in src, (
+        "동점 중 임의의 한 점이던 hb_star/he_star 가 화면 코드에 되살아났다"
+    )
+
+
+def test_lever_text_states_the_one_axis_not_a_single_optimal_pair(probe):
+    """화면에 실제로 그려지는 문단을 읽는다 — 엔진이 옳아도 문구가 옛말이면 소용없다.
+
+    P17 은 엔진만 본다. 이 검사는 #alloc 을 실제로 렌더해서 #alloc-levers 의
+    텍스트를 읽으므로, "최적 헤지비율은 (35%, 100%)" 류가 되살아나면 잡힌다.
+    """
+    t = probe["hedgeLeverText"]
+    assert t["rendered"] is True and t["renderErrors"] == 0
+    assert t["mentionsXe"] is True, "총 미헤지 환노출(Xe)을 말하지 않는다"
+    assert t["saysRiskIsOneAxis"] is True, "위험이 보는 축이 하나라는 사실을 적지 않는다"
+    assert t["saysTiesAreEqual"] is True, "동점 조합의 위험이 같다는 사실을 적지 않는다"
+    assert t["labelsPairAsRepresentative"] is True, (
+        "헤지비율 쌍을 적으면서 그것이 **대표점**임을 밝히지 않는다 — 한 점을 최적으로 읽힌다"
+    )
+    assert t["noFlatnessThreshold"] is True
+
+
+def test_lever_text_warns_when_the_band_is_what_picks_the_answer(probe):
+    """밴드가 물면 그 사실을 화면에 적어야 한다 — 그 숫자는 모형이 아니라 내규가 정한 값이다."""
+    assert probe["hedgeLeverText"]["warnsWhenBandBinds"] is True

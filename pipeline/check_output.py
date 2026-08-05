@@ -61,9 +61,14 @@ REQUIRED_KEYS = {
               "defaults", "n_weeks", "method"],
 }
 # 배열 페이로드의 **행 스키마** — 행 하나만 봐도 개명·누락이 드러난다.
+# 경로에 `.` 을 쓰면 중첩 배열도 지목할 수 있다(`boot.rows`).
 REQUIRED_ROW_KEYS = {
     ("hedge", "matrix"): ["c", "name", "vol_e", "mvh", "corr",
                           "cost_12m", "cost_curve", "src", "active", "sample"],
+    # 헤지 레버의 자유도는 실질 1개(Xe)다 — 화면이 이 이름으로 집는다.
+    # 예전의 hb_star/he_star 는 동점 중 임의의 한 점이라 되살리지 말 것.
+    ("alloc", "boot.rows"): ["block_len", "n_reps", "anchor", "d1", "d2",
+                             "xe_star", "xe_open", "share_xe_interior"],
 }
 # 중첩 객체의 필수 키 — 화면 부제가 이 값들로 자기 표본을 밝힌다(하드코딩 금지).
 REQUIRED_NESTED_KEYS = {
@@ -165,7 +170,9 @@ def check(out: Path, max_warnings: int, min_series: int, dashboard: Path | None)
         else:
             checked += 1
     for (name, arr), keys in REQUIRED_ROW_KEYS.items():
-        rows = (payloads.get(name) or {}).get(arr)
+        rows = payloads.get(name)
+        for step in arr.split("."):
+            rows = (rows or {}).get(step) if isinstance(rows, dict) else None
         if not isinstance(rows, list):
             continue                       # 위 REQUIRED_KEYS 가 이미 잡는다
         if not rows:

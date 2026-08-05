@@ -79,6 +79,13 @@ DEFAULTS = {
     "alt_alpha": 3.0, "alt_vol": 8.0,       # 대체 기대 CPI+α, 위험(스무딩 보정 가정)
     "tenor_m": H.DEFAULT_TENOR_M,           # 가중평균 스왑 만기(월) — 3·6·12·12M+ 혼합의 금액가중, 수기 입력
     "h_bond": 90, "h_eq": 90,               # 헤지비율 % — 사용자의 현재 상태로 대체됨
+    # 헤지비율 밴드(내규)는 **기관 내부정보**다. 여기 기본값은 의도적으로 **중립(0~100)**,
+    # 즉 "밴드 없음"이며 특정 기관의 내규 숫자를 코드에 박지 않는다(공개 저장소).
+    # 사용자가 #alloc-sim 에 입력하면 브라우저 localStorage 에만 남는다.
+    "h_bands": {"해외채권": [0, 100], "해외주식": [0, 100]},
+    # 일시 초과 허용선 — NAV 감소로 헤지 계약을 즉시 줄이지 못해 생기는 **운영 허용오차**이지
+    # 최적화가 고를 수 있는 선택지가 아니다. 그래서 결정범위(h_bands)와 따로 둔다.
+    "h_tol_hi": {"해외채권": None, "해외주식": None},
     "start_key": "full", "proxy": "acwi", "cost_key": "hp",   # 비용 정본 = 실측 HP (사용자 확정)
     "block_len": 24,
 }
@@ -271,27 +278,80 @@ def optimize_batch(MU, COVS, lo, hi, total, targets, iters=OPT_ITERS):
     return W
 
 
-_GRID_H = np.arange(0, 101, 5) / 100.0
+# 환노출 방향 벡터 g = e_usd − swap. 헤지 레버 둘은 **이 하나의 방향의 스칼라배**다:
+#   x(hb,he) = x1 + (1−hb)·w채·g + (1−he)·w주·g = x1 + Xe·g
+# 따라서 경제 관점 위험은 (hb, he) 를 따로 보지 않고 Xe 하나로만 결정된다.
+# 이것은 근사가 아니라 로딩 정의에서 바로 따라 나오는 **항등식**이며(승인 ⑤의 귀결),
+# 화면의 '동률 능선' — 같은 Xe 를 만드는 모든 (hb,he) 의 위험이 정확히 같다 — 이 여기서 온다.
+FX_DIR = np.zeros(len(SOURCE_LABELS))
+FX_DIR[IX["e_usd"]], FX_DIR[IX["swap"]] = 1.0, -1.0
+FX_DIR.setflags(write=False)
 
 
-def hedge_grid_min(covS, w, alt_scale, proxy="acwi"):
-    """배분 고정 시 (채권헤지, 주식헤지) 격자에서 총위험 최소점.
+def unhedged_fx(w, h_bond: float, h_eq: float) -> float:
+    """총 미헤지 환노출 Xe = w채(1−h채) + w주(1−h주). 단위는 w 와 같다."""
+    return float(w[1]) * (1 - h_bond) + float(w[3]) * (1 - h_eq)
 
-    σ²(hb,he) 는 h 의 2차식이므로 계수 6개만 계산해 격자를 닫힌꼴로 평가한다.
-    x(hb,he) = x1 + (1−hb)·db + (1−he)·de,  x1 = h=1 로딩.
-    """
-    n = len(SOURCE_LABELS)
+
+def hedge_quad(covS, w, alt_scale, proxy="acwi"):
+    """σ²(Xe) = a0 + 2·a1·Xe + a2·Xe² 의 계수 셋 (Xe 단위는 w 와 같다)."""
     x1 = w @ loadings(1.0, 1.0, alt_scale, proxy)
-    db = np.zeros(n); db[IX["e_usd"]], db[IX["swap"]] = w[1], -w[1]
-    de = np.zeros(n); de[IX["e_usd"]], de[IX["swap"]] = w[3], -w[3]
-    Sx1, Sdb, Sde = covS @ x1, covS @ db, covS @ de
-    c0, cbb, cee = x1 @ Sx1, db @ Sdb, de @ Sde
-    c0b, c0e, cbe = x1 @ Sdb, x1 @ Sde, db @ Sde
-    u = (1 - _GRID_H)[:, None]        # 채권 축
-    v = (1 - _GRID_H)[None, :]        # 주식 축
-    var = c0 + 2 * u * c0b + 2 * v * c0e + u * u * cbb + v * v * cee + 2 * u * v * cbe
-    i, j = np.unravel_index(np.argmin(var), var.shape)
-    return float(_GRID_H[i]) * 100, float(_GRID_H[j]) * 100, math.sqrt(max(float(var[i, j]), 0)) * 100
+    Sg = covS @ FX_DIR
+    return float(x1 @ covS @ x1), float(x1 @ Sg), float(FX_DIR @ Sg)
+
+
+def hedge_xe_min(covS, w, alt_scale, proxy="acwi", xe_lo=None, xe_hi=None):
+    """위험 최소 Xe — 1차원 2차식의 **폐형 해**. 격자를 쓰지 않으므로 양자화 오차가 0이다.
+
+    (구버전은 5%p 격자에서 (hb,he) 쌍을 argmin 으로 골랐는데, 위 항등식 때문에
+    최소점이 무한히 많아 **동점 중 스캔 순서상 먼저 만난 구석**이 나왔다. 하필
+    가장 반직관적인 점이 뽑혀 "해외주식 100% 헤지가 최적"으로 읽히는 사고가 있었다.)
+
+    a2 > 0 (환노출 방향의 분산이 양수) 이면 볼록이므로 밴드 구간으로 자른 값이
+    곧 제약 하 최소점이다.
+    """
+    a0, a1, a2 = hedge_quad(covS, w, alt_scale, proxy)
+    xe = (-a1 / a2) if a2 > 0 else 0.0
+    if xe_lo is not None:
+        xe = max(xe, xe_lo)
+    if xe_hi is not None:
+        xe = min(xe, xe_hi)
+    return xe, math.sqrt(max(a0 + 2 * a1 * xe + a2 * xe * xe, 0.0))
+
+
+def xe_range(w, bands):
+    """밴드가 허용하는 Xe 의 [최소, 최대]. bands = ((hb_lo,hb_hi), (he_lo,he_hi)), 전부 소수."""
+    (blo, bhi), (elo, ehi) = bands
+    return unhedged_fx(w, bhi, ehi), unhedged_fx(w, blo, elo)
+
+
+def hedge_pair_for_xe(w, xe, cur, bands):
+    """목표 Xe 를 만드는 (h채, h주) 는 무한히 많다 — 그중 **현재값에 가장 가까운** 한 점.
+
+    임의 계수 0개다: 직선 w채·hb + w주·he = c 를 밴드 상자와 교차시킨 선분 위로
+    현재점을 유클리드 정사영하는 것뿐이며 해가 폐형이다. 밴드 안에서 그 Xe 를
+    만들 수 없으면 None 을 돌려준다(호출자가 명시적으로 알린다).
+    """
+    wb, we = float(w[1]), float(w[3])
+    hb0, he0 = cur
+    (blo, bhi), (elo, ehi) = bands
+    c = wb + we - xe
+    if wb <= 1e-12 and we <= 1e-12:          # 해외자산이 없으면 Xe 는 항상 0
+        return hb0, he0
+    if we <= 1e-12:
+        hb = min(max(c / wb, blo), bhi)
+        return hb, he0
+    if wb <= 1e-12:
+        he = min(max(c / we, elo), ehi)
+        return hb0, he
+    r = wb / we
+    hb = (hb0 + r * (c / we - he0)) / (1 + r * r)
+    lo = max(blo, (c - we * ehi) / wb)       # he(hb) 도 밴드 안이어야 한다
+    hi = min(bhi, (c - we * elo) / wb)
+    if lo > hi + 1e-12:
+        return None
+    hb = min(max(hb, lo), hi)
+    return hb, (c - wb * hb) / we
 
 
 def anchor_of(covS, rates):
@@ -366,8 +426,7 @@ def bootstrap(M: pd.DataFrame, rates, d, cost) -> list[dict]:
         COVS_S = np.einsum("rti,rtj->rij", Z, Z) / (T - 1) * 12    # (R,10,10) 연율
         anchors = np.empty(BOOT_REPS)
         d1 = np.empty(BOOT_REPS)
-        hb_star = np.empty(BOOT_REPS)
-        he_star = np.empty(BOOT_REPS)
+        xe_star = np.empty(BOOT_REPS)
         MU = np.empty((BOOT_REPS, 6))
         COVA = np.empty((BOOT_REPS, 6, 6))
         sig_cur = np.empty(BOOT_REPS)
@@ -381,18 +440,21 @@ def bootstrap(M: pd.DataFrame, rates, d, cost) -> list[dict]:
             MU[r] = mu
             COVA[r] = C * 10000                                     # %² 단위
             sig_cur[r] = math.sqrt(max(float(w0 @ C @ w0), 0)) * 100
-            hb, he, smin = hedge_grid_min(covS, w0, k, d["proxy"])
-            hb_star[r], he_star[r] = hb, he
-            d1[r] = sig_cur[r] - smin
+            # 헤지 레버의 자유도는 실질 1개(Xe)다 — 밴드는 사용자 입력이므로
+            # 게시하는 분포는 **무제약** Xe* 이고, 밴드 절단은 화면에서 한다.
+            xe, smin = hedge_xe_min(covS, w0, k, d["proxy"])
+            xe_star[r] = xe * 100
+            d1[r] = sig_cur[r] - smin * 100
         targets = np.einsum("ri,i->r", MU, w0)
         W = optimize_batch(MU, COVA, lo, hi, total, targets)
         sig_opt = np.sqrt(np.maximum(np.einsum("ri,rij,rj->r", W, COVA, W), 0))
         d2 = sig_cur - sig_opt
         qs = lambda v: {f"q{q:02d}": round(float(np.percentile(v, q)), 4) for q in Q}
+        xe_open = float(w0[1] + w0[3]) * 100      # 전량 미헤지일 때의 Xe (상한)
         out.append({"block_len": L, "n_reps": BOOT_REPS,
                     "anchor": qs(anchors), "d1": qs(d1), "d2": qs(d2),
-                    "hb_star": qs(hb_star), "he_star": qs(he_star),
-                    "share_hb_interior": round(float(((hb_star > 0) & (hb_star < 100)).mean()), 3)})
+                    "xe_star": qs(xe_star), "xe_open": round(xe_open, 4),
+                    "share_xe_interior": round(float(((xe_star > 0) & (xe_star < xe_open)).mean()), 3)})
     return out
 
 

@@ -334,23 +334,111 @@ def test_alloc_optimize_target_return_holds_and_is_efficient():
     assert float(w @ cov @ w) <= grid_min + 1e-3
 
 
-def test_alloc_hedge_grid_min_matches_direct_loadings():
-    """닫힌꼴 2차식 격자 = 로딩을 직접 만들어 계산한 값 (정의 대조)."""
-    rng = np.random.default_rng(17)
+def _rand_cov(seed=17):
+    rng = np.random.default_rng(seed)
     n = len(alloc.SOURCE_LABELS)
     A = rng.normal(size=(n, n)) * 0.01
-    covS = A @ A.T
+    return A @ A.T
+
+
+def test_alloc_hedge_levers_collapse_to_one_axis_exactly():
+    """같은 Xe 를 만드는 (h채, h주) 는 위험이 **정확히** 같다 — 근사가 아니라 항등식.
+
+    이 성질이 깨지면 '최적 헤지비율' 한 점을 적어도 되지만, 성립하는 한 한 점을
+    고르는 것은 무한한 동점 중 임의 선택이다. 화면 문구가 그 위에 서 있다.
+    """
+    covS = _rand_cov()
     w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
     k = 0.7
-    hb, he, smin = alloc.hedge_grid_min(covS, w, k)
-    direct = math.inf
-    for hbx in np.arange(0, 101, 5) / 100:
-        for hex_ in np.arange(0, 101, 5) / 100:
-            x = w @ alloc.loadings(hbx, hex_, k)
-            direct = min(direct, math.sqrt(max(float(x @ covS @ x), 0)) * 100)
-    assert abs(smin - direct) < 1e-9
-    x = w @ alloc.loadings(hb / 100, he / 100, k)
-    assert abs(math.sqrt(float(x @ covS @ x)) * 100 - smin) < 1e-9
+    sig = lambda hb, he: math.sqrt(float((w @ alloc.loadings(hb, he, k)) @ covS
+                                         @ (w @ alloc.loadings(hb, he, k))))
+    target = alloc.unhedged_fx(w, 0.35, 1.00)
+    base = sig(0.35, 1.00)
+    seen = 0
+    for hb in np.arange(0.0, 1.0001, 0.01):
+        he = 1 - (target - w[1] * (1 - hb)) / w[3]
+        if he < -1e-9 or he > 1 + 1e-9:
+            continue
+        seen += 1
+        assert abs(alloc.unhedged_fx(w, hb, he) - target) < 1e-12
+        assert abs(sig(hb, he) - base) < 1e-14, f"({hb},{he}) 에서 동률이 깨짐"
+    assert seen >= 10, "동률 능선 위의 표본이 너무 적어 검사가 무의미하다"
+
+
+def test_alloc_hedge_xe_min_is_the_true_minimum():
+    """폐형 Xe* 가 모든 (h채,h주) 조합보다 낮거나 같다 — 격자 argmin 을 대체한 근거."""
+    covS = _rand_cov(5)
+    w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
+    k = 0.7
+    xe, smin = alloc.hedge_xe_min(covS, w, k)
+    for hb in np.arange(0, 1.0001, 0.02):
+        for he in np.arange(0, 1.0001, 0.02):
+            x = w @ alloc.loadings(hb, he, k)
+            assert math.sqrt(max(float(x @ covS @ x), 0)) >= smin - 1e-12
+    a0, a1, a2 = alloc.hedge_quad(covS, w, k)
+    assert a2 > 0                                     # 볼록 — 밴드 절단이 곧 제약 하 최소
+    assert abs(a0 + 2 * a1 * xe + a2 * xe * xe - smin ** 2) < 1e-18
+
+
+def test_alloc_hedge_xe_min_clips_to_band():
+    """밴드가 물면 제약 하 최소는 잘린 끝점이다(볼록이므로)."""
+    covS = _rand_cov(9)
+    w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
+    k = 0.7
+    free, _ = alloc.hedge_xe_min(covS, w, k)
+    lo, hi = free + 0.01, free + 0.05                 # 자유 최소점의 오른쪽만 허용
+    xe, s = alloc.hedge_xe_min(covS, w, k, xe_lo=lo, xe_hi=hi)
+    assert abs(xe - lo) < 1e-12
+    a0, a1, a2 = alloc.hedge_quad(covS, w, k)
+    assert abs(a0 + 2 * a1 * lo + a2 * lo * lo - s ** 2) < 1e-18
+
+
+def test_alloc_xe_range_matches_band_corners():
+    w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
+    bands = ((0.7, 1.0), (0.0, 0.2))
+    lo, hi = alloc.xe_range(w, bands)
+    assert abs(lo - alloc.unhedged_fx(w, 1.0, 0.2)) < 1e-15
+    assert abs(hi - alloc.unhedged_fx(w, 0.7, 0.0)) < 1e-15
+    assert lo < hi
+
+
+def test_alloc_hedge_pair_for_xe_is_the_closest_feasible_point():
+    """대표점 규칙 = 밴드 ∩ 등Xe 직선 위에서 현재값에 가장 가까운 점 (임의 계수 0개)."""
+    w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
+    bands = ((0.0, 1.0), (0.0, 1.0))
+    cur = (0.98, 0.0)
+    xe = alloc.unhedged_fx(w, 0.35, 1.00)
+    hb, he = alloc.hedge_pair_for_xe(w, xe, cur, bands)
+    assert abs(alloc.unhedged_fx(w, hb, he) - xe) < 1e-12         # 같은 Xe 를 만든다
+    assert bands[0][0] <= hb <= bands[0][1] and bands[1][0] <= he <= bands[1][1]
+    d = (hb - cur[0]) ** 2 + (he - cur[1]) ** 2
+    for g in np.arange(0.0, 1.0001, 0.005):                        # 무차별 대조
+        h2 = 1 - (xe - w[1] * (1 - g)) / w[3]
+        if h2 < 0 or h2 > 1:
+            continue
+        assert (g - cur[0]) ** 2 + (h2 - cur[1]) ** 2 >= d - 1e-12
+    # 현재값이 이미 그 Xe 위에 있으면 움직이지 않는다
+    same = alloc.hedge_pair_for_xe(w, alloc.unhedged_fx(w, *cur), cur, bands)
+    assert abs(same[0] - cur[0]) < 1e-12 and abs(same[1] - cur[1]) < 1e-12
+
+
+def test_alloc_hedge_pair_for_xe_reports_infeasible_instead_of_guessing():
+    """밴드 안에서 만들 수 없는 Xe 는 None — 조용히 아무 점이나 돌려주지 않는다."""
+    w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
+    bands = ((0.7, 1.0), (0.0, 0.2))
+    lo, hi = alloc.xe_range(w, bands)
+    assert alloc.hedge_pair_for_xe(w, hi + 0.01, (0.98, 0.0), bands) is None
+    assert alloc.hedge_pair_for_xe(w, lo - 0.01, (0.98, 0.0), bands) is None
+    assert alloc.hedge_pair_for_xe(w, (lo + hi) / 2, (0.98, 0.0), bands) is not None
+
+
+def test_alloc_hedge_pair_handles_missing_foreign_sleeve():
+    """해외주식이 0이면 주식헤지는 정보가 없다 — 현재값을 그대로 둔다(0 으로 만들지 않는다)."""
+    w = np.array([0.5, 0.3, 0.05, 0.0, 0.1, 0.05])
+    bands = ((0.0, 1.0), (0.0, 1.0))
+    hb, he = alloc.hedge_pair_for_xe(w, alloc.unhedged_fx(w, 0.6, 0.4), (0.98, 0.4), bands)
+    assert abs(he - 0.4) < 1e-12
+    assert abs(hb - 0.6) < 1e-12
 
 
 def test_alloc_anchor_definition():
