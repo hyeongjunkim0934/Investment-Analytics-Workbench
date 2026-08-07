@@ -268,7 +268,9 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   130바이트 포인터를 읽고 `zipfile.BadZipFile` 로 죽는다. 뒤따르는 "PK 로 시작하는지" 확인 단계는
   LFS 와 무관하게 잘린 업로드·오류 페이지까지 명시적 오류로 잡아 준다.
   data 저장소의 LFS 전환 여부는 **미결 상태**다 (`../Data/CLAUDE.md`「LFS — 아직 적용 전」).
-- CI는 **Python 3.12** 고정. 로컬 인터프리터가 다르면 pandas 동작 차이가 날 수 있다.
+- **Python 3.12 이상이 필수다 — 로컬도 마찬가지다.** CI가 3.12 고정인 것과 별개로, 고정된
+  `numpy==2.5.1` 이 `requires_python >=3.12` 라서 **3.11 에서는 `pip install -r pipeline/requirements.txt`
+  가 아예 실패한다**(이전 핀 2.4.6 은 `>=3.11` 이었다). 3.11 로 돌리려던 것이면 인터프리터를 올릴 것.
 - 의존성은 `pipeline/requirements.txt`(런타임 3개)와 `tests/requirements.txt`(pytest)에 `==` 로
   **고정되어 있다**. 둘을 섞지 말 것 — pytest 는 런타임 의존이 아니다. 손으로 숫자를 바꾸지 말고
   dependabot이 여는 주간 PR로 올릴 것. 버전 숫자를 다른 문서에 복사해 두지도 말 것.
