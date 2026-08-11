@@ -3686,6 +3686,10 @@ function allocEngine(A, st) {
     }
   }
   const cmaSig = (lb) => Math.sqrt(Math.max(cmaW.cov[cmaCI[lb]][cmaCI[lb]], 0)) * 100;
+  /* 환율 축이 실제로 있는가 — 없으면 헤지비율이 위험을 전혀 못 바꾸므로(모든
+     (hb,he) 동점) 헤지 참고치는 허구가 된다. 재점검 발견: 이 상태에서 예전엔
+     "완전헤지 100/100 최적"이 나갔다 — 무한 동점 중 임의 구석이었다. */
+  const fxLive = layer !== "cma" || (cmaCI != null && cmaCI["_fx"] != null);
 
   /* 앵커 — 각 시장 자국통화 기준(승인 ⑤-ⓑ). 헤지 슬라이더와 완전히 무관 —
      헤지비율은 기대수익에 비용항(h×cost)으로만, 위험에 환노출(1−h)로만 들어간다.
@@ -3891,7 +3895,7 @@ function allocEngine(A, st) {
   return {
     A, st, set, ix, S, cost, costOpt, view, V, mix, mixEcon, w0, lo, hi, total, groups,
     byKr, byFx, kAlt, tau, proxy,
-    layer, layerNote, cmaAll, cmaW, sample, altInfo,
+    layer, layerNote, cmaAll, cmaW, sample, altInfo, fxLive,
     n_months: sample.n_months,
     anchorLocal, muEconAt, build, sigOf, rowUsb, rowEq, rowKospi, rowKr,
     sigmaW, eulerRC,
@@ -4134,8 +4138,10 @@ function renderAllocTv(box, E, st, pal, rerender) {
    전부 활성 층의 Σ·μ 에서 폐형으로 나온다. 유일한 모형치는 포트폴리오 MDD:
    실측 경로 MDD 는 원본 수익률 미게시 계약상 화면에서 계산할 수 없어(자산별
    실측 MDD 는 파이프라인이 창 통계로 사전계산), 무추세 기하브라운 근사
-   E[MDD] ≈ √(π/2)·σ·√T 를 [모형] 라벨로 낸다 — √(π/2)=1.2533 은 브라운 운동
-   최대낙폭의 표준 기대값이지 조정 모수가 아니다. */
+   E[%MDD] ≈ 1 − e^(−√(π/2)·σ·√T) 를 [모형] 라벨로 낸다. √(π/2)=1.2533 은
+   산술 브라운 최대낙폭의 표준 기대값이고, 지수화가 로그경로 낙폭을 %낙폭으로
+   되돌려 100% 상한을 구조적으로 지킨다 — 재점검 몬테카를로에서 원식(1.2533·σ√T)
+   은 σ√T 가 크면 −100% 를 넘는 불가능한 값을 냈다(예: 주식 몰빵 + 전체 창). */
 function allocCharStats(E, w) {
   const V = E.V;
   const sig = E.sigmaW(w, V.C);
@@ -4155,7 +4161,7 @@ function allocCharStats(E, w) {
     sigs,
     corr: V.keys.map((_, i) => V.keys.map((_, j) =>
       sigs[i] > 1e-12 && sigs[j] > 1e-12 ? V.C[i][j] / (sigs[i] * sigs[j]) : null)),
-    emdd: 1.2533 * sig * Math.sqrt(T),
+    emdd: (1 - Math.exp(-1.2533 * (sig / 100) * Math.sqrt(T))) * 100,
   };
 }
 
@@ -4185,12 +4191,17 @@ function renderAllocChar(box, E, w, opts) {
     tile("분산비 DR", cs.dr == null ? "–" : fmtNum(cs.dr, 2),
       "Σ비중×σ ÷ 포트σ — 1보다 클수록 상관이 위험을 지움"),
     tile("예상 최대낙폭 [모형]", `−${fmtNum(cs.emdd, 1)}%`,
-      `무추세 기하브라운 √(π/2)·σ·√T, T=${fmtNum(cs.T, 1)}년 — 실측 경로는 미게시 계약상 불가`));
+      `무추세 기하브라운 1−e^(−√(π/2)·σ√T), T=${fmtNum(cs.T, 1)}년 — 실측 경로는 미게시 계약상 불가`));
   if (opts && opts.gapSig != null) {
     const gap = cs.sig - opts.gapSig;
+    /* 정직성 가드(재점검 발견): 현재 배분이 밴드 밖이면 최적화가 현재 μ 에 도달하지
+       못한다 — 그때 "같은 기대수익"이라 적으면 참고점의 μ 손실을 은폐하게 된다. */
+    const unreach = opts.gapMu != null && opts.gapMu < cs.mu - 0.005;
     tiles.append(tile("투자선까지의 효율 갭", `${gap > 0.005 ? "−" : ""}${fmtNum(Math.abs(gap), 2)}%p`,
-      gap > 0.005 ? "같은 기대수익의 투자선 위 점까지 줄일 수 있는 위험" : "사실상 투자선 위에 있습니다",
-      gap > 0.005 ? "d-up" : "d-down"));
+      unreach
+        ? `⚠ 현재 기대수익 ${fmtNum(cs.mu, 2)}% 는 제약(밴드) 안에서 도달 불가 — 참고점 μ ${fmtNum(opts.gapMu, 2)}% 기준 위험차입니다`
+        : gap > 0.005 ? "같은 기대수익 이상을 내는 투자선 위 점까지 줄일 수 있는 위험" : "사실상 투자선 위에 있습니다",
+      unreach || gap > 0.005 ? "d-up" : "d-down"));
   }
   box.append(tiles);
 
@@ -4311,6 +4322,21 @@ function allocState(A) {
   if (!isFinite(+st.alt_map.w_eq)) st.alt_map.w_eq = 50;
   if (!isFinite(+st.alt_map.w_bd)) st.alt_map.w_bd = 50;
   if (!st.mu_over || typeof st.mu_over !== "object") st.mu_over = d.mu_over;
+  if (st.cma_win != null) st.cma_win = String(st.cma_win);   // tv_len 과 대칭 — 숫자형 저장 수용
+  /* 숫자 칸 소독(재점검 발견) — 손상 저장("abc")이 NaN 으로 스며들면 그룹 상한이
+     NaN 이 되어 참고치가 사유 없이 전부 "–"가 된다(NaN 비교는 모든 검사를 통과).
+     null 은 유효한 "없음"이므로 유지하고, 숫자로 못 읽는 값만 기본값으로 되돌린다. */
+  ["cap_book", "cap_foreign", "cap_equity", "target_ret", "risk_cap",
+   "loan_w", "loan_y", "alt_alpha", "alt_vol", "tenor_m", "h_bond", "h_eq",
+   "by_kr", "by_fx", "dur_liab", "dur_asset", "la_ratio", "book_mat_m"].forEach((k) => {
+    if (st[k] == null) return;
+    st[k] = isFinite(+st[k]) ? +st[k] : d[k];
+  });
+  if (!st.mix_acct || typeof st.mix_acct !== "object") st.mix_acct = { ...d.mix_acct };
+  ALLOC_ACCT.forEach((k) => {
+    const v = st.mix_acct[k];
+    st.mix_acct[k] = v != null && isFinite(+v) ? +v : d.mix_acct[k];
+  });
   return st;
 }
 
@@ -4345,6 +4371,8 @@ function allocCmaSrcTag(key, E) {
   const ek = { "시가 국내채권": "국내채권", "시가 해외채권": "해외채권" }[key] || key;
   const over = E.st.mu_over && E.st.mu_over[ek] != null && isFinite(E.st.mu_over[ek]);
   const muTag = (dflt) => over ? "μ 키인(+캐리)" : dflt;
+  /* 환율 축이 없으면 "+환노출"은 거짓 — 실린 로딩만 적는다(재점검 발견) */
+  const fxSuf = E.fxLive ? "+환노출" : "";
   if (key === "대체투자") {
     const ai = E.altInfo;
     return ai && ai.mode === "factor"
@@ -4352,9 +4380,9 @@ function allocCmaSrcTag(key, E) {
       : "[BM] 벤치마크 그대로 — 스무딩 σ 과소 (진단용)";
   }
   if (key === "장부가 국내채권") return "[BM+입력] σ 벤치마크 · μ 북일드";
-  if (key === "장부가 해외채권") return "[BM+입력] σ 벤치마크+환노출 · μ 북일드+헤지캐리";
+  if (key === "장부가 해외채권") return `[BM+입력] σ 벤치마크${fxSuf} · μ 북일드+헤지캐리`;
   if (key.includes("주식")) return `[BM+앵커] σ 벤치마크 · ${muTag("μ 무위험+샤프×σ")}`;
-  if (key.includes("해외채권")) return `[BM+관측] σ 벤치마크+환노출 · ${muTag("μ YTM+헤지캐리")}`;
+  if (key.includes("해외채권")) return `[BM+관측] σ 벤치마크${fxSuf} · ${muTag("μ YTM+헤지캐리")}`;
   return `[BM+관측] σ 벤치마크 · ${muTag("μ 시장금리")}`;
 }
 
@@ -4502,6 +4530,19 @@ function renderAlloc() {
           ` → 매핑 ${fmtNum(ai.mapped, 2)}% (팩터 + 잔차 ${fmtNum(ai.idio, 2)}%` +
           (ai.alpha != null ? ` · α=${fmtNum(ai.alpha, 3)}` : "") + ")"
         : `벤치마크 관측 σ ${fmtNum(ai.obs, 2)}% — 평가 스무딩으로 과소(ρ₁ 유의)이며 상관도 0과 구분 불가. 진단·대조용입니다`));
+    if (ai.mode === "factor") {
+      /* 재점검 발견 둘: ① 보조축이 없으면 잔차가 0으로 조용히 들어가 완전헤지
+         근처에서 행렬이 특이해진다 ② 가중 합≠100 은 민감도 용례로 허용하되 알린다 */
+      if (ai.unsmoothed == null) {
+        mapRow.append(el("span", { class: "d-up", style: "font-size:12px" },
+          "⚠ 디스무딩 보조축(_alt) 없음 — 잔차 미가산: 완전헤지 근처에서 공분산이 특이해질 수 있습니다"));
+      }
+      const wSum = ai.wEq + ai.wBd;
+      if (Math.abs(wSum - 100) > 0.5) {
+        mapRow.append(el("span", { class: "d-up", style: "font-size:12px" },
+          `⚠ 매핑 가중 합 ${fmtNum(wSum, 0)}% — 100%가 아닙니다(민감도 실험이 아니면 확인)`));
+      }
+    }
     ctl.append(mapRow);
   }
 
@@ -4629,9 +4670,11 @@ function renderAlloc() {
 
     /* 헤지 참고치(위험 최소 Xe·대표점) — 요약과 레버 문단이 **같은 계산 한 벌**을 쓴다.
        두 곳에서 따로 계산하면 언젠가 어긋난 두 "최적"이 화면에 공존하게 된다.
-       경제 관점 전용(xeQuad 가드) — 회계 관점 최적화(CMA)에서는 배분 참고치만 낸다. */
+       경제 관점 전용(xeQuad 가드) — 회계 관점 최적화(CMA)에서는 배분 참고치만 낸다.
+       환율 축이 없는 표본(fxLive=false)에서도 내지 않는다 — 모든 헤지비율이 동점이라
+       한 점을 적으면 임의 선택이 된다(재점검 발견). */
     let hq = null;
-    if (doOpt && !acct) {
+    if (doOpt && !acct && E.fxLive) {
       const q = E.xeQuad();
       const hbnds = allocHBands(st);
       const [xeLo, xeHi] = allocXeRange(E, hbnds);
@@ -4738,20 +4781,27 @@ function renderAlloc() {
             hq.bound ? el("b", {}, `헤지 밴드가 물고 있습니다(무제약 Xe ${fmtNum(hq.xeFree * 100, 2)}%). `) : "",
             "같은 Xe를 만드는 헤지 조합은 위험이 정확히 같습니다 — ",
             el("a", { href: "#alloc-hedge" }, "왜? ›"),
-          ] : [
+          ] : acct ? [
             "회계 관점 참고치(수익 유지 ②) — 손익변동성이 낮은 장부가 자산으로 쏠리는 것이 이 관점의 예상된 성질입니다(§7.7 ①). ",
             el("b", {}, "장부가 성격 합산 상한"),
             "을 수기 입력하면 그 쏠림에 내규 한도가 걸립니다. 헤지 참고치는 경제 관점 전용입니다.",
+          ] : [
+            /* 경제 관점 + 환율 축 부재(재점검 발견) — 헤지 참고치를 내지 않는 이유를 밝힌다 */
+            el("b", {}, "헤지 참고치가 없습니다"),
+            " — 이 표본에는 환율 축(_fx)이 없어 헤지비율이 위험을 전혀 바꾸지 못합니다(모든 조합이 동점). ",
+            "달러원 시리즈가 파이프라인에 들어오면 자동으로 복구됩니다.",
           ])));
     }
 
     /* ----- 포트폴리오 특성 — 비중 조정과 함께 즉시 갱신 (드래그 중에도) -----
        효율 갭은 「같은 기대수익」 기준이라, 목표수익 입력이 있으면 wKeep(목표
        기준)을 그대로 못 쓰고 현재 μ 에서 한 번 더 푼다. */
-    const gapSig = doOpt
-      ? (st.target_ret == null ? sigKeep : E.sigmaW(E.optimize(V.mu, V.C, muCur), V.C))
+    const gapW = doOpt
+      ? (st.target_ret == null ? wKeep : E.optimize(V.mu, V.C, muCur))
       : null;
-    renderAllocChar(charCard, E, w0, { gapSig });
+    renderAllocChar(charCard, E, w0, gapW
+      ? { gapSig: E.sigmaW(gapW, V.C), gapMu: amDot(V.mu, gapW) }
+      : {});
 
     /* ----- 3칸 카드 ----- */
     cardsBox.textContent = "";
@@ -4858,6 +4908,11 @@ function renderAlloc() {
     } else if (infeas.length) {
       leverBox.append(el("b", {}, "제약 모순으로 레버 계산을 보류했습니다"),
         " — 위 카드의 항목을 수기 입력에서 고치면 자동으로 다시 계산됩니다.");
+    } else if (!hq) {
+      /* 환율 축 부재 — 헤지 레버가 위험을 못 바꾸는데 "최적"을 적으면 임의 선택이다 */
+      leverBox.append(el("b", {}, "레버 1(헤지)이 이 표본에서는 무력합니다"),
+        " — 환율 축(_fx)이 없어 모든 헤지비율 조합의 위험이 정확히 같습니다. ",
+        "헤지 참고치는 내지 않고, 배분 참고치(레버 2)만 위 표와 카드에 표시합니다.");
     } else {
       /* 헤지 레버의 자유도는 실질 1개(총 미헤지 환노출 Xe)다 — 한 점을 "최적"이라
          적으면 무한한 동점 중 하나를 임의로 고른 것이 된다. 수치는 위 요약과 같은
@@ -5721,6 +5776,13 @@ function renderSection(id) {
   if (!fn) return;
   try {
     fn();
+    /* 성공하면 이전 실패 배너를 걷는다 — 남겨 두면 복구된 화면이 계속 "고장"
+       이라고 말한다(재점검 발견). 실패 경로는 아래 catch 가 다시 붙인다.
+       (:scope 는 domshim 이 몰라 직계 자식 필터로 쓴다.) */
+    const ok = document.getElementById(id);
+    if (ok) [...ok.querySelectorAll(".render-error")]
+      .filter((n) => n.parentElement === ok || n.parentNode === ok)
+      .forEach((n) => n.remove());
   } catch (e) {
     console.error(`render failed: ${id}`, e);
     const node = document.getElementById(id);

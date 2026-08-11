@@ -248,8 +248,10 @@ def load_data_dir(data_dir: Path) -> list[dict]:
                 label = " ".join(x for x in (grp, name) if x)
                 add_series(f"bm:{label}", "user-bm", "BM",
                            f"{label} 전략 벤치마크", pairs)
+            # 관측이 실제로 있는 열만 센다 — 날짜 행을 못 읽은 파일이 "10개 파싱"
+            # 으로 보고되면 meta 와 실제 카탈로그가 어긋난다(재점검 발견).
             files_report.append({"file": p.name, "kind": "benchmark",
-                                 "series": len(cols)})
+                                 "series": sum(1 for _n, _g, pr in cols if pr)})
         elif breadth.is_stock_report(p):
             # 미국 증시 데일리 리포트 — **하루치 스냅샷**이라 성격이 다르다.
             # 파일 하나 = 관측 하루이고, 이력은 날짜별 파일이 쌓여야 생긴다.

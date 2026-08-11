@@ -1677,6 +1677,59 @@ def test_alloc_toc_navigates_without_touching_the_hash(probe):
     assert c["tocClicksSafe"] is True
 
 
+def test_char_emdd_is_geometric_and_bounded(probe):
+    """E[MDD] 는 기하 정합형 1−e^(−√(π/2)·σ√T) — 라벨("기하브라운")과 산식이 일치하고
+    100% 상한이 구조적으로 지켜진다. 재점검 몬테카를로: 원식(1.2533·σ√T)은 주식
+    몰빵+장기 표본에서 −100% 를 넘는 불가능한 낙폭을 표시했다."""
+    c = probe["allocChar"]
+    assert c["emddHand"] is True
+    assert c["emddBelow100"] is True
+
+
+# ---- 재점검(2026-08-11) 수정 — 축 부재·소독·정직 문구 (실행해서 확인) --------
+def test_audit_no_fx_axis_means_no_hedge_reference(probe):
+    """환율 축(_fx)이 없으면 모든 헤지비율이 동점 — 참고치를 내지 않고 사유를 적는다.
+
+    재점검 실측: 예전에는 이 상태에서 "완전헤지 100/100 최적"이 나갔다 — 무한
+    동점 중 임의 구석이며, 격자 argmin 사고(§7.5)와 같은 병의 재발이었다.
+    """
+    c = probe["cmaAudit"]
+    assert c["fxLiveFalse"] is True and c["hedgeIsFlat"] is True
+    assert c["noFxSummaryExplains"] is True
+    assert c["noFxNoHedgeColumn"] is True
+    assert c["noFxLeverExplains"] is True
+    assert c["noFxSrcTagHonest"] is True, "출처 태그가 없는 환노출을 계속 주장한다"
+    assert c["noFxRenderErrors"] == 0
+
+
+def test_audit_missing_alt_axis_is_loud_and_full_hedge_stays_pd(probe):
+    """_alt 부재 시 잔차 미가산을 화면이 밝히고, 잔차가 있으면 완전헤지에서도 정칙."""
+    c = probe["cmaAudit"]
+    assert c["noAltWarns"] is True
+    assert c["noAltIdioZero"] is True
+    assert c["pdAtFullHedge"] is True, "완전헤지(fx 로딩 0)에서 행렬이 특이 — 잔차 가산 확인"
+
+
+def test_audit_state_sanitation_blocks_nan_propagation(probe):
+    """손상 저장("abc" 상한·문자열 비중·숫자형 창 키)이 NaN 으로 퍼지지 않는다.
+
+    재점검 실측: NaN 상한은 모든 비교를 통과해 참고치가 사유 없이 전부 "–"가 됐다.
+    """
+    c = probe["cmaAudit"]
+    assert c["badCapSanitized"] is True
+    assert c["stringMixCoerced"] is True
+    assert c["numericWinCoerced"] is True
+    assert c["sanitizedRenderErrors"] == 0 and c["sanitizedHasReference"] is True
+
+
+def test_audit_honesty_badges(probe):
+    """매핑 가중 합≠100 배지 · 목표 μ 도달 불가 문구 · 복구 시 고장 배너 제거."""
+    c = probe["cmaAudit"]
+    assert c["sumBadgeShown"] is True
+    assert c["gapUnreachableFlagged"] is True, "밴드 밖 배분에서 효율 갭이 '같은 기대수익'이라 거짓말한다"
+    assert c["bannerClearedAfterRecovery"] is True
+
+
 # ---- 통화 구성 (실행해서 확인) ----------------------------------------------
 def test_currency_mix_is_empty_until_the_user_enters_it(probe):
     """벤치마크를 몰래 적용하지 않는다 — 기본은 미입력이다.

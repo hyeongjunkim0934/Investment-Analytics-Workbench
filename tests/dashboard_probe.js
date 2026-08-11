@@ -1448,7 +1448,9 @@ safe("allocChar", () => {
   /* ① 손계산 대조 — 샤프·E[MDD]·ρ(포트,자산)·상관 대각 */
   const rf = CMA_ALLOC.rates.kr3m.v;
   r.sharpeHand = Math.abs(cs.sharpe - (cs.mu - rf) / cs.sig) < 1e-12;
-  r.emddHand = Math.abs(cs.emdd - 1.2533 * cs.sig * Math.sqrt(cs.T)) < 1e-12;
+  /* 기하 정합형(재점검 정정): E[%MDD] = 1 − e^(−√(π/2)·σ_dec·√T) — 100% 상한 내장 */
+  r.emddHand = Math.abs(cs.emdd - (1 - Math.exp(-1.2533 * (cs.sig / 100) * Math.sqrt(cs.T))) * 100) < 1e-12;
+  r.emddBelow100 = cs.emdd < 100;
   const Cw = E.V.C.map((row) => row.reduce((s, c, j) => s + c * w[j], 0));
   const i0 = 0;
   r.rhoHand = Math.abs(cs.rho[i0] - Cw[i0] / (cs.sig * cs.sigs[i0])) < 1e-12;
@@ -1482,6 +1484,107 @@ safe("allocChar", () => {
   let clickOk = true;
   try { btns.forEach((b) => b.onclick && b.onclick()); } catch (e) { clickOk = false; }
   r.tocClicksSafe = clickOk;
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
+/* ====== P20-e. 재점검(2026-08-11) 수정 검증 — 축 부재·소독·정직 문구 ========
+   독립 리뷰 2건이 실측한 결함들의 수정을 실행으로 고정한다: _fx 부재 시 허구의
+   "완전헤지 최적", _alt 부재 시 무언 특이 위험, 손상 저장의 NaN 전파, 밴드 밖
+   배분에서 효율 갭 문구 거짓, 복구 후에도 남는 고장 배너. */
+const stripCmaCol = (cma, col) => {
+  const i = cma.cols.indexOf(col);
+  if (i < 0) return cma;
+  const cut = (arr) => arr.filter((_, j) => j !== i);
+  const cutM = (M) => M.filter((_, k) => k !== i).map((row) => cut(row));
+  return { ...cma,
+    cols: cut(cma.cols),
+    fx_col: col === "_fx" ? null : cma.fx_col,
+    alt: col === "_alt" ? null : cma.alt,
+    windows: cma.windows.map((w) => ({ ...w,
+      mean_pct: cut(w.mean_pct), vol_pct: cut(w.vol_pct),
+      mdd_pct: w.mdd_pct ? cut(w.mdd_pct) : w.mdd_pct,
+      corr: cutM(w.corr), cov: cutM(w.cov) })),
+    tv: (cma.tv || []).map((b) => ({ ...b, cov: b.cov.map(cutM) })),
+  };
+};
+
+safe("cmaAudit", () => {
+  const r = {};
+  shim.localStorage.removeItem("iaw-alloc");
+
+  /* ① _fx 부재 — 헤지비율이 전부 동점이므로 참고치를 내지 않고 사유를 적는다 */
+  const NOFX = { ...CMA_ALLOC, cma: stripCmaCol(CMA_ALLOC.cma, "_fx") };
+  const Ef = P.allocEngine(NOFX, P.allocDefaults(NOFX));
+  r.fxLiveFalse = Ef.fxLive === false;
+  r.hedgeIsFlat = Math.abs(Ef.sigmaHedge(0, 0) - Ef.sigmaHedge(1, 1)) < 1e-12;
+  P.DATA.alloc = NOFX;
+  P.renderSection("alloc");
+  const sumTxt = DOC.getElementById("alloc-summary").textContent;
+  r.noFxSummaryExplains = /헤지 참고치가 없습니다/.test(sumTxt) && /_fx/.test(sumTxt);
+  r.noFxNoHedgeColumn = !/헤지 채권\/주식/.test(sumTxt);
+  r.noFxLeverExplains = /무력합니다/.test(DOC.getElementById("alloc-levers").textContent);
+  r.noFxSrcTagHonest = !/\+환노출/.test(DOC.getElementById("alloc-table-card").textContent);
+  r.noFxRenderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+
+  /* ② _alt 부재 + 팩터 모드 — 잔차 미가산을 화면이 밝힌다 */
+  const NOALT = { ...CMA_ALLOC, cma: stripCmaCol(CMA_ALLOC.cma, "_alt") };
+  P.DATA.alloc = NOALT;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  r.noAltWarns = /잔차 미가산/.test(DOC.getElementById("alloc-controls").textContent);
+  const Ea = P.allocEngine(NOALT, P.allocDefaults(NOALT));
+  r.noAltIdioZero = Ea.altInfo.idio === 0 && Ea.altInfo.unsmoothed == null;
+
+  /* ③ 완전헤지(fx 로딩 0)에서도 잔차 덕에 정칙 — 뮤테이션 ②의 PD 사각 봉쇄 */
+  const chol = (C) => {
+    const n = C.length, L = C.map((row) => row.slice());
+    for (let i = 0; i < n; i++) for (let j = 0; j <= i; j++) {
+      let s = L[i][j];
+      for (let k = 0; k < j; k++) s -= L[i][k] * L[j][k];
+      if (i === j) { if (s <= 0) return false; L[i][i] = Math.sqrt(s); }
+      else L[i][j] = s / L[j][j];
+    }
+    return true;
+  };
+  const Eh = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), h_bond: 100, h_eq: 100 });
+  r.pdAtFullHedge = chol(Eh.V.C);
+
+  /* ④ 손상 저장 소독 — "abc" 상한·문자열 비중·숫자형 창 키가 NaN 으로 퍼지지 않는다 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
+    cap_book: "abc", cap_foreign: "x", mix_acct: { "장부가 국내채권": "30" }, cma_win: 1 }));
+  const stS = P.allocState(CMA_ALLOC);
+  r.badCapSanitized = stS.cap_book === null && stS.cap_foreign === null;
+  r.stringMixCoerced = stS.mix_acct["장부가 국내채권"] === 30;
+  r.numericWinCoerced = stS.cma_win === "1";
+  P.DATA.alloc = CMA_ALLOC;
+  P.renderSection("alloc");
+  r.sanitizedRenderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  r.sanitizedHasReference = /참고치/.test(DOC.getElementById("alloc-summary").textContent);
+
+  /* ⑤ 매핑 가중 합≠100 — 몰래 정규화하지 않고 배지로 알린다 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
+    alt_map: { mode: "factor", w_eq: 200, w_bd: 0 } }));
+  P.renderSection("alloc");
+  r.sumBadgeShown = /100%가 아닙니다/.test(DOC.getElementById("alloc-controls").textContent);
+
+  /* ⑥ 효율 갭 정직성 — 현재 배분이 밴드 밖이라 목표 μ 도달 불가면 그렇다고 적는다 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
+    mix_acct: { "장부가 국내채권": 5, "시가 국내채권": 5, "장부가 해외채권": 5,
+      "시가 해외채권": 5, 국내주식: 5, 해외주식: 65, 대체투자: 5, 단기자금: 5 } }));
+  P.renderSection("alloc");
+  r.gapUnreachableFlagged = /도달 불가/.test(DOC.getElementById("alloc-char-card").textContent);
+
+  /* ⑦ 복구된 화면은 고장 배너를 걷는다 */
+  shim.localStorage.removeItem("iaw-alloc");
+  const realA = P.RENDERERS.alloc;
+  P.RENDERERS.alloc = () => { throw new Error("probe: 일부러 실패"); };
+  P.renderSection("alloc");
+  const had = DOC.getElementById("alloc").querySelectorAll(".render-error").length === 1;
+  P.RENDERERS.alloc = realA;
+  P.renderSection("alloc");
+  r.bannerClearedAfterRecovery = had &&
+    DOC.getElementById("alloc").querySelectorAll(".render-error").length === 0;
   shim.localStorage.removeItem("iaw-alloc");
   return r;
 });
