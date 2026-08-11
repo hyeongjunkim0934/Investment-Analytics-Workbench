@@ -66,7 +66,7 @@ footer.append(elem("p", "build-line"), elem("div", "build-warnings"));
 /* 자산배분 뼈대 — renderAlloc 이 $("#alloc-…") 로 집는 자리들(index.html 과의 계약).
    하나라도 빠지면 그 자리에서 죽으므로 실제 마크업과 같은 목록을 둔다. */
 ["alloc-headline", "alloc-summary", "alloc-controls", "alloc-cards", "alloc-levers",
- "alloc-frontier-card", "alloc-path-card", "alloc-table-card",
+ "alloc-frontier-card", "alloc-path-card", "alloc-tv-card", "alloc-table-card",
  "alloc-inputs-box", "alloc-method"].forEach((id) => secNodes.alloc.append(elem("div", id)));
 
 /* 카탈로그 뼈대 */
@@ -173,7 +173,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "RENDERERS", "renderAll", "renderSection", "renderACWI",
   "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
   "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256",
-  "allocCcySum", "ALLOC_CCY", "allocState"];
+  "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -1201,6 +1201,10 @@ const CMA_ALLOC = (() => {
     return r * sd[a] * sd[b];
   }));
   const corr = cols.map((a, i) => cols.map((b, j) => cov[i][j] / (sd[a] * sd[b])));
+  /* 국내주식 σ 만 두 배(합동변환 — PSD 유지)인 시점 — 시변 방향성 검사용 */
+  const iEq2 = cols.indexOf("시가 국내주식");
+  const covEq2 = cov.map((row, i) => row.map((v, j) =>
+    v * (i === iEq2 ? 2 : 1) * (j === iEq2 ? 2 : 1)));
   const win = (key, n, start) => ({ key, n_months: n, start, end: "2030-06-30",
     mean_pct: [3.2, 3.4, 3.1, 8.0, 9.5, 3.3, 4.1, 5.0, 5.2, 1.0],
     vol_pct: cols.map((c) => sd[c] * 100), corr, cov });
@@ -1219,6 +1223,9 @@ const CMA_ALLOC = (() => {
         n_months: 54, included: !/금융상품|대출금/.test(l) })),
       excluded: ["장부가 금융상품", "장부가 대출금"],
       windows: [win("1", 12, "2029-07-31"), win("all", 54, "2026-01-31")],
+      tv: [{ key: "1", n_window: 12,
+             dates: ["2030-04-30", "2030-05-31", "2030-06-30"],
+             cov: [covEq2, cov, cov] }],
       method: "월말 표본·부분월 제거 (probe)",
     },
   };
@@ -1351,6 +1358,75 @@ safe("cmaLayer", () => {
   shim.localStorage.removeItem("iaw-alloc");
   P.renderSection("alloc");
   r.fallbackNoteRendered = /벤치마크 CMA 없음/.test(DOC.getElementById("alloc-controls").textContent);
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
+/* ====== P20-c. 시변·창 민감도 — λ-효용 MVO (§7.7 1-2c 후속, 2026-08-11) ======
+   표본(롤링 시점·고정 창)을 바꿔 가며 같은 λ-MVO 를 풀어 배분 경로를 보여주는
+   카드. ① λ 단조성(위험회피↑ → 위험↓) ② 방향성(σ 두 배인 자산의 비중 감소)
+   ③ 롤링 종점 = 고정 창 (같은 표본 → 같은 해) ④ 화면 렌더를 실행으로 잰다. */
+safe("cmaTv", () => {
+  const r = {};
+  shim.localStorage.removeItem("iaw-alloc");
+  const E = P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC));
+  const cm = CMA_ALLOC.cma;
+  const opt = (M, lam) => {
+    const B = E.buildFrom(M, "econ", 0.9, 0.9);
+    return { B, w: E.optimizeUtil(B.mu, B.C, lam, 2000) };
+  };
+  const sig = (B, w) => E.sigmaW(w, B.C);
+  const M = cm.windows[1].cov;
+  const { B: B1, w: w1 } = opt(M, 1);
+  const { w: wHi } = opt(M, 50);
+
+  /* ① 위험회피 단조 — λ 50 은 λ 1 보다 위험이 낮고 기대수익도 낮다 */
+  r.lambdaMonotoneRisk = sig(B1, wHi) <= sig(B1, w1) + 1e-9;
+  const mdot = (mu, w) => w.reduce((s, wi, i) => s + wi * mu[i], 0);
+  r.lambdaMonotoneReturn = mdot(B1.mu, wHi) <= mdot(B1.mu, w1) + 1e-9;
+  /* λ=1 해가 고위험회피 해보다 효용(소수 단위)이 낮지 않다 — 목적함수 검산 */
+  const util = (B, w, lam) => mdot(B.mu, w) / 100
+    - lam / 2 * w.reduce((s, wi, i) => s + wi * B.C[i].reduce((t, c, j) => t + c * w[j], 0), 0) / 1e4;
+  r.lambda1SolutionHasHigherUtility = util(B1, w1, 1) >= util(B1, wHi, 1) - 1e-9;
+
+  /* ② 방향성 — 국내주식 σ 가 두 배인 롤링 시점에서는 국내주식 비중이 준다.
+     λ=1 에서는 이 자산이 밴드 상한(10%)에 붙어 σ 가 변해도 못 움직인다 — 그래서
+     내부해가 되는 λ=15 로 잰다(같은 목적함수 족·같은 코드 경로). λ=1 의 상한
+     붙음 자체도 확인한다: 밴드가 물면 표본이 바뀌어도 비중이 그대로여야 한다. */
+  const iEq = P.ALLOC_ECON.indexOf("국내주식");
+  const { w: w2at1 } = opt(cm.tv[0].cov[0], 1);
+  r.bandPinnedAtLowLambda =
+    Math.abs(w1[iEq] - 0.10) < 5e-3 && Math.abs(w2at1[iEq] - w1[iEq]) < 5e-3;
+  const { w: wA15 } = opt(M, 15);
+  const { w: wB15 } = opt(cm.tv[0].cov[0], 15);
+  r.riskierAssetGetsLess = wB15[iEq] < wA15[iEq] - 1e-3;
+
+  /* ③ 롤링 종점 = 고정 창(같은 표본·같은 결정 알고리즘 → 같은 해) — 단, 프로브
+     픽스처의 고정 "1"창과 tv 종점은 같은 행렬을 공유하므로 여기서 성립해야 한다 */
+  const { w: wEnd } = opt(cm.tv[0].cov[2], 1);
+  const { w: wAll } = opt(cm.windows[1].cov, 1);
+  r.sameMatrixSameSolution = wEnd.every((x, i) => Math.abs(x - wAll[i]) < 1e-12);
+
+  /* ④ 화면 — 롤링 차트 카드와 창 민감도 표가 실제로 렌더된다 */
+  P.DATA.alloc = CMA_ALLOC;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const tvBox = DOC.getElementById("alloc-tv-card");
+  const txt = tvBox ? tvBox.textContent : "";
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  r.rollCardRendered = /시간 경로/.test(txt) && /λ/.test(txt);
+  r.saysInputsAreFrozen = /현재 설정으로 고정/.test(txt);
+  r.saysThirdObjective = /①②/.test(txt);
+  /* 창 민감도 모드 — 저장 상태로 전환해 표가 나오는지 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, tv_mode: "win" }));
+  P.renderSection("alloc");
+  const txt2 = DOC.getElementById("alloc-tv-card").textContent;
+  r.winModeRendersTable = /창 민감도/.test(txt2) && /전체/.test(txt2);
+  /* 프록시 층에서는 카드가 안내문으로 물러난다 */
+  P.DATA.alloc = ALLOC_FIXTURE;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  r.proxyLayerShowsGuidance = /벤치마크 층 전용/.test(DOC.getElementById("alloc-tv-card").textContent);
   shim.localStorage.removeItem("iaw-alloc");
   return r;
 });

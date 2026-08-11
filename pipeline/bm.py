@@ -236,6 +236,27 @@ def build_cma(series_store: dict, warn) -> dict:
         st["key"] = name
         out_windows.append(st)
 
+    # 시변(롤링) 창 — 최적 배분의 시간 경로용. 길이 y 마다 월말 t 별로 직전 12y 개월
+    # 공분산을 싣는다. **가중치 경로를 여기서 굳히지 않는 이유**: λ·기대수익 키인·
+    # 대체투자 매핑·제약이 전부 화면 모수라, 경로를 파이프라인이 계산하면 그
+    # 커스터마이징이 전부 죽는다 — 데이터(공분산)/모형(최적화)의 분리 원칙.
+    # 롤링 평균은 싣지 않는다 — 실현 평균을 기대수익으로 쓰는 문을 열지 않는다(§7.7).
+    rd = lambda x: float(round(float(x), 8))
+    cs = list(df.columns)
+    tv = []
+    for y in WINDOW_YEARS:
+        need = y * 12
+        if len(df) < need + 2:          # 점이 2개는 있어야 「경로」다
+            continue
+        pts_d, pts_cov = [], []
+        for e in range(need, len(df) + 1):
+            sub = df.iloc[e - need:e]
+            cv = sub.cov(ddof=1) * 12.0
+            pts_d.append(str(sub.index[-1].date()))
+            pts_cov.append([[rd(cv.iloc[i, j]) for j in range(len(cs))]
+                            for i in range(len(cs))])
+        tv.append({"key": str(y), "n_window": need, "dates": pts_d, "cov": pts_cov})
+
     return {
         "active": True,
         "asof": str(asof.date()),
@@ -252,6 +273,7 @@ def build_cma(series_store: dict, warn) -> dict:
         "coverage": coverage,
         "excluded": [lb for lb in (k[3:] for k in all_bm) if lb in EXCLUDED],
         "windows": out_windows,
+        "tv": tv,
         "method": ("월말 수준 → 월간 수익률 → 연환산(σ ×√12, 평균 ×12, 공분산 ×12). "
                    "일별을 쓰지 않는 이유: 주말 캐리포워드로 σ 과소평가. "
                    "0 값은 벤치마크 미개시 결측으로 제외. "

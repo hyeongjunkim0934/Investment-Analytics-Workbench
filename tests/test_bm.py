@@ -263,6 +263,34 @@ def test_cma_alt_skipped_below_min_sample_without_breaking_cma():
     assert any("디스무딩 보조축 생략" in w for w in warns)
 
 
+def test_cma_tv_rolling_covariances_consistent_with_fixed_windows(parsed):
+    """시변(롤링) 블록 — 개수·모양이 맞고, 마지막 롤링 창 = 같은 길이의 고정 창.
+
+    마지막 대조가 핵심이다: 롤링 경로의 종점과 고정 창은 **같은 표본**이므로 반올림
+    까지 정확히 같아야 한다 — 다르면 둘 중 하나의 표본 절단이 틀린 것이다.
+    """
+    _, P = parsed
+    out = bm.build_cma(P.SERIES, lambda m: None)
+    n_all = out["windows"][-1]["n_months"]
+    n = len(out["cols"])
+    assert out["tv"], "롤링 블록이 비어 있다"
+    for blk in out["tv"]:
+        need = blk["n_window"]
+        assert need == int(blk["key"]) * 12
+        assert len(blk["dates"]) == len(blk["cov"]) == n_all - need + 1
+        assert blk["dates"] == sorted(blk["dates"])          # 시간 오름차순
+        for M in (blk["cov"][0], blk["cov"][-1]):
+            assert len(M) == n and all(len(r) == n for r in M)
+            for i in range(n):
+                assert M[i][i] >= 0
+                for j in range(n):
+                    assert abs(M[i][j] - M[j][i]) < 1e-12
+        wfix = next((w for w in out["windows"] if w["key"] == blk["key"]), None)
+        assert wfix is not None
+        assert blk["cov"][-1] == wfix["cov"], f"{blk['key']}년: 롤링 종점 ≠ 고정 창"
+        assert blk["dates"][-1] == wfix["end"]
+
+
 # --------------------------------------------------------------------------
 # CMA — 유출 가드 (원본 수익률·수준 미게시)
 # --------------------------------------------------------------------------

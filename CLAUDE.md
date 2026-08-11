@@ -46,7 +46,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 2분). 현재 321개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 2분). 현재 325개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (1초 미만)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js
 python -m pytest
@@ -194,6 +194,15 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   금지 유지). 장부가 쏠림은 수용된 성질이고 `st.cap_book`(장부가 채권 2 + 단기자금 **합산**
   상한, 중립 기본값 없음)이 내규 한도 자리다. 기대수익 키인은 `st.mu_over`(6키) — base 를
   대체하고 헤지캐리는 별도 가산이라 슬라이더가 살아 있다.
+  **시변·창 민감도 카드**(`renderAllocTv` + `#alloc-tv-card`)는 λ-효용 MVO
+  (`amOptimizeUtil`, λ = `st.mvo_lambda` 기본 1 — **소수 단위**, 2026-08-11 사용자 지정,
+  커스터마이징 UI 는 차기)로 표본만 바꿔 가며 최적 배분을 다시 푼다 — 요약의 ①②와
+  **다른 세 번째 목적함수**이고 화면이 그 사실을 밝힌다. 데이터는 `bm.py` 가 게시하는
+  `cma.tv`(길이별 롤링 공분산 — **가중치 경로가 아니라 공분산**을 싣는 이유: 경로를
+  파이프라인이 굳히면 λ·매핑·제약 커스터마이징이 전부 죽는다). μ·제약·매핑·헤지는
+  현재 설정 고정 — 롤링 실현 평균을 μ 로 쓰는 문을 열지 않았다. 차트 등록부는
+  `allocTvCharts` 로 분리 — recalc 타이머의 전체 파괴에 시변 차트가 딸려 죽지 않게.
+  프로브 `cmaTv` 가 단조성·방향성·밴드 붙음 구분을 실행으로 확인한다.
 - **헤지 레버의 자유도는 실질 1개다 — 「최적 헤지비율 한 점」을 적지 말 것.**
   `alloc.py` 의 `loadings()` 에서 두 레버는 **같은 방향 벡터 `FX_DIR = e_usd − swap` 의
   스칼라배**로만 들어간다: `x(hb,he) = x1 + [w채(1−hb) + w주(1−he)]·g = x1 + Xe·g`.

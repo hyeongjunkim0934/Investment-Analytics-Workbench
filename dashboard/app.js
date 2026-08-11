@@ -3576,6 +3576,22 @@ function amProjectSet(w, lo, hi, total, groups) {
   return x;
 }
 
+/* λ-효용 MVO: max μ'w − (λ/2)·w'Σw — 시변·창 민감도 카드의 목적함수.
+   단위: **소수 기준**(μ 소수, Σ 소수² — 교과서 관례라 λ=1 이 통상적 저위험회피).
+   내부 C 는 %²·mu 는 % 라서 여기서 환산한다. 투영은 amOptimize 와 같은 한 벌. */
+function amOptimizeUtil(mu, C, lo, hi, total, lam, groups, iters) {
+  iters = iters || 3000;
+  let w = amProjectSet(mu.map(() => total / mu.length), lo, hi, total, groups);
+  for (let t = 0; t < iters; t++) {
+    const g = amMv(C, w);
+    for (let i = 0; i < g.length; i++) g[i] = lam * g[i] / 1e4 - mu[i] / 100;
+    let gm = 1e-12;
+    for (const v of g) gm = Math.max(gm, Math.abs(v));
+    w = amProjectSet(w.map((v, i) => v - 0.02 * g[i] / gm), lo, hi, total, groups);
+  }
+  return w;
+}
+
 /* 투영 경사법 + (목표수익) 쌍대 상승 — alloc.py optimize 이식본 */
 function amOptimize(mu, C, lo, hi, total, target, groups, iters) {
   iters = iters || 3000;
@@ -3747,7 +3763,7 @@ function allocEngine(A, st) {
      미헤지분 (1−h) 만큼 _fx 를 **더한다**. 구 층의 스왑 MTM 항(d_swap)은 CMA
      행렬에 없어 반영되지 않는다(방법론에 명시) — 그 결과 회계 관점에서도 헤지
      위험이 Xe 로 붕괴하지만, 헤지 참고치는 기존대로 경제 관점 전용으로 둔다. */
-  function cmaAltRow() {
+  function cmaAltRow(M) {
     const mcols = cmaAll.cols.length;
     const r = new Array(mcols).fill(0);
     if (st.alt_map.mode === "bm") { r[cmaCI["시가 대체투자"]] = 1; return { r, idio: 0 }; }
@@ -3761,7 +3777,6 @@ function allocEngine(A, st) {
     let idio = 0;
     const ai = cmaCI["_alt"];
     if (ai != null) {
-      const M = cmaW.cov;
       const varF = amQuad(r, M);
       let cAf = 0;
       for (let j = 0; j < mcols; j++) cAf += r[j] * M[j][ai];
@@ -3769,8 +3784,9 @@ function allocEngine(A, st) {
     }
     return { r, idio };
   }
-  function buildCma(view, hbX, heX) {
-    const M = cmaW.cov;
+  /* M 을 갈아끼울 수 있게 분리 — 시변(롤링)·창 민감도 카드가 같은 로딩·매핑으로
+     다른 시점의 공분산을 쓴다. buildCma 는 현재 창을 꽂은 것일 뿐이다. */
+  function buildCmaFrom(M, view, hbX, heX) {
     const fxi = cmaCI["_fx"];
     const base = (lb) => {
       const r = new Array(cmaAll.cols.length).fill(0);
@@ -3778,7 +3794,7 @@ function allocEngine(A, st) {
       return r;
     };
     const withFx = (r, open) => { if (fxi != null && open > 1e-12) r[fxi] += open; return r; };
-    const alt = cmaAltRow();
+    const alt = cmaAltRow(M);
     const anchor = anchorLocal();
     const muE = muEconAt(hbX, heX, anchor);
     let keys, rows, mu;
@@ -3808,6 +3824,7 @@ function allocEngine(A, st) {
     applyMuOver(view, keys, mu, hbX, heX);
     return { keys, rows, mu, C, anchor };
   }
+  const buildCma = (view, hbX, heX) => buildCmaFrom(cmaW.cov, view, hbX, heX);
   const build = layer === "cma" ? buildCma : buildProxy;
 
   const mixSrc = st.mix_acct;
@@ -3856,8 +3873,8 @@ function allocEngine(A, st) {
         start: cmaW.start, end: cmaW.end, n_months: cmaW.n_months }
     : { label: set.label, start: set.start, end: set.end, n_months: set.n_months };
   const altInfo = layer === "cma" ? (() => {
-    const a = cmaAltRow();
     const M = cmaW.cov;
+    const a = cmaAltRow(M);
     return {
       mode: st.alt_map.mode,
       wEq: isFinite(+st.alt_map.w_eq) ? +st.alt_map.w_eq : 50,
@@ -3942,6 +3959,12 @@ function allocEngine(A, st) {
     optimize(mu, C, target, iters) {
       return amOptimize(mu, C, lo, hi, total, target, groups, iters);
     },
+    /* λ-효용 최적화 — 시변·창 민감도 카드 전용 목적함수 (요약의 ①②와 다르다) */
+    optimizeUtil(mu, C, lam, iters) {
+      return amOptimizeUtil(mu, C, lo, hi, total, lam, groups, iters);
+    },
+    /* CMA 층 전용 — 임의 시점(롤링)·임의 창의 공분산으로 같은 로딩·매핑을 편다 */
+    buildFrom: layer === "cma" ? buildCmaFrom : null,
   };
 }
 
@@ -4012,10 +4035,106 @@ function allocFeasibility(E) {
   return probs;
 }
 
+/* ---- 시변·창 민감도 카드 — λ-효용 MVO 로 표본을 바꿔 가며 최적 배분 재계산 ----
+   목적함수는 요약의 ①②(위험최소·수익유지)와 **다른 세 번째 참고축**이다:
+   max μ'w − (λ/2)·w'Σw, λ=1 소수 단위(2026-08-11 사용자 지정 — 커스터마이징 UI 는
+   차기). μ·밴드·그룹 한도·대체투자 매핑·헤지비율은 현재 설정으로 **고정**하므로
+   경로의 움직임은 위험 구조(σ·상관)의 변화만 반영한다 — 롤링 실현 평균을 μ 로
+   쓰는 문은 일부러 열지 않았다(§7.7: 과거 평균을 기대수익으로 쓰지 않는다). */
+function renderAllocTv(box, E, st, pal, rerender) {
+  /* 차트 등록부를 allocCharts 와 분리한다 — 이 카드는 recalc 의 타이머 **밖**에서
+     그려지는데, 타이머가 allocCharts 를 전부 파괴하고 다시 그리므로 같은 등록부를
+     쓰면 방금 만든 시변 차트가 120ms 뒤에 소리 없이 죽는다. */
+  allocTvCharts.forEach(destroyChart);
+  allocTvCharts = [];
+  box.textContent = "";
+  if (E.layer !== "cma") {
+    box.append(el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, "최적 배분의 표본 민감도 — 벤치마크 층 전용")),
+      el("div", { class: "card-sub" },
+        "위험 원천을 기관 벤치마크(CMA)로 두면 창 민감도와 시변(롤링) 경로가 표시됩니다."));
+    return;
+  }
+  const lam = +st.mvo_lambda || 1;
+  const hb = st.h_bond / 100, he = st.h_eq / 100;
+  const optAt = (M) => {
+    const B = E.buildFrom(M, E.view, hb, he);
+    const w = E.optimizeUtil(B.mu, B.C, lam, 1500);
+    return { B, w, sig: E.sigmaW(w, B.C), mu: amDot(B.mu, w) };
+  };
+  const tvAll = E.cmaAll.tv || [];
+  const mode = tvAll.length && st.tv_mode === "roll" ? "roll" : "win";
+  const modeSeg = el("div", { class: "seg", role: "group" });
+  const mkMode = (label, v, disabled, title) => {
+    const b = el("button", { class: mode === v ? "active" : "",
+      onclick: () => { st.tv_mode = v; allocSaveState(st); rerender(); } }, label);
+    if (disabled) { b.disabled = true; if (title) b.title = title; }
+    return b;
+  };
+  modeSeg.append(mkMode("시변(롤링)", "roll", !tvAll.length, "롤링 데이터 없음"),
+                 mkMode("창 민감도", "win"));
+  const note = () => el("div", { class: "card-sub", style: "margin-top:6px" },
+    "목적함수 max μ'w − (λ/2)·w'Σw — 요약의 ①②(위험최소·수익유지)와 다른 세 번째 참고축입니다. ",
+    el("b", {}, "μ·밴드·그룹 한도·대체투자 매핑·헤지비율은 현재 설정으로 고정"),
+    " — 움직임은 위험 구조(σ·상관)의 변화만 반영합니다(롤링 실현 평균을 μ 로 쓰지 않습니다). λ 커스터마이징은 차기.");
+
+  if (mode === "roll") {
+    const blk = tvAll.find((b) => b.key === String(st.tv_len)) || tvAll[tvAll.length - 1];
+    const lenSeg = el("div", { class: "seg", role: "group" });
+    tvAll.forEach((b) => lenSeg.append(el("button", { class: b.key === blk.key ? "active" : "",
+      onclick: () => { st.tv_len = b.key; allocSaveState(st); rerender(); } }, `${b.key}년 롤링`)));
+    const pts = blk.cov.map((M, i) => ({ d: blk.dates[i], ...optAt(M) }));
+    const keys = pts[0].B.keys;
+    const fbox = cardScaffold(box, {
+      title: `최적 배분의 시간 경로 — λ-효용 MVO (λ=${fmtNum(lam, 1)}, 소수 단위)`,
+      sub: `${blk.key}년 롤링 × ${pts.length}시점 · ${E.view === "acct" ? "회계" : "경제"} 관점`,
+      csvName: "최적배분_시변.csv",
+      controls: el("span", { style: "display:inline-flex;gap:8px;flex-wrap:wrap" }, modeSeg, lenSeg),
+      tableFn: () => ({
+        headers: ["월말", ...keys.map((k) => k + "%"), "위험%", "수익%"],
+        rows: pts.map((p) => [p.d, ...p.w.map((x) => fmtNum(x * 100, 1)),
+                              fmtNum(p.sig, 2), fmtNum(p.mu, 2)]),
+      }),
+    });
+    const xs = pts.map((p) => {
+      const [y, m] = p.d.split("-").map(Number);
+      return +(y + (m - 0.5) / 12).toFixed(3);
+    });
+    allocTvCharts.push(makeRatioChart(fbox, {
+      seriesDefs: keys.map((k, i) => ({ label: k, color: pal.series[i % pal.series.length],
+        x: xs, v: pts.map((p) => +(p.w[i] * 100).toFixed(2)) })),
+      xLabel: "롤링 창의 끝(월말)", unit: "%", height: 280,
+    }));
+    box.append(note());
+    return;
+  }
+
+  /* 창 민감도 — 게시된 고정 창마다 같은 λ-MVO 를 풀어 배분을 나란히 놓는다 */
+  const rows = E.cmaAll.windows.map((w) => ({ key: w.key, n: w.n_months, ...optAt(w.cov) }));
+  const keys = rows[0].B.keys;
+  box.append(el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, `최적 배분의 창 민감도 — λ-효용 MVO (λ=${fmtNum(lam, 1)}, 소수 단위)`),
+    el("span", { class: "card-sub" }, `창을 바꾸면 배분이 얼마나 움직이나 · ${E.view === "acct" ? "회계" : "경제"} 관점`),
+    el("span", {}, modeSeg)));
+  const t = el("table", { class: "mini-table" },
+    el("tr", {}, ...["창", "개월", ...keys.map((k) => k + "%"), "위험%", "수익%"]
+      .map((h) => el("th", {}, h))));
+  rows.forEach((r) => {
+    t.append(el("tr", {},
+      el("td", { style: "text-align:left" }, r.key === "all" ? "전체" : `${r.key}년`),
+      el("td", { class: "num" }, String(r.n)),
+      ...r.w.map((x) => el("td", { class: "num" }, fmtNum(x * 100, 1))),
+      el("td", { class: "num" }, fmtNum(r.sig, 2)),
+      el("td", { class: "num" }, fmtNum(r.mu, 2))));
+  });
+  box.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, t), note());
+}
+
 /* ================= 자산배분 — 화면 ================= */
 
 const ALLOC_LS_KEY = "iaw-alloc";
 let allocCharts = [];
+let allocTvCharts = [];   // 시변 카드 전용 — recalc 타이머의 전체 파괴와 분리
 
 function allocDefaults(A) {
   const d = A.defaults;
@@ -4045,6 +4164,9 @@ function allocDefaults(A) {
        헤지캐리는 별도 가산이라 헤지 슬라이더가 계속 살아 있다. */
     mu_over: { 국내채권: null, 해외채권: null, 국내주식: null,
                해외주식: null, 대체투자: null, 단기자금: null },
+    /* 시변·창 민감도 카드 — λ-효용 MVO. λ=1 소수 단위(2026-08-11 사용자 지정,
+       커스터마이징 UI 는 차기). tv_len 은 롤링 길이(년) — null = 게시된 것 중 최장. */
+    mvo_lambda: 1, tv_mode: "roll", tv_len: null,
     cap_foreign: null, cap_equity: null, target_ret: null, risk_cap: null,
     by_kr: null, by_fx: null, book_mat_m: null,
     dur_liab: null, dur_asset: null, la_ratio: null,
@@ -4071,6 +4193,8 @@ function allocState(A) {
     if (!st.ccy[k] || typeof st.ccy[k] !== "object") st.ccy[k] = {};
   });
   if (st.src !== "proxy" && st.src !== "cma") st.src = "cma";
+  if (!isFinite(+st.mvo_lambda) || +st.mvo_lambda <= 0) st.mvo_lambda = 1;
+  if (st.tv_mode !== "win" && st.tv_mode !== "roll") st.tv_mode = "roll";
   if (!st.alt_map || typeof st.alt_map !== "object") st.alt_map = d.alt_map;
   if (st.alt_map.mode !== "bm" && st.alt_map.mode !== "factor") st.alt_map.mode = "factor";
   if (!isFinite(+st.alt_map.w_eq)) st.alt_map.w_eq = 50;
@@ -4144,6 +4268,8 @@ function renderAlloc() {
   }
   allocCharts.forEach(destroyChart);
   allocCharts = [];
+  allocTvCharts.forEach(destroyChart);
+  allocTvCharts = [];
   const pal = palette();
   const st = allocState(A);
 
@@ -4350,6 +4476,7 @@ function renderAlloc() {
   const inputsBox = $("#alloc-inputs-box");
   const frontierCard = $("#alloc-frontier-card");
   const pathCard = $("#alloc-path-card");
+  const tvCard = $("#alloc-tv-card");
   let chartTimer = null;
 
   function recalc(withCharts) {
@@ -4743,12 +4870,16 @@ function renderAlloc() {
       const why = infeas.length
         ? "제약이 서로 모순되어 계산을 보류했습니다 — 수기 입력에서 밴드·그룹 한도를 고치십시오."
         : "프록시층의 회계 관점에는 없습니다 — 장부가 자산(가격변동 0)을 평균-분산 최적화에 넣지 않기 때문입니다(§7.2-1). 경제 관점으로 전환하거나 위험 원천을 기관 벤치마크(CMA)로 두면 표시됩니다.";
-      [["효율적 투자선", frontierCard], ["이행 경로", pathCard]].forEach(([title, box]) => {
+      [["효율적 투자선", frontierCard], ["이행 경로", pathCard],
+       ["표본 민감도·시변", tvCard]].forEach(([title, box]) => {
         box.textContent = "";
         box.append(el("div", { class: "card-head" }, el("span", { class: "card-title" }, `${title} — 보류`)),
           el("div", { class: "card-sub" }, why));
       });
     } else if (withCharts) {
+      /* 시변·창 민감도 — 타이머 밖 동기 렌더(드래그 중(recalc(false))에는 안 돈다).
+         타이머 안에 두면 프로브가 못 본다 — 셰이드는 타이머를 흘리지 않는다. */
+      renderAllocTv(tvCard, E, st, pal, () => recalc(true));
       clearTimeout(chartTimer);
       chartTimer = setTimeout(() => {
         allocCharts.forEach(destroyChart);

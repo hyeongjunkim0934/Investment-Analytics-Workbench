@@ -1599,6 +1599,43 @@ def test_cma_screen_shows_layer_mapping_and_provenance(probe):
     assert c["headlineShowsLayer"] is True
 
 
+def test_tv_lambda_utility_optimizer_is_sane(probe):
+    """λ-효용 MVO — 단조성·목적함수 검산·같은 표본 = 같은 해.
+
+    λ↑ 면 위험·기대수익이 함께 줄어야 하고(위험회피), λ=1 해는 λ=1 효용에서
+    다른 해보다 낮지 않아야 하며, 같은 행렬에는 같은 답이 나와야 한다.
+    """
+    c = probe["cmaTv"]
+    assert c["lambdaMonotoneRisk"] is True
+    assert c["lambdaMonotoneReturn"] is True
+    assert c["lambda1SolutionHasHigherUtility"] is True
+    assert c["sameMatrixSameSolution"] is True
+
+
+def test_tv_weights_respond_to_risk_structure_not_bands(probe):
+    """시변의 요점 — σ 가 커진 자산의 비중이 실제로 줄어야 한다.
+
+    단 밴드에 붙은 자산은 표본이 바뀌어도 못 움직인다(λ=1 의 국내주식 상한 붙음
+    확인) — 방향성은 내부해가 되는 λ 에서 잰다. 이 구분이 없으면 "시변인데 왜
+    안 움직이나"를 코드 결함으로 오진한다.
+    """
+    c = probe["cmaTv"]
+    assert c["bandPinnedAtLowLambda"] is True
+    assert c["riskierAssetGetsLess"] is True
+
+
+def test_tv_card_renders_and_states_what_is_frozen(probe):
+    """시변·창 민감도 카드 — 롤링 차트·창 표가 렌더되고, 고정된 입력(μ·제약·매핑·
+    헤지)과 ①②와 다른 목적함수임을 화면이 스스로 밝힌다. 프록시 층에서는 안내문."""
+    c = probe["cmaTv"]
+    assert c["renderErrors"] == 0
+    assert c["rollCardRendered"] is True
+    assert c["saysInputsAreFrozen"] is True
+    assert c["saysThirdObjective"] is True
+    assert c["winModeRendersTable"] is True
+    assert c["proxyLayerShowsGuidance"] is True
+
+
 # ---- 통화 구성 (실행해서 확인) ----------------------------------------------
 def test_currency_mix_is_empty_until_the_user_enters_it(probe):
     """벤치마크를 몰래 적용하지 않는다 — 기본은 미입력이다.
