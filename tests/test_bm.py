@@ -73,6 +73,61 @@ def test_bm_dates_are_yyyymmdd_strings_and_junk_rows_skipped(parsed):
     assert s.index.min() == cal[0] and s.index.max() == cal[-1]
 
 
+def test_bm_datetime_a_column_is_parsed(tmp_path):
+    """A열이 **날짜형 셀**이어도 파싱된다 — 문서 계약("YYYYMMDD 문자열 또는 날짜형").
+
+    재점검 실측: openpyxl 은 날짜 셀을 datetime.datetime 으로 돌려주는데 예전 코드는
+    pd.Timestamp(하위클래스)만 검사해 날짜형 파일이 **경고 0건으로 0 관측**이 됐다 —
+    엑셀에서 날짜 서식으로 재저장하는 순간 CMA 가 조용히 꺼지는 함정이었다.
+    """
+    import datetime
+    import openpyxl
+    p = tmp_path / "bm_datetime.xlsx"
+    wb = openpyxl.Workbook(write_only=True)
+    ws = wb.create_sheet("S")
+    ws.append(["조회일자", "장부가", "", "시가"])
+    ws.append(["", "국내채권", "해외채권", "국내주식"])
+    for i in range(40):
+        d = datetime.datetime(2024, 1, 1) + datetime.timedelta(days=i)
+        ws.append([d, 100.0 + i, 200.0 + i, 300.0 + i])
+    wb.save(p)
+    warns = []
+    cols = bm.parse(p, warns.append)
+    assert [len(pairs) for _, _, pairs in cols] == [40, 40, 40]
+    assert not warns
+
+    # 반대로 날짜를 한 행도 못 읽으면 조용히 넘어가지 않고 소리를 낸다
+    p2 = tmp_path / "bm_nodates.xlsx"
+    wb2 = openpyxl.Workbook(write_only=True)
+    ws2 = wb2.create_sheet("S")
+    ws2.append(["조회일자", "장부가"])
+    ws2.append(["", "국내채권"])
+    ws2.append(["합계", 1.0])
+    wb2.save(p2)
+    warns2 = []
+    bm.parse(p2, warns2.append)
+    assert any("날짜 행이 0개" in w for w in warns2)
+
+
+def test_build_cma_survives_constant_column_in_window():
+    """창 안 무변동 열 — corr 은 None 이 되고 빌드는 산다.
+
+    재점검 실측: NaN corr 이 그대로 나가면 격리망 **밖**의 json.dump(allow_nan=False)
+    가 JSON 15개 전체를 죽였다. NaN 은 0 으로 지어내지 않고 None(정의 불가)으로 낸다.
+    """
+    me = pd.date_range("2023-01-31", periods=26, freq="ME")
+    flat = pd.Series(100.0, index=me)                       # 전 구간 무변동 → 수익률 전부 0
+    move = pd.Series(100.0 * (1.01 ** np.arange(26)) * (1 + 0.02 * np.sin(np.arange(26))), index=me)
+    out = bm.build_cma(
+        _store(**{"bm:시가 국내주식": move, "bm:시가 국내채권": flat}), lambda m: None)
+    assert out["active"] is True
+    json.dumps(out, allow_nan=False)                        # 여기서 죽던 경로
+    w = out["windows"][-1]
+    i = out["cols"].index("시가 국내채권")
+    assert w["vol_pct"][i] == 0.0
+    assert w["corr"][i][1 - i] is None and w["corr"][i][i] is None
+
+
 # --------------------------------------------------------------------------
 # 월말 수익률 — 부분월 가드
 # --------------------------------------------------------------------------

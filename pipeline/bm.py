@@ -27,6 +27,7 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import math
 
 import numpy as np
@@ -88,22 +89,31 @@ def parse(path, warn) -> list[tuple[str, str, list]]:
             warn(f"{path.name}: 2행에서 자산군 이름을 찾지 못해 건너뜀")
             return []
         out = {i: [] for i, _, _ in cols}
+        n_dates = 0
         for r in rows:
             if not r or r[0] is None:
                 continue
             raw = r[0]
-            if isinstance(raw, pd.Timestamp):
-                dt = raw
+            # openpyxl 은 날짜 셀을 datetime.datetime 으로 돌려준다 — pd.Timestamp 는
+            # 그 하위클래스라 Timestamp 만 검사하면 날짜형 파일이 통째로 무시된다
+            # (재점검 실측: 날짜 서식으로 재저장한 파일이 경고 0건으로 0 관측이 됐다).
+            if isinstance(raw, _dt.date) and not isinstance(raw, str):
+                dt = pd.Timestamp(raw.year, raw.month, raw.day)
             else:
                 s = str(raw).strip()
                 if not s.isdigit() or len(s) != 8:
                     continue        # 합계·주석 행 등은 조용히 무시
                 dt = pd.Timestamp(f"{s[:4]}-{s[4:6]}-{s[6:8]}")
+            n_dates += 1
             for i, _, _ in cols:
                 v = r[i + 1] if i + 1 < len(r) else None
                 # 0 = 미개시 결측. 음수 지수도 데이터 오류로 보고 버린다.
                 if isinstance(v, (int, float)) and v > 0:
                     out[i].append((dt, float(v)))
+        if n_dates == 0:
+            # 헤더는 인식됐는데 날짜 행이 0 — 조용히 빈 시리즈가 되면 CMA 가
+            # "BM 파일 없음"이라는 오도성 사유로 꺼진다. 반드시 소리를 낸다.
+            warn(f"{path.name}: 자산군 {len(cols)}개를 인식했지만 날짜 행이 0개 — A열 형식 확인 필요")
         return [(name, grp, out[i]) for i, grp, name in cols]
     finally:
         wb.close()
@@ -208,7 +218,8 @@ def build_cma(series_store: dict, warn) -> dict:
     windows = []
     for y in WINDOW_YEARS:
         need = y * 12
-        if len(df) < need:
+        # 정확히 같으면 "all" 과 동일 표본이라 중복 게시가 된다 — all 만 남긴다
+        if len(df) <= need:
             continue
         windows.append((str(y), df.iloc[-need:]))
     windows.append(("all", df))
@@ -231,7 +242,11 @@ def build_cma(series_store: dict, warn) -> dict:
             "mean_pct": [rd(m[c] * 100, 4) for c in cols],
             "vol_pct": [rd(v[c] * 100, 4) for c in cols],
             "mdd_pct": [rd(mdd[c] * 100, 4) for c in cols],
-            "corr": [[rd(corr.loc[a, b]) for b in cols] for a in cols],
+            # 창 안에서 완전 무변동인 열은 corr 이 NaN — 그대로 두면 격리망 밖의
+            # json.dump(allow_nan=False) 가 JSON 15개 전체를 죽인다(재점검 실측).
+            # NaN 은 None(정의 불가)으로 게시한다 — 0 으로 지어내지 않는다.
+            "corr": [[rd(corr.loc[a, b]) if pd.notna(corr.loc[a, b]) else None
+                      for b in cols] for a in cols],
             # 공분산은 소수(연율 분산) 단위 — 화면 σ 재구성·헤지 공식이 이걸 쓴다
             "cov": [[rd(cov.loc[a, b]) for b in cols] for a in cols],
         }
@@ -252,7 +267,7 @@ def build_cma(series_store: dict, warn) -> dict:
     tv = []
     for y in WINDOW_YEARS:
         need = y * 12
-        if len(df) < need + 2:          # 점이 2개는 있어야 「경로」다
+        if len(df) < need + 2:          # 점 3개 미만(len−need+1 < 3)이면 경로가 아니다
             continue
         pts_d, pts_cov = [], []
         for e in range(need, len(df) + 1):
