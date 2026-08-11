@@ -1673,7 +1673,7 @@ def test_alloc_toc_navigates_without_touching_the_hash(probe):
     scrollIntoView 여야 한다. index.html 쪽 검사는 계약 테스트(id 대조)가 맡는다.
     """
     c = probe["allocChar"]
-    assert c["tocButtonCount"] == 8
+    assert c["tocButtonCount"] == 9      # 시뮬레이터가 첫 항목 (§7.7.8)
     assert c["tocClicksSafe"] is True
 
 
@@ -1728,6 +1728,50 @@ def test_audit_honesty_badges(probe):
     assert c["sumBadgeShown"] is True
     assert c["gapUnreachableFlagged"] is True, "밴드 밖 배분에서 효율 갭이 '같은 기대수익'이라 거짓말한다"
     assert c["bannerClearedAfterRecovery"] is True
+
+
+
+# ---- 포트폴리오 시뮬레이터 §7.7.8 (실행해서 확인) -----------------------------
+def test_sim_panel_redistribution_is_exact(probe):
+    """「합계 100% 유지」 재분배 — 합 유지·값 고정·클램프·0-나머지 균등을 손계산 대조.
+
+    명시적 모드이므로 몰래-맞추기 금지 규약과 충돌하지 않는다(기본은 자유 조정).
+    """
+    c = probe["simPanel"]
+    assert c["lockKeepsSum"] is True and c["lockSetsValue"] is True
+    assert c["lockClamps"] is True
+    assert c["lockSplitsEquallyWhenOthersZero"] is True
+    assert c["lockModeRedistributesInUi"] is True
+
+
+def test_sim_panel_sigma_keyin_scales_variance_not_correlation(probe):
+    """σ 키인의 계약 — 분산은 (키인/실측)² 배, **상관은 벤치마크 실측 ρ 불변**,
+    앵커는 관측 σ 유지(출처 오염 금지), 주식 μ 디폴트(샤프×σ)는 유효 σ 를 따른다."""
+    c = probe["simPanel"]
+    assert c["sigmaScales"] is True
+    assert c["corrPreserved"] is True, "σ 키인이 상관을 건드렸다 — 키인 σ × 실측 ρ 계약 위반"
+    assert c["anchorUnpolluted"] is True
+    assert c["equityMuFollowsKeyedSigma"] is True
+
+
+def test_sim_panel_renders_bars_markers_donuts_cards(probe):
+    """패널 렌더 — 목차 첫 버튼 = 시뮬레이터, 막대 8, ▼ 마커 = λ-MVO 산출 위치,
+    도넛 2(지금·최적), 카드 2(최적·시뮬), 상관 정책 문구."""
+    c = probe["simPanel"]
+    assert c["renderErrors"] == 0
+    assert c["tocFirstIsSim"] is True
+    assert c["barCount"] == 8 and c["markerVisibleCount"] == 8
+    assert c["donutCount"] == 2
+    assert c["hasOptCard"] is True and c["hasSimCard"] is True
+    assert c["statesCorrPolicy"] is True
+    assert c["markerMatchesOptimum"] is True, "막대 위 ▼ 가 최적화 산출과 어긋난다"
+
+
+def test_sim_panel_proxy_layer_degrades_loudly(probe):
+    """프록시층 — σ 키인 8칸 전부 비활성 + 최적 「보류」 안내(조용한 강등 금지)."""
+    c = probe["simPanel"]
+    assert c["proxySigDisabled"] is True
+    assert c["proxyOptDeferred"] is True
 
 
 # ---- 통화 구성 (실행해서 확인) ----------------------------------------------
