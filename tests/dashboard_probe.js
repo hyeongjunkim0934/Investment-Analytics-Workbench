@@ -66,7 +66,8 @@ footer.append(elem("p", "build-line"), elem("div", "build-warnings"));
 /* 자산배분 뼈대 — renderAlloc 이 $("#alloc-…") 로 집는 자리들(index.html 과의 계약).
    하나라도 빠지면 그 자리에서 죽으므로 실제 마크업과 같은 목록을 둔다. */
 secNodes.alloc.append(elem("nav", "alloc-toc"));
-["alloc-headline", "alloc-summary", "alloc-controls", "alloc-cards", "alloc-levers",
+["alloc-sim-panel",
+ "alloc-headline", "alloc-summary", "alloc-controls", "alloc-cards", "alloc-levers",
  "alloc-frontier-card", "alloc-path-card", "alloc-tv-card", "alloc-char-card",
  "alloc-table-card", "alloc-inputs-box", "alloc-method"]
   .forEach((id) => secNodes.alloc.append(elem("div", id)));
@@ -175,7 +176,8 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "RENDERERS", "renderAll", "renderSection", "renderACWI",
   "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
   "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256",
-  "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil", "allocCharStats"];
+  "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil", "allocCharStats",
+  "allocRedistribute"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -1589,6 +1591,80 @@ safe("cmaAudit", () => {
   return r;
 });
 
+/* ====== P20-f. 포트폴리오 시뮬레이터(§7.7.8) — μ·σ 키인·최적·막대·도넛 ======
+   ① 재분배 순수 함수 손계산 ② σ 키인 = (키인/실측)² 배 분산 + 상관 불변 + 앵커
+   비오염 ③ 패널 렌더(막대 8·▼ 마커 = 최적화 산출·도넛·카드) ④ 합계 유지 모드
+   ⑤ 프록시층 강등을 전부 실행으로 잰다. */
+safe("simPanel", () => {
+  const r = {};
+  shim.localStorage.removeItem("iaw-alloc");
+
+  /* ① 재분배 — 합 유지·값 고정·클램프·0-나머지 균등 */
+  const mix0 = { "장부가 국내채권": 30, "시가 국내채권": 12, "장부가 해외채권": 12,
+    "시가 해외채권": 6, 국내주식: 3, 해외주식: 5, 대체투자: 15, 단기자금: 5 };   // 합 88
+  const tot = (m) => Object.values(m).reduce((a, b) => a + b, 0);
+  const m1 = P.allocRedistribute(mix0, "해외주식", 25, 88);
+  r.lockKeepsSum = Math.abs(tot(m1) - 88) < 0.1;
+  r.lockSetsValue = Math.abs(m1["해외주식"] - 25) < 1e-9;
+  r.lockClamps = Math.abs(P.allocRedistribute(mix0, "해외주식", 250, 88)["해외주식"] - 88) < 0.1;
+  const zeros = Object.fromEntries(Object.keys(mix0).map((k) => [k, k === "해외주식" ? 50 : 0]));
+  r.lockSplitsEquallyWhenOthersZero = Math.abs(tot(P.allocRedistribute(zeros, "해외주식", 30, 88)) - 88) < 0.1;
+
+  /* ② σ 키인 — 실측 30% 를 15% 로: 분산 1/4, 상관 불변, 앵커 관측 유지, 주식 μ 하락 */
+  const st0 = P.allocDefaults(CMA_ALLOC);
+  const E0c = P.allocEngine(CMA_ALLOC, st0);
+  const iEq = P.ALLOC_ECON.indexOf("국내주식"), iFb = P.ALLOC_ECON.indexOf("해외채권");
+  const ES = P.allocEngine(CMA_ALLOC, { ...st0, sig_over: { ...st0.sig_over, 국내주식: 15 } });
+  r.sigmaScales = Math.abs(ES.V.C[iEq][iEq] - E0c.V.C[iEq][iEq] / 4) < 1e-9;
+  const corr = (E, i, j) => E.V.C[i][j] / Math.sqrt(E.V.C[i][i] * E.V.C[j][j]);
+  r.corrPreserved = Math.abs(corr(ES, iEq, iFb) - corr(E0c, iEq, iFb)) < 1e-9;
+  r.anchorUnpolluted = Math.abs(ES.V.anchor.kr.sigma - E0c.V.anchor.kr.sigma) < 1e-12;
+  r.equityMuFollowsKeyedSigma = ES.V.mu[iEq] < E0c.V.mu[iEq] - 1e-9;
+
+  /* ③ 렌더 — 목차 첫 버튼·막대 8·▼ = 최적 위치·도넛 2·카드 2·상관 정책 문구 */
+  P.DATA.alloc = CMA_ALLOC;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const panel = DOC.getElementById("alloc-sim-panel");
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  r.tocFirstIsSim =
+    (DOC.getElementById("alloc-toc").querySelectorAll("button")[0] || {}).textContent === "시뮬레이터";
+  r.barCount = panel.querySelectorAll(".sim-bar-wrap").length;
+  r.markerVisibleCount = Array.from(panel.querySelectorAll(".sim-opt-mark")).filter((n) => !n.hidden).length;
+  r.donutCount = panel.querySelectorAll("svg").length;
+  const ptxt = panel.textContent;
+  r.hasOptCard = /① 최적 포트폴리오/.test(ptxt);
+  r.hasSimCard = /② 지금 시뮬레이션/.test(ptxt);
+  r.statesCorrPolicy = /상관은 벤치마크 실측/.test(ptxt);
+  const Ea = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), view: "acct" });
+  const wOpt = Ea.optimizeUtil(Ea.V.mu, Ea.V.C, 1);
+  const mark0 = panel.querySelectorAll(".sim-opt-mark")[0];
+  r.markerMatchesOptimum = Math.abs(parseFloat(mark0.style.left) - wOpt[0] * 100) < 0.6;
+
+  /* ④ 합계 100% 유지 모드 — 숫자 입력 하나가 나머지를 재분배해 합을 지킨다 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, sum_lock: true }));
+  P.renderSection("alloc");
+  const inp = DOC.getElementById("sim-mix-해외주식");
+  inp.value = "25";
+  inp.dispatchEvent({ type: "input", target: inp });
+  const mixInputs = Array.from(DOC.getElementById("alloc-sim-panel").querySelectorAll("input"))
+    .filter((n) => (n.id || "").startsWith("sim-mix-"));
+  const sumNow = mixInputs.reduce((a, n) => a + (+n.value || 0), 0);
+  r.lockModeRedistributesInUi = Math.abs(sumNow - 88) < 0.2 && Math.abs(+inp.value - 25) < 1e-9;
+
+  /* ⑤ 프록시층 — σ 키인 비활성·최적 보류 안내(조용한 강등 금지) */
+  P.DATA.alloc = ALLOC_FIXTURE;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const p2 = DOC.getElementById("alloc-sim-panel");
+  const sigInputs = Array.from(p2.querySelectorAll("input"))
+    .filter((n) => (n.getAttribute("aria-label") || "").includes("위험 % 키인"));
+  r.proxySigDisabled = sigInputs.length === 8 && sigInputs.every((n) => n.disabled === true);
+  r.proxyOptDeferred = /최적 포트폴리오 — 보류/.test(p2.textContent);
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
 /* ====== P21. 통화 구성 — 벤치마크 디폴트와 커버리지 =========================
    기관 실제 비중은 수기입력이고 저장소에 없다. 화면이 채워 주는 것은 **공개 벤치마크**
    뿐이며, 두 자산군의 근거 품질이 달라(채권=표시통화 직접 집계 / 주식=국가→통화 근사)
@@ -1685,7 +1761,7 @@ safe("simConsole", () => {
   r.sumBadgeWarns = !!badge && badge.classList.contains("warn");
   /* 과다 배분(합계 98 > 목표 88)은 단기자금을 0 으로 눌러도 못 맞춘다 — 버튼이
      조용히 "맞췄다"고 하면 안 된다. 눌러도 warn 이 남아야 한다. */
-  const fillBtn = Array.from(DOC.getElementById("alloc-controls").querySelectorAll("button"))
+  const fillBtn = Array.from(DOC.getElementById("alloc").querySelectorAll("button"))
     .find((n) => n.textContent.includes("잔여"));
   if (fillBtn) fillBtn.click();
   r.fillCashCannotFixOverAllocation = !!badge && badge.classList.contains("warn");

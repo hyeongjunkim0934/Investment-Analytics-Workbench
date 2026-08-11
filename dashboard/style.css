@@ -875,3 +875,25 @@ button.vchip { cursor: pointer; }
   background: transparent; color: var(--ink-2);
 }
 .sec-toc button:hover { color: var(--ink-1); background: var(--border); }
+
+/* ---- 포트폴리오 시뮬레이터(§7.7.8) — 막대·최적 마커·도넛 ------------------ */
+.sim8 { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.sim8-row { display: grid; grid-template-columns: 150px 1fr 74px 92px 92px;
+  gap: 10px; align-items: center; }
+.sim8-head { color: var(--ink-3); font-size: 11.5px; }
+.sim8-name { font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; }
+.sim-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
+.sim-bar-wrap { position: relative; padding-top: 10px; }
+.sim-bar-wrap input[type="range"] { width: 100%; margin: 0; }
+.sim-opt-mark { position: absolute; top: -3px; transform: translateX(-50%);
+  font-size: 11px; color: var(--ink-1); pointer-events: none; line-height: 1; }
+.sim8-row input[type="number"] { width: 100%; }
+.sim8-dyn { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.sim8-card { padding: 10px 14px; min-width: 200px; flex: 1 1 200px; }
+.sim8-strong { border-color: var(--accent, var(--ink-3)); }
+.sim8-donut { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.sim8-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px;
+  color: var(--ink-2); max-width: 420px; }
+@media (max-width: 720px) {
+  .sim8-row { grid-template-columns: 110px 1fr 60px 72px 72px; gap: 6px; }
+}

@@ -3691,6 +3691,28 @@ function allocEngine(A, st) {
      "완전헤지 100/100 최적"이 나갔다 — 무한 동점 중 임의 구석이었다. */
   const fxLive = layer !== "cma" || (cmaCI != null && cmaCI["_fx"] != null);
 
+  /* σ 키인(§7.7.8) — 라벨별 배율 sigScale 을 만들어 행렬을 D·M·D 로 갈아끼운다.
+     상관은 불변(벤치마크 실측 ρ), σ 만 사용자 값. 키인 σ 는 다른 벤치마크 통계와
+     같은 **환노출 제거 기준**이고, 미헤지분의 환변동은 로딩이 얹는다. **앵커는
+     관측 σ 를 유지한다** — 앵커는 시장이 위험 1단위에 주는 관측 보상이라 키인으로
+     오염되면 "관측" 출처 표기가 거짓이 된다. 반면 주식 μ 디폴트(무위험+샤프×σ)의
+     σ 는 유효(키인) 값을 쓴다 — 동일 샤프 논리는 실제로 지는 위험에 걸리는 것. */
+  const sigScale = {};
+  if (layer === "cma" && st.sig_over) {
+    Object.entries(CMA_ACCT_LBL).forEach(([k, lb]) => {
+      const v = st.sig_over[k];
+      if (v == null || !isFinite(+v) || +v <= 0) return;
+      const base = cmaSig(lb);
+      if (base > 1e-9) sigScale[lb] = +v / base;
+    });
+  }
+  const cmaSigEff = (lb) => cmaSig(lb) * (sigScale[lb] || 1);
+  function scaleCmaM(M) {
+    if (!Object.keys(sigScale).length) return M;
+    const d = cmaAll.cols.map((c) => sigScale[c] || 1);
+    return M.map((row, i) => row.map((v, j) => v * d[i] * d[j]));
+  }
+
   /* 앵커 — 각 시장 자국통화 기준(승인 ⑤-ⓑ). 헤지 슬라이더와 완전히 무관 —
      헤지비율은 기대수익에 비용항(h×cost)으로만, 위험에 환노출(1−h)로만 들어간다.
      σ 는 활성 데이터층에서 온다 — CMA 의 해외채권 벤치마크는 환노출 제거 기준이라
@@ -3708,8 +3730,8 @@ function allocEngine(A, st) {
 
   function muEconAt(hbX, heX, anchor) {
     const a = anchor || anchorLocal();
-    const sKospi = layer === "cma" ? cmaSig("시가 국내주식") : sigOf(rowKospi);
-    const sEqLoc = layer === "cma" ? cmaSig("시가 해외주식") : sigOf(rowEqLoc);
+    const sKospi = layer === "cma" ? cmaSigEff("시가 국내주식") : sigOf(rowKospi);
+    const sEqLoc = layer === "cma" ? cmaSigEff("시가 해외주식") : sigOf(rowEqLoc);
     return [R.kr5y.v,
             R.us_ytm.v + hbX * cost,
             R.kr3m.v + a.value * sKospi,
@@ -3790,7 +3812,8 @@ function allocEngine(A, st) {
   }
   /* M 을 갈아끼울 수 있게 분리 — 시변(롤링)·창 민감도 카드가 같은 로딩·매핑으로
      다른 시점의 공분산을 쓴다. buildCma 는 현재 창을 꽂은 것일 뿐이다. */
-  function buildCmaFrom(M, view, hbX, heX) {
+  function buildCmaFrom(M0, view, hbX, heX) {
+    const M = scaleCmaM(M0);      // σ 키인 반영 — 상관 불변, σ 만 교체
     const fxi = cmaCI["_fx"];
     const base = (lb) => {
       const r = new Array(cmaAll.cols.length).fill(0);
@@ -3877,7 +3900,7 @@ function allocEngine(A, st) {
         start: cmaW.start, end: cmaW.end, n_months: cmaW.n_months }
     : { label: set.label, start: set.start, end: set.end, n_months: set.n_months };
   const altInfo = layer === "cma" ? (() => {
-    const M = cmaW.cov;
+    const M = scaleCmaM(cmaW.cov);   // σ 키인 반영 — 화면 진단이 행렬과 같은 수를 말하게
     const a = cmaAltRow(M);
     return {
       mode: st.alt_map.mode,
@@ -3895,7 +3918,13 @@ function allocEngine(A, st) {
   return {
     A, st, set, ix, S, cost, costOpt, view, V, mix, mixEcon, w0, lo, hi, total, groups,
     byKr, byFx, kAlt, tau, proxy,
-    layer, layerNote, cmaAll, cmaW, sample, altInfo, fxLive,
+    layer, layerNote, cmaAll, cmaW, sample, altInfo, fxLive, sigScale,
+    /* 시뮬레이터용 — 회계 키의 관측/유효(키인 반영) σ. CMA 층 밖에서는 null */
+    cmaAcctSig(k) {
+      if (layer !== "cma") return null;
+      const lb = CMA_ACCT_LBL[k];
+      return lb ? { obs: cmaSig(lb), eff: cmaSigEff(lb) } : null;
+    },
     n_months: sample.n_months,
     anchorLocal, muEconAt, build, sigOf, rowUsb, rowEq, rowKospi, rowKr,
     sigmaW, eulerRC,
@@ -4252,6 +4281,62 @@ function renderAllocChar(box, E, w, opts) {
   box.append(det);
 }
 
+/* ---- 시뮬레이터(§7.7.8) 보조 — 합계 유지 재분배 + 도넛 차트 ----------------
+   재분배는 순수 함수로 뺀다(프로브가 손계산 대조). 「합계 100% 유지」는 사용자가
+   명시적으로 고른 모드라 몰래 맞추기 금지 규약과 충돌하지 않는다 — 자유 모드에서는
+   재분배하지 않고 합계 배지만 보인다(기존 규약 그대로). */
+function allocRedistribute(mix, key, newV, target) {
+  const out = { ...mix };
+  const others = ALLOC_ACCT.filter((k) => k !== key);
+  const v = Math.min(Math.max(0, newV), Math.max(0, target));
+  out[key] = +v.toFixed(2);
+  const need = Math.max(0, target - v);
+  const oldSum = others.reduce((a, k) => a + Math.max(0, out[k] || 0), 0);
+  if (oldSum <= 1e-9) {
+    others.forEach((k) => { out[k] = +(need / others.length).toFixed(2); });
+  } else {
+    const f = need / oldSum;
+    others.forEach((k) => { out[k] = +(Math.max(0, out[k] || 0) * f).toFixed(2); });
+  }
+  return out;
+}
+
+/* 도넛 — 비중 시각화 전용(값 왜곡 없음: 각도 = 비중/합). 합이 0이면 빈 링. */
+function allocDonutSVG(entries, size) {
+  const NS = "http://www.w3.org/2000/svg";
+  const s = size || 132, r = s * 0.34, cx = s / 2, cy = s / 2;
+  const C = 2 * Math.PI * r;
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${s} ${s}`);
+  svg.setAttribute("width", s); svg.setAttribute("height", s);
+  svg.setAttribute("role", "img");
+  const total = entries.reduce((a, e) => a + Math.max(0, e.w), 0);
+  const ring = document.createElementNS(NS, "circle");
+  ring.setAttribute("cx", cx); ring.setAttribute("cy", cy); ring.setAttribute("r", r);
+  ring.setAttribute("fill", "none");
+  ring.setAttribute("stroke", "var(--border)");
+  ring.setAttribute("stroke-width", s * 0.16);
+  svg.append(ring);
+  if (total > 1e-9) {
+    let off = C * 0.25;                       // 12시 방향 시작
+    entries.forEach((e) => {
+      const frac = Math.max(0, e.w) / total;
+      if (frac <= 1e-9) return;
+      const c = document.createElementNS(NS, "circle");
+      c.setAttribute("cx", cx); c.setAttribute("cy", cy); c.setAttribute("r", r);
+      c.setAttribute("fill", "none");
+      c.setAttribute("stroke", e.color);
+      c.setAttribute("stroke-width", s * 0.16);
+      c.setAttribute("stroke-dasharray", `${frac * C} ${C - frac * C}`);
+      c.setAttribute("stroke-dashoffset", off);
+      c.setAttribute("class", "donut-seg");
+      svg.append(c);
+      off -= frac * C;
+    });
+  }
+  return svg;
+}
+
 /* ================= 자산배분 — 화면 ================= */
 
 const ALLOC_LS_KEY = "iaw-alloc";
@@ -4289,6 +4374,17 @@ function allocDefaults(A) {
     /* 시변·창 민감도 카드 — λ-효용 MVO. λ=1 소수 단위(2026-08-11 사용자 지정,
        커스터마이징 UI 는 차기). tv_len 은 롤링 길이(년) — null = 게시된 것 중 최장. */
     mvo_lambda: 1, tv_mode: "roll", tv_len: null,
+    /* 시뮬레이터(§7.7.8) — 자산군별 위험 키인(연 %, 회계 8키). null = 벤치마크 실측.
+       **상관은 항상 벤치마크 실측 ρ 를 유지**하고 σ 만 갈아끼운다(키인 σ × 실측 ρ —
+       표준 CMA 관행). 그래야 특성 카드·효율선·시변이 같은 행렬에서 한 몸으로 움직인다.
+       디폴트 수치는 사용자가 추후 지정 예정 — 그때까지 미입력 = 실측이 디폴트다. */
+    sig_over: { "장부가 국내채권": null, "시가 국내채권": null, "장부가 해외채권": null,
+                "시가 해외채권": null, 국내주식: null, 해외주식: null,
+                대체투자: null, 단기자금: null },
+    /* 비중 막대 합계 모드 — true: 하나를 끌면 나머지가 비례 재분배돼 합이 유지된다
+       (명시적 모드 선택이므로 「몰래 맞추기」가 아니다). 기본은 자유 조정 + 합계
+       배지 — 기존 「몰래 맞추지 않는다」 원칙의 기본값을 유지하고 유지 모드는 옵트인. */
+    sum_lock: false,
     cap_foreign: null, cap_equity: null, target_ret: null, risk_cap: null,
     by_kr: null, by_fx: null, book_mat_m: null,
     dur_liab: null, dur_asset: null, la_ratio: null,
@@ -4337,6 +4433,12 @@ function allocState(A) {
     const v = st.mix_acct[k];
     st.mix_acct[k] = v != null && isFinite(+v) ? +v : d.mix_acct[k];
   });
+  if (!st.sig_over || typeof st.sig_over !== "object") st.sig_over = d.sig_over;
+  ALLOC_ACCT.forEach((k) => {
+    const v = st.sig_over[k];
+    if (v != null && (!isFinite(+v) || +v <= 0)) st.sig_over[k] = null;
+  });
+  st.sum_lock = st.sum_lock === true;
   return st;
 }
 
@@ -4426,8 +4528,8 @@ function renderAlloc() {
      섹션 안 앵커로 쓰면 마을로 튕긴다 — 버튼 + scrollIntoView 로만 움직인다. */
   const toc = $("#alloc-toc");
   toc.textContent = "";
-  [["요약", "#alloc-summary"], ["조작 콘솔", "#alloc-controls"], ["참고치", "#alloc-cards"],
-   ["투자선", "#alloc-frontier-card"], ["시변·민감도", "#alloc-tv-card"],
+  [["시뮬레이터", "#alloc-sim-panel"], ["요약", "#alloc-summary"], ["설정", "#alloc-controls"],
+   ["참고치", "#alloc-cards"], ["투자선", "#alloc-frontier-card"], ["시변·민감도", "#alloc-tv-card"],
    ["특성", "#alloc-char-card"], ["자산군 표", "#alloc-table-card"], ["방법론", "#alloc-method"]]
     .forEach(([label, sel]) => {
       toc.append(el("button", { type: "button", onclick: () => {
@@ -4438,6 +4540,184 @@ function renderAlloc() {
 
   /* 층·창·매핑 표식용 엔진 한 벌 — recalc 는 매번 새로 만들므로 이건 표시 전용이다 */
   const E0 = allocEngine(A, st);
+
+  /* ---- ⓪ 포트폴리오 시뮬레이터 (§7.7.8 — 화면 최상단, 2026-08-11 사용자 지시) ----
+     8자산군 μ·σ 키인 → λ-MVO 최적 배분(막대 위 ▼ + 도넛) + 비중 막대 드래그
+     즉시 시뮬레이션(카드 + 도넛). 비중 = 시뮬레이션(즉시 반영·저장 안 함 —
+     기존 조작/저장 분리 승계), μ·σ = 모형 입력(즉시 저장 — cost/매핑과 같은 규약).
+     이 배치가 2026-08-05 「요약 먼저」 동선을 대체한다(HANDOVER §7.7.8). */
+  const simBox = $("#alloc-sim-panel");
+  let simDyn = null;
+  {
+    simBox.textContent = "";
+    const target = () => 100 - (st.loan_w || 0);
+    const lockSeg = el("div", { class: "seg", role: "group" });
+    const mkLock = (label, v) => el("button", {
+      class: st.sum_lock === v ? "active" : "",
+      onclick: () => { st.sum_lock = v; allocSaveState(st); renderAlloc(); } }, label);
+    lockSeg.append(mkLock("자유 조정", false), mkLock("합계 100% 유지", true));
+    simBox.append(el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, "포트폴리오 시뮬레이터 — 기대수익·위험 키인 → 최적 배분 + 즉시 시뮬레이션"),
+      el("span", { class: "card-sub" },
+        `회계 8자산군 · 최적 = λ-효용 MVO(λ=${fmtNum(+st.mvo_lambda || 1, 1)}) · ` +
+        (E0.layer === "cma" ? "상관은 벤치마크 실측 ρ 유지" : "프록시층 — 최적·σ 키인은 벤치마크 층 전용")),
+      el("span", {}, lockSeg)));
+
+    const simSum = el("span", { class: "sim-sum" });
+    const refreshSimSum = () => {
+      const sum = ALLOC_ACCT.reduce((a, k) => a + (st.mix_acct[k] || 0), 0);
+      const off = Math.abs(sum - target()) > 0.05;
+      simSum.textContent = `합계 ${fmtNum(sum, 1)}% / 목표 ${fmtNum(target(), 1)}% (대출 ${fmtNum(st.loan_w || 0, 1)}% 제외)`;
+      simSum.classList.toggle("warn", off);
+      return off;
+    };
+    const rowRefs = {};
+    const syncRow = (k) => {
+      const rr = rowRefs[k];
+      if (!rr) return;
+      const v = st.mix_acct[k] || 0;
+      rr.bar.value = String(v);
+      rr.num.value = String(v);
+    };
+    const applyWeight = (k, v, final) => {
+      if (st.sum_lock) {
+        st.mix_acct = allocRedistribute(st.mix_acct, k, v, target());
+        ALLOC_ACCT.forEach(syncRow);
+      } else {
+        st.mix_acct[k] = Math.max(0, v);
+        syncRow(k);
+      }
+      refreshSimSum();
+      markDirty();
+      recalc(!!final);
+    };
+    const rows = el("div", { class: "sim8" });
+    rows.append(el("div", { class: "sim8-row sim8-head" },
+      el("span", {}, "자산군"), el("span", {}, "비중 막대 — 끌어서 조정 (▼ = 최적)"),
+      el("span", {}, "비중%"), el("span", {}, "기대수익%"), el("span", {}, "위험%")));
+    ALLOC_ACCT.forEach((k, i) => {
+      const color = pal.series[i % pal.series.length];
+      const bar = el("input", { type: "range", min: "0", max: "100", step: "0.5",
+        value: String(st.mix_acct[k] || 0), "aria-label": `${k} 비중 % (막대)` });
+      const mark = el("span", { class: "sim-opt-mark", hidden: true, title: `${k} 최적 비중` }, "▼");
+      const barWrap = el("div", { class: "sim-bar-wrap" }, bar, mark);
+      bar.addEventListener("input", () => applyWeight(k, +bar.value, false));
+      bar.addEventListener("change", () => applyWeight(k, +bar.value, true));
+      const num = el("input", { type: "number", step: "0.5",
+        value: String(st.mix_acct[k] || 0), id: "sim-mix-" + k.replace(/\s+/g, "-"),
+        "aria-label": `${k} 비중 %` });
+      num.addEventListener("input", () => applyWeight(k, num.value === "" ? 0 : +num.value, false));
+      num.addEventListener("change", () => applyWeight(k, num.value === "" ? 0 : +num.value, true));
+      /* μ 키인 — 장부가 채권은 기존 북일드 칸이 정본이라 그리로 쓴다(키인 이중화 금지) */
+      const muMap = { "장부가 국내채권": ["by_kr", null], "장부가 해외채권": ["by_fx", null] }[k]
+        || [null, { "시가 국내채권": "국내채권", "시가 해외채권": "해외채권" }[k] || k];
+      const muVal = muMap[0] ? st[muMap[0]] : st.mu_over[muMap[1]];
+      const muIn = el("input", { type: "number", step: "0.05",
+        value: muVal == null ? "" : String(muVal), placeholder: "앵커/관측",
+        "aria-label": `${k} 기대수익 % 키인` });
+      muIn.addEventListener("change", () => {
+        const v = muIn.value === "" ? null : +muIn.value;
+        if (muMap[0]) st[muMap[0]] = v != null && isFinite(v) ? v : null;
+        else st.mu_over[muMap[1]] = v != null && isFinite(v) ? v : null;
+        allocSaveState(st);
+        renderAlloc();
+      });
+      const as = E0.cmaAcctSig ? E0.cmaAcctSig(k) : null;
+      const sgIn = el("input", { type: "number", step: "0.1", min: "0",
+        value: st.sig_over[k] == null ? "" : String(st.sig_over[k]),
+        placeholder: as ? `실측 ${fmtNum(as.obs, 2)}` : "벤치마크 층 전용",
+        "aria-label": `${k} 위험 % 키인` });
+      if (!as) sgIn.disabled = true;
+      sgIn.addEventListener("change", () => {
+        const v = sgIn.value === "" ? null : +sgIn.value;
+        st.sig_over[k] = v != null && isFinite(v) && v > 0 ? v : null;
+        allocSaveState(st);
+        renderAlloc();
+      });
+      rows.append(el("div", { class: "sim8-row" },
+        el("span", { class: "sim8-name" }, el("i", { class: "sim-dot", style: `background:${color}` }), k),
+        barWrap, num, muIn, sgIn));
+      rowRefs[k] = { bar, num, mark };
+    });
+    simBox.append(rows);
+
+    const fillCash = el("button", { type: "button", class: "btn-ghost", onclick: () => {
+      /* 합계를 몰래 맞추지 않는다 — 사용자가 눌렀을 때만 잔여를 단기자금으로 채운다 */
+      const others = ALLOC_ACCT.filter((x) => x !== "단기자금")
+        .reduce((a, x) => a + (st.mix_acct[x] || 0), 0);
+      st.mix_acct["단기자금"] = Math.max(0, +(target() - others).toFixed(2));
+      syncRow("단기자금");
+      refreshSimSum();
+      markDirty();
+      recalc(true);
+    } }, "잔여 → 단기자금");
+    const dynBox = el("div", { class: "sim8-dyn" });
+    simBox.append(el("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px" },
+      simSum, st.sum_lock ? "" : fillCash,
+      el("span", { style: "color:var(--ink-3);font-size:12px" },
+        "비중은 즉시 반영·저장 안 함(저장은 아래 「기본값으로 저장」) · μ·σ 키인은 모형 입력이라 즉시 저장 · " +
+        "σ 키인은 환노출 제거 기준, 상관은 벤치마크 실측 ρ 유지 · 디폴트 수치는 추후 사용자 지정 예정(미입력 = 실측)")),
+      dynBox);
+    refreshSimSum();
+
+    /* 동적 갱신 — 최적은 비중과 무관하므로 드래그 중(recalc(false))에는 다시 풀지
+       않고, 시뮬 카드·도넛·합계만 매번 갱신한다. */
+    let optCache = null;
+    simDyn = (E8, withCharts) => {
+      const w = ALLOC_ACCT.map((k) => (st.mix_acct[k] || 0) / 100);
+      const V8 = E8.V;
+      const sim = { mu: amDot(V8.mu, w), sig: E8.sigmaW(w, V8.C) };
+      const canOpt = E8.layer === "cma" && allocFeasibility(E8).length === 0;
+      if (withCharts || optCache == null) {
+        optCache = canOpt ? (() => {
+          const wo = E8.optimizeUtil(V8.mu, V8.C, +st.mvo_lambda || 1);
+          return { w: wo, mu: amDot(V8.mu, wo), sig: E8.sigmaW(wo, V8.C) };
+        })() : null;
+      }
+      const opt = optCache;
+      ALLOC_ACCT.forEach((k, i) => {
+        const rr = rowRefs[k];
+        if (!rr) return;
+        rr.mark.hidden = !opt;
+        if (opt) rr.mark.style.left = `${Math.min(100, Math.max(0, opt.w[i] * 100))}%`;
+      });
+      dynBox.textContent = "";
+      const card8 = (title, mu, sig, note, strong) => el("div",
+        { class: "card sim8-card" + (strong ? " sim8-strong" : "") },
+        el("div", { class: "card-title" }, title),
+        el("div", { style: "font-size:19px;font-weight:700;margin:4px 0 2px" }, `위험 ${fmtNum(sig, 2)}%`),
+        el("div", {}, `기대수익 ${fmtNum(mu, 2)}%`),
+        el("div", { style: "color:var(--ink-3);font-size:11px;margin-top:3px" }, note));
+      const cardsRow = el("div", { style: "display:flex;gap:10px;flex-wrap:wrap;align-items:stretch" });
+      if (opt) {
+        cardsRow.append(card8("① 최적 포트폴리오 (λ-MVO)", opt.mu, opt.sig,
+          "키인 μ·σ + 실측 상관 · 밴드·합산 상한 반영 · 막대 위 ▼ = 최적 위치", true));
+      } else {
+        cardsRow.append(el("div", { class: "card sim8-card" },
+          el("div", { class: "card-title" }, "① 최적 포트폴리오 — 보류"),
+          el("div", { style: "font-size:12px;margin-top:4px" },
+            E8.layer !== "cma"
+              ? "위험 원천을 기관 벤치마크(CMA)로 두면 계산됩니다."
+              : "제약이 서로 모순입니다 — 수기 입력에서 밴드·상한을 확인하세요.")));
+      }
+      cardsRow.append(card8("② 지금 시뮬레이션 (조정값)", sim.mu, sim.sig,
+        opt ? `최적 대비 수익 ${sim.mu - opt.mu >= 0 ? "+" : ""}${fmtNum(sim.mu - opt.mu, 2)}%p · ` +
+              `위험 ${sim.sig - opt.sig >= 0 ? "+" : ""}${fmtNum(sim.sig - opt.sig, 2)}%p`
+            : "막대를 끌면 즉시 다시 계산됩니다"));
+      const entries = (ws) => ALLOC_ACCT.map((k, i) => ({
+        label: k, w: Math.max(0, ws[i]), color: pal.series[i % pal.series.length] }));
+      const dwrap = (title, ws) => el("div", { class: "sim8-donut" },
+        allocDonutSVG(entries(ws)),
+        el("div", { class: "card-sub", style: "text-align:center" }, title));
+      const donuts = el("div", { style: "display:flex;gap:16px;flex-wrap:wrap;align-items:center" },
+        dwrap("지금 배분", w));
+      if (opt) donuts.append(dwrap("최적 배분", opt.w));
+      donuts.append(el("div", { class: "sim8-legend" },
+        ...ALLOC_ACCT.map((k, i) => el("span", {},
+          el("i", { class: "sim-dot", style: `background:${pal.series[i % pal.series.length]}` }), ` ${k}`))));
+      dynBox.append(cardsRow, donuts);
+    };
+  }
 
   const hl = $("#alloc-headline");
   hl.textContent = "";
@@ -4579,52 +4859,8 @@ function renderAlloc() {
   sliders.append(mkSlider("해외채권 헤지비율", "h_bond"), mkSlider("해외주식 헤지비율", "h_eq"));
   ctl.append(sliders);
 
-  /* 배분 비중 — 회계 구분 8칸 그대로 받는다(경제 관점은 자동 합산). 경제 6칸으로
-     받으면 장부가/시가로 쪼개는 규칙을 지어내야 해서(자의성) 회계 구분을 유지한다. */
-  const mixRow = el("div", { class: "sim-mix" });
-  const sumBadge = el("span", { class: "sim-sum" });
-  const refreshSum = () => {
-    const target = 100 - (st.loan_w || 0);
-    const sum = ALLOC_ACCT.reduce((a, k) => a + (st.mix_acct[k] || 0), 0);
-    const off = Math.abs(sum - target) > 0.05;
-    sumBadge.textContent = `합계 ${fmtNum(sum, 1)}% / 목표 ${fmtNum(target, 1)}% (대출 ${fmtNum(st.loan_w || 0, 1)}% 제외)`;
-    sumBadge.classList.toggle("warn", off);
-    return off;
-  };
-  ALLOC_ACCT.forEach((k) => {
-    const inp = el("input", { type: "number", step: "1",
-      value: String(st.mix_acct[k] != null ? st.mix_acct[k] : 0),
-      id: "sim-mix-" + k.replace(/\s+/g, "-"), "aria-label": `${k} 비중 %` });
-    inp.addEventListener("input", () => {
-      st.mix_acct[k] = inp.value === "" ? 0 : +inp.value;
-      markDirty();
-      refreshSum();
-      recalc(false);
-    });
-    inp.addEventListener("change", () => recalc(true));
-    mixRow.append(el("label", { class: "sim-cell" },
-      el("span", {}, k), inp));
-  });
-  const fillCash = el("button", { type: "button", class: "btn-ghost", onclick: () => {
-    /* 합계를 몰래 맞추지 않는다 — 사용자가 눌렀을 때만 잔여를 단기자금으로 채운다 */
-    const target = 100 - (st.loan_w || 0);
-    const others = ALLOC_ACCT.filter((k) => k !== "단기자금")
-      .reduce((a, k) => a + (st.mix_acct[k] || 0), 0);
-    st.mix_acct["단기자금"] = Math.max(0, +(target - others).toFixed(2));
-    const inp = $("#sim-mix-단기자금");
-    if (inp) inp.value = String(st.mix_acct["단기자금"]);
-    markDirty();
-    refreshSum();
-    recalc(true);
-  } }, "잔여 → 단기자금");
-  ctl.append(el("div", { style: "margin-top:10px;font-size:12.5px" },
-      el("b", {}, "배분 비중 (%)"),
-      el("span", { style: "color:var(--ink-3)" }, " — 바꾸는 즉시 위 요약과 아래 카드·차트가 다시 계산됩니다")),
-    mixRow,
-    el("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px" },
-      sumBadge, fillCash));
-  refreshSum();
-
+  /* 배분 8칸·잔여 버튼은 §7.7.8 시뮬레이터 패널(화면 최상단)로 이사했다 — 같은
+     id(sim-mix-*)·같은 계약(즉시 반영·저장 안 함·합계 배지·명시적 잔여 버튼) 승계. */
   ctl.append(el("div", { style: "margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap" },
     el("button", { class: "btn-primary", style: "border:0;cursor:pointer;font-family:inherit",
       onclick: () => { allocSaveState(st); renderAlloc(); } },
@@ -4656,6 +4892,9 @@ function renderAlloc() {
     const se = E.seOf(sigCur);
     const target = st.target_ret != null ? st.target_ret : muCur;
     /* 실행 불가능한 밴드·그룹 한도 — 최적화를 돌리지 않고 명시적으로 알린다 */
+    /* 시뮬레이터(§7.7.8) — 8축 회계 엔진 한 벌. acct 뷰면 E 재사용 */
+    const E8 = acct ? E : allocEngine(A, { ...st, view: "acct" });
+    if (simDyn) simDyn(E8, withCharts);
     const infeas = allocFeasibility(E);
     /* 회계 관점 최적화는 **CMA 층에서만** 돈다(§7.7 ①) — 프록시층의 장부가 자산은
        가격변동이 정확히 0이라 최적화기가 밴드 상한까지 쏠린다(§7.2-1). CMA 층은
