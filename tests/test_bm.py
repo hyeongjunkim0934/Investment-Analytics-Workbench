@@ -131,6 +131,7 @@ def test_build_cma_annualization_is_exact():
         _store(**{"bm:장부가 국내채권": a, "bm:시가 국내채권": b}), lambda m: None)
     assert out["active"] is True
     assert out["fx_col"] is None and out["cols"] == out["labels"]
+    assert out["alt"] is None                    # DESMOOTH 대상이 없는 저장소
     # 장부가 국내채권 → 시가 국내채권 (경제적 실질 관점 치환쌍)
     assert out["econ_map"]["장부가 국내채권"] == "시가 국내채권"
 
@@ -148,7 +149,9 @@ def test_build_cma_shape_on_parsed_store(parsed):
     out = bm.build_cma(P.SERIES, lambda m: None)
     assert out["active"] is True
     assert out["labels"] == [k[3:] for k in synth.BM_UNIVERSE]
-    assert out["cols"] == out["labels"] + ["_fx"]     # 달러원이 있으니 환율 축 포함
+    # 대체투자(DESMOOTH)와 달러원이 있으니 보조축 둘 다, 이 순서로
+    assert out["cols"] == out["labels"] + ["_alt", "_fx"]
+    assert out["alt"]["label"] == "시가 대체투자" and -0.9 < out["alt"]["alpha"] < 0.9
 
     keys = [w["key"] for w in out["windows"]]
     assert keys[-1] == "all" and len(keys) == len(set(keys))
@@ -218,6 +221,46 @@ def test_cma_fx_column_supports_hedged_reconstruction(parsed):
     direct = float((df["a"] - df["f"]).var(ddof=1) * 12.0)
     rebuilt = w["cov"][i][i] - 2.0 * w["cov"][i][f] + w["cov"][f][f]
     assert abs(direct - rebuilt) < 1e-6
+
+
+def test_cma_alt_desmoothing_column_matches_hand_calc():
+    """`_alt` 보조축 — Geltner AR(1) 역필터를 손계산과 대조.
+
+    관측 수익률 x 를 결정론적으로 만들고, α(=ρ1)와 역필터 y=(x_t−αx_{t−1})/(1−α)
+    를 테스트 안에서 numpy 로 독립 계산해 게시된 α·σ(_alt) 와 맞춘다.
+    """
+    me = pd.date_range("2020-01-31", periods=37, freq="ME")
+    x = np.array(([0.01, 0.01, 0.02, 0.02] * 9), dtype=float)   # ρ1 > 0 인 결정 수열
+    lvl = 100.0 * np.cumprod(np.r_[1.0, 1.0 + x])
+    alt = pd.Series(lvl, index=me)
+    other = pd.Series(np.linspace(100.0, 120.0, 37), index=me)
+    out = bm.build_cma(
+        _store(**{"bm:시가 대체투자": alt, "bm:시가 국내주식": other}), lambda m: None)
+
+    m = x.mean()
+    a = float(((x[1:] - m) * (x[:-1] - m)).sum() / ((x - m) ** 2).sum())
+    y = (x[1:] - a * x[:-1]) / (1.0 - a)
+    assert out["alt"] == {"label": "시가 대체투자", "alpha": round(a, 6), "n_fit": 36}
+    assert out["cols"] == out["labels"] + ["_alt"]              # 달러원 없는 저장소
+    w = out["windows"][-1]
+    i = out["cols"].index("_alt")
+    assert w["n_months"] == len(y)                              # 공통 표본 = y 구간
+    assert abs(w["vol_pct"][i] - y.std(ddof=1) * np.sqrt(12) * 100) < 5e-5
+    assert abs(w["mean_pct"][i] - y.mean() * 12 * 100) < 5e-5
+
+
+def test_cma_alt_skipped_below_min_sample_without_breaking_cma():
+    """DESMOOTH 대상이 24개월 미만이면 보조축만 조용히 빠지고 CMA 는 산다."""
+    me = pd.date_range("2024-01-31", periods=20, freq="ME")
+    long_me = pd.date_range("2023-01-31", periods=32, freq="ME")
+    warns = []
+    out = bm.build_cma(_store(**{
+        "bm:시가 대체투자": pd.Series(np.linspace(100, 105, 20), index=me),
+        "bm:시가 국내주식": pd.Series(np.linspace(100, 130, 32), index=long_me),
+    }), warns.append)
+    assert out["active"] is True
+    assert out["alt"] is None and "_alt" not in out["cols"]
+    assert any("디스무딩 보조축 생략" in w for w in warns)
 
 
 # --------------------------------------------------------------------------

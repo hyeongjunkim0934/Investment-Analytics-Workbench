@@ -1517,6 +1517,88 @@ def test_event_title_span_carries_the_class_the_css_targets():
     assert 'class: "t"' in m.group(0), "evMini 의 제목 span 에 class:\"t\" 가 없다"
 
 
+# ---- 벤치마크(CMA) 데이터층 — §7.7 1-2c (실행해서 확인) ----------------------
+def test_cma_layer_is_default_and_falls_back_loudly(probe):
+    """위험 원천은 CMA 가 기본이고, 비활성이면 **사유를 적으며** 프록시로 물러난다.
+
+    조용한 대체는 금지다 — 어느 층으로 계산했는지 화면이 항상 밝혀야 한다.
+    """
+    c = probe["cmaLayer"]
+    assert c["defaultLayerIsCma"] is True
+    assert c["fallsBackWithoutCma"] is True
+    assert c["fallbackKeepsReason"] is True, "폴백 사유(payload 의 reason)가 layerNote 에 없다"
+    assert c["fallbackNoteRendered"] is True, "폴백 사유가 화면에 렌더되지 않는다"
+
+
+def test_cma_matrix_entries_are_benchmark_covariances_verbatim(probe):
+    """CMA 층의 행렬 원소가 벤치마크 공분산(+환노출 로딩) 손계산과 일치한다.
+
+    프록시 재조립이 남아 있으면 여기서 갈라진다 — 층 스위치가 이름만 바꾸는
+    회귀를 막는 자리다. 국내채권은 시가 쌍 통계를 받아야 한다(경제 관점 병합).
+    """
+    c = probe["cmaLayer"]
+    assert c["domesticEquityVarExact"] is True
+    assert c["foreignBondVarWithFxExact"] is True, "환노출 (1−h) 로딩이 행렬에 없다"
+    assert c["krBondUsesMarketTwin"] is True
+
+
+def test_cma_alt_factor_mapping_matches_closed_form(probe):
+    """대체투자 기관 방식(주식·채권 매핑) — 잔차분산까지 폐형 손계산과 일치한다.
+
+    잔차 없이 팩터만 넣으면 공분산이 특이행렬이 된다(실측 최소고유값 −1.8e−18).
+    """
+    c = probe["cmaLayer"]
+    assert c["idioIsPositive"] is True
+    assert c["altVarIsFactorPlusIdio"] is True
+    assert c["altCrossIsFactorCross"] is True
+    assert c["econMatrixIsPD"] is True, "잔차를 더했는데도 행렬이 정칙이 아니다"
+    assert c["bmModeUsesRawAlt"] is True, "「벤치마크 그대로(진단)」 모드가 관측 σ 로 돌아가지 않는다"
+
+
+def test_cma_mu_keyin_window_and_anchor(probe):
+    """기대수익 키인은 base 를 대체하고 헤지캐리는 별도 가산 · 창 전환 · 앵커 σ 출처."""
+    c = probe["cmaLayer"]
+    assert c["muOverridePlain"] is True
+    assert c["muOverrideKeepsCarry"] is True, "키인 시 헤지캐리가 죽는다 — 슬라이더가 μ에서 무력화됨"
+    assert c["windowSwitchChangesSample"] is True
+    assert c["anchorSigmaFromBm"] is True, "앵커 σ 가 활성 층(벤치마크)에서 오지 않는다"
+
+
+def test_cma_xe_collapse_holds_and_hedge_is_live(probe):
+    """CMA 층에서도 Xe 붕괴가 **정확히** 성립하고 헤지 슬라이더가 σ 를 움직인다."""
+    c = probe["cmaLayer"]
+    assert c["xeQuadExactOnCma"] is True
+    assert c["hedgeSliderMatters"] is True
+
+
+def test_cma_acct_optimization_and_book_cap(probe):
+    """회계 관점 최적화(§7.7 ①) — 상한 없으면 장부가로 쏠리고, 합산 상한이 물린다.
+
+    쏠림 자체는 사용자가 예상·수용한 성질이고, 상한이 내규 한도의 자리다.
+    경제 관점에는 이 그룹이 없어야 한다(장부/시가 병합이라 정의 불가).
+    """
+    c = probe["cmaLayer"]
+    assert c["acctPilesIntoBookWithoutCap"] is True
+    assert c["capBookGroupExists"] is True
+    assert c["capBookBinds"] is True, "장부가 성격 합산 상한이 최적해를 실제로 구속하지 않는다"
+    assert c["capBookNotInEcon"] is True
+    assert c["acctSummaryHasReference"] is True
+    assert c["acctSummaryNotDeferred"] is True
+    assert c["acctRenderErrors"] == 0
+
+
+def test_cma_screen_shows_layer_mapping_and_provenance(probe):
+    """층 스위치·매핑 콘솔·[매핑] 출처 태그·환노출 근거·제외 자산군이 실제로 렌더된다."""
+    c = probe["cmaLayer"]
+    assert c["renderErrors"] == 0
+    assert c["controlsShowSource"] is True
+    assert c["controlsShowMapping"] is True
+    assert c["tableShowsMappingTag"] is True
+    assert c["methodShowsFxBasis"] is True
+    assert c["methodShowsExcluded"] is True
+    assert c["headlineShowsLayer"] is True
+
+
 # ---- 통화 구성 (실행해서 확인) ----------------------------------------------
 def test_currency_mix_is_empty_until_the_user_enters_it(probe):
     """벤치마크를 몰래 적용하지 않는다 — 기본은 미입력이다.

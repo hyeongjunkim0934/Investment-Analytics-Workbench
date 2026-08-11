@@ -50,6 +50,15 @@ WINDOW_YEARS = [1, 2, 3, 5, 7, 10]
 # 이 둘을 빼면 남는 8개가 §7.7 합의문의 자산군 8개와 정확히 일치한다.
 EXCLUDED = ("장부가 금융상품", "장부가 대출금")
 
+# 디스무딩 보조축 대상 — §7.7.2 실측에서 월간 자기상관이 유의했던 자산만
+# (ρ1=0.31, Ljung-Box p=0.002. 나머지 시가 4개는 전부 0 과 구분 불가 — 그
+# 횡단면 대조가 이 목록의 근거다). **활성 매핑이 아니라 보조 열이다**: §7.7.3
+# 결정대로 활성 위험은 화면의 팩터 매핑(기관 방식)이 정하고, 이 열은 화면이
+# 임의의 팩터 가중 v 에 대해 잔차분산 σ²_alt − (v'C)²/(v'Σv) 를 폐형으로
+# 계산하는 데 필요한 공분산을 제공한다. Geltner(1991) AR(1) 역필터,
+# α = 전 이력 ρ1 (자유 모수 0 — 데이터가 정한다).
+DESMOOTH = ("시가 대체투자",)
+
 
 def is_bm(path) -> bool:
     return path.name.lower().startswith("bm")
@@ -140,6 +149,27 @@ def build_cma(series_store: dict, warn) -> dict:
     if fx_ret is None:
         warn(f"cma: 환율 시리즈({FX_KEY}) 없음 — 헤지 반영 축 없이 게시")
 
+    # 디스무딩 보조축(_alt) — DESMOOTH 대상이 있으면 역필터 계열을 행렬에 한 열로
+    # 싣는다. α 는 해당 자산 **전 이력**의 ρ1 (공통 표본이 아니라 — 표본이 길수록
+    # 안정적이고, 공통 창마다 α 가 흔들리면 창 간 비교가 무의미해진다).
+    alt_ret, alt_diag = None, None
+    for k, lb in zip(bm_keys, labels):
+        if lb not in DESMOOTH:
+            continue
+        r = rets[k]
+        if len(r) < 24:
+            warn(f"cma: {lb} 월간 표본 {len(r)}개 — 디스무딩 보조축 생략(최소 24개)")
+            continue
+        x = r.values
+        m = x.mean()
+        a = float(((x[1:] - m) * (x[:-1] - m)).sum() / ((x - m) ** 2).sum())
+        if not (-0.9 < a < 0.9):
+            warn(f"cma: {lb} ρ1={a:.3f} — 역필터 불안정 영역이라 보조축 생략")
+            continue
+        alt_ret = pd.Series((x[1:] - a * x[:-1]) / (1.0 - a), index=r.index[1:])
+        alt_diag = {"label": lb, "alpha": float(round(a, 6)), "n_fit": int(len(r))}
+        break   # 현재 대상 1개. 늘리려면 열 이름 규약(_alt 복수화)부터 정할 것
+
     # 경제적 실질 관점 매핑 — 같은 이름의 「시가」 상대가 있으면 그쪽 통계로
     # 치환한다(장부가 국내채권 → 시가 국내채권). 상대가 없는 자산(단기자금·
     # 금융상품·대출금)은 자기 자신 — 화면이 그 사실을 밝힌다.
@@ -162,8 +192,10 @@ def build_cma(series_store: dict, warn) -> dict:
                          "n_months": int(len(r)),
                          "included": lb not in EXCLUDED})
 
-    # 공통 표본 (전 자산 + 환율)
+    # 공통 표본 (전 자산 + 보조축). 열 순서 = labels → _alt → _fx (화면 계약)
     frames = {lb: rets[k] for k, lb in zip(bm_keys, labels)}
+    if alt_ret is not None:
+        frames["_alt"] = alt_ret
     if fx_ret is not None:
         frames["_fx"] = fx_ret
     df = pd.DataFrame(frames).dropna()
@@ -210,8 +242,12 @@ def build_cma(series_store: dict, warn) -> dict:
         "labels": labels,
         "groups": groups,
         "fx_col": "_fx" if fx_ret is not None else None,
-        # 행렬 열 순서 = labels + (있으면) "_fx" 마지막 열. 화면은 이 순서로 집는다.
-        "cols": labels + (["_fx"] if fx_ret is not None else []),
+        # 디스무딩 보조축 진단 — 열이 실렸을 때만 non-null (α = 전 이력 ρ1)
+        "alt": alt_diag if alt_ret is not None else None,
+        # 행렬 열 순서 = labels + (있으면) "_alt" + (있으면) "_fx". 화면은 이 순서로 집는다.
+        "cols": (labels
+                 + (["_alt"] if alt_ret is not None else [])
+                 + (["_fx"] if fx_ret is not None else [])),
         "econ_map": econ_map,
         "coverage": coverage,
         "excluded": [lb for lb in (k[3:] for k in all_bm) if lb in EXCLUDED],
@@ -220,5 +256,7 @@ def build_cma(series_store: dict, warn) -> dict:
                    "일별을 쓰지 않는 이유: 주말 캐리포워드로 σ 과소평가. "
                    "0 값은 벤치마크 미개시 결측으로 제외. "
                    "금융상품·대출금은 배분 대상이 아니라 행렬에서 제외(coverage 에는 남음). "
+                   "_alt = 대체투자 Geltner AR(1) 역필터 보조축(α=전 이력 ρ1) — "
+                   "화면 팩터 매핑의 잔차분산 폐형 계산용이며 활성 위험 정의가 아니다. "
                    "기대수익률은 계산하지 않는다 — 화면에서 키인(과거 평균은 참고)."),
     }

@@ -759,9 +759,6 @@ def test_gate_rejects_a_renamed_matrix_column(built, tmp_path):
 PUBLISH_ONLY_KEYS = {
     ("alloc", "anchor_ref"): "동일 샤프 앵커의 기준(자국통화)·값. 방법론 재현용 게시물",
     ("alloc", "checks"):     "자기검증 결과. 값이 사라지면 검증 없이 배포된 것과 같다",
-    ("alloc", "cma"):        "벤치마크 CMA 사전계산(§7.7 1-2b). 최적화 UI(1-2c)가 붙기 "
-                             "전에도 게이트가 wiring 누락을 막아야 한다 — UI가 cma 를 "
-                             "읽기 시작하면 이 예외를 지울 것",
     ("risk", "grade_bands"): "등급 밴드 정본(app.js 는 자체 BANDS 상수를 쓴다 — 3중 진실이 남아 있다)",
 }
 
