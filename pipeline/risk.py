@@ -591,3 +591,52 @@ def detect_events(S: dict, asof: pd.Timestamp, d: dict) -> dict:
     ]
     return {"asof": asof.strftime("%Y-%m-%d"), "lookback_days": EVENT_LOOKBACK_D,
             "events": events[:40], "catalog": catalog}
+
+
+# ---------------------------------------------------------------------------
+# 이벤트 브리핑 원고 — "AI 앵커"의 원고를 **파이프라인이 템플릿으로 조립**한다.
+# LLM 없음: title/value 를 원문 그대로 끼우고 문장 틀은 아래 f-string 이 전부라,
+# 같은 events 로는 항상 같은 원고가 나오고 화면 타임라인과 한 글자도 어긋날 수 없다
+# (자의성 금지 — docs/HANDOVER.md §4·§5.2.1). 형식은 사용자가 승인한 C 선별형:
+# 머리(건수) → 경계·주의 전건(최신순) → 규칙은 타임라인에 위임 → 고지.
+# 호출 자리는 process.py — 시장 폭 이벤트가 병합된 **뒤**여야 전건이 실린다.
+# ---------------------------------------------------------------------------
+BRIEF_DISCLAIMER = ("이 브리핑은 검출 규칙이 만든 이벤트를 그대로 읽은 것으로, "
+                    "해석·전망을 담지 않습니다. 모델 참고치입니다.")
+
+
+def compose_brief(events: list[dict], asof: str, lookback_days: int) -> list[str]:
+    """이벤트 목록 → 브리핑 문장 리스트. 표시·낭독 양쪽이 이 한 벌을 쓴다.
+
+    여는 문장의 구간은 기준일이 아니라 **실제 이벤트 날짜의 최소~최대**다 —
+    시장 폭 이벤트는 데일리 리포트에서 와서 bb/info 기준일(asof)보다 뒤일 수 있어,
+    "asof 기준"이라 말하면 그보다 뒤 날짜의 이벤트와 모순되기 때문이다.
+    """
+    if not events:
+        return [f"기준일 {asof}까지 최근 {lookback_days}일 창에서 검출된 이벤트가 없습니다.",
+                BRIEF_DISCLAIMER]
+
+    n = {"경계": 0, "주의": 0, "정보": 0}
+    for e in events:
+        n[e["sev"]] = n.get(e["sev"], 0) + 1
+    dates = sorted(e["date"] for e in events)
+    cross_year = dates[0][:4] != dates[-1][:4]
+
+    def dt(d: str) -> str:
+        y, m, day = d.split("-")
+        return (f"{y}년 " if cross_year else "") + f"{int(m)}월 {int(day)}일"
+
+    span = (f"{dt(dates[0])} 하루 동안" if dates[0] == dates[-1]
+            else f"{dt(dates[0])}부터 {dt(dates[-1])}까지")
+    head = (f"{span} 검출된 이벤트는 모두 {len(events)}건 — "
+            f"경계 {n['경계']} · 주의 {n['주의']} · 정보 {n['정보']}.")
+    picked = [e for sev in ("경계", "주의")
+              for e in sorted((e for e in events if e["sev"] == sev),
+                              key=lambda x: x["date"], reverse=True)]
+    if not picked:
+        return [head + " 경계·주의 단계는 없습니다.",
+                "정보 단계 이벤트는 아래 타임라인에 있습니다. " + BRIEF_DISCLAIMER]
+    lines = [head + " 경계·주의만 읽습니다."]
+    lines += [f"[{e['sev']}] {dt(e['date'])} — {e['title']} ({e['value']})" for e in picked]
+    lines.append("검출 규칙은 아래 타임라인·방법론에 있습니다. " + BRIEF_DISCLAIMER)
+    return lines

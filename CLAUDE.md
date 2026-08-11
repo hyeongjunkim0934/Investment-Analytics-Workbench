@@ -16,7 +16,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | 경로 | 역할 |
 |---|---|
 | `pipeline/process.py` | CLI 진입점. 엑셀 파싱 → 시리즈 저장소(`SERIES`) → 패널 빌더 → JSON 15개 출력 |
-| `pipeline/risk.py` | `build(SERIES, warn)` → `risk.json` + `events.json` + 관계분석용 주간 프레임 (요인 점수·IC가중 합성·이벤트 검출) |
+| `pipeline/risk.py` | `build(SERIES, warn)` → `risk.json` + `events.json` + 관계분석용 주간 프레임 (요인 점수·IC가중 합성·이벤트 검출). 브리핑 원고 조립(`compose_brief`)도 여기 — 호출은 `process.py` 가 시장 폭 병합 **뒤**에 한다 |
 | `pipeline/hedge.py` | `build(SERIES, warn)` → `hedge.json` (7통화 헤지 매트릭스·백테스트·시뮬레이터 공분산) |
 | `pipeline/alloc.py` | `build(SERIES, warn)` → `alloc.json` (자산배분 원천 10개 공분산·현재 금리·동일 샤프 앵커·블록 부트스트랩 사전계산. **원본 수익률 미게시** — 공분산·평균·분위수만) |
 | `pipeline/panel.py` | `build(SERIES, risk_weekly, warn)` → `panel.json` (관계분석용 주간 정렬 패널. 공개 변수는 `VARS` 화이트리스트로만 통제) |
@@ -45,7 +45,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 287개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 298개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (1초 미만)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js
 python -m pytest
@@ -154,6 +154,16 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   만장일치 조건뿐). 둘을 합치는 자리는 `process.py` 이며 **서로 다른 try 블록**이다.
   아래는 시계열 쪽 설명이다 — `risk.py` 의 `detect_events()` (급변 2.5σ·백분위 90% 교차·커브 역전·삼 룰·데이터 지연).
   규칙을 바꾸면 화면에 노출되는 `catalog` 설명 문구도 같은 함수 안에서 같이 고칠 것.
+- **이벤트 브리핑(「AI 앵커」 원고) = `risk.py` 의 `compose_brief()` 가 정본이다 — LLM 금지.**
+  이벤트 `title`/`value` 를 **원문 그대로** 템플릿에 끼우는 C 선별형(경계·주의 전건, 규칙은
+  타임라인에 위임)이며, 같은 events 로는 항상 같은 원고가 나온다(자의성 금지 — LLM 으로
+  문장을 만들면 이 성질이 깨진다. `docs/HANDOVER.md` §5.2.1). 산출물은 `events.json.brief`
+  (문장 배열)이고 게이트 `REQUIRED_KEYS["events"]` 가 부재를 막는다. 화면(`app.js`
+  `renderEventsBrief`)은 받은 문장을 **표시·낭독만** 한다 — 거기서 문장을 만들지 말 것.
+  음성은 **기기 내(localService) 한국어 음성만** 쓴다(클라우드 음성은 문장을 외부 서버로
+  보내 「외부 요청 0」 위반 — 없으면 재생 대신 이유를 카드에 적는다). 자동재생 없음,
+  화면 이탈 시 `routeView` 가 `stopBrief()` 로 멈춘다. 프로브 `eventsBrief` 가 원문 표시·
+  클라우드 거부·전 문장 낭독·이탈 정지를 전부 실행으로 확인한다.
 - **헤지 레버의 자유도는 실질 1개다 — 「최적 헤지비율 한 점」을 적지 말 것.**
   `alloc.py` 의 `loadings()` 에서 두 레버는 **같은 방향 벡터 `FX_DIR = e_usd − swap` 의
   스칼라배**로만 들어간다: `x(hb,he) = x1 + [w채(1−hb) + w주(1−he)]·g = x1 + Xe·g`.

@@ -1109,6 +1109,99 @@ function renderRisk() {
 
 const evFilter = { sev: null, cat: null };
 
+/* ── 이벤트 브리핑 — events.json.brief 를 카드로 보이고, 원하면 음성으로 읽는다.
+   원고는 파이프라인(risk.compose_brief)이 이벤트 필드를 **원문 그대로** 템플릿에
+   끼운 것이라(LLM 없음) 아래 타임라인과 한 글자도 어긋날 수 없다 — 화면은 받은
+   문장을 그대로 표시·낭독만 한다(여기서 문장을 만들지 말 것).
+   음성 규약(사용자 승인 2026-08-11): **기기 내(localService) 한국어 음성만** 쓴다.
+   Chrome 의 "Google 한국의" 같은 클라우드 음성은 문장을 구글 서버로 보내므로
+   「외부 요청 0」 규약을 조용히 깬다 — 그 경우 재생 대신 이유를 카드에 적는다
+   (원고 자체는 항상 눈으로 읽을 수 있다). 자동재생 없음(버튼으로만 — WCAG 1.4.2),
+   재생 중 화면을 떠나면 정지(routeView 의 stopBrief). */
+const speechOK = () =>
+  typeof speechSynthesis !== "undefined" && typeof SpeechSynthesisUtterance !== "undefined";
+
+function briefVoice() {
+  if (!speechOK()) return null;
+  return speechSynthesis.getVoices().find(
+    (v) => v.localService &&
+      String(v.lang).toLowerCase().replace("_", "-").startsWith("ko")) || null;
+}
+
+let briefSpeaking = false;
+
+function stopBrief() {
+  if (!speechOK()) return;
+  speechSynthesis.cancel();
+  briefSpeaking = false;
+  const b = $("#brief-play");
+  if (b) { b.textContent = "▶ 브리핑 듣기"; b.setAttribute("aria-pressed", "false"); }
+}
+
+function playBrief(lines) {
+  const btn = $("#brief-play"), note = $("#brief-note");
+  const voice = briefVoice();
+  if (!voice) {
+    /* 음성 목록이 늦게 로드되는 브라우저가 있어 클릭 시점에 다시 확인한다 —
+       기기 내 한국어 음성이 없으면 클라우드로 넘어가지 않고 이유를 적는다. */
+    if (note) note.hidden = false;
+    return;
+  }
+  speechSynthesis.cancel();
+  briefSpeaking = true;
+  btn.textContent = "■ 정지";
+  btn.setAttribute("aria-pressed", "true");
+  lines.forEach((line, i) => {
+    const u = new SpeechSynthesisUtterance(line);
+    u.lang = "ko-KR";
+    u.voice = voice;
+    if (i === lines.length - 1) u.onend = () => stopBrief();
+    speechSynthesis.speak(u);
+  });
+}
+
+function renderEventsBrief(E) {
+  const box = $("#events-brief");
+  if (!box) return;
+  if (briefSpeaking) stopBrief();          // 필터 클릭 재렌더 중 유령 재생 방지
+  box.textContent = "";
+  const lines = E && E.brief;
+  if (!Array.isArray(lines) || !lines.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const head = el("div", { class: "brief-head" }, el("strong", {}, "브리핑"));
+  if (speechOK()) {
+    head.append(el("button", {
+      type: "button", id: "brief-play", class: "brief-play", "aria-pressed": "false",
+      onclick: () => (briefSpeaking ? stopBrief() : playBrief(lines)),
+    }, "▶ 브리핑 듣기"));
+  }
+  box.append(head);
+  lines.forEach((l, i) => box.append(el("p", {
+    class: "brief-line" + (i === 0 ? " brief-lead"
+         : i === lines.length - 1 ? " brief-disc" : ""),
+  }, l)));
+  const note = el("p", { class: "brief-note", id: "brief-note" },
+    "이 브라우저에는 기기 내 한국어 음성이 없어 음성 재생을 하지 않습니다 — ",
+    "클라우드 음성은 문장을 외부 서버로 보내므로 쓰지 않습니다(외부 요청 0 규약).");
+  note.hidden = true;
+  box.append(note);
+  if (speechOK()) {
+    /* 목록이 이미 로드돼 있고 기기 내 한국어 음성이 없으면 미리 밝힌다.
+       늦게 도착하는 브라우저는 voiceschanged 가 다시 판정한다 — on* 대입이라
+       재렌더가 겹쳐도 리스너는 한 벌이다. */
+    const sync = () => {
+      const btn = $("#brief-play"), n = $("#brief-note");
+      if (!btn || !n) return;
+      const loaded = speechSynthesis.getVoices().length > 0;
+      const missing = loaded && !briefVoice();
+      btn.disabled = missing;
+      n.hidden = !missing;
+    };
+    sync();
+    speechSynthesis.onvoiceschanged = sync;
+  }
+}
+
 function renderEventsTimeline() {
   const E = DATA.events;
   const tl = $("#events-timeline");
@@ -1160,6 +1253,8 @@ function renderEvents() {
     `지난 업로드 이후 무엇이 특이했나 — 최근 ${E.lookback_days}일 이벤트 ${E.events.length}건 `);
   a.append(el("small", {}, `경계 ${counts["경계"]} · 주의 ${counts["주의"]} · 정보 ${counts["정보"]} · 엑셀 업로드 시마다 자동 검출`));
   hl.append(a);
+
+  renderEventsBrief(E);
 
   const ft = $("#events-filters");
   ft.textContent = "";
@@ -1815,6 +1910,9 @@ function routeView() {
   const hash = location.hash.replace(/^#/, "");
   const sec = underlyingSection(hash);
   const showVillage = !sec;
+  /* 브리핑 음성은 화면 전환과 함께 끝낸다 — 이벤트 화면을 떠났는데 목소리만 남아
+     따라오는 상태를 만들지 않는다(멱등이라 어느 전환에서 불려도 무해). */
+  stopBrief();
 
   $("#village").hidden = !showVillage;
   $("#village-frame").classList.remove("vz-enter");   // 입장 연출 중 해시가 먼저 바뀌어도 잔상 없게

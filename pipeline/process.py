@@ -745,6 +745,16 @@ def main() -> None:
             import traceback
             traceback.print_exc()
             warn("breadth: 시장 폭 이벤트 계산 실패 — 나머지 이벤트만 나갑니다")
+        # 브리핑 원고 — 반드시 시장 폭 **병합 뒤**에 조립한다(전건이 실려야 한다).
+        # 실패하면 브리핑 없이 나가되, 게이트(REQUIRED_KEYS)가 배포 전에 잡는다.
+        try:
+            events_payload["brief"] = risk.compose_brief(
+                events_payload["events"], events_payload["asof"],
+                events_payload["lookback_days"])
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            warn("brief: 이벤트 브리핑 조립 실패 — 브리핑 카드 없이 배포됩니다")
         payloads["events.json"] = events_payload
         try:
             payloads["panel.json"] = panel.build(SERIES, risk_weekly, warn)

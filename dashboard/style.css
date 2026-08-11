@@ -423,6 +423,22 @@ a.kpi:hover { border-color: var(--baseline); }
 .method th, .method td { padding: 4px 12px 4px 0; text-align: left; font-size: 12.5px; }
 .method td.num, .method th.num { text-align: right; }
 
+/* ---------- 이벤트 브리핑 카드 ----------
+   원고는 파이프라인이 조립해 온다(app.js renderEventsBrief 는 표시·낭독만).
+   토큰만 쓰므로 다크(기본)·라이트 두 테마에 한 벌로 맞는다. */
+.brief { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; margin: 0 0 16px; }
+.brief-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.brief-head strong { font-size: 14px; }
+.brief-play { border: 1px solid var(--border); background: var(--page); color: var(--ink-1);
+  border-radius: 20px; padding: 5px 14px; min-height: 26px; cursor: pointer;
+  font-size: 12.5px; font-family: inherit; }
+.brief-play[aria-pressed="true"] { background: var(--accent-solid); border-color: var(--accent-solid); color: #fff; }
+.brief-play:disabled { color: var(--ink-3); cursor: default; }
+.brief-line { margin: 4px 0; font-size: 13.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.brief-lead { font-weight: 650; }
+.brief-disc, .brief-note { color: var(--ink-3); font-size: 12px; margin-top: 8px; }
+
 /* ---------- 이벤트 타임라인 ---------- */
 .filters { display: flex; gap: 8px; margin: 0 0 16px; font-size: 12.5px; flex-wrap: wrap; }
 .filters span, .filters button { border: 1px solid var(--border); background: var(--surface); border-radius: 20px;

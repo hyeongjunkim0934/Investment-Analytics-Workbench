@@ -59,6 +59,9 @@ REQUIRED_KEYS = {
               "validation", "factors", "limits"],
     "panel": ["asof", "freq", "t", "risk", "risk_meta", "vars",
               "defaults", "n_weeks", "method"],
+    # brief = 브리핑 카드 원고(risk.compose_brief). process.py 가 조립 실패를
+    # warn 으로 삼키고 exit 0 하므로, 빠진 채 초록 배포되는 것을 여기서 막는다.
+    "events": ["asof", "lookback_days", "events", "catalog", "brief"],
 }
 # 배열 페이로드의 **행 스키마** — 행 하나만 봐도 개명·누락이 드러난다.
 # 경로에 `.` 을 쓰면 중첩 배열도 지목할 수 있다(`boot.rows`).
