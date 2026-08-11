@@ -203,6 +203,57 @@ def test_event_filter_chips_are_buttons_with_state(probe):
     assert e["ariaPressed"][0] == "true"
 
 
+# ---- 이벤트 브리핑 카드 + 기기 내 TTS (실행해서 확인) ------------------------
+def test_brief_card_shows_the_pipeline_script_verbatim(probe):
+    """원고는 파이프라인(risk.compose_brief)이 조립한다 — 화면은 표시·낭독만.
+
+    문장이 한 글자라도 바뀌면 "원고와 타임라인이 어긋날 수 없다"는 계약이 깨진다.
+    원고가 없으면(파이프라인 실패) 카드째 숨는다.
+    """
+    b = probe["eventsBrief"]
+    assert b["hiddenWithoutBrief"] is True
+    assert b["shownWithBrief"] is True
+    assert b["linesVerbatim"] is True
+
+
+def test_brief_tts_refuses_cloud_voices(probe):
+    """기기 내(localService) 한국어 음성만 쓴다 — 사용자 승인 규약(2026-08-11).
+
+    Chrome 의 "Google 한국의" 같은 클라우드 음성은 문장을 외부 서버로 보내므로
+    「외부 요청 0」 규약을 조용히 깬다. 그 경우 재생하지 않고 이유를 화면에 적는다.
+    """
+    b = probe["eventsBrief"]
+    assert b["cloudOnlyDisables"] is True, "클라우드 음성뿐인데 버튼이 살아 있다"
+    assert b["cloudOnlyNoteShown"] is True and b["noteMentionsWhy"] is True
+    assert b["cloudOnlySpeaks"] == 0, "클라우드 음성으로 재생했다 — 외부 요청 0 위반"
+
+
+def test_brief_tts_reads_every_line_with_the_local_korean_voice(probe):
+    b = probe["eventsBrief"]
+    assert b["localEnables"] is True and b["noteHiddenWithLocal"] is True
+    assert len(b["spokenTexts"]) == 4, "원고 문장 수와 발화 수가 다르다"
+    assert b["allLang"] == ["ko-KR"]
+    assert b["allLocalVoice"] is True, "클라우드가 목록 앞에 있으면 그쪽이 잡히는 회귀"
+    assert b["pressedWhileSpeaking"] == "true"
+    assert "정지" in b["labelWhileSpeaking"]
+
+
+def test_brief_tts_stops_when_leaving_the_screen(probe):
+    """재생 중 화면을 떠나면 목소리가 따라오지 않는다 (routeView 의 stopBrief).
+    마지막 문장이 끝나도 스스로 정지 상태로 돌아온다."""
+    b = probe["eventsBrief"]
+    assert b["cancelledOnLeave"] is True
+    assert b["pressedAfterLeave"] == "false"
+    assert "듣기" in b["labelAfterLeave"]
+    assert b["labelAfterEnd"] == b["labelAfterLeave"]
+
+
+def test_brief_container_exists_in_markup():
+    """프로브 뼈대가 아니라 실제 index.html 에도 컨테이너가 있어야 한다."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'id="events-brief"' in html
+
+
 # ---- 푸터 빌드 경고 --------------------------------------------------------
 def test_build_warnings_live_outside_the_build_line_paragraph(probe):
     """<p id="build-line"> **안**에 넣으면 펼치는 순간 문단이 18px→209px 로 늘며

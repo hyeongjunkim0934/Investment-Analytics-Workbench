@@ -129,6 +129,10 @@
   <section id="events" class="section">
     <h2>이벤트</h2>
     <div class="qa" id="events-headline"></div>
+    <!-- 브리핑 카드 — 원고는 파이프라인이 events.json.brief 로 조립해 온다(원문 그대로,
+         LLM 없음). 음성 버튼은 기기 내(localService) 한국어 음성만 쓴다 — 자세한 규약은
+         app.js 의 renderEventsBrief. -->
+    <div class="brief" id="events-brief" hidden></div>
     <div class="filters" id="events-filters"></div>
     <div class="tl" id="events-timeline"></div>
     <details class="method" id="events-rules"></details>

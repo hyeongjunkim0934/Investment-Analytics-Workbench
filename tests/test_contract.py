@@ -22,6 +22,7 @@ import pytest
 
 import check_output
 import process
+import risk
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "pipeline" / "check_output.py"
@@ -621,6 +622,8 @@ DYNAMIC_IDS = {
     # 시뮬레이션 콘솔 배분 입력칸 — `"sim-mix-" + 자산군명` 으로 만들어 같은 접두사로 집는다.
     # (참조 정규식이 [A-Za-z0-9_-]+ 라 한글 뒷부분이 잘려 접두사만 남는다)
     "sim-mix-":    'id: "sim-mix-" + k.replace',
+    "brief-play":  'id: "brief-play"',                   # 브리핑 듣기/정지 버튼
+    "brief-note":  'id: "brief-note"',                   # 기기 내 음성 부재 안내
 }
 
 
@@ -703,6 +706,7 @@ def test_gate_passes_on_a_healthy_build(built):
     ("hedge", "matrix"), ("hedge", "curves"), ("hedge", "mtm"),
     ("hedge", "cost_stats"), ("hedge", "sim"), ("hedge", "default_tenor_m"),
     ("alloc", "sources"), ("risk", "factors"), ("panel", "vars"),
+    ("events", "brief"),
 ])
 def test_gate_rejects_a_payload_missing_a_required_key(built, tmp_path, payload, key):
     """필수 키 하나만 사라져도 배포를 막아야 한다.
@@ -1031,3 +1035,72 @@ def test_breadth_event_failure_does_not_lose_the_other_events(built, tmp_path, m
     assert "except Exception" in after and "warn(" in after, (
         "시장 폭 이벤트 계산에 격리(try/except + warn)가 없습니다"
     )
+
+
+# --------------------------------------------------------------------------
+# 이벤트 브리핑 (events.json.brief) — 원고는 파이프라인이 조립한다 (LLM 없음)
+#
+# "AI 앵커"의 원고다. LLM 으로 쓰면 같은 데이터에서 다른 문장이 나와 「자의성 금지」
+# 위반이므로, risk.compose_brief 가 이벤트 필드를 **원문 그대로** 템플릿에 끼운다.
+# 여기서는 그 계약 — 경계·주의 전건 원문 포함, 정보 제목 미포함(C 선별형),
+# 고지 문장, 빈 목록 처리 — 을 못박는다.
+# --------------------------------------------------------------------------
+
+def _ev(date, sev, title="t", value="v", cat="급변", rule="r"):
+    return {"date": date, "sev": sev, "cat": cat, "title": title, "value": value,
+            "rule": rule, "tags": []}
+
+
+def test_brief_reads_every_alert_and_warning_verbatim():
+    evs = [_ev("2026-06-23", "경계", "KOSPI TR 일간 급락", "-10.0%"),
+           _ev("2026-07-01", "주의", "국고 10년 일간 급등", "+14.0bp"),
+           _ev("2026-07-06", "정보", "달러/원 변동성 백분위 90% 이탈", "81%")]
+    lines = risk.compose_brief(evs, "2026-07-27", 45)
+    body = "\n".join(lines)
+    assert "KOSPI TR 일간 급락 (-10.0%)" in body      # 제목·값이 원문 그대로
+    assert "국고 10년 일간 급등 (+14.0bp)" in body
+    assert "달러/원 변동성" not in body               # 정보는 건수로만 (C 선별형)
+    assert "모두 3건" in lines[0]
+    assert "경계 1 · 주의 1 · 정보 1" in lines[0]
+    assert lines[-1].endswith("모델 참고치입니다.")   # 고지는 항상 마지막
+
+
+def test_brief_orders_alerts_before_warnings_newest_first():
+    evs = [_ev("2026-06-01", "주의", "w-old"), _ev("2026-07-01", "주의", "w-new"),
+           _ev("2026-06-15", "경계", "a1")]
+    items = [l for l in risk.compose_brief(evs, "2026-07-27", 45) if l.startswith("[")]
+    assert [l[1:3] for l in items] == ["경계", "주의", "주의"]
+    assert "w-new" in items[1] and "w-old" in items[2]
+
+
+def test_brief_handles_empty_and_info_only_lists():
+    empty = risk.compose_brief([], "2026-07-27", 45)
+    assert "검출된 이벤트가 없습니다" in empty[0]
+    assert empty[-1].endswith("모델 참고치입니다.")
+    info = risk.compose_brief([_ev("2026-07-06", "정보", "i1")], "2026-07-27", 45)
+    assert "경계·주의 단계는 없습니다" in info[0]
+    assert not any(l.startswith("[") for l in info)
+
+
+def test_brief_window_is_event_dates_not_asof():
+    """여는 문장의 구간은 기준일(asof)이 아니라 실제 이벤트 날짜다 — 시장 폭 이벤트는
+    데일리 리포트에서 와서 asof 보다 뒤일 수 있고, "asof 기준"이라 말하면 모순이 된다.
+    해가 걸치면 연도를 붙이고, 하루면 "하루 동안"으로 읽는다(둘 다 기계적 규칙)."""
+    cross = risk.compose_brief([_ev("2025-12-30", "주의", "a"),
+                                _ev("2026-01-05", "경계", "b")], "2026-01-10", 45)
+    assert "2025년 12월 30일부터 2026년 1월 5일까지" in cross[0]
+    one = risk.compose_brief([_ev("2026-06-18", "주의", "a")], "2026-07-27", 45)
+    assert "6월 18일 하루 동안" in one[0]
+
+
+def test_built_brief_covers_its_own_events(built):
+    """완주 산출물 자기정합 — 브리핑에 경계·주의 이벤트가 하나라도 빠지면 안 된다."""
+    out, _ = built
+    E = json.loads((out / "events.json").read_text(encoding="utf-8"))
+    assert isinstance(E.get("brief"), list) and E["brief"], "events.json 에 brief 가 없습니다"
+    assert all(isinstance(l, str) and l for l in E["brief"])
+    body = "\n".join(E["brief"])
+    for e in E["events"]:
+        if e["sev"] in ("경계", "주의"):
+            assert e["title"] in body, f"브리핑에서 빠진 이벤트: {e['title']}"
+            assert e["value"] in body, f"브리핑에서 빠진 값: {e['value']}"

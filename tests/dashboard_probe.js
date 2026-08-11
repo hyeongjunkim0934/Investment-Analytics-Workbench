@@ -76,7 +76,7 @@ catTable.append(tbody);
 secNodes.catalog.append(elem("input", "catalog-search"), elem("span", "catalog-count"), catTable);
 
 /* 이벤트 뼈대 */
-["events-headline", "events-filters", "events-timeline"].forEach((id) => secNodes.events.append(elem("div", id)));
+["events-headline", "events-brief", "events-filters", "events-timeline"].forEach((id) => secNodes.events.append(elem("div", id)));
 secNodes.events.append(elem("details", "events-rules"));
 
 /* 환헤지 뼈대 — index.html 의 #hedge 안 구조를 그대로 흉내 낸다.
@@ -99,6 +99,19 @@ secNodes.macro.append(elem("div", "macro-grid"));
 let REDUCED = false;        // prefers-reduced-motion 스위치 (아래 sceneCycle 프로브가 쓴다)
 const INTERVALS = [];       // app.js 가 건 setInterval 기록 (실제로 걸지는 않는다)
 const FETCH_CALLS = [];     // 네트워크 호출 기록 (시뮬레이터 유출 검사용)
+
+/* 브리핑 TTS 스텁 — speak/cancel 을 기록만 한다. voices 배열을 프로브가 갈아 끼우며
+   "기기 내(localService) 한국어 음성만 쓴다" 규약을 실행으로 확인한다(아래 eventsBrief). */
+const SPOKEN = [];
+const TTS_CANCELS = [];
+class UtterStub { constructor(text) { this.text = text; this.lang = ""; this.voice = null; this.onend = null; } }
+const speechStub = {
+  voices: [],
+  getVoices: () => speechStub.voices,
+  speak: (u) => SPOKEN.push(u),
+  cancel: () => TTS_CANCELS.push(1),
+  onvoiceschanged: null,
+};
 const sandbox = {
   document: DOC,
   window: null,
@@ -134,6 +147,8 @@ const sandbox = {
      여기서도 전역으로 넣어 준다(노드 22 내장, 외부 의존성 0). */
   crypto: globalThis.crypto,
   TextEncoder, TextDecoder,
+  speechSynthesis: speechStub,
+  SpeechSynthesisUtterance: UtterStub,
 };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
@@ -351,6 +366,78 @@ safe("eventChips", () => {
     labels: real.map((c) => c.textContent),
     allHaveAriaPressed: real.every((c) => c.getAttribute("aria-pressed") !== null),
   };
+});
+
+/* ============ P8b. 이벤트 브리핑 — 원고 원문 표시 + 기기 내 음성만 사용 ============
+   원고는 파이프라인이 조립한 문장 배열(events.json.brief)이고, 화면은 그것을 그대로
+   표시·낭독만 해야 한다. 여기서는 ① 문장이 한 글자도 안 바뀌고 렌더되는가
+   ② 클라우드 음성만 있으면 재생을 거부하고 이유를 적는가(외부 요청 0 규약)
+   ③ 기기 내 한국어 음성이 있으면 전 문장을 그 음성·ko-KR 로 읽는가
+   ④ 화면을 떠나면 멈추는가 — 를 전부 실행으로 확인한다. */
+safe("eventsBrief", () => {
+  const BRIEF = [
+    "6월 18일부터 8월 3일까지 검출된 이벤트는 모두 2건 — 경계 1 · 주의 1 · 정보 0. 경계·주의만 읽습니다.",
+    "[경계] 6월 23일 — KOSPI TR 일간 급락 (-10.0%)",
+    "[주의] 7월 1일 — 국고 10년 일간 급등 (+14.0bp)",
+    "검출 규칙은 아래 타임라인·방법론에 있습니다. 이 브리핑은 검출 규칙이 만든 이벤트를 그대로 읽은 것으로, 해석·전망을 담지 않습니다. 모델 참고치입니다.",
+  ];
+  const EVS = [
+    { date: "2026-06-23", sev: "경계", cat: "급변", title: "KOSPI TR 일간 급락", value: "-10.0%", rule: "r1" },
+    { date: "2026-07-01", sev: "주의", cat: "급변", title: "국고 10년 일간 급등", value: "+14.0bp", rule: "r2" },
+  ];
+  const box = DOC.getElementById("events-brief");
+  const r = {};
+
+  /* ① 원고가 없으면 카드는 숨김 */
+  P.DATA.events = { asof: "2026-07-27", lookback_days: 45, events: EVS, catalog: [] };
+  P.renderEvents();
+  r.hiddenWithoutBrief = box.hidden === true;
+
+  /* ② 클라우드 한국어 음성뿐 → 버튼 비활성 + 이유 표시, 클릭해도 재생 0 */
+  const cloudKo = { lang: "ko-KR", localService: false, name: "Google 한국의" };
+  speechStub.voices = [cloudKo];
+  P.DATA.events.brief = BRIEF;
+  P.renderEvents();
+  const btn = () => DOC.getElementById("brief-play");
+  const note = () => DOC.getElementById("brief-note");
+  r.shownWithBrief = box.hidden === false;
+  r.linesVerbatim = BRIEF.every((l) => box.textContent.includes(l));
+  r.cloudOnlyDisables = btn().disabled === true;
+  r.cloudOnlyNoteShown = note().hidden === false;
+  r.noteMentionsWhy = /외부|클라우드/.test(note().textContent);
+  SPOKEN.length = 0;
+  btn().click();
+  r.cloudOnlySpeaks = SPOKEN.length;              // 0 이어야 한다
+
+  /* ③ 기기 내 음성이 (클라우드 뒤에) 나타나면 voiceschanged 가 버튼을 살린다.
+     find 가 local 을 고르는지 보려고 클라우드를 앞에 둔다. */
+  const localKo = { lang: "ko_KR", localService: true, name: "Yuna" };   // Android 식 ko_KR
+  speechStub.voices = [cloudKo, localKo];
+  speechStub.onvoiceschanged();
+  r.localEnables = btn().disabled === false;
+  r.noteHiddenWithLocal = note().hidden === true;
+  SPOKEN.length = 0; TTS_CANCELS.length = 0;
+  btn().click();
+  r.spokenTexts = SPOKEN.map((u) => u.text);
+  r.allLang = [...new Set(SPOKEN.map((u) => u.lang))];
+  r.allLocalVoice = SPOKEN.every((u) => u.voice === localKo);
+  r.pressedWhileSpeaking = btn().getAttribute("aria-pressed");
+  r.labelWhileSpeaking = btn().textContent;
+
+  /* ④ 화면을 떠나면 멈춘다 */
+  shim.location.hash = "#rates";
+  P.routeView();
+  r.cancelledOnLeave = TTS_CANCELS.length > 0;
+  r.labelAfterLeave = btn().textContent;
+  r.pressedAfterLeave = btn().getAttribute("aria-pressed");
+
+  /* 마지막 문장이 끝나면 스스로 정지 상태로 돌아온다 */
+  SPOKEN.length = 0;
+  btn().click();
+  SPOKEN[SPOKEN.length - 1].onend();
+  r.labelAfterEnd = btn().textContent;
+  shim.location.hash = "";
+  return r;
 });
 
 /* ============ P9. 빌드 경고는 <p id="build-line"> 밖의 형제 컨테이너에 들어간다 ====== */
