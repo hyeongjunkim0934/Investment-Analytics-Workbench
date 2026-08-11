@@ -19,6 +19,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `pipeline/risk.py` | `build(SERIES, warn)` → `risk.json` + `events.json` + 관계분석용 주간 프레임 (요인 점수·IC가중 합성·이벤트 검출). 브리핑 원고 조립(`compose_brief`)도 여기 — 호출은 `process.py` 가 시장 폭 병합 **뒤**에 한다 |
 | `pipeline/hedge.py` | `build(SERIES, warn)` → `hedge.json` (7통화 헤지 매트릭스·백테스트·시뮬레이터 공분산) |
 | `pipeline/alloc.py` | `build(SERIES, warn)` → `alloc.json` (자산배분 원천 10개 공분산·현재 금리·동일 샤프 앵커·블록 부트스트랩 사전계산. **원본 수익률 미게시** — 공분산·평균·분위수만) |
+| `pipeline/bm.py` | 자산군 전략 벤치마크(BM) 파서 + `build_cma(SERIES, warn)` → `alloc.json.cma` (자본시장가정 사전계산 — §7.7 재설계의 데이터층). **원본 수준·수익률 미게시** — 창별 연환산 σ·상관·공분산·과거 평균과 표본 메타만. BM 파일이 없어도 `active:false` 블록을 항상 게시한다(체인 안전장치) |
 | `pipeline/panel.py` | `build(SERIES, risk_weekly, warn)` → `panel.json` (관계분석용 주간 정렬 패널. 공개 변수는 `VARS` 화이트리스트로만 통제) |
 | `pipeline/breadth.py` | 미국 증시 데일리 리포트 → **집계 지표만** (`us:*` 12개). 파일 하나 = 관측 하루라 이력은 날짜별 파일이 쌓여야 생긴다. **종목 단위(티커·회사명·현재가)는 한 줄도 읽지 않는다** — 공개 저장소이므로 그 계약이 값 정확도만큼 중요하고, `tests/test_breadth.py` 가 상세 시트를 일부러 넣고 유출이 없는지 확인한다 |
 | `pipeline/common.py` | 공용 산식 한 벌 — `epoch_seconds`/`pack_values`/`spearman`/`auc`. 위 넷과 연구 하네스가 전부 여기서 가져온다 |
@@ -45,7 +46,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 67초). 현재 298개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 2분). 현재 311개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (1초 미만)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js
 python -m pytest
@@ -69,8 +70,9 @@ python pipeline/research/wf_validation.py --data-dir ../Data
   (합계 약 2.1MB), 마지막 줄 `N warning(s) — see meta.json`.
 - **15는 코드가 정한 수**(아래 JSON 계약)라 달라지면 그 자체가 버그다. 반대로 `N`·`M`·경고 건수는
   `--data-dir` 의 엑셀에서 오는 수라 데이터를 갱신하면 정상적으로 바뀐다 — 현재 `../Data` 기준선은
-  **456 시리즈 / 5 파일 / 경고 7건**(전부 stderr의 `data_bb.xlsx/D: duplicate column …`)이며, 이 기준선의
-  정본은 Data 저장소 쪽(`../Data/CLAUDE.md`)이다. 급감이나 경고 성격 변화만 신호로 볼 것.
+  **466 시리즈 / 6 파일 / 경고 7건**(전부 stderr의 `data_bb.xlsx/D: duplicate column …`)이며, 이 기준선의
+  정본은 Data 저장소 쪽(`../Data/CLAUDE.md`)이다. BM지수 파일이 아직 반영 전인 체크아웃이면
+  456 / 5 로 나온다(경고는 그대로 7). 급감이나 경고 성격 변화만 신호로 볼 것.
   데일리 리포트를 더 올려도 **시리즈 수는 456 그대로**이고 각 `us:*` 의 관측 수만 는다 —
   파일 하나가 하루치이기 때문이다(파일 수와 `meta.json.files` 항목은 는다).
 - 서빙 확인: `curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/data/meta.json` → `200`.
@@ -106,12 +108,15 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 |---|---|---|
 | 파일명이 `data_bb` 로 시작 | `parse_wide(p, "bb")` | `bb:<Notation>` |
 | 파일명이 `data_info` 로 시작 | `parse_wide(p, "info")` | `info:<Notation>` |
+| 파일명이 `bm` 으로 시작 | `bm.parse(p, warn)` | `bm:<그룹> <자산군>` (예: `bm:시가 국내채권`) |
 | **시트에 `Market Overview` 가 있음** | `breadth.parse(p, warn)` | `us:<지표>` (집계만) |
 | 그 외 전부 | `parse_index_export(p)` | `idx:<A1 첫 공백 토큰>` (예: `ACWI08.xlsx` → `idx:ACWI`) |
 
 - **데일리 리포트만 파일명이 아니라 내용으로 판정한다**(`breadth.is_stock_report`). 그 파일은
   `Daily_Stock_Report_26.08.04.xlsx` 처럼 **날짜가 박힌 이름으로 배포**되므로 접두사 규약을 매일
   지키게 하면 언젠가 반드시 잊고, 잊은 날의 파일은 조용히 지수 익스포트 파서로 흘러가 버려진다.
+  BM 파일(`BM지수_20260811.xlsx`)도 날짜 박힌 이름이지만 **접두사 판정**이다 — 사용자가 의도적으로
+  올리는 단일 계열 파일이라 이름을 통제할 수 있어서다(`pipeline/bm.py` docstring).
 - **리포트의 관측일은 파일명이 아니라 본문**("미국 2026-08-03 종가 기준")에서 온다. 파일명 날짜는
   작성일이라 하루 뒤다 — 파일명을 믿으면 모든 관측이 하루씩 밀린다.
 
@@ -164,6 +169,15 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   보내 「외부 요청 0」 위반 — 없으면 재생 대신 이유를 카드에 적는다). 자동재생 없음,
   화면 이탈 시 `routeView` 가 `stopBrief()` 로 멈춘다. 프로브 `eventsBrief` 가 원문 표시·
   클라우드 거부·전 문장 낭독·이탈 정지를 전부 실행으로 확인한다.
+- **자본시장가정(CMA) = `bm.py` 가 정본이다** (§7.7 재설계의 데이터층 — `alloc.json.cma`).
+  창 그리드는 `WINDOW_YEARS`(공통 표본이 꽉 채우는 창만 게시 — 짧은 자산이 늘면 긴 창이
+  자동으로 열린다), 환율 축은 `FX_KEY`(`bb:달러원` — K+1 번째 `_fx` 열로 헤지 반영 공분산을
+  폐형 재구성). **월말 표본**으로만 계산한다 — 주말 캐리포워드 일별을 그대로 쓰면 σ 가
+  계통적으로 과소평가되고, **마지막 부분월은 버린다**(`_month_end_returns` — 실측: 월중까지만
+  온 달이 월간 수익률로 둔갑했다). **기대수익률은 계산하지 않는다** — 화면 키인이 정본이고
+  과거 평균은 참고 배지다(2026-08-11 사용자 지시). 게이트 `REQUIRED_KEYS["alloc"]` 의 `cma` 가
+  부재를 막지만 화면은 아직 안 읽는다 — `test_contract.py` `PUBLISH_ONLY_KEYS` 에 예외로
+  등록돼 있고, 최적화 UI(1-2c)가 읽기 시작하면 그 예외를 지울 것.
 - **헤지 레버의 자유도는 실질 1개다 — 「최적 헤지비율 한 점」을 적지 말 것.**
   `alloc.py` 의 `loadings()` 에서 두 레버는 **같은 방향 벡터 `FX_DIR = e_usd − swap` 의
   스칼라배**로만 들어간다: `x(hb,he) = x1 + [w채(1−hb) + w주(1−he)]·g = x1 + Xe·g`.

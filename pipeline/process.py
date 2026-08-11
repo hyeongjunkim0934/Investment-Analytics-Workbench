@@ -27,6 +27,7 @@ import openpyxl
 import pandas as pd
 
 import alloc
+import bm
 import breadth
 import hedge
 import panel
@@ -238,6 +239,17 @@ def load_data_dir(data_dir: Path) -> list[dict]:
         elif low.startswith("data_info"):
             n = parse_wide(p, "info")
             files_report.append({"file": p.name, "kind": "infomax-wide", "series": n})
+        elif bm.is_bm(p):
+            # 자산군 전략 벤치마크 — 자산배분 CMA 의 원천. 날짜 박힌 이름이어도
+            # 접두사 `bm` 만 지키면 된다 (규약은 pipeline/bm.py 모듈 docstring).
+            cols = bm.parse(p, warn)
+            for name, grp, pairs in cols:
+                # 그룹 행이 비어 있으면 grp="" — 키에 선행 공백이 남지 않게 잇는다
+                label = " ".join(x for x in (grp, name) if x)
+                add_series(f"bm:{label}", "user-bm", "BM",
+                           f"{label} 전략 벤치마크", pairs)
+            files_report.append({"file": p.name, "kind": "benchmark",
+                                 "series": len(cols)})
         elif breadth.is_stock_report(p):
             # 미국 증시 데일리 리포트 — **하루치 스냅샷**이라 성격이 다르다.
             # 파일 하나 = 관측 하루이고, 이력은 날짜별 파일이 쌓여야 생긴다.
@@ -780,6 +792,17 @@ def main() -> None:
         import traceback
         traceback.print_exc()
         warn("alloc: 자산배분 계산 실패 — 해당 섹션 없이 배포됩니다")
+
+    # CMA(자본시장가정) — BM 파일이 없어도 active:false 로 항상 게시된다
+    # (게이트 REQUIRED_KEYS 가 부재를 막으므로, 블록 자체는 무조건 있어야 한다).
+    if "alloc.json" in payloads:
+        try:
+            payloads["alloc.json"]["cma"] = bm.build_cma(SERIES, warn)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            warn("cma: 자본시장가정 계산 실패 — 최적화 카드 없이 배포됩니다")
+            payloads["alloc.json"]["cma"] = {"active": False, "reason": "계산 실패 — 빌드 로그 확인"}
 
     payloads.update({
         "rates.json": build_rates(),

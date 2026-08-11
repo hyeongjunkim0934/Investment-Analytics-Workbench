@@ -54,7 +54,10 @@ REQUIRED_KEYS = {
               "cost_hist_curve", "cost_hist_usd", "cost_stats", "mtm", "sim",
               "acct_model", "limits"],
     "alloc": ["asof", "sources", "sets", "rates", "cost_options", "anchor_ref",
-              "defaults", "ccy_bench", "boot", "checks", "acct_model", "limits"],
+              "defaults", "ccy_bench", "boot", "checks", "acct_model", "limits",
+              # cma = 벤치마크 기반 자본시장가정(bm.build_cma). BM 파일이 없어도
+              # active:false 블록이 게시돼야 한다 — 부재는 wiring 누락이다.
+              "cma"],
     "risk":  ["asof", "grade_bands", "howto", "layers", "weights",
               "validation", "factors", "limits"],
     "panel": ["asof", "freq", "t", "risk", "risk_meta", "vars",
