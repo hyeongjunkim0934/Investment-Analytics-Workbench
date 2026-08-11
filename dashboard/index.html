@@ -176,6 +176,8 @@
 
   <section id="alloc" class="section">
     <h2>자산배분</h2>
+    <!-- 컨텐츠 탭 — 긴 화면의 구역 이동. 해시 앵커가 아니라 버튼(라우팅 축과 분리) -->
+    <nav class="sec-toc" id="alloc-toc" aria-label="자산배분 목차"></nav>
     <div class="qa" id="alloc-headline"></div>
     <!-- 답을 한 자리에 — 현재 vs 참고치(배분·헤지·수익·위험). 담당자의 첫 질문
          "그래서 최적이 얼마인데?"가 문단이 아니라 표 하나로 답해지는 자리다. -->
@@ -189,6 +191,8 @@
     </div>
     <!-- 시변(롤링)·창 민감도 — λ-효용 MVO 로 표본을 바꿔 가며 최적 배분을 재계산 -->
     <div class="card" id="alloc-tv-card" style="margin-top:14px"></div>
+    <!-- 포트폴리오 특성 — 비중 조정과 함께 즉시 갱신 (샤프·분산비·MDD·상관) -->
+    <div class="card" id="alloc-char-card" style="margin-top:14px"></div>
     <div class="card" id="alloc-table-card" style="margin-top:14px"></div>
     <div class="howto" id="alloc-inputs-box" style="margin-top:14px"></div>
     <details class="method" id="alloc-method"></details>

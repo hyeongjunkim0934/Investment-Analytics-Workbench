@@ -1636,6 +1636,47 @@ def test_tv_card_renders_and_states_what_is_frozen(probe):
     assert c["proxyLayerShowsGuidance"] is True
 
 
+def test_char_metrics_match_hand_calc(probe):
+    """포트폴리오 특성 — 샤프·E[MDD]·ρ(포트,자산)·상관 대각·분산비를 손계산과 대조.
+
+    E[MDD] 상수 √(π/2)=1.2533 은 무추세 브라운 운동의 표준 결과이지 조정 모수가
+    아니다. 분산비는 한 자산 몰빵에서 정확히 1 이어야 한다(분산효과 0 의 정의).
+    """
+    c = probe["allocChar"]
+    assert c["sharpeHand"] is True
+    assert c["emddHand"] is True
+    assert c["rhoHand"] is True and c["rhoBounded"] is True
+    assert c["corrDiagOnes"] is True
+    assert c["drAtLeastOne"] is True
+    assert c["drOneWhenConcentrated"] is True
+
+
+def test_char_card_renders_with_honest_mdd_labels(probe):
+    """특성 카드 — 샤프·분산비·효율 갭·상관 행렬이 렌더되고, MDD 는 정직하게 나뉜다.
+
+    포트폴리오 MDD 는 [모형](실측 경로는 원본 미게시 계약상 불가), 자산별은 실측,
+    매핑된 대체투자는 원지수 실측이 대표하지 않으므로 **비운다**.
+    """
+    c = probe["allocChar"]
+    assert c["renderErrors"] == 0
+    assert c["cardRendered"] is True
+    assert c["mddLabeledAsModel"] is True
+    assert c["showsEfficiencyGap"] is True
+    assert c["hasCorrMatrix"] is True
+    assert c["mappedAltMddBlank"] is True
+
+
+def test_alloc_toc_navigates_without_touching_the_hash(probe):
+    """컨텐츠 탭 — 버튼 8개가 있고 눌러도 죽지 않는다.
+
+    해시 앵커(href="#…")를 쓰면 섹션 라우팅 축과 충돌해 마을로 튕긴다 — 버튼 +
+    scrollIntoView 여야 한다. index.html 쪽 검사는 계약 테스트(id 대조)가 맡는다.
+    """
+    c = probe["allocChar"]
+    assert c["tocButtonCount"] == 8
+    assert c["tocClicksSafe"] is True
+
+
 # ---- 통화 구성 (실행해서 확인) ----------------------------------------------
 def test_currency_mix_is_empty_until_the_user_enters_it(probe):
     """벤치마크를 몰래 적용하지 않는다 — 기본은 미입력이다.

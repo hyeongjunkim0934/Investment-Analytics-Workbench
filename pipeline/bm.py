@@ -219,12 +219,18 @@ def build_cma(series_store: dict, warn) -> dict:
         v = sub.std(ddof=1) * math.sqrt(12.0)
         cov = sub.cov(ddof=1) * 12.0
         corr = sub.corr()
+        # 자산별 실측 최대낙폭(창 안, 월말 관측 기준 — 월중 저점은 보이지 않는다).
+        # 초기 원금(1.0)도 고점 후보다 — 첫 수익률이 음수면 그 낙폭이 잡혀야 한다.
+        cum = (1.0 + sub).cumprod()
+        peak = cum.cummax().clip(lower=1.0)
+        mdd = (1.0 - cum / peak).max()
         rd = lambda x, n=8: float(round(float(x), n))
         return {
             "n_months": int(len(sub)),
             "start": str(sub.index.min().date()), "end": str(sub.index.max().date()),
             "mean_pct": [rd(m[c] * 100, 4) for c in cols],
             "vol_pct": [rd(v[c] * 100, 4) for c in cols],
+            "mdd_pct": [rd(mdd[c] * 100, 4) for c in cols],
             "corr": [[rd(corr.loc[a, b]) for b in cols] for a in cols],
             # 공분산은 소수(연율 분산) 단위 — 화면 σ 재구성·헤지 공식이 이걸 쓴다
             "cov": [[rd(cov.loc[a, b]) for b in cols] for a in cols],

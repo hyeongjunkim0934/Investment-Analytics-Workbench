@@ -858,3 +858,20 @@ button.vchip { cursor: pointer; }
     to   { opacity: 1; transform: none; }
   }
 }
+
+/* ---- 섹션 목차(컨텐츠 탭) — 자산배분처럼 긴 화면의 구역 이동 --------------
+   해시 앵커가 아니라 버튼이다(해시는 화면 라우팅 축 — app.js 주석 참조).
+   sticky 로 위에 붙어 스크롤 중에도 손이 닿는다. */
+.sec-toc {
+  position: sticky; top: 8px; z-index: 5;
+  display: flex; gap: 6px; flex-wrap: wrap; width: fit-content;
+  padding: 6px 8px; margin: 0 0 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+}
+.sec-toc:empty { display: none; }
+.sec-toc button {
+  font: inherit; font-size: 12px; padding: 3px 10px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 7px;
+  background: transparent; color: var(--ink-2);
+}
+.sec-toc button:hover { color: var(--ink-1); background: var(--border); }

@@ -263,6 +263,26 @@ def test_cma_alt_skipped_below_min_sample_without_breaking_cma():
     assert any("디스무딩 보조축 생략" in w for w in warns)
 
 
+def test_cma_window_mdd_matches_hand_calc():
+    """자산별 실측 MDD — 알려진 수익률 경로로 손계산과 대조.
+
+    a: 0×5 → +10% → −20% → +5% → 0×5 — 누적 1.1 → 0.88, MDD = 1 − 0.88/1.1 = 20%.
+    b: 첫 달부터 −10% — 초기 원금(1.0)이 고점 후보여야 10% 가 잡힌다(누적 고점만
+    보면 0 이 된다 — 그 회귀를 여기서 막는다).
+    """
+    ra = [0.0] * 5 + [0.10, -0.20, 0.05] + [0.0] * 5
+    rb = [-0.10] + [0.0] * 12
+    me = pd.date_range("2024-01-31", periods=14, freq="ME")
+    lvl = lambda rs: pd.Series(100.0 * np.cumprod([1.0] + [1 + r for r in rs]), index=me)
+    out = bm.build_cma(
+        _store(**{"bm:시가 국내주식": lvl(ra), "bm:시가 국내채권": lvl(rb)}), lambda m: None)
+    assert out["active"] is True
+    w = out["windows"][-1]
+    ia, ib = out["cols"].index("시가 국내주식"), out["cols"].index("시가 국내채권")
+    assert abs(w["mdd_pct"][ia] - (1 - 0.88 / 1.1) * 100) < 5e-4
+    assert abs(w["mdd_pct"][ib] - 10.0) < 5e-4
+
+
 def test_cma_tv_rolling_covariances_consistent_with_fixed_windows(parsed):
     """시변(롤링) 블록 — 개수·모양이 맞고, 마지막 롤링 창 = 같은 길이의 고정 창.
 

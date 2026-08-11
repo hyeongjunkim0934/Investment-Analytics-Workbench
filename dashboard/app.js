@@ -4130,6 +4130,117 @@ function renderAllocTv(box, E, st, pal, rerender) {
   box.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, t), note());
 }
 
+/* ---- 포트폴리오 특성 — 비중을 움직일 때 함께 움직이는 계량 지표 한 벌 --------
+   전부 활성 층의 Σ·μ 에서 폐형으로 나온다. 유일한 모형치는 포트폴리오 MDD:
+   실측 경로 MDD 는 원본 수익률 미게시 계약상 화면에서 계산할 수 없어(자산별
+   실측 MDD 는 파이프라인이 창 통계로 사전계산), 무추세 기하브라운 근사
+   E[MDD] ≈ √(π/2)·σ·√T 를 [모형] 라벨로 낸다 — √(π/2)=1.2533 은 브라운 운동
+   최대낙폭의 표준 기대값이지 조정 모수가 아니다. */
+function allocCharStats(E, w) {
+  const V = E.V;
+  const sig = E.sigmaW(w, V.C);
+  const mu = amDot(V.mu, w);
+  const rf = E.A.rates.kr3m.v;
+  const Cw = amMv(V.C, w);
+  const sigs = V.keys.map((_, i) => Math.sqrt(Math.max(V.C[i][i], 0)));
+  const T = E.sample.n_months / 12;
+  return {
+    mu, sig, se: E.seOf(sig), rf, T,
+    sharpe: sig > 1e-12 ? (mu - rf) / sig : null,
+    /* 분산비 DR = Σ|w|σᵢ ÷ σₚ — 1 이면 분산효과 0, 클수록 상관이 위험을 지워 준 것 */
+    dr: sig > 1e-12 ? w.reduce((a, wi, i) => a + Math.abs(wi) * sigs[i], 0) / sig : null,
+    /* 포트폴리오와 각 자산의 상관 ρ(p,i) = (Σw)ᵢ ÷ (σₚσᵢ) */
+    rho: V.keys.map((_, i) =>
+      sig > 1e-12 && sigs[i] > 1e-12 ? Cw[i] / (sig * sigs[i]) : null),
+    sigs,
+    corr: V.keys.map((_, i) => V.keys.map((_, j) =>
+      sigs[i] > 1e-12 && sigs[j] > 1e-12 ? V.C[i][j] / (sigs[i] * sigs[j]) : null)),
+    emdd: 1.2533 * sig * Math.sqrt(T),
+  };
+}
+
+/* 특성 카드 — 비중 조정과 함께 즉시 갱신된다. gapSig = 같은 기대수익의 투자선 위
+   점까지 줄일 수 있는 위험(효율 갭, doOpt 일 때만). */
+function renderAllocChar(box, E, w, opts) {
+  box.textContent = "";
+  const V = E.V;
+  const cs = allocCharStats(E, w);
+  const acct = E.view === "acct";
+  const riskWord = acct ? "손익변동성" : "위험";
+  box.append(el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, `포트폴리오 특성 — ${acct ? "회계" : "경제"} 관점, 즉시 갱신`),
+    el("span", { class: "card-sub" },
+      `표본 ${E.sample.start}~${E.sample.end} (${E.sample.n_months}개월) · 위 콘솔의 비중·헤지·매핑을 그대로 따릅니다`)));
+
+  const tile = (label, val, sub, cls) => el("div", { class: "card", style: "padding:10px 14px;min-width:130px" },
+    el("div", { class: "card-title", style: "font-size:11.5px" }, label),
+    el("div", { class: cls || "", style: "font-size:18px;font-weight:700;margin:3px 0 1px" }, val),
+    el("div", { style: "color:var(--ink-3);font-size:11px" }, sub));
+  const tiles = el("div", { style: "display:flex;gap:10px;flex-wrap:wrap;margin-top:8px" });
+  tiles.append(
+    tile("기대수익 (연)", `${fmtNum(cs.mu, 2)}%`, "출처는 자산군 표의 출처 열"),
+    tile(`${riskWord} (연)`, `${fmtNum(cs.sig, 2)}%`, `±표본오차 ${fmtNum(cs.se, 2)}%p`),
+    tile("샤프 (관측 무위험)", cs.sharpe == null ? "–" : fmtNum(cs.sharpe, 2),
+      `(μ − 한국 3개월 ${fmtNum(cs.rf, 2)}%) ÷ σ`),
+    tile("분산비 DR", cs.dr == null ? "–" : fmtNum(cs.dr, 2),
+      "Σ비중×σ ÷ 포트σ — 1보다 클수록 상관이 위험을 지움"),
+    tile("예상 최대낙폭 [모형]", `−${fmtNum(cs.emdd, 1)}%`,
+      `무추세 기하브라운 √(π/2)·σ·√T, T=${fmtNum(cs.T, 1)}년 — 실측 경로는 미게시 계약상 불가`));
+  if (opts && opts.gapSig != null) {
+    const gap = cs.sig - opts.gapSig;
+    tiles.append(tile("투자선까지의 효율 갭", `${gap > 0.005 ? "−" : ""}${fmtNum(Math.abs(gap), 2)}%p`,
+      gap > 0.005 ? "같은 기대수익의 투자선 위 점까지 줄일 수 있는 위험" : "사실상 투자선 위에 있습니다",
+      gap > 0.005 ? "d-up" : "d-down"));
+  }
+  box.append(tiles);
+
+  /* 자산별: 비중·σ·실측 MDD(벤치마크 원지수)·포트와의 상관 */
+  const mddOf = (k) => {
+    if (E.layer !== "cma" || !E.cmaW || !E.cmaW.mdd_pct) return null;
+    if (k === "대체투자" && E.altInfo && E.altInfo.mode === "factor") return null;   // 매핑 자산 — 원지수 실측이 대표하지 않는다
+    const lb = { "장부가 국내채권": "장부가 국내채권", "시가 국내채권": "시가 국내채권",
+      "장부가 해외채권": "장부가 해외채권", "시가 해외채권": "시가 해외채권",
+      국내주식: "시가 국내주식", 해외주식: "시가 해외주식", 대체투자: "시가 대체투자",
+      단기자금: "장부가 단기자금",
+      국내채권: "시가 국내채권", 해외채권: "시가 해외채권" }[k];
+    const i = E.cmaAll.cols.indexOf(lb);
+    return i >= 0 ? E.cmaW.mdd_pct[i] : null;
+  };
+  const t = el("table", { class: "mini-table", style: "margin-top:10px" },
+    el("tr", {}, ...["자산군", "비중%", `${riskWord}%`, "실측 MDD%", "ρ(포트, 자산)"]
+      .map((h) => el("th", {}, h))));
+  V.keys.forEach((k, i) => {
+    const m = mddOf(k);
+    t.append(el("tr", {},
+      el("td", { style: "text-align:left" }, k),
+      el("td", { class: "num" }, fmtNum(w[i] * 100, 1)),
+      el("td", { class: "num" }, fmtNum(cs.sigs[i], 2)),
+      el("td", { class: "num" }, m == null ? "–" : `−${fmtNum(m, 1)}`),
+      el("td", { class: "num" }, cs.rho[i] == null ? "–" : fmtNum(cs.rho[i], 2))));
+  });
+  box.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, t),
+    el("div", { class: "card-sub" },
+      "실측 MDD 는 벤치마크 원지수의 창 안 최대낙폭(월말 관측 — 월중 저점은 보이지 않음). ",
+      "매핑된 대체투자는 원지수 실측이 대표하지 않아 비웁니다. ρ(포트,자산) = 공분산 ÷ (σₚσᵢ)."));
+
+  /* 상관 행렬 — 길어서 접는다. 값은 현재 관점·매핑·헤지가 반영된 V.C 기준이다 */
+  const det = el("details", { style: "margin-top:8px" },
+    el("summary", {}, "자산군 상관 행렬 (현재 관점·매핑·헤지 반영)"));
+  const tc = el("table", { class: "mini-table" },
+    el("tr", {}, el("th", {}, ""), ...V.keys.map((k) => el("th", {}, k))));
+  V.keys.forEach((a, i) => {
+    const tr = el("tr", {}, el("td", { style: "text-align:left" }, a));
+    V.keys.forEach((_, j) => {
+      const v = cs.corr[i][j];
+      tr.append(el("td", { class: "num " + (v != null && i !== j ? (v > 0.5 ? "d-up" : v < -0.3 ? "d-down" : "") : "") },
+        v == null ? "–" : fmtNum(v, 2)));
+    });
+    tc.append(tr);
+  });
+  det.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, tc));
+  box.append(det);
+}
+
 /* ================= 자산배분 — 화면 ================= */
 
 const ALLOC_LS_KEY = "iaw-alloc";
@@ -4281,6 +4392,21 @@ function renderAlloc() {
   const baseSig = baseE.sigmaW(baseE.w0, baseE.V.C);
   const baseMu = amDot(baseE.V.mu, baseE.w0);
   const baseXe = baseE.xeOf(baseSt.h_bond / 100, baseSt.h_eq / 100);
+
+  /* 컨텐츠 탭(목차) — 화면이 길어져 상단에서 각 구역으로 바로 이동한다.
+     해시(href="#…")를 쓰지 않는 이유: 해시는 섹션 라우팅 축이라(routeView)
+     섹션 안 앵커로 쓰면 마을로 튕긴다 — 버튼 + scrollIntoView 로만 움직인다. */
+  const toc = $("#alloc-toc");
+  toc.textContent = "";
+  [["요약", "#alloc-summary"], ["조작 콘솔", "#alloc-controls"], ["참고치", "#alloc-cards"],
+   ["투자선", "#alloc-frontier-card"], ["시변·민감도", "#alloc-tv-card"],
+   ["특성", "#alloc-char-card"], ["자산군 표", "#alloc-table-card"], ["방법론", "#alloc-method"]]
+    .forEach(([label, sel]) => {
+      toc.append(el("button", { type: "button", onclick: () => {
+        const n = $(sel);
+        if (n && n.scrollIntoView) n.scrollIntoView({ block: "start" });
+      } }, label));
+    });
 
   /* 층·창·매핑 표식용 엔진 한 벌 — recalc 는 매번 새로 만들므로 이건 표시 전용이다 */
   const E0 = allocEngine(A, st);
@@ -4477,6 +4603,7 @@ function renderAlloc() {
   const frontierCard = $("#alloc-frontier-card");
   const pathCard = $("#alloc-path-card");
   const tvCard = $("#alloc-tv-card");
+  const charCard = $("#alloc-char-card");
   let chartTimer = null;
 
   function recalc(withCharts) {
@@ -4617,6 +4744,14 @@ function renderAlloc() {
             "을 수기 입력하면 그 쏠림에 내규 한도가 걸립니다. 헤지 참고치는 경제 관점 전용입니다.",
           ])));
     }
+
+    /* ----- 포트폴리오 특성 — 비중 조정과 함께 즉시 갱신 (드래그 중에도) -----
+       효율 갭은 「같은 기대수익」 기준이라, 목표수익 입력이 있으면 wKeep(목표
+       기준)을 그대로 못 쓰고 현재 μ 에서 한 번 더 푼다. */
+    const gapSig = doOpt
+      ? (st.target_ret == null ? sigKeep : E.sigmaW(E.optimize(V.mu, V.C, muCur), V.C))
+      : null;
+    renderAllocChar(charCard, E, w0, { gapSig });
 
     /* ----- 3칸 카드 ----- */
     cardsBox.textContent = "";

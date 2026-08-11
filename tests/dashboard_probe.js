@@ -65,9 +65,11 @@ footer.append(elem("p", "build-line"), elem("div", "build-warnings"));
 
 /* 자산배분 뼈대 — renderAlloc 이 $("#alloc-…") 로 집는 자리들(index.html 과의 계약).
    하나라도 빠지면 그 자리에서 죽으므로 실제 마크업과 같은 목록을 둔다. */
+secNodes.alloc.append(elem("nav", "alloc-toc"));
 ["alloc-headline", "alloc-summary", "alloc-controls", "alloc-cards", "alloc-levers",
- "alloc-frontier-card", "alloc-path-card", "alloc-tv-card", "alloc-table-card",
- "alloc-inputs-box", "alloc-method"].forEach((id) => secNodes.alloc.append(elem("div", id)));
+ "alloc-frontier-card", "alloc-path-card", "alloc-tv-card", "alloc-char-card",
+ "alloc-table-card", "alloc-inputs-box", "alloc-method"]
+  .forEach((id) => secNodes.alloc.append(elem("div", id)));
 
 /* 카탈로그 뼈대 */
 const catTable = elem("table", "catalog-table");
@@ -173,7 +175,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "RENDERERS", "renderAll", "renderSection", "renderACWI",
   "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
   "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256",
-  "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil"];
+  "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil", "allocCharStats"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -1207,7 +1209,9 @@ const CMA_ALLOC = (() => {
     v * (i === iEq2 ? 2 : 1) * (j === iEq2 ? 2 : 1)));
   const win = (key, n, start) => ({ key, n_months: n, start, end: "2030-06-30",
     mean_pct: [3.2, 3.4, 3.1, 8.0, 9.5, 3.3, 4.1, 5.0, 5.2, 1.0],
-    vol_pct: cols.map((c) => sd[c] * 100), corr, cov });
+    vol_pct: cols.map((c) => sd[c] * 100),
+    mdd_pct: cols.map((c) => +(sd[c] * 100 * 1.5).toFixed(4)),   // 결정론 자리값
+    corr, cov });
   return {
     ...ALLOC_FIXTURE,
     cma: {
@@ -1427,6 +1431,57 @@ safe("cmaTv", () => {
   shim.localStorage.removeItem("iaw-alloc");
   P.renderSection("alloc");
   r.proxyLayerShowsGuidance = /벤치마크 층 전용/.test(DOC.getElementById("alloc-tv-card").textContent);
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
+/* ====== P20-d. 포트폴리오 특성 + 목차 (2026-08-11 사용자 지시) ==============
+   비중을 바꿀 때 샤프·분산비·상관·MDD·효율 갭이 함께 움직이는 카드와, 긴 화면의
+   구역 이동용 목차(해시 아님 — 라우팅 축과 분리). 지표는 손계산과 대조한다. */
+safe("allocChar", () => {
+  const r = {};
+  shim.localStorage.removeItem("iaw-alloc");
+  const E = P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC));
+  const w = E.w0;
+  const cs = P.allocCharStats(E, w);
+
+  /* ① 손계산 대조 — 샤프·E[MDD]·ρ(포트,자산)·상관 대각 */
+  const rf = CMA_ALLOC.rates.kr3m.v;
+  r.sharpeHand = Math.abs(cs.sharpe - (cs.mu - rf) / cs.sig) < 1e-12;
+  r.emddHand = Math.abs(cs.emdd - 1.2533 * cs.sig * Math.sqrt(cs.T)) < 1e-12;
+  const Cw = E.V.C.map((row) => row.reduce((s, c, j) => s + c * w[j], 0));
+  const i0 = 0;
+  r.rhoHand = Math.abs(cs.rho[i0] - Cw[i0] / (cs.sig * cs.sigs[i0])) < 1e-12;
+  r.rhoBounded = cs.rho.every((x) => x == null || (x >= -1 - 1e-9 && x <= 1 + 1e-9));
+  r.corrDiagOnes = cs.corr.every((row, i) => Math.abs(row[i] - 1) < 1e-9);
+  r.drAtLeastOne = cs.dr >= 1 - 1e-9;
+
+  /* ② 분산비가 실제로 「분산」을 재나 — 한 자산 몰빵이면 DR = 1 */
+  const wOne = w.map((_, i) => (i === 0 ? 1 : 0));
+  r.drOneWhenConcentrated = Math.abs(P.allocCharStats(E, wOne).dr - 1) < 1e-9;
+
+  /* ③ 화면 — 카드·목차가 렌더되고, 매핑된 대체투자의 실측 MDD 칸은 비운다 */
+  P.DATA.alloc = CMA_ALLOC;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const box = DOC.getElementById("alloc-char-card");
+  const txt = box ? box.textContent : "";
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  r.cardRendered = /포트폴리오 특성/.test(txt) && /샤프/.test(txt) && /분산비/.test(txt);
+  r.mddLabeledAsModel = /\[모형\]/.test(txt) && /기하브라운/.test(txt);
+  r.showsEfficiencyGap = /효율 갭|투자선 위에 있습니다/.test(txt);
+  r.hasCorrMatrix = /상관 행렬/.test(txt);
+  /* 매핑 자산의 실측 MDD 는 원지수가 대표하지 않으므로 비워야 한다 */
+  const rows = [...box.querySelectorAll("table tr")];
+  const altRow = rows.find((tr) => /대체투자/.test(tr.textContent));
+  r.mappedAltMddBlank = altRow ? /–/.test(altRow.children[3].textContent) : false;
+  /* 목차 — 버튼이 있고, 눌러도 죽지 않는다(scrollIntoView 가드) */
+  const toc = DOC.getElementById("alloc-toc");
+  const btns = toc ? [...toc.querySelectorAll("button")] : [];
+  r.tocButtonCount = btns.length;
+  let clickOk = true;
+  try { btns.forEach((b) => b.onclick && b.onclick()); } catch (e) { clickOk = false; }
+  r.tocClicksSafe = clickOk;
   shim.localStorage.removeItem("iaw-alloc");
   return r;
 });
