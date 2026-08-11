@@ -23,6 +23,7 @@ import pytest
 import check_output
 import process
 import risk
+import synth
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "pipeline" / "check_output.py"
@@ -157,6 +158,21 @@ def test_alloc_sets_psd_and_boot_quantiles_monotone(built):
     assert all(abs(row[ia]) < 1e-15 for row in sp["cov"]), "spx02: acwi 열이 0 이 아님"
     full = next(s for s in A["sets"] if s["key"] == "full")
     assert sp["n_months"] >= full["n_months"], "spx02 는 공통 표본 이상이어야 한다"
+
+
+def test_alloc_cma_active_end_to_end_on_synth(built):
+    """완주 산출물의 `alloc.json.cma` — BM 픽스처가 있으니 활성이어야 한다.
+
+    비활성 경로(BM 파일 없음 → active:false)는 `tests/test_bm.py` 가 단위로 검사한다.
+    여기서는 파일 판정 → 파싱 → 저장소 → build_cma → 게시까지의 배선 전체를 본다.
+    cma 수학·유출 가드도 test_bm.py 쪽이 정본이다.
+    """
+    out, _ = built
+    A = json.loads((out / "alloc.json").read_text(encoding="utf-8"))
+    cma = A["cma"]
+    assert cma["active"] is True, cma.get("reason")
+    assert cma["labels"] == [k[3:] for k in synth.BM_UNIVERSE]
+    assert cma["cols"][-1] == "_fx"       # 합성 데이터에 달러원이 있으므로
 
 
 def test_catalog_has_metadata_only(built):
@@ -705,8 +721,8 @@ def test_gate_passes_on_a_healthy_build(built):
 @pytest.mark.parametrize("payload,key", [
     ("hedge", "matrix"), ("hedge", "curves"), ("hedge", "mtm"),
     ("hedge", "cost_stats"), ("hedge", "sim"), ("hedge", "default_tenor_m"),
-    ("alloc", "sources"), ("risk", "factors"), ("panel", "vars"),
-    ("events", "brief"),
+    ("alloc", "sources"), ("alloc", "cma"), ("risk", "factors"),
+    ("panel", "vars"), ("events", "brief"),
 ])
 def test_gate_rejects_a_payload_missing_a_required_key(built, tmp_path, payload, key):
     """필수 키 하나만 사라져도 배포를 막아야 한다.

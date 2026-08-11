@@ -13,28 +13,33 @@ import synth
 
 
 def test_series_count_and_files(parsed):
-    """파싱 시리즈 수 = 스펙 길이의 합, 파일 4개. 중복 컬럼은 세지 않는다."""
+    """파싱 시리즈 수 = 스펙 길이의 합, 파일 5개. 중복 컬럼은 세지 않는다."""
     report, P = parsed
-    assert len(report) == 4
+    assert len(report) == 5
     expected = (len(synth.BB_SPEC) + len(synth.INFO_SPEC)
                 + 1                       # idx:ACWI
-                + len(synth.BREADTH_KEYS))  # 데일리 리포트 집계 지표
+                + len(synth.BREADTH_KEYS)   # 데일리 리포트 집계 지표
+                + len(synth.BM_KEYS))       # 자산군 전략 벤치마크
     assert len(P.SERIES) == expected
     kinds = {r["kind"] for r in report}
-    assert kinds == {"bloomberg-wide", "infomax-wide", "index:ACWI", "us-breadth"}
+    assert kinds == {"bloomberg-wide", "infomax-wide", "index:ACWI",
+                     "us-breadth", "benchmark"}
 
 
 def test_key_prefixes_follow_filename(parsed):
     """키 접두사는 파서가 정한다.
 
-    `data_bb*`/`data_info*` 는 **파일명**으로, 데일리 리포트(`us:`)는 **시트 이름**으로,
-    나머지는 지수 익스포트(`idx:`)로 간다 — 리포트만 내용 판정인 이유는 그 파일이
-    날짜가 박힌 이름으로 배포되기 때문이다(`pipeline/breadth.py` 참조).
+    `data_bb*`/`data_info*`/`bm*` 는 **파일명**으로, 데일리 리포트(`us:`)는 **시트
+    이름**으로, 나머지는 지수 익스포트(`idx:`)로 간다 — 리포트만 내용 판정인 이유는
+    그 파일이 날짜가 박힌 이름으로 배포되기 때문이다(`pipeline/breadth.py` 참조).
+    BM 파일도 날짜 박힌 이름이지만 사용자가 의도적으로 올리는 파일이라 접두사를
+    통제할 수 있다(`pipeline/bm.py` docstring).
     """
     _, P = parsed
     for k in synth.ALL_KEYS:
         assert k in P.SERIES, f"missing {k}"
-    assert all(k.split(":", 1)[0] in ("bb", "info", "idx", "us") for k in P.SERIES)
+    assert all(k.split(":", 1)[0] in ("bb", "info", "idx", "us", "bm")
+               for k in P.SERIES)
 
 
 def test_stock_report_publishes_aggregates_only(parsed):

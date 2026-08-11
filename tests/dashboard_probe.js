@@ -65,9 +65,11 @@ footer.append(elem("p", "build-line"), elem("div", "build-warnings"));
 
 /* 자산배분 뼈대 — renderAlloc 이 $("#alloc-…") 로 집는 자리들(index.html 과의 계약).
    하나라도 빠지면 그 자리에서 죽으므로 실제 마크업과 같은 목록을 둔다. */
+secNodes.alloc.append(elem("nav", "alloc-toc"));
 ["alloc-headline", "alloc-summary", "alloc-controls", "alloc-cards", "alloc-levers",
- "alloc-frontier-card", "alloc-path-card", "alloc-table-card",
- "alloc-inputs-box", "alloc-method"].forEach((id) => secNodes.alloc.append(elem("div", id)));
+ "alloc-frontier-card", "alloc-path-card", "alloc-tv-card", "alloc-char-card",
+ "alloc-table-card", "alloc-inputs-box", "alloc-method"]
+  .forEach((id) => secNodes.alloc.append(elem("div", id)));
 
 /* 카탈로그 뼈대 */
 const catTable = elem("table", "catalog-table");
@@ -173,7 +175,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "RENDERERS", "renderAll", "renderSection", "renderACWI",
   "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
   "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256",
-  "allocCcySum", "ALLOC_CCY", "allocState"];
+  "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil", "allocCharStats"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -1175,6 +1177,311 @@ safe("durationGap", () => {
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, h_bond: 90 }));
   P.renderSection("alloc");
   r.survivesLegacyState = DOC.getElementById("alloc").querySelectorAll(".render-error").length === 0;
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
+/* ====== P20-b. 벤치마크(CMA) 데이터층 — §7.7 1-2c ==========================
+   위험 원천 스위치가 실제로 벤치마크 공분산으로 계산하는지, 대체투자 팩터
+   매핑(기관 방식)이 잔차까지 정확한지, 회계 관점 최적화와 장부가 합산 상한이
+   실제로 물리는지를 **손계산 대조**로 잰다. 값은 전부 이 파일 안의 합성이다. */
+const CMA_ALLOC = (() => {
+  const labels = ["장부가 국내채권", "장부가 해외채권", "장부가 단기자금",
+                  "시가 국내주식", "시가 해외주식", "시가 국내채권", "시가 해외채권",
+                  "시가 대체투자"];
+  const cols = [...labels, "_alt", "_fx"];
+  const sd = { "장부가 국내채권": 0.0024, "장부가 해외채권": 0.0034, "장부가 단기자금": 0.0027,
+               "시가 국내주식": 0.30, "시가 해외주식": 0.13, "시가 국내채권": 0.021,
+               "시가 해외채권": 0.045, "시가 대체투자": 0.014, _alt: 0.0199, _fx: 0.103 };
+  const rho = { "시가 해외주식|_fx": -0.02, "시가 해외채권|_fx": -0.5, "시가 국내주식|_fx": -0.3,
+                "시가 국내주식|시가 해외주식": 0.6, "시가 국내채권|시가 해외채권": 0.4,
+                "_alt|시가 해외주식": -0.05, "_alt|시가 국내채권": -0.04,
+                "시가 대체투자|_alt": 0.7 };
+  const cov = cols.map((a) => cols.map((b) => {
+    if (a === b) return sd[a] * sd[a];
+    const r = rho[`${a}|${b}`] != null ? rho[`${a}|${b}`] : (rho[`${b}|${a}`] || 0);
+    return r * sd[a] * sd[b];
+  }));
+  const corr = cols.map((a, i) => cols.map((b, j) => cov[i][j] / (sd[a] * sd[b])));
+  /* 국내주식 σ 만 두 배(합동변환 — PSD 유지)인 시점 — 시변 방향성 검사용 */
+  const iEq2 = cols.indexOf("시가 국내주식");
+  const covEq2 = cov.map((row, i) => row.map((v, j) =>
+    v * (i === iEq2 ? 2 : 1) * (j === iEq2 ? 2 : 1)));
+  const win = (key, n, start) => ({ key, n_months: n, start, end: "2030-06-30",
+    mean_pct: [3.2, 3.4, 3.1, 8.0, 9.5, 3.3, 4.1, 5.0, 5.2, 1.0],
+    vol_pct: cols.map((c) => sd[c] * 100),
+    mdd_pct: cols.map((c) => +(sd[c] * 100 * 1.5).toFixed(4)),   // 결정론 자리값
+    corr, cov });
+  return {
+    ...ALLOC_FIXTURE,
+    cma: {
+      active: true, asof: "2030-06-30", labels, cols,
+      groups: labels.map((l) => l.split(" ")[0]),
+      fx_col: "_fx", alt: { label: "시가 대체투자", alpha: 0.31, n_fit: 90 },
+      econ_map: { "장부가 국내채권": "시가 국내채권", "장부가 해외채권": "시가 해외채권",
+                  "장부가 단기자금": "장부가 단기자금", "시가 국내주식": "시가 국내주식",
+                  "시가 해외주식": "시가 해외주식", "시가 국내채권": "시가 국내채권",
+                  "시가 해외채권": "시가 해외채권", "시가 대체투자": "시가 대체투자" },
+      coverage: [...labels, "장부가 금융상품", "장부가 대출금"].map((l) => ({
+        label: l, group: l.split(" ")[0], first: "2026-01-31", last: "2030-06-30",
+        n_months: 54, included: !/금융상품|대출금/.test(l) })),
+      excluded: ["장부가 금융상품", "장부가 대출금"],
+      windows: [win("1", 12, "2029-07-31"), win("all", 54, "2026-01-31")],
+      tv: [{ key: "1", n_window: 12,
+             dates: ["2030-04-30", "2030-05-31", "2030-06-30"],
+             cov: [covEq2, cov, cov] }],
+      method: "월말 표본·부분월 제거 (probe)",
+    },
+  };
+})();
+
+safe("cmaLayer", () => {
+  const r = {};
+  const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
+  const mv = (M, w) => M.map((row) => dot(row, w));
+  const quad = (w, M) => dot(w, mv(M, w));
+  const cm = CMA_ALLOC.cma;
+  const CI = {}; cm.cols.forEach((c, i) => { CI[c] = i; });
+  const M = cm.windows[1].cov;
+  const eV = (lb, extra) => {
+    const v = new Array(cm.cols.length).fill(0);
+    v[CI[lb]] = 1;
+    (extra || []).forEach(([l, x]) => { v[CI[l]] += x; });
+    return v;
+  };
+
+  /* ① 층 스위치 — CMA 있으면 기본, 없으면 프록시로 물러나며 그 사실을 적는다 */
+  shim.localStorage.removeItem("iaw-alloc");
+  const E = P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC));
+  r.defaultLayerIsCma = E.layer === "cma";
+  const Eoff = P.allocEngine(ALLOC_FIXTURE, P.allocDefaults(ALLOC_FIXTURE));
+  r.fallsBackWithoutCma = Eoff.layer === "proxy" && !!Eoff.layerNote;
+  const Einact = P.allocEngine({ ...ALLOC_FIXTURE, cma: { active: false, reason: "probe-이유" } },
+    P.allocDefaults(ALLOC_FIXTURE));
+  r.fallbackKeepsReason = Einact.layer === "proxy" && /probe-이유/.test(Einact.layerNote || "");
+
+  /* ② 경제 관점 행렬 — 손계산 대조 (기본 헤지 90% → 환노출 0.1) */
+  const V = E.V;
+  const iKr = 0, iFb = 1, iEq = 3, iAlt = 4;           // ALLOC_ECON 순서
+  r.domesticEquityVarExact =
+    Math.abs(V.C[2][2] - quad(eV("시가 국내주식"), M) * 1e4) < 1e-9;
+  const fbRow = eV("시가 해외채권", [["_fx", 0.1]]);
+  r.foreignBondVarWithFxExact = Math.abs(V.C[iFb][iFb] - quad(fbRow, M) * 1e4) < 1e-9;
+  r.krBondUsesMarketTwin = Math.abs(V.C[iKr][iKr] - quad(eV("시가 국내채권"), M) * 1e4) < 1e-9;
+
+  /* ③ 대체투자 팩터 매핑(기관 방식 50/50) — 잔차까지 폐형 손계산과 일치해야 한다 */
+  const f = eV("시가 해외주식", [["시가 국내채권", 1]]).map((x) => x * 0.5);
+  const varF = quad(f, M);
+  const cAf = dot(f, M.map((row) => row[CI._alt]));
+  const idio = M[CI._alt][CI._alt] - cAf * cAf / varF;
+  r.idioIsPositive = idio > 1e-10;
+  r.altVarIsFactorPlusIdio = Math.abs(V.C[iAlt][iAlt] - (varF + idio) * 1e4) < 1e-9;
+  const eqRow = eV("시가 해외주식", [["_fx", 0.1]]);
+  r.altCrossIsFactorCross = Math.abs(V.C[iAlt][iEq] - dot(eqRow, mv(M, f)) * 1e4) < 1e-9;
+  /* 잔차 덕에 정칙 — 촐레스키가 끝까지 간다 */
+  const chol = (C) => {
+    const n = C.length, L = C.map((row) => row.slice());
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j <= i; j++) {
+        let s = L[i][j];
+        for (let k = 0; k < j; k++) s -= L[i][k] * L[j][k];
+        if (i === j) { if (s <= 0) return false; L[i][i] = Math.sqrt(s); }
+        else L[i][j] = s / L[j][j];
+      }
+    }
+    return true;
+  };
+  r.econMatrixIsPD = chol(V.C);
+  /* 벤치마크 그대로(진단) 모드 — 관측 σ 로 되돌아간다 */
+  const Ebm = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC),
+    alt_map: { mode: "bm", w_eq: 50, w_bd: 50 } });
+  r.bmModeUsesRawAlt =
+    Math.abs(Ebm.V.C[iAlt][iAlt] - quad(eV("시가 대체투자"), M) * 1e4) < 1e-9;
+
+  /* ④ 창 전환·표본 표기 */
+  const E1 = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), cma_win: "1" });
+  r.windowSwitchChangesSample = E1.sample.n_months === 12 && E.sample.n_months === 54;
+
+  /* ⑤ 기대수익 키인 — base 대체 + 캐리 별도 가산 (해외채권 90% 헤지, HP 9M 보간 −0.775) */
+  const Emu = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC),
+    mu_over: { 국내주식: 9, 해외채권: 5 } });
+  r.muOverridePlain = Math.abs(Emu.V.mu[2] - 9) < 1e-12;
+  r.muOverrideKeepsCarry = Math.abs(Emu.V.mu[1] - (5 + 0.9 * (-0.775))) < 1e-12;
+
+  /* ⑥ 앵커 σ 가 벤치마크에서 온다 (시가 국내채권 2.1%) */
+  r.anchorSigmaFromBm = Math.abs(E.V.anchor.kr.sigma - 2.1) < 1e-9;
+
+  /* ⑦ Xe 붕괴·헤지 감응 — CMA 층에서도 정확히 성립해야 한다 */
+  const q = E.xeQuad();
+  let worst = 0;
+  for (let hb = 0; hb <= 1.0001; hb += 0.2) {
+    for (let he = 0; he <= 1.0001; he += 0.2) {
+      const d = Math.abs(E.sigmaXe(E.xeOf(hb, he), q) - E.sigmaHedge(hb, he));
+      if (d > worst) worst = d;
+    }
+  }
+  r.xeQuadExactOnCma = worst < 1e-12;
+  r.hedgeSliderMatters = Math.abs(E.sigmaHedge(0, 0) - E.sigmaHedge(1, 1)) > 1e-6;
+
+  /* ⑧ 회계 관점 최적화 + 장부가 합산 상한 — 상한 없으면 쏠리고, 걸면 물린다 */
+  const bookIdx = ["장부가 국내채권", "장부가 해외채권", "단기자금"];
+  const sumBook = (Ea, w) => bookIdx.reduce((s, k) => s + w[Ea.V.keys.indexOf(k)], 0);
+  const Ea0 = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), view: "acct" });
+  const w0cap = Ea0.optimize(Ea0.V.mu, Ea0.V.C, null);
+  r.acctPilesIntoBookWithoutCap = sumBook(Ea0, w0cap) > 0.55;
+  const Ea = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), view: "acct", cap_book: 50 });
+  r.capBookGroupExists = Ea.groups.some((g) => g.label === "장부가 성격 합계");
+  const wCap = Ea.optimize(Ea.V.mu, Ea.V.C, null);
+  r.capBookBinds = sumBook(Ea, wCap) <= 0.505;
+  /* 경제 관점에는 이 그룹이 없어야 한다 — 장부/시가 병합이라 정의 불가 */
+  const Ee = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), cap_book: 50 });
+  r.capBookNotInEcon = !Ee.groups.some((g) => g.label === "장부가 성격 합계");
+
+  /* ⑨ 화면 — 층 스위치·매핑 콘솔·출처 태그·회계 참고치가 실제로 렌더되는가 */
+  P.DATA.alloc = CMA_ALLOC;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const ctlTxt = DOC.getElementById("alloc-controls").textContent;
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  r.controlsShowSource = /위험 원천/.test(ctlTxt) && /기관 벤치마크/.test(ctlTxt);
+  r.controlsShowMapping = /대체투자 위험/.test(ctlTxt) && /디스무딩/.test(ctlTxt);
+  r.tableShowsMappingTag = /\[매핑\]/.test(DOC.getElementById("alloc-table-card").textContent);
+  const mthTxt = DOC.getElementById("alloc-method").textContent;
+  r.methodShowsFxBasis = /환노출 제거 기준/.test(mthTxt);
+  r.methodShowsExcluded = /장부가 금융상품/.test(mthTxt) && /제외/.test(mthTxt);
+  r.headlineShowsLayer = /기관 벤치마크/.test(DOC.getElementById("alloc-headline").textContent);
+  /* 회계 관점 — CMA 층에서는 참고치 표가 나와야 한다 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, view: "acct" }));
+  P.renderSection("alloc");
+  const sumTxt = DOC.getElementById("alloc-summary").textContent;
+  r.acctSummaryHasReference = /회계\(손익\) 관점/.test(sumTxt) && /참고치/.test(sumTxt);
+  r.acctSummaryNotDeferred = !/이 층의 회계 관점에는 없습니다/.test(sumTxt);
+  r.acctRenderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  /* 프록시 폴백 화면 — 사유가 적히고 CMA 버튼이 비활성이다 */
+  P.DATA.alloc = ALLOC_FIXTURE;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  r.fallbackNoteRendered = /벤치마크 CMA 없음/.test(DOC.getElementById("alloc-controls").textContent);
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
+/* ====== P20-c. 시변·창 민감도 — λ-효용 MVO (§7.7 1-2c 후속, 2026-08-11) ======
+   표본(롤링 시점·고정 창)을 바꿔 가며 같은 λ-MVO 를 풀어 배분 경로를 보여주는
+   카드. ① λ 단조성(위험회피↑ → 위험↓) ② 방향성(σ 두 배인 자산의 비중 감소)
+   ③ 롤링 종점 = 고정 창 (같은 표본 → 같은 해) ④ 화면 렌더를 실행으로 잰다. */
+safe("cmaTv", () => {
+  const r = {};
+  shim.localStorage.removeItem("iaw-alloc");
+  const E = P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC));
+  const cm = CMA_ALLOC.cma;
+  const opt = (M, lam) => {
+    const B = E.buildFrom(M, "econ", 0.9, 0.9);
+    return { B, w: E.optimizeUtil(B.mu, B.C, lam, 2000) };
+  };
+  const sig = (B, w) => E.sigmaW(w, B.C);
+  const M = cm.windows[1].cov;
+  const { B: B1, w: w1 } = opt(M, 1);
+  const { w: wHi } = opt(M, 50);
+
+  /* ① 위험회피 단조 — λ 50 은 λ 1 보다 위험이 낮고 기대수익도 낮다 */
+  r.lambdaMonotoneRisk = sig(B1, wHi) <= sig(B1, w1) + 1e-9;
+  const mdot = (mu, w) => w.reduce((s, wi, i) => s + wi * mu[i], 0);
+  r.lambdaMonotoneReturn = mdot(B1.mu, wHi) <= mdot(B1.mu, w1) + 1e-9;
+  /* λ=1 해가 고위험회피 해보다 효용(소수 단위)이 낮지 않다 — 목적함수 검산 */
+  const util = (B, w, lam) => mdot(B.mu, w) / 100
+    - lam / 2 * w.reduce((s, wi, i) => s + wi * B.C[i].reduce((t, c, j) => t + c * w[j], 0), 0) / 1e4;
+  r.lambda1SolutionHasHigherUtility = util(B1, w1, 1) >= util(B1, wHi, 1) - 1e-9;
+
+  /* ② 방향성 — 국내주식 σ 가 두 배인 롤링 시점에서는 국내주식 비중이 준다.
+     λ=1 에서는 이 자산이 밴드 상한(10%)에 붙어 σ 가 변해도 못 움직인다 — 그래서
+     내부해가 되는 λ=15 로 잰다(같은 목적함수 족·같은 코드 경로). λ=1 의 상한
+     붙음 자체도 확인한다: 밴드가 물면 표본이 바뀌어도 비중이 그대로여야 한다. */
+  const iEq = P.ALLOC_ECON.indexOf("국내주식");
+  const { w: w2at1 } = opt(cm.tv[0].cov[0], 1);
+  r.bandPinnedAtLowLambda =
+    Math.abs(w1[iEq] - 0.10) < 5e-3 && Math.abs(w2at1[iEq] - w1[iEq]) < 5e-3;
+  const { w: wA15 } = opt(M, 15);
+  const { w: wB15 } = opt(cm.tv[0].cov[0], 15);
+  r.riskierAssetGetsLess = wB15[iEq] < wA15[iEq] - 1e-3;
+
+  /* ③ 롤링 종점 = 고정 창(같은 표본·같은 결정 알고리즘 → 같은 해) — 단, 프로브
+     픽스처의 고정 "1"창과 tv 종점은 같은 행렬을 공유하므로 여기서 성립해야 한다 */
+  const { w: wEnd } = opt(cm.tv[0].cov[2], 1);
+  const { w: wAll } = opt(cm.windows[1].cov, 1);
+  r.sameMatrixSameSolution = wEnd.every((x, i) => Math.abs(x - wAll[i]) < 1e-12);
+
+  /* ④ 화면 — 롤링 차트 카드와 창 민감도 표가 실제로 렌더된다 */
+  P.DATA.alloc = CMA_ALLOC;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const tvBox = DOC.getElementById("alloc-tv-card");
+  const txt = tvBox ? tvBox.textContent : "";
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  r.rollCardRendered = /시간 경로/.test(txt) && /λ/.test(txt);
+  r.saysInputsAreFrozen = /현재 설정으로 고정/.test(txt);
+  r.saysThirdObjective = /①②/.test(txt);
+  /* 창 민감도 모드 — 저장 상태로 전환해 표가 나오는지 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, tv_mode: "win" }));
+  P.renderSection("alloc");
+  const txt2 = DOC.getElementById("alloc-tv-card").textContent;
+  r.winModeRendersTable = /창 민감도/.test(txt2) && /전체/.test(txt2);
+  /* 프록시 층에서는 카드가 안내문으로 물러난다 */
+  P.DATA.alloc = ALLOC_FIXTURE;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  r.proxyLayerShowsGuidance = /벤치마크 층 전용/.test(DOC.getElementById("alloc-tv-card").textContent);
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
+/* ====== P20-d. 포트폴리오 특성 + 목차 (2026-08-11 사용자 지시) ==============
+   비중을 바꿀 때 샤프·분산비·상관·MDD·효율 갭이 함께 움직이는 카드와, 긴 화면의
+   구역 이동용 목차(해시 아님 — 라우팅 축과 분리). 지표는 손계산과 대조한다. */
+safe("allocChar", () => {
+  const r = {};
+  shim.localStorage.removeItem("iaw-alloc");
+  const E = P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC));
+  const w = E.w0;
+  const cs = P.allocCharStats(E, w);
+
+  /* ① 손계산 대조 — 샤프·E[MDD]·ρ(포트,자산)·상관 대각 */
+  const rf = CMA_ALLOC.rates.kr3m.v;
+  r.sharpeHand = Math.abs(cs.sharpe - (cs.mu - rf) / cs.sig) < 1e-12;
+  r.emddHand = Math.abs(cs.emdd - 1.2533 * cs.sig * Math.sqrt(cs.T)) < 1e-12;
+  const Cw = E.V.C.map((row) => row.reduce((s, c, j) => s + c * w[j], 0));
+  const i0 = 0;
+  r.rhoHand = Math.abs(cs.rho[i0] - Cw[i0] / (cs.sig * cs.sigs[i0])) < 1e-12;
+  r.rhoBounded = cs.rho.every((x) => x == null || (x >= -1 - 1e-9 && x <= 1 + 1e-9));
+  r.corrDiagOnes = cs.corr.every((row, i) => Math.abs(row[i] - 1) < 1e-9);
+  r.drAtLeastOne = cs.dr >= 1 - 1e-9;
+
+  /* ② 분산비가 실제로 「분산」을 재나 — 한 자산 몰빵이면 DR = 1 */
+  const wOne = w.map((_, i) => (i === 0 ? 1 : 0));
+  r.drOneWhenConcentrated = Math.abs(P.allocCharStats(E, wOne).dr - 1) < 1e-9;
+
+  /* ③ 화면 — 카드·목차가 렌더되고, 매핑된 대체투자의 실측 MDD 칸은 비운다 */
+  P.DATA.alloc = CMA_ALLOC;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const box = DOC.getElementById("alloc-char-card");
+  const txt = box ? box.textContent : "";
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  r.cardRendered = /포트폴리오 특성/.test(txt) && /샤프/.test(txt) && /분산비/.test(txt);
+  r.mddLabeledAsModel = /\[모형\]/.test(txt) && /기하브라운/.test(txt);
+  r.showsEfficiencyGap = /효율 갭|투자선 위에 있습니다/.test(txt);
+  r.hasCorrMatrix = /상관 행렬/.test(txt);
+  /* 매핑 자산의 실측 MDD 는 원지수가 대표하지 않으므로 비워야 한다 */
+  const rows = [...box.querySelectorAll("table tr")];
+  const altRow = rows.find((tr) => /대체투자/.test(tr.textContent));
+  r.mappedAltMddBlank = altRow ? /–/.test(altRow.children[3].textContent) : false;
+  /* 목차 — 버튼이 있고, 눌러도 죽지 않는다(scrollIntoView 가드) */
+  const toc = DOC.getElementById("alloc-toc");
+  const btns = toc ? [...toc.querySelectorAll("button")] : [];
+  r.tocButtonCount = btns.length;
+  let clickOk = true;
+  try { btns.forEach((b) => b.onclick && b.onclick()); } catch (e) { clickOk = false; }
+  r.tocClicksSafe = clickOk;
   shim.localStorage.removeItem("iaw-alloc");
   return r;
 });

@@ -213,25 +213,76 @@ def write_stock_report(path, *, date="2030-05-17", market=None, indexes=None,
     wb.save(path)
 
 
+# --- 자산군 전략 벤치마크(BM) — 실파일의 **형태 특성**만 흉내 낸다 -------------
+# 2행 헤더(1행 그룹은 병합 셀처럼 빈 칸이 왼쪽 값을 계승), A열 YYYYMMDD 문자열,
+# 주말까지 캐리포워드된 일별 수준, 미개시 구간 0 채움(늦게 시작하는 자산 1개).
+# 값은 전부 고정 시드 난수다 — 실파일의 수치는 한 톨도 들어가지 않는다.
+# 실파일은 2014년부터지만 CMA 공통 표본은 늦개시 자산(아래) 이후만 쓴다 —
+# 그 앞 이력은 coverage 숫자에만 나타나므로 픽스처는 파싱 비용만 낮게 2018 시작.
+BM_START = "2018-01-01"
+#: 늦개시 자산(시가 국내주식 상대역)의 개시일 — 이 전 날짜는 전부 0 이다.
+BM_LATE_START = "2022-06-01"
+BM_GROUPS = ["장부가"] * 5 + ["시가"] * 5
+BM_NAMES = ["국내채권", "해외채권", "금융상품", "단기자금", "대출금",
+            "국내주식", "해외주식", "국내채권", "해외채권", "대체투자"]
+_BM_VOL = {"장부가": 0.0001, "시가": 0.008}   # 장부가 = 거의 직선(상각), 시가 = 시장
+
+
+def write_bm(path, *, end=None) -> None:
+    """BM 워크북 — 2행 헤더 · YYYYMMDD 문자열 날짜 · 캐리포워드 · 0=미개시 · 잡음 행."""
+    end = end or END
+    b = pd.bdate_range(BM_START, end)
+    cal = pd.date_range(BM_START, end)
+    rng = np.random.default_rng(SEED + 77)
+    cols = []
+    for grp, name in zip(BM_GROUPS, BM_NAMES):
+        v = _geo(rng, len(b), 1000.0, _BM_VOL[grp])
+        s = pd.Series(v, index=b).reindex(cal).ffill()
+        if (grp, name) == ("시가", "국내주식"):
+            s[s.index < BM_LATE_START] = 0.0     # 미개시 = 0 (실파일 규약)
+        cols.append(s)
+    wb = openpyxl.Workbook(write_only=True)
+    ws = wb.create_sheet("BM지수일자별조회")
+    g_row, cur = ["조회일자"], None
+    for g in BM_GROUPS:
+        g_row.append(g if g != cur else "")      # 병합 셀 흉내 — 구간 첫 칸만 라벨
+        cur = g
+    ws.append(g_row)
+    ws.append([""] + BM_NAMES)
+    for i, d in enumerate(cal):
+        if i == 400:   # 파서가 조용히 무시해야 하는 벤더 잡음 행
+            ws.append(["합계(벤더 잡음 행)"] + [""] * len(BM_NAMES))
+        ws.append([d.strftime("%Y%m%d")] + [float(c.iloc[i]) for c in cols])
+    wb.save(path)
+
+
 def build_all(dest) -> dict:
-    """네 워크북을 dest 에 만들고 {kind: path} 를 돌려준다."""
+    """다섯 워크북을 dest 에 만들고 {kind: path} 를 돌려준다."""
     dest = str(dest).rstrip("/")
     paths = {
         "bb": f"{dest}/data_bb_synth.xlsx",
         "info": f"{dest}/data_info_synth.xlsx",
         "idx": f"{dest}/ACWI_synth.xlsx",
         "report": f"{dest}/Daily_Stock_Report_synth.xlsx",
+        # 실배포처럼 날짜 박힌 이름 — 접두사 `bm`(대소문자 무관)만 지키면 된다
+        "bm": f"{dest}/BM지수_synth_20991231.xlsx",
     }
     write_wide(paths["bb"], BB_SPEC, dup_notation="달러원")
     write_wide(paths["info"], INFO_SPEC, sheet_title="DailyRate")
     write_index(paths["idx"])
     write_stock_report(paths["report"])
+    write_bm(paths["bm"])
     return paths
 
 
 BB_KEYS = [f"bb:{s[0]}" for s in BB_SPEC]
 INFO_KEYS = [f"info:{s[0]}" for s in INFO_SPEC]
 IDX_KEYS = ["idx:ACWI"]
+BM_KEYS = [f"bm:{g} {n}" for g, n in zip(BM_GROUPS, BM_NAMES)]
+#: CMA 행렬에 실제로 들어가는 자산군 — 배분 대상이 아닌 둘(`bm.EXCLUDED`)을 뺀 8개.
+#: 파싱은 10개 그대로이므로 BM_KEYS 와 다르다.
+BM_UNIVERSE = [k for k in BM_KEYS
+               if k[3:] not in ("장부가 금융상품", "장부가 대출금")]
 #: 데일리 리포트가 만드는 키 — `write_stock_report` 기본 픽스처 기준.
 #: 지수는 선언된 셋만 나가므로 DOW 는 여기 없다(픽스처에는 있다).
 BREADTH_KEYS = [
@@ -240,4 +291,4 @@ BREADTH_KEYS = [
     "us:ad_sp500", "us:ad_nasdaq", "us:ad_r2000",
     "us:skew_sp500", "us:skew_nasdaq", "us:skew_r2000",
 ]
-ALL_KEYS = BB_KEYS + INFO_KEYS + IDX_KEYS + BREADTH_KEYS
+ALL_KEYS = BB_KEYS + INFO_KEYS + IDX_KEYS + BREADTH_KEYS + BM_KEYS
