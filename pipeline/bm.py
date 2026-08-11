@@ -43,6 +43,13 @@ FX_KEY = "bb:달러원"
 # 2021-12~)이 늘어나면 긴 창이 자동으로 열린다. "all" = 전체 공통 표본.
 WINDOW_YEARS = [1, 2, 3, 5, 7, 10]
 
+# 배분 대상에서 제외하는 자산군 (2026-08-11 사용자 지시). 배분 레버가 아니므로
+# 공분산 행렬에 자리를 차지할 이유가 없다. **파싱은 계속 한다** — 키·카탈로그·
+# coverage 에는 남고 CMA 행렬에서만 빠진다(자산이 사라진 게 아니라 최적화
+# 대상이 아니라는 뜻이라, 게시물에서 지워 버리면 그 구분이 안 보인다).
+# 이 둘을 빼면 남는 8개가 §7.7 합의문의 자산군 8개와 정확히 일치한다.
+EXCLUDED = ("장부가 금융상품", "장부가 대출금")
+
 
 def is_bm(path) -> bool:
     return path.name.lower().startswith("bm")
@@ -115,10 +122,14 @@ def build_cma(series_store: dict, warn) -> dict:
     `active:false` 로 게시한다 — Data 저장소 기본 브랜치에 BM 파일이 아직 없어도
     게이트·배포가 깨지지 않게 하는 체인 안전장치다."""
     S = {k: v["s"] for k, v in series_store.items()}
-    bm_keys = [k for k in series_store if k.startswith("bm:")]
-    if not bm_keys:
+    all_bm = [k for k in series_store if k.startswith("bm:")]
+    if not all_bm:
         return {"active": False,
                 "reason": "BM 파일 없음 — Data 저장소 raw/ 에 BM*.xlsx 를 올리면 활성화됩니다"}
+    bm_keys = [k for k in all_bm if k[3:] not in EXCLUDED]
+    if not bm_keys:
+        return {"active": False,
+                "reason": "배분 대상 자산군 없음 — 전부 EXCLUDED 에 걸렸습니다"}
 
     labels = [k[3:] for k in bm_keys]                       # "장부가 국내채권" …
     groups = [lb.split()[0] for lb in labels]
@@ -138,14 +149,18 @@ def build_cma(series_store: dict, warn) -> dict:
         twin = f"시가 {name}"
         econ_map[lb] = twin if (grp == "장부가" and twin in labels) else lb
 
-    # 자산별 가용 구간 (표본 정직성 — 화면 표에 그대로 나간다)
+    # 자산별 가용 구간 (표본 정직성 — 화면 표에 그대로 나간다). 제외 자산군도
+    # `included:false` 로 함께 싣는다 — 파일에는 있는데 배분에 없다는 사실이
+    # 화면에서 보여야 "왜 8개인가"에 답이 된다.
     coverage = []
-    for i, (k, lb) in enumerate(zip(bm_keys, labels)):
-        r = rets[k]
-        coverage.append({"label": lb, "group": groups[i],
+    for k in all_bm:
+        lb = k[3:]
+        r = _month_end_returns(S[k])
+        coverage.append({"label": lb, "group": lb.split()[0],
                          "first": str(r.index.min().date()) if len(r) else None,
                          "last": str(r.index.max().date()) if len(r) else None,
-                         "n_months": int(len(r))})
+                         "n_months": int(len(r)),
+                         "included": lb not in EXCLUDED})
 
     # 공통 표본 (전 자산 + 환율)
     frames = {lb: rets[k] for k, lb in zip(bm_keys, labels)}
@@ -199,9 +214,11 @@ def build_cma(series_store: dict, warn) -> dict:
         "cols": labels + (["_fx"] if fx_ret is not None else []),
         "econ_map": econ_map,
         "coverage": coverage,
+        "excluded": [lb for lb in (k[3:] for k in all_bm) if lb in EXCLUDED],
         "windows": out_windows,
         "method": ("월말 수준 → 월간 수익률 → 연환산(σ ×√12, 평균 ×12, 공분산 ×12). "
                    "일별을 쓰지 않는 이유: 주말 캐리포워드로 σ 과소평가. "
                    "0 값은 벤치마크 미개시 결측으로 제외. "
+                   "금융상품·대출금은 배분 대상이 아니라 행렬에서 제외(coverage 에는 남음). "
                    "기대수익률은 계산하지 않는다 — 화면에서 키인(과거 평균은 참고)."),
     }

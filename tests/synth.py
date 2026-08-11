@@ -279,6 +279,10 @@ BB_KEYS = [f"bb:{s[0]}" for s in BB_SPEC]
 INFO_KEYS = [f"info:{s[0]}" for s in INFO_SPEC]
 IDX_KEYS = ["idx:ACWI"]
 BM_KEYS = [f"bm:{g} {n}" for g, n in zip(BM_GROUPS, BM_NAMES)]
+#: CMA 행렬에 실제로 들어가는 자산군 — 배분 대상이 아닌 둘(`bm.EXCLUDED`)을 뺀 8개.
+#: 파싱은 10개 그대로이므로 BM_KEYS 와 다르다.
+BM_UNIVERSE = [k for k in BM_KEYS
+               if k[3:] not in ("장부가 금융상품", "장부가 대출금")]
 #: 데일리 리포트가 만드는 키 — `write_stock_report` 기본 픽스처 기준.
 #: 지수는 선언된 셋만 나가므로 DOW 는 여기 없다(픽스처에는 있다).
 BREADTH_KEYS = [

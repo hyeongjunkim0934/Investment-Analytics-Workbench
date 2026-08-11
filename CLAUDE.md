@@ -46,7 +46,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 2분). 현재 311개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 2분). 현재 312개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (1초 미만)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js
 python -m pytest
@@ -175,7 +175,10 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   폐형 재구성). **월말 표본**으로만 계산한다 — 주말 캐리포워드 일별을 그대로 쓰면 σ 가
   계통적으로 과소평가되고, **마지막 부분월은 버린다**(`_month_end_returns` — 실측: 월중까지만
   온 달이 월간 수익률로 둔갑했다). **기대수익률은 계산하지 않는다** — 화면 키인이 정본이고
-  과거 평균은 참고 배지다(2026-08-11 사용자 지시). 게이트 `REQUIRED_KEYS["alloc"]` 의 `cma` 가
+  과거 평균은 참고 배지다(2026-08-11 사용자 지시). **배분 대상 자산군은 `EXCLUDED` 가 정한다** —
+  금융상품·대출금은 배분 레버가 아니라 행렬에서 빠지고(2026-08-11 사용자 지시), 남는 8개가
+  §7.7 합의문의 자산군 8개와 일치한다. **파싱까지 막지는 말 것** — `coverage` 에 `included:false`
+  로 남아야 "파일에는 10개인데 화면은 8개"인 이유가 화면에서 보인다. 게이트 `REQUIRED_KEYS["alloc"]` 의 `cma` 가
   부재를 막지만 화면은 아직 안 읽는다 — `test_contract.py` `PUBLISH_ONLY_KEYS` 에 예외로
   등록돼 있고, 최적화 UI(1-2c)가 읽기 시작하면 그 예외를 지울 것.
 - **헤지 레버의 자유도는 실질 1개다 — 「최적 헤지비율 한 점」을 적지 말 것.**

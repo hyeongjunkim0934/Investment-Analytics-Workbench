@@ -171,7 +171,7 @@ def test_alloc_cma_active_end_to_end_on_synth(built):
     A = json.loads((out / "alloc.json").read_text(encoding="utf-8"))
     cma = A["cma"]
     assert cma["active"] is True, cma.get("reason")
-    assert cma["labels"] == [k[3:] for k in synth.BM_KEYS]
+    assert cma["labels"] == [k[3:] for k in synth.BM_UNIVERSE]
     assert cma["cols"][-1] == "_fx"       # 합성 데이터에 달러원이 있으므로
 
 

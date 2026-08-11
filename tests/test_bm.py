@@ -147,7 +147,7 @@ def test_build_cma_shape_on_parsed_store(parsed):
     _, P = parsed
     out = bm.build_cma(P.SERIES, lambda m: None)
     assert out["active"] is True
-    assert out["labels"] == [k[3:] for k in synth.BM_KEYS]
+    assert out["labels"] == [k[3:] for k in synth.BM_UNIVERSE]
     assert out["cols"] == out["labels"] + ["_fx"]     # 달러원이 있으니 환율 축 포함
 
     keys = [w["key"] for w in out["windows"]]
@@ -170,7 +170,30 @@ def test_build_cma_shape_on_parsed_store(parsed):
     assert w_all["start"] >= synth.BM_LATE_START
     assert w_all["n_months"] >= 12
     for c in out["coverage"]:
-        assert set(c) == {"label", "group", "first", "last", "n_months"}
+        assert set(c) == {"label", "group", "first", "last", "n_months", "included"}
+
+
+def test_excluded_asset_classes_are_parsed_but_kept_out_of_the_matrix(parsed):
+    """금융상품·대출금은 **배분 대상이 아닐 뿐 없는 자산이 아니다** (2026-08-11 지시).
+
+    행렬에서는 빠지되 파싱·coverage 에는 남아야 한다 — 게시물에서 통째로 지우면
+    "파일에는 10개인데 화면은 8개"인 이유가 화면에서 사라진다. 남는 8개는 §7.7
+    합의문의 자산군 8개와 일치해야 한다.
+    """
+    _, P = parsed
+    for k in synth.BM_KEYS:
+        assert k in P.SERIES, f"제외 자산군도 파싱은 돼야 한다 — {k}"
+
+    out = bm.build_cma(P.SERIES, lambda m: None)
+    assert len(out["labels"]) == 8
+    assert set(out["excluded"]) == set(bm.EXCLUDED)
+    for lb in bm.EXCLUDED:
+        assert lb not in out["labels"], f"{lb} 가 행렬에 남아 있습니다"
+        assert lb not in out["econ_map"]
+    cov = {c["label"]: c["included"] for c in out["coverage"]}
+    assert set(cov) == {k[3:] for k in synth.BM_KEYS}, "coverage 는 10개 전부여야 한다"
+    assert all(cov[lb] is False for lb in bm.EXCLUDED)
+    assert all(cov[k[3:]] is True for k in synth.BM_UNIVERSE)
 
 
 def test_cma_fx_column_supports_hedged_reconstruction(parsed):
