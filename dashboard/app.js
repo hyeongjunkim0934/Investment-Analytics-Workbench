@@ -3159,10 +3159,19 @@ const HEDGE_LS_KEY = "iaw-hedge-input";
 const AMT_SRC = { input: "우리 값", derived: "자산배분에서 유도", sample: "예시값" };
 
 /* `iaw-alloc` 은 **읽기만** 한다. allocSaveState() 가 저장 시 state 전체를 덮어쓰므로,
-   hedge 가 alloc 에 쓰면 자산배분 화면의 다음 저장에 조용히 지워진다. */
+   hedge 가 alloc 에 쓰면 자산배분 화면의 다음 저장에 조용히 지워진다.
+   새 스키마는 시가 7축 `mix`(§7.7.11), 구 저장분은 회계 9축 `mix_acct` — 구 쪽은
+   allocState 의 fold 와 같은 규칙(채권 쌍 합산)으로 접어서 돌려준다. */
 function allocMixReadOnly() {
-  try { return (JSON.parse(localStorage.getItem(ALLOC_LS_KEY)) || {}).mix_acct || null; }
-  catch { return null; }
+  try {
+    const s = JSON.parse(localStorage.getItem(ALLOC_LS_KEY)) || {};
+    if (s.mix && typeof s.mix === "object") return s.mix;
+    const m = s.mix_acct;
+    if (!m || typeof m !== "object") return null;
+    const g = (k) => (m[k] != null && isFinite(+m[k]) ? +m[k] : NaN);
+    return { 해외채권: g("장부가 해외채권") + g("시가 해외채권"),
+             해외주식: g("해외주식") };
+  } catch { return null; }
 }
 
 /* 총 운용자산(억원) — hedge 자신의 저장소에만 둔다(스키마는 추가만 하므로 하위 호환). */
@@ -3176,7 +3185,7 @@ function hedgeRows(H2, saved) {
   const aum = hedgeTotalAum(saved);
   const mix = aum ? allocMixReadOnly() : null;
   /* 유도 매핑 — 통화 구성 정보가 없으므로 **달러 두 줄만** 유도한다.
-     장부가 해외채권 + 시가 해외채권 → USD_b, 해외주식 → USD_e. */
+     해외채권 → USD_b, 해외주식 → USD_e (시가 7축 — 구 저장분은 fold 되어 온다). */
   const pct = (...keys) => {
     if (!mix) return null;
     const vals = keys.map((k) => +mix[k]).filter((x) => isFinite(x));
@@ -3203,7 +3212,7 @@ function hedgeRows(H2, saved) {
     if (m.c === "USD") {
       rows.push({ id: "USD_b", cur: "USD", kind: "bond", name: "달러 — 채권",
                   ref: `경제 ${m.mvh}% · 회계 100%`, book: 70, h: 90,
-                  ...pick(derive("장부가 해외채권", "시가 해외채권"), 5000) });
+                  ...pick(derive("해외채권"), 5000) });
       rows.push({ id: "USD_e", cur: "USD", kind: "eq", name: "달러 — 해외주식(ACWI)",
                   ref: eqMinH == null ? "경제 —" : `경제 ${eqMinH}% (변동성 최소)`,
                   book: null, h: 30,
@@ -3608,16 +3617,18 @@ function amOptimize(mu, C, lo, hi, total, target, groups, iters) {
   return w;
 }
 
-/* 대체투자는 지분형/대출형 두 분류다(2026-08-12 사용자 지시). 경제 축의 삽입 위치가
-   계약이다 — 해외채권 index 1·해외주식 index 3 을 xeOf/hedgePairForXe 가 쓰므로 그 앞을
+/* 자산군 우주는 **시가 기준 7축 하나**다(2026-08-12 사용자 지시 — 장부가 축 제거 §7.7.11).
+   장부가 BM 은 원가법이라 손익변동 σ(실측 0.18%/0.17%)가 시장위험을 나르지 않아 같은
+   MVO 방법론을 적용할 수 없고, 장부 보유분의 경제적 위험은 시가 축이 나른다(구 경제
+   관점의 채권 쌍 합산 규칙 그대로 — 이관도 같은 fold 를 쓴다). 이때 회계 9축·관점
+   토글·장부가 합산 상한(cap_book)·북일드(by_kr/by_fx)가 함께 폐지됐다.
+   대체투자는 지분형/대출형 두 분류다(2026-08-12 사용자 지시). 삽입 위치가 계약이다 —
+   해외채권 index 1·해외주식 index 3 을 xeOf/hedgePairForXe 가 쓰므로 그 앞을
    건드리지 말 것. 두 분류의 위험은 CMA 층의 분류별 팩터 매핑(cmaAltRows)이 정하고,
    프록시층은 같은 프록시를 공유한다(pipeline/alloc.py loadings 와 동일 규약).
-   회계 축 순서는 2026-08-12 사용자 지정: 장부가 채권 2 → 단기자금 → 주식 2 →
-   시가 채권 2 → 대체투자(대출형 → 지분형). 대출금은 배분 우주에서 제외 — 9개가 합 100. */
+   대출금은 배분 우주에서 제외 — 7개가 합 100. */
 const ALLOC_ECON = ["국내채권", "해외채권", "국내주식", "해외주식",
                     "대체투자(대출형)", "대체투자(지분형)", "단기자금"];
-const ALLOC_ACCT = ["장부가 국내채권", "장부가 해외채권", "단기자금", "국내주식", "해외주식",
-                    "시가 국내채권", "시가 해외채권", "대체투자(대출형)", "대체투자(지분형)"];
 const ALLOC_ALT_KEYS = ["대체투자(지분형)", "대체투자(대출형)"];
 const allocIsAlt = (k) => k === "대체투자(지분형)" || k === "대체투자(대출형)";
 /* 좁은 표 머리글용 축약 — slice(0,4)는 두 분류를 구분하지 못한다 */
@@ -3660,7 +3671,6 @@ function allocEngine(A, st) {
   const rowAlt = zero(); rowAlt[ix.alt] = kAlt;
   const rowUsb = (h) => { const r = zero(); r[ix.us_bond] = 1; r[ix.e_usd] = 1 - h; r[ix.swap] = h; return r; };
   const rowEq = (h) => { const r = zero(); r[ix[proxy]] = 1; r[ix.e_usd] = 1 - h; r[ix.swap] = h; return r; };
-  const rowBookFx = (h) => { const r = zero(); r[ix.e_usd] = 1 - h; r[ix.swap] = h; r[ix.d_swap] = -h * tau; return r; };
 
   const sigOf = (row) => Math.sqrt(Math.max(amQuad(row, S), 0)) * 100;
 
@@ -3675,13 +3685,14 @@ function allocEngine(A, st) {
     layerNote = A.cma && A.cma.reason
       ? `벤치마크 CMA 비활성 — ${A.cma.reason}` : "벤치마크 CMA 없음 — 프록시로 계산";
   }
-  /* 회계 9키 → CMA 라벨. 경제 7키는 시가 쌍으로 병합된다(econ_map 과 같은 규칙 —
-     장부/시가가 같은 시가 통계를 받으므로 병합 7키가 곧 경제 관점이다).
-     대체투자 두 분류는 벤치마크 계열 하나(시가 대체투자)를 공유한다 — 분류별
-     위험 구분은 벤치마크가 아니라 분류별 팩터 매핑(cmaAltRows)이 만든다. */
-  const CMA_ACCT_LBL = {
-    "장부가 국내채권": "장부가 국내채권", "시가 국내채권": "시가 국내채권",
-    "장부가 해외채권": "장부가 해외채권", "시가 해외채권": "시가 해외채권",
+  /* 자산군 7키 → CMA 라벨. 채권·주식은 시가 벤치마크, 단기자금은 장부가 단기자금
+     계열이 정의상 그 자산이다(현금성 — 원가와 시가가 사실상 같다). 대체투자 두
+     분류는 벤치마크 계열 하나(시가 대체투자)를 공유한다 — 분류별 위험 구분은
+     벤치마크가 아니라 분류별 팩터 매핑(cmaAltRows)이 만든다. 장부가 채권 계열은
+     BM 파일에 여전히 게시되지만(coverage 진단용) 여기서는 더 이상 요구하지도
+     사용하지도 않는다(§7.7.11). */
+  const CMA_LBL = {
+    국내채권: "시가 국내채권", 해외채권: "시가 해외채권",
     국내주식: "시가 국내주식", 해외주식: "시가 해외주식",
     "대체투자(지분형)": "시가 대체투자", "대체투자(대출형)": "시가 대체투자",
     단기자금: "장부가 단기자금",
@@ -3689,7 +3700,7 @@ function allocEngine(A, st) {
   let cmaW = null, cmaCI = null;
   if (layer === "cma") {
     const have = new Set(cmaAll.cols);
-    const missing = [...new Set(Object.values(CMA_ACCT_LBL))].filter((lb) => !have.has(lb));
+    const missing = [...new Set(Object.values(CMA_LBL))].filter((lb) => !have.has(lb));
     if (missing.length) {
       layer = "proxy";
       layerNote = `벤치마크 CMA 에 자산군 누락(${missing.join(", ")}) — 프록시로 계산`;
@@ -3714,7 +3725,7 @@ function allocEngine(A, st) {
      σ 는 유효(키인) 값을 쓴다 — 동일 샤프 논리는 실제로 지는 위험에 걸리는 것. */
   const sigScale = {};
   if (layer === "cma" && st.sig_over) {
-    Object.entries(CMA_ACCT_LBL).forEach(([k, lb]) => {
+    Object.entries(CMA_LBL).forEach(([k, lb]) => {
       /* 대체투자 두 분류는 σ 키인 대상이 아니다 — 위험은 분류별 팩터 매핑이 정하고
          (매핑 콘솔에서 조정), 두 키가 같은 라벨을 공유해 배율이 충돌하기도 한다. */
       if (allocIsAlt(k)) return;
@@ -3763,43 +3774,24 @@ function allocEngine(A, st) {
      (헤지비용 반영 후 원화 기대수익, 사용자 CMA 정본)로 base 를 통째로 대체하고
      캐리를 다시 더하지 않는다(중복 가산 금지 — 구 「캐리 별도 가산」 규약 폐지).
      헤지 슬라이더는 μ 가 아니라 위험(환노출 (1−h))으로만 작동한다. 미입력 자산만
-     앵커/관측+캐리 폴백. 장부가 채권의 키인은 기존 북일드(by_kr/by_fx)가 담당한다. */
-  const MU_OVER_ACCT = { "시가 국내채권": "국내채권", "시가 해외채권": "해외채권",
-    국내주식: "국내주식", 해외주식: "해외주식",
-    "대체투자(지분형)": "대체투자(지분형)", "대체투자(대출형)": "대체투자(대출형)",
-    단기자금: "단기자금" };
-  function applyMuOver(view2, keys, mu) {
+     앵커/관측+캐리 폴백. 구 북일드(by_kr/by_fx)는 장부가 축과 함께 폐지(§7.7.11). */
+  function applyMuOver(keys, mu) {
     keys.forEach((k, i) => {
-      const ek = view2 === "acct" ? MU_OVER_ACCT[k] : k;
-      if (!ek) return;
-      const v = st.mu_over ? st.mu_over[ek] : null;
+      const v = st.mu_over ? st.mu_over[k] : null;
       if (v == null || !isFinite(v)) return;
       mu[i] = +v;
     });
     return mu;
   }
 
-  const byKr = st.by_kr != null ? st.by_kr : R.kr5y.v;      // 북일드 미입력 시 [관측] 대체
-  /* 북일드 키인도 최종치(§7.7.10) — 캐리 미가산. 미입력 폴백만 관측 YTM + 캐리. */
-  const byFxAt = (hbX) => (st.by_fx != null ? st.by_fx : R.us_ytm.v + hbX * cost);
-
-  function buildProxy(view, hbX, heX) {
+  function buildProxy(hbX, heX) {
     const anchor = anchorLocal();   // 슬라이더 무관 — hbX 는 비용항·로딩에만 쓰인다
     const muE = muEconAt(hbX, heX, anchor);
-    let keys, rows, mu;
-    if (view === "acct") {
-      keys = ALLOC_ACCT;
-      /* 대체투자 두 분류는 프록시층에서 같은 행(rowAlt)을 공유한다 — 완전상관이라
-         합계 비중이 같으면 총위험이 구 단일 「대체투자」와 정확히 같다.
-         행 순서 = ALLOC_ACCT (장부채권 2 → 단기 → 주식 2 → 시가채권 2 → 대출형 → 지분형). */
-      rows = [zero(), rowBookFx(hbX), rowCash, rowKospi, rowEq(heX),
-              rowKr, rowUsb(hbX), rowAlt, rowAlt];
-      mu = [byKr, byFxAt(hbX), muE[6], muE[2], muE[3], muE[0], muE[1], muE[4], muE[5]];
-    } else {
-      keys = ALLOC_ECON;
-      rows = [rowKr, rowUsb(hbX), rowKospi, rowEq(heX), rowAlt, rowAlt, rowCash];
-      mu = muE;
-    }
+    /* 대체투자 두 분류는 프록시층에서 같은 행(rowAlt)을 공유한다 — 완전상관이라
+       합계 비중이 같으면 총위험이 구 단일 「대체투자」와 정확히 같다. */
+    const keys = ALLOC_ECON;
+    const rows = [rowKr, rowUsb(hbX), rowKospi, rowEq(heX), rowAlt, rowAlt, rowCash];
+    const mu = muE;
     const m = keys.length;
     const C = [];
     for (let i = 0; i < m; i++) {
@@ -3807,7 +3799,7 @@ function allocEngine(A, st) {
       C.push([]);
       for (let j = 0; j < m; j++) C[i].push(amDot(rows[j], Si) * 10000);   // %² 단위
     }
-    applyMuOver(view, keys, mu);
+    applyMuOver(keys, mu);
     return { keys, rows, mu, C, anchor };
   }
 
@@ -3863,7 +3855,7 @@ function allocEngine(A, st) {
   }
   /* M 을 갈아끼울 수 있게 분리 — 시변(롤링)·창 민감도 카드가 같은 로딩·매핑으로
      다른 시점의 공분산을 쓴다. buildCma 는 현재 창을 꽂은 것일 뿐이다. */
-  function buildCmaFrom(M0, view, hbX, heX) {
+  function buildCmaFrom(M0, hbX, heX) {
     const M = scaleCmaM(M0);      // σ 키인 반영 — 상관 불변, σ 만 교체
     const fxi = cmaCI["_fx"];
     const base = (lb) => {
@@ -3875,22 +3867,11 @@ function allocEngine(A, st) {
     const alt = cmaAltRows(M);
     const anchor = anchorLocal();
     const muE = muEconAt(hbX, heX, anchor);
-    let keys, rows, mu;
-    if (view === "acct") {
-      keys = ALLOC_ACCT;
-      /* 행 순서 = ALLOC_ACCT (2026-08-12 사용자 지정) */
-      rows = [base("장부가 국내채권"), withFx(base("장부가 해외채권"), 1 - hbX),
-              base("장부가 단기자금"), base("시가 국내주식"), withFx(base("시가 해외주식"), 1 - heX),
-              base("시가 국내채권"), withFx(base("시가 해외채권"), 1 - hbX),
-              alt.rDt, alt.rEq];
-      mu = [byKr, byFxAt(hbX), muE[6], muE[2], muE[3], muE[0], muE[1], muE[4], muE[5]];
-    } else {
-      keys = ALLOC_ECON;
-      rows = [base("시가 국내채권"), withFx(base("시가 해외채권"), 1 - hbX),
-              base("시가 국내주식"), withFx(base("시가 해외주식"), 1 - heX),
-              alt.rDt, alt.rEq, base("장부가 단기자금")];
-      mu = muE;
-    }
+    const keys = ALLOC_ECON;
+    const rows = [base("시가 국내채권"), withFx(base("시가 해외채권"), 1 - hbX),
+                  base("시가 국내주식"), withFx(base("시가 해외주식"), 1 - heX),
+                  alt.rDt, alt.rEq, base("장부가 단기자금")];
+    const mu = muE;
     const m = keys.length;
     const C = [];
     for (let i = 0; i < m; i++) {
@@ -3906,26 +3887,16 @@ function allocEngine(A, st) {
       C[iAe][iAe] += add;
       if (iAd >= 0) C[iAd][iAd] += add;
     }
-    applyMuOver(view, keys, mu, hbX, heX);
+    applyMuOver(keys, mu);
     return { keys, rows, mu, C, anchor };
   }
-  const buildCma = (view, hbX, heX) => buildCmaFrom(cmaW.cov, view, hbX, heX);
+  const buildCma = (hbX, heX) => buildCmaFrom(cmaW.cov, hbX, heX);
   const build = layer === "cma" ? buildCma : buildProxy;
 
-  const mixSrc = st.mix_acct;
-  const mixEcon = {
-    국내채권: mixSrc["장부가 국내채권"] + mixSrc["시가 국내채권"],
-    해외채권: mixSrc["장부가 해외채권"] + mixSrc["시가 해외채권"],
-    국내주식: mixSrc["국내주식"], 해외주식: mixSrc["해외주식"],
-    "대체투자(지분형)": mixSrc["대체투자(지분형)"],
-    "대체투자(대출형)": mixSrc["대체투자(대출형)"],
-    단기자금: mixSrc["단기자금"],
-  };
-  const view = st.view === "acct" ? "acct" : "econ";
-  const V = build(view, hb, he);
-  const mix = view === "acct" ? mixSrc : mixEcon;
+  const mix = st.mix;
+  const V = build(hb, he);
   const w0 = V.keys.map((k) => (mix[k] || 0) / 100);
-  const bands = view === "acct" ? st.bands_acct : st.bands;
+  const bands = st.bands;
   const lo = V.keys.map((k) => (bands[k] ? bands[k][0] : 0) / 100);
   const hi = V.keys.map((k) => (bands[k] ? bands[k][1] : 100) / 100);
   const total = w0.reduce((a, b) => a + b, 0);
@@ -3938,13 +3909,8 @@ function allocEngine(A, st) {
     groups.push({ label: "주식 합계", cap: st.cap_equity / 100,
       idx: V.keys.map((k, i) => [k, i]).filter(([k]) => k.includes("주식")).map(([, i]) => i) });
   }
-  /* 장부가 성격 합산 상한(§7.7 — 장부가 채권 2 + 단기자금 **합산**, 각각이 아니다).
-     회계 관점에만 건다 — 경제 관점은 장부/시가가 병합돼 이 구분이 없다. */
-  if (view === "acct" && st.cap_book != null) {
-    groups.push({ label: "장부가 성격 합계", cap: st.cap_book / 100,
-      idx: ["장부가 국내채권", "장부가 해외채권", "단기자금"]
-        .map((k) => V.keys.indexOf(k)).filter((i) => i >= 0) });
-  }
+  /* 구 「장부가 성격 합산 상한」(cap_book)은 장부가 축과 함께 폐지(§7.7.11) —
+     현금 쏠림이 문제가 되면 단기자금 밴드 상한이 그 자리다. */
 
   const sigmaW = (w, C) => Math.sqrt(Math.max(amQuad(w, C), 0));
   const eulerRC = (w, C) => {
@@ -3978,22 +3944,22 @@ function allocEngine(A, st) {
   })() : null;
 
   return {
-    A, st, set, ix, S, cost, costOpt, view, V, mix, mixEcon, w0, lo, hi, total, groups,
-    byKr, kAlt, tau, proxy,
+    A, st, set, ix, S, cost, costOpt, V, mix, w0, lo, hi, total, groups,
+    kAlt, tau, proxy,
     layer, layerNote, cmaAll, cmaW, sample, altInfo, fxLive, sigScale,
-    /* 시뮬레이터용 — 회계 키의 관측/유효(키인 반영) σ. CMA 층 밖에서는 null */
-    cmaAcctSig(k) {
+    /* 시뮬레이터용 — 자산군의 관측/유효(키인 반영) σ. CMA 층 밖에서는 null */
+    cmaSigInfo(k) {
       if (layer !== "cma") return null;
-      const lb = CMA_ACCT_LBL[k];
+      const lb = CMA_LBL[k];
       return lb ? { obs: cmaSig(lb), eff: cmaSigEff(lb) } : null;
     },
     n_months: sample.n_months,
     anchorLocal, muEconAt, build, sigOf, rowUsb, rowEq, rowKospi, rowKr,
     sigmaW, eulerRC,
     seOf(sig) { return sig / Math.sqrt(2 * sample.n_months); },
-    /* 배분 고정 · 헤지 (hbX,heX) 이동 시 총위험(현재 관점 기준) */
+    /* 배분 고정 · 헤지 (hbX,heX) 이동 시 총위험 */
     sigmaHedge(hbX, heX) {
-      const B = build(view, hbX, heX);
+      const B = build(hbX, heX);
       return sigmaW(w0, B.C);
     },
     /* --- 헤지 레버의 자유도는 실질 1개다 (pipeline/alloc.py 와 같은 항등식) ---
@@ -4006,13 +3972,11 @@ function allocEngine(A, st) {
     /* σ²(Xe) = a0 + 2·a1·Xe + a2·Xe². 정확히 2차식이므로 **세 점이면 계수가 확정**된다
        — 로딩 산식을 여기서 다시 쓰지 않고 sigmaHedge 를 세 번 부르는 편이 어긋날 여지가 없다.
        (hb,he) = (1−t, 1−t) 로 잡으면 Xe = (w채+w주)·t 라 t = 0 / ½ / 1 을 쓴다.
-       회계 관점은 d_swap 의 −h·τ 때문에 이 붕괴가 성립하지 **않으므로** 쓰지 말 것. */
+       (구 회계 관점은 d_swap 의 −h·τ 때문에 이 붕괴가 성립하지 않아 가드로 막았었다 —
+       장부가 축 폐지로 그 관점 자체가 없어져 가드도 함께 내렸다 §7.7.11.) */
     xeQuad() {
-      /* 주석이 아니라 실제 가드다 — 회계 관점에서 이 붕괴는 성립하지 않으므로
-         조용히 틀린 2차식을 돌려주느니 호출 자체를 막는다. */
-      if (view !== "econ") throw new Error("xeQuad: 경제 관점 전용 (회계는 d_swap 때문에 붕괴하지 않음)");
       const X = w0[1] + w0[3];
-      if (!(X > 0)) return { a0: sigmaW(w0, build(view, 1, 1).C) ** 2, a1: 0, a2: 0, span: 0 };
+      if (!(X > 0)) return { a0: sigmaW(w0, build(1, 1).C) ** 2, a1: 0, a2: 0, span: 0 };
       const sq = (t) => this.sigmaHedge(1 - t, 1 - t) ** 2;
       const s0 = sq(0), s1 = sq(0.5), s2 = sq(1);
       const a2 = 2 * (s2 - 2 * s1 + s0) / (X * X);
@@ -4160,7 +4124,7 @@ function renderAllocTv(box, E, st, pal, rerender) {
   const lam = +st.mvo_lambda || 1;
   const hb = st.h_bond / 100, he = st.h_eq / 100;
   const optAt = (M) => {
-    const B = E.buildFrom(M, E.view, hb, he);
+    const B = E.buildFrom(M, hb, he);
     const w = E.optimizeUtil(B.mu, B.C, lam, 1500);
     return { B, w, sig: E.sigmaW(w, B.C), mu: amDot(B.mu, w) };
   };
@@ -4189,7 +4153,7 @@ function renderAllocTv(box, E, st, pal, rerender) {
     const keys = pts[0].B.keys;
     const fbox = cardScaffold(box, {
       title: `최적 배분의 시간 경로 — λ-효용 MVO (λ=${fmtNum(lam, 1)}, 소수 단위)`,
-      sub: `${blk.key}년 롤링 × ${pts.length}시점 · ${E.view === "acct" ? "회계" : "경제"} 관점`,
+      sub: `${blk.key}년 롤링 × ${pts.length}시점 · 시가 기준 7축`,
       csvName: "최적배분_시변.csv",
       controls: el("span", { style: "display:inline-flex;gap:8px;flex-wrap:wrap" }, modeSeg, lenSeg),
       tableFn: () => ({
@@ -4216,7 +4180,7 @@ function renderAllocTv(box, E, st, pal, rerender) {
   const keys = rows[0].B.keys;
   box.append(el("div", { class: "card-head" },
     el("span", { class: "card-title" }, `최적 배분의 창 민감도 — λ-효용 MVO (λ=${fmtNum(lam, 1)}, 소수 단위)`),
-    el("span", { class: "card-sub" }, `창을 바꾸면 배분이 얼마나 움직이나 · ${E.view === "acct" ? "회계" : "경제"} 관점`),
+    el("span", { class: "card-sub" }, "창을 바꾸면 배분이 얼마나 움직이나 · 시가 기준 7축"),
     el("span", {}, modeSeg)));
   const t = el("table", { class: "mini-table" },
     el("tr", {}, ...["창", "개월", ...keys.map((k) => k + "%"), "위험%", "수익%"]
@@ -4269,10 +4233,9 @@ function renderAllocChar(box, E, w, opts) {
   box.textContent = "";
   const V = E.V;
   const cs = allocCharStats(E, w);
-  const acct = E.view === "acct";
-  const riskWord = acct ? "손익변동성" : "위험";
+  const riskWord = "위험";
   box.append(el("div", { class: "card-head" },
-    el("span", { class: "card-title" }, `포트폴리오 특성 — ${acct ? "회계" : "경제"} 관점, 즉시 갱신`),
+    el("span", { class: "card-title" }, "포트폴리오 특성 — 즉시 갱신"),
     el("span", { class: "card-sub" },
       `표본 ${E.sample.start}~${E.sample.end} (${E.sample.n_months}개월) · 위 콘솔의 비중·헤지·매핑을 그대로 따릅니다`)));
 
@@ -4307,12 +4270,10 @@ function renderAllocChar(box, E, w, opts) {
   const mddOf = (k) => {
     if (E.layer !== "cma" || !E.cmaW || !E.cmaW.mdd_pct) return null;
     if (allocIsAlt(k) && E.altInfo && E.altInfo.mode === "factor") return null;   // 매핑 자산 — 원지수 실측이 대표하지 않는다
-    const lb = { "장부가 국내채권": "장부가 국내채권", "시가 국내채권": "시가 국내채권",
-      "장부가 해외채권": "장부가 해외채권", "시가 해외채권": "시가 해외채권",
+    const lb = { 국내채권: "시가 국내채권", 해외채권: "시가 해외채권",
       국내주식: "시가 국내주식", 해외주식: "시가 해외주식",
       "대체투자(지분형)": "시가 대체투자", "대체투자(대출형)": "시가 대체투자",
-      단기자금: "장부가 단기자금",
-      국내채권: "시가 국내채권", 해외채권: "시가 해외채권" }[k];
+      단기자금: "장부가 단기자금" }[k];
     const i = E.cmaAll.cols.indexOf(lb);
     return i >= 0 ? E.cmaW.mdd_pct[i] : null;
   };
@@ -4333,9 +4294,9 @@ function renderAllocChar(box, E, w, opts) {
       "실측 MDD 는 벤치마크 원지수의 창 안 최대낙폭(월말 관측 — 월중 저점은 보이지 않음). ",
       "매핑된 대체투자는 원지수 실측이 대표하지 않아 비웁니다. ρ(포트,자산) = 공분산 ÷ (σₚσᵢ)."));
 
-  /* 상관 행렬 — 길어서 접는다. 값은 현재 관점·매핑·헤지가 반영된 V.C 기준이다 */
+  /* 상관 행렬 — 길어서 접는다. 값은 현재 매핑·헤지가 반영된 V.C 기준이다 */
   const det = el("details", { style: "margin-top:8px" },
-    el("summary", {}, "자산군 상관 행렬 (현재 관점·매핑·헤지 반영)"));
+    el("summary", {}, "자산군 상관 행렬 (현재 매핑·헤지 반영)"));
   const tc = el("table", { class: "mini-table" },
     el("tr", {}, el("th", {}, ""), ...V.keys.map((k) => el("th", {}, k))));
   V.keys.forEach((a, i) => {
@@ -4357,17 +4318,20 @@ function renderAllocChar(box, E, w, opts) {
    재분배하지 않고 합계 배지만 보인다(기존 규약 그대로). */
 function allocRedistribute(mix, key, newV, target) {
   const out = { ...mix };
-  const others = ALLOC_ACCT.filter((k) => k !== key);
+  const others = ALLOC_ECON.filter((k) => k !== key);
   const v = Math.min(Math.max(0, newV), Math.max(0, target));
-  out[key] = +v.toFixed(2);
-  const need = Math.max(0, target - v);
+  out[key] = Math.round(v * 10) / 10;
+  const need = Math.max(0, Math.round((target - out[key]) * 10));   // 0.1%p 단위 정수
   const oldSum = others.reduce((a, k) => a + Math.max(0, out[k] || 0), 0);
-  if (oldSum <= 1e-9) {
-    others.forEach((k) => { out[k] = +(need / others.length).toFixed(2); });
-  } else {
-    const f = need / oldSum;
-    others.forEach((k) => { out[k] = +(Math.max(0, out[k] || 0) * f).toFixed(2); });
-  }
+  /* 비례 재분배 후 0.1 단위 최대잔여법 — 합계가 목표와 **정확히** 일치해야
+     「합계 100% 유지」 모드가 배지를 안 띄운다(비중 표시 0.1 단위 — 2026-08-12). */
+  const raw = others.map((k) => oldSum <= 1e-9
+    ? need / 10 / others.length : Math.max(0, out[k] || 0) * (need / 10) / oldSum);
+  const fl = raw.map((x) => Math.floor(x * 10));
+  let rem = need - fl.reduce((a, b) => a + b, 0);
+  raw.map((x, i) => [x * 10 - fl[i], i]).sort((a, b) => b[0] - a[0])
+    .forEach(([, i]) => { if (rem > 0) { fl[i] += 1; rem -= 1; } });
+  others.forEach((k, i) => { out[k] = fl[i] / 10; });
   return out;
 }
 
@@ -4416,10 +4380,9 @@ let allocTvCharts = [];   // 시변 카드 전용 — recalc 타이머의 전체
 function allocDefaults(A) {
   const d = A.defaults;
   return {
-    view: "econ",
-    mix_acct: { ...d.mix_acct },
+    /* 시가 기준 7축 하나(§7.7.11) — 구 mix_acct/bands_acct/view 는 이관 절이 접는다 */
+    mix: { ...(d.mix || {}) },
     bands: JSON.parse(JSON.stringify(d.bands)),
-    bands_acct: JSON.parse(JSON.stringify(d.bands_acct)),
     loan_w: d.loan_w, loan_y: d.loan_y,
     alt_alpha: d.alt_alpha, alt_vol: d.alt_vol,
     tenor_m: d.tenor_m, h_bond: d.h_bond, h_eq: d.h_eq,
@@ -4439,9 +4402,6 @@ function allocDefaults(A) {
        민감도 대안). 잔차(고유위험)는 디스무딩 보조축(_alt)의 팩터 스팬 회귀에서
        폐형으로 계산해 분류마다 독립 가산한다(§7.7.9). */
     alt_map: { mode: "factor", eq_we: 50, eq_wb: 50, dt_we: 50, dt_wb: 50 },
-    /* 장부가 성격(장부가 채권 2 + 단기자금) 합산 상한 % — 내규 수치라 중립(없음)이
-       기본이고 수기 입력으로만 받는다(§7.7 의 70 은 코드에 박지 않는다). */
-    cap_book: null,
     /* 기대수익 키인(연 %) — 디폴트는 파이프라인이 게시한 사용자 지정 CMA 수치
        (2026-08-12). 키인은 최종치라 캐리 미가산(§7.7.10). 구 alloc.json(디폴트
        미게시)에서는 null = 앵커/관측 폴백. */
@@ -4451,22 +4411,17 @@ function allocDefaults(A) {
     /* 시변·창 민감도 카드 — λ-효용 MVO. λ=1 소수 단위(2026-08-11 사용자 지정,
        커스터마이징 UI 는 차기). tv_len 은 롤링 길이(년) — null = 게시된 것 중 최장. */
     mvo_lambda: 1, tv_mode: "roll", tv_len: null,
-    /* 시뮬레이터(§7.7.8) — 자산군별 위험 키인(연 %, 회계 8키). null = 벤치마크 실측.
-       **상관은 항상 벤치마크 실측 ρ 를 유지**하고 σ 만 갈아끼운다(키인 σ × 실측 ρ —
-       표준 CMA 관행). 그래야 특성 카드·효율선·시변이 같은 행렬에서 한 몸으로 움직인다.
-       디폴트 수치는 사용자가 추후 지정 예정 — 그때까지 미입력 = 실측이 디폴트다. */
-    sig_over: { "장부가 국내채권": null, "시가 국내채권": null, "장부가 해외채권": null,
-                "시가 해외채권": null, 국내주식: null, 해외주식: null, 단기자금: null },
+    /* 시뮬레이터(§7.7.8) — 자산군별 위험 키인(연 %, 대체투자 두 분류 제외 5키).
+       null = 벤치마크 실측. **상관은 항상 벤치마크 실측 ρ 를 유지**하고 σ 만
+       갈아끼운다(키인 σ × 실측 ρ — 표준 CMA 관행). 그래야 특성 카드·효율선·시변이
+       같은 행렬에서 한 몸으로 움직인다. 미입력 = 실측이 디폴트다. */
+    sig_over: { 국내채권: null, 해외채권: null, 국내주식: null, 해외주식: null,
+                단기자금: null },
     /* 비중 막대 합계 모드 — true: 하나를 끌면 나머지가 비례 재분배돼 합이 유지된다
        (명시적 모드 선택이므로 「몰래 맞추기」가 아니다). 기본은 자유 조정 + 합계
        배지 — 기존 「몰래 맞추지 않는다」 원칙의 기본값을 유지하고 유지 모드는 옵트인. */
     sum_lock: false,
     cap_foreign: null, cap_equity: null, target_ret: null, risk_cap: null,
-    /* 북일드 디폴트 — 사용자 지정(2026-08-12): 장부가 국내 3.04 / 해외 3.34.
-       구 alloc.json 에는 없어 null = 관측 폴백. */
-    by_kr: d.by_kr != null ? d.by_kr : null,
-    by_fx: d.by_fx != null ? d.by_fx : null,
-    book_mat_m: null,
     dur_liab: null, dur_asset: null, la_ratio: null,
     dur_by: { 국내채권: null, 해외채권: null, 단기자금: null },
     saved: false,
@@ -4516,64 +4471,93 @@ function allocState(A) {
       && st.mix_acct["대체투자"] != null && isFinite(+st.mix_acct["대체투자"])
       && st.mix_acct["대체투자(지분형)"] == null) {
     const v = +st.mix_acct["대체투자"];
-    const de = d.mix_acct["대체투자(지분형)"], dd = d.mix_acct["대체투자(대출형)"];
+    const de = d.mix["대체투자(지분형)"], dd = d.mix["대체투자(대출형)"];
     const fe = de + dd > 0 ? de / (de + dd) : 0.5;
     const ve = +(v * fe).toFixed(2);
     st.mix_acct["대체투자(지분형)"] = ve;
     st.mix_acct["대체투자(대출형)"] = +(v - ve).toFixed(2);   // 합계 보존
   }
   if (st.mix_acct) delete st.mix_acct["대체투자"];
-  [["bands", d.bands], ["bands_acct", d.bands_acct]].forEach(([bk, db]) => {
-    const b = st[bk];
-    if (!b || typeof b !== "object") return;
-    if (Array.isArray(b["대체투자"]) && !Array.isArray(b["대체투자(지분형)"])) {
-      b["대체투자(지분형)"] = b["대체투자"].slice();
-      b["대체투자(대출형)"] = (db["대체투자(대출형)"] || [0, 100]).slice();
+  {
+    const b = st.bands;
+    if (b && typeof b === "object") {
+      if (Array.isArray(b["대체투자"]) && !Array.isArray(b["대체투자(지분형)"])) {
+        b["대체투자(지분형)"] = b["대체투자"].slice();
+        b["대체투자(대출형)"] = (d.bands["대체투자(대출형)"] || [0, 100]).slice();
+      }
+      delete b["대체투자"];
+      /* 분할 키 백필 — 저장분에 없으면 기본값. 수기 입력 저장 핸들러가 이 배열을
+         직접 인덱싱하므로(bands[k][0]) 없는 채로 두면 저장 버튼에서 죽는다. */
+      ALLOC_ALT_KEYS.forEach((k) => {
+        if (!Array.isArray(b[k])) b[k] = (d.bands[k] || [0, 100]).slice();
+      });
     }
-    delete b["대체투자"];
-    /* 분할 키 백필 — 저장분에 없으면 기본값. 수기 입력 저장 핸들러가 이 배열을
-       직접 인덱싱하므로(bands_acct[k][0]) 없는 채로 두면 저장 버튼에서 죽는다. */
-    ALLOC_ALT_KEYS.forEach((k) => {
-      if (!Array.isArray(b[k])) b[k] = (db[k] || [0, 100]).slice();
-    });
-  });
+  }
   if (st.sig_over && typeof st.sig_over === "object") delete st.sig_over["대체투자"];
   if (st.cma_win != null) st.cma_win = String(st.cma_win);   // tv_len 과 대칭 — 숫자형 저장 수용
   /* 숫자 칸 소독(재점검 발견) — 손상 저장("abc")이 NaN 으로 스며들면 그룹 상한이
      NaN 이 되어 참고치가 사유 없이 전부 "–"가 된다(NaN 비교는 모든 검사를 통과).
      null 은 유효한 "없음"이므로 유지하고, 숫자로 못 읽는 값만 기본값으로 되돌린다. */
-  ["cap_book", "cap_foreign", "cap_equity", "target_ret", "risk_cap",
+  ["cap_foreign", "cap_equity", "target_ret", "risk_cap",
    "loan_w", "loan_y", "alt_alpha", "alt_vol", "tenor_m", "h_bond", "h_eq",
-   "by_kr", "by_fx", "dur_liab", "dur_asset", "la_ratio", "book_mat_m"].forEach((k) => {
+   "dur_liab", "dur_asset", "la_ratio"].forEach((k) => {
     if (st[k] == null) return;
     st[k] = isFinite(+st[k]) ? +st[k] : d[k];
   });
-  if (!st.mix_acct || typeof st.mix_acct !== "object") st.mix_acct = { ...d.mix_acct };
-  ALLOC_ACCT.forEach((k) => {
-    const v = st.mix_acct[k];
-    st.mix_acct[k] = v != null && isFinite(+v) ? +v : d.mix_acct[k];
-  });
-  if (!st.sig_over || typeof st.sig_over !== "object") st.sig_over = d.sig_over;
-  ALLOC_ACCT.forEach((k) => {
-    const v = st.sig_over[k];
-    if (v != null && (!isFinite(+v) || +v <= 0)) st.sig_over[k] = null;
-  });
-  /* ---- 2026-08-12 이관 — 대출금 제외·μ/매핑 디폴트(사용자 지정) ---- */
-  /* 대출금은 배분 우주에서 제외 확정 — 저장분의 12% 도 무효(9개 자산군 합 100). */
-  st.loan_w = 0;
-  /* 구 「예시」 기본값 **그대로**인 저장분만 새 예시로 바꾼다 — 사용자가 만진 숫자는
-     건드리지 않는다(합계 100 미달은 배지가 알린다 — 몰래 맞추기 금지). */
+  /* ---- 2026-08-12 이관 ② — 장부가 축 제거(§7.7.11) ----
+     회계 9축 저장분을 시가 7축으로 접는다. 채권 쌍은 **합산**(구 경제 관점 mixEcon 과
+     같은 규칙 — 합계 100 과 경제적 환노출 보존), σ 키인은 시가 키를 승계하고,
+     장부가 키·북일드(by_kr/by_fx)·cap_book·bands_acct·view(관점)는 폐기한다.
+     장부 보유분의 경제적 위험은 시가 축이 나른다 — 저장분을 조용히 버리지 않는
+     이유이자, 접는 규칙이 유일하게 정해지는 이유다. */
   const OLD_MIX = { "장부가 국내채권": 30, "시가 국내채권": 12, "장부가 해외채권": 12,
     "시가 해외채권": 6, 국내주식: 3, 해외주식: 5,
     "대체투자(지분형)": 12, "대체투자(대출형)": 3, 단기자금: 5 };
-  if (ALLOC_ACCT.every((k) => +st.mix_acct[k] === OLD_MIX[k])) st.mix_acct = { ...d.mix_acct };
+  /* 주의: st.mix 는 디폴트 스프레드로 항상 존재한다 — fold 여부는 **저장분**에 새
+     스키마(mix)가 있었는지로 판정해야 한다(실측: st.mix 로 가드하면 fold 가 영영
+     안 돈다). */
+  if ((!saved.mix || typeof saved.mix !== "object")
+      && st.mix_acct && typeof st.mix_acct === "object") {
+    if (Object.keys(OLD_MIX).every((k) => +st.mix_acct[k] === OLD_MIX[k])) {
+      st.mix = { ...d.mix };   // 구 「예시」 그대로 — 사용자가 만진 값이 아니라 새 예시로
+    } else {
+      const g = (k) => (st.mix_acct[k] != null && isFinite(+st.mix_acct[k]) ? +st.mix_acct[k] : 0);
+      st.mix = { 국내채권: g("장부가 국내채권") + g("시가 국내채권"),
+                 해외채권: g("장부가 해외채권") + g("시가 해외채권"),
+                 국내주식: g("국내주식"), 해외주식: g("해외주식"),
+                 "대체투자(대출형)": g("대체투자(대출형)"),
+                 "대체투자(지분형)": g("대체투자(지분형)"), 단기자금: g("단기자금") };
+    }
+  }
+  if (!st.mix || typeof st.mix !== "object") st.mix = { ...d.mix };
+  ALLOC_ECON.forEach((k) => {
+    const v = st.mix[k];
+    st.mix[k] = v != null && isFinite(+v) ? +v : d.mix[k];
+  });
+  if (!st.sig_over || typeof st.sig_over !== "object") st.sig_over = { ...d.sig_over };
+  [["시가 국내채권", "국내채권"], ["시가 해외채권", "해외채권"]].forEach(([o, n]) => {
+    if (st.sig_over[n] == null && st.sig_over[o] != null) st.sig_over[n] = st.sig_over[o];
+  });
+  {
+    const sigOld = st.sig_over;
+    st.sig_over = {};
+    ALLOC_ECON.forEach((k) => {
+      const v = sigOld[k];
+      st.sig_over[k] = v != null && isFinite(+v) && +v > 0 ? +v : null;
+    });
+  }
+  ["mix_acct", "bands_acct", "by_kr", "by_fx", "cap_book", "book_mat_m", "view"]
+    .forEach((k) => { delete st[k]; });
+  /* ---- 2026-08-12 이관 ① — 대출금 제외·μ/매핑 디폴트(사용자 지정) ---- */
+  /* 대출금은 배분 우주에서 제외 확정 — 저장분의 12% 도 무효(7개 자산군 합 100). */
+  st.loan_w = 0;
   /* 구 매핑 기본값(지분형 65/35·대출형 0/100) 그대로면 새 기본 50/50 으로(2026-08-12
      지시 "전에 말한대로 5대5"). 사용자가 조정한 다른 값은 유지. */
   if (+st.alt_map.eq_we === 65 && +st.alt_map.eq_wb === 35
       && +st.alt_map.dt_we === 0 && +st.alt_map.dt_wb === 100) {
     ["eq_we", "eq_wb", "dt_we", "dt_wb"].forEach((k) => { st.alt_map[k] = d.alt_map[k]; });
   }
-  /* μ·북일드 디폴트(사용자 지정 CMA) — 미입력(null)은 지정 디폴트로 채운다.
+  /* μ 디폴트(사용자 지정 CMA) — 미입력(null)은 지정 디폴트로 채운다.
      "미입력 = 사용자 지정 디폴트"가 새 계약이다(§7.7.10 — 구 앵커/관측 도출은
      디폴트가 게시되지 않은 자산의 폴백으로만 남는다).
 
@@ -4582,19 +4566,16 @@ function allocState(A) {
      저장된 화면에는 영영 반영되지 않는다(실측 사고: 대체투자 두 분류가 옛 저장분
      때문에 같은 μ 4.39 로 굳어 있었다 — 지분형 게시 디폴트는 6.86). 지금 값이
      "우리가 채운 그 값 그대로"면 새 디폴트로 갱신하고, 사용자가 고친 값이면
-     건드리지 않는다. */
+     건드리지 않는다. 구 북일드 스냅숏(by_kr/by_fx)은 축과 함께 폐기. */
   if (!st.mu_dflt || typeof st.mu_dflt !== "object") st.mu_dflt = {};
+  delete st.mu_dflt.by_kr;
+  delete st.mu_dflt.by_fx;
   const dfltSync = (cur, was, next) =>
     (cur == null || (was != null && Math.abs(+cur - +was) < 1e-12)) ? +next : cur;
   if (d.mu_over) Object.entries(d.mu_over).forEach(([k, v]) => {
     if (v == null || !isFinite(+v)) return;
     st.mu_over[k] = dfltSync(st.mu_over[k], st.mu_dflt[k], v);
     st.mu_dflt[k] = +v;
-  });
-  ["by_kr", "by_fx"].forEach((k) => {
-    if (d[k] == null || !isFinite(+d[k])) return;
-    st[k] = dfltSync(st[k], st.mu_dflt[k], d[k]);
-    st.mu_dflt[k] = +d[k];
   });
   st.sum_lock = st.sum_lock === true;
   return st;
@@ -4628,8 +4609,7 @@ function allocSaveState(st) {
 /* CMA 층의 출처 태그 — 위험은 벤치마크 직접 관측. 기대수익을 키인했으면 그 사실이
    태그에 드러나야 한다(출처 정직성 — 키인이 정본이라는 §7.7 규약의 표시면). */
 function allocCmaSrcTag(key, E) {
-  const ek = { "시가 국내채권": "국내채권", "시가 해외채권": "해외채권" }[key] || key;
-  const over = E.st.mu_over && E.st.mu_over[ek] != null && isFinite(E.st.mu_over[ek]);
+  const over = E.st.mu_over && E.st.mu_over[key] != null && isFinite(E.st.mu_over[key]);
   /* 키인 = 최종치(§7.7.10) — 캐리를 다시 더하지 않는다. 아래 폴백 문구는 미입력용. */
   const muTag = (dflt) => over ? "μ 키인(최종치)" : dflt;
   /* 환율 축이 없으면 "+환노출"은 거짓 — 실린 로딩만 적는다(재점검 발견) */
@@ -4640,9 +4620,6 @@ function allocCmaSrcTag(key, E) {
     const c = key === "대체투자(지분형)" ? ai.eq : ai.dt;
     return `[매핑] σ = ${fmtNum(c.we, 0)}% 해외주식 + ${fmtNum(c.wb, 0)}% 국내채권 + 잔차 · ${muTag("μ = CPI+α")}`;
   }
-  if (key === "장부가 국내채권") return "[BM+입력] σ 벤치마크 · μ 북일드(최종치)";
-  if (key === "장부가 해외채권")
-    return `[BM+입력] σ 벤치마크${fxSuf} · ${E.st.by_fx != null ? "μ 북일드(최종치)" : "μ 관측 YTM+헤지캐리"}`;
   if (key.includes("주식")) return `[BM+앵커] σ 벤치마크 · ${muTag("μ 무위험+샤프×σ")}`;
   if (key.includes("해외채권")) return `[BM+관측] σ 벤치마크${fxSuf} · ${muTag("μ YTM+헤지캐리")}`;
   return `[BM+관측] σ 벤치마크 · ${muTag("μ 시장금리")}`;
@@ -4651,10 +4628,6 @@ function allocCmaSrcTag(key, E) {
 function allocSrcTag(key) {
   return {
     국내채권: "[관측] 한국 5년 YTM", 해외채권: "[관측] 미 종합 YTM + 헤지캐리",
-    "장부가 국내채권": "[입력] 북일드 — 키인은 최종치 (미입력 시 [관측] 5년 YTM 대체)",
-    "시가 국내채권": "[관측] 한국 5년 YTM",
-    "장부가 해외채권": "[입력] 북일드 — 키인은 최종치 (미입력 시 [관측] YTM+헤지캐리 대체)",
-    "시가 해외채권": "[관측] 미 종합 YTM + 헤지캐리",
     국내주식: "[관측→앵커] 무위험 + 샤프×σ", 해외주식: "[관측→앵커] 무위험 + 샤프×σ + 헤지캐리",
     "대체투자(지분형)": "[가정] CPI + α · 위험 별도 입력(두 분류 공유 프록시)",
     "대체투자(대출형)": "[가정] CPI + α · 위험 별도 입력(두 분류 공유 프록시)",
@@ -4680,7 +4653,7 @@ function renderAlloc() {
      얼마나 벗어났는지를 요약·투자선 마커가 이 스냅숏과 비교해 보여준다.
      저장 버튼 → renderAlloc 재실행 → 기준선이 새 저장값으로 갱신되는 구조다. */
   const baseSt = allocState(A);
-  const baseE = allocEngine(A, { ...baseSt, view: "econ" });
+  const baseE = allocEngine(A, baseSt);
   const baseSig = baseE.sigmaW(baseE.w0, baseE.V.C);
   const baseMu = amDot(baseE.V.mu, baseE.w0);
   const baseXe = baseE.xeOf(baseSt.h_bond / 100, baseSt.h_eq / 100);
@@ -4704,15 +4677,16 @@ function renderAlloc() {
   const E0 = allocEngine(A, st);
 
   /* ---- ⓪ 포트폴리오 시뮬레이터 (§7.7.8 — 화면 최상단, 2026-08-11 사용자 지시) ----
-     8자산군 μ·σ 키인 → λ-MVO 최적 배분(막대 위 ▼ + 도넛) + 비중 막대 드래그
-     즉시 시뮬레이션(카드 + 도넛). 비중 = 시뮬레이션(즉시 반영·저장 안 함 —
-     기존 조작/저장 분리 승계), μ·σ = 모형 입력(즉시 저장 — cost/매핑과 같은 규약).
+     7자산군(시가 기준 — 장부가 축 제외 §7.7.11) μ·σ 키인 → λ-MVO 최적 배분(막대 위
+     ▼ + 도넛) + 비중 막대 드래그 즉시 시뮬레이션(카드 + 도넛). 비중 = 시뮬레이션
+     (즉시 반영·저장 안 함 — 기존 조작/저장 분리 승계), μ·σ = 모형 입력(즉시 저장 —
+     cost/매핑과 같은 규약). 비중 표시·입력은 0.1%p 단위(2026-08-12 사용자 지시).
      이 배치가 2026-08-05 「요약 먼저」 동선을 대체한다(HANDOVER §7.7.8). */
   const simBox = $("#alloc-sim-panel");
   let simDyn = null;
   {
     simBox.textContent = "";
-    const target = () => 100;   // 대출금 제외(2026-08-12 사용자 지시) — 9개 자산군이 합 100
+    const target = () => 100;   // 대출금·장부가 축 제외(2026-08-12) — 7개 자산군이 합 100
     const lockSeg = el("div", { class: "seg", role: "group" });
     const mkLock = (label, v) => el("button", {
       class: st.sum_lock === v ? "active" : "",
@@ -4721,13 +4695,14 @@ function renderAlloc() {
     simBox.append(el("div", { class: "card-head" },
       el("span", { class: "card-title" }, "포트폴리오 시뮬레이터 — 기대수익·위험 키인 → 최적 배분 + 즉시 시뮬레이션"),
       el("span", { class: "card-sub" },
-        `회계 9자산군(대체투자 지분형/대출형 분리) · 최적 = λ-효용 MVO(λ=${fmtNum(+st.mvo_lambda || 1, 1)}) · ` +
+        "7자산군 · 시가 기준(장부가 축 제외 2026-08-12 — 원가법 BM 은 시장위험을 나르지 않아 MVO 대상이 아닙니다) · " +
+        `최적 = λ-효용 MVO(λ=${fmtNum(+st.mvo_lambda || 1, 1)} — 위험회피계수, 클수록 보수적) · ` +
         (E0.layer === "cma" ? "상관은 벤치마크 실측 ρ 유지" : "프록시층 — 최적·σ 키인은 벤치마크 층 전용")),
       el("span", {}, lockSeg)));
 
     const simSum = el("span", { class: "sim-sum" });
     const refreshSimSum = () => {
-      const sum = ALLOC_ACCT.reduce((a, k) => a + (st.mix_acct[k] || 0), 0);
+      const sum = ALLOC_ECON.reduce((a, k) => a + (st.mix[k] || 0), 0);
       const off = Math.abs(sum - target()) > 0.05;
       simSum.textContent = `합계 ${fmtNum(sum, 1)}% / 목표 ${fmtNum(target(), 1)}%`;
       simSum.classList.toggle("warn", off);
@@ -4737,16 +4712,17 @@ function renderAlloc() {
     const syncRow = (k) => {
       const rr = rowRefs[k];
       if (!rr) return;
-      const v = st.mix_acct[k] || 0;
+      const v = st.mix[k] || 0;
       rr.bar.value = String(v);
       rr.num.value = String(v);
     };
     const applyWeight = (k, v, final) => {
+      const v1 = Math.round(Math.max(0, v) * 10) / 10;   // 0.1%p 단위(2026-08-12)
       if (st.sum_lock) {
-        st.mix_acct = allocRedistribute(st.mix_acct, k, v, target());
-        ALLOC_ACCT.forEach(syncRow);
+        st.mix = allocRedistribute(st.mix, k, v1, target());
+        ALLOC_ECON.forEach(syncRow);
       } else {
-        st.mix_acct[k] = Math.max(0, v);
+        st.mix[k] = v1;
         syncRow(k);
       }
       refreshSimSum();
@@ -4757,24 +4733,21 @@ function renderAlloc() {
     rows.append(el("div", { class: "sim8-row sim8-head" },
       el("span", {}, "자산군"), el("span", {}, "비중 막대 — 끌어서 조정 (▼ = 최적)"),
       el("span", {}, "비중%"), el("span", {}, "기대수익%"), el("span", {}, "위험%")));
-    ALLOC_ACCT.forEach((k, i) => {
+    ALLOC_ECON.forEach((k, i) => {
       const color = pal.series[i % pal.series.length];
-      const bar = el("input", { type: "range", min: "0", max: "100", step: "0.5",
-        value: String(st.mix_acct[k] || 0), "aria-label": `${k} 비중 % (막대)` });
+      const bar = el("input", { type: "range", min: "0", max: "100", step: "0.1",
+        value: String(st.mix[k] || 0), "aria-label": `${k} 비중 % (막대)` });
       const mark = el("span", { class: "sim-opt-mark", hidden: true, title: `${k} 최적 비중` }, "▼");
       const barWrap = el("div", { class: "sim-bar-wrap" }, bar, mark);
       bar.addEventListener("input", () => applyWeight(k, +bar.value, false));
       bar.addEventListener("change", () => applyWeight(k, +bar.value, true));
-      const num = el("input", { type: "number", step: "0.5",
-        value: String(st.mix_acct[k] || 0), id: "sim-mix-" + k.replace(/\s+/g, "-"),
+      const num = el("input", { type: "number", step: "0.1",
+        value: String(st.mix[k] || 0), id: "sim-mix-" + k.replace(/\s+/g, "-"),
         "aria-label": `${k} 비중 %` });
       num.addEventListener("input", () => applyWeight(k, num.value === "" ? 0 : +num.value, false));
       num.addEventListener("change", () => applyWeight(k, num.value === "" ? 0 : +num.value, true));
-      /* μ 키인 — 장부가 채권은 기존 북일드 칸이 정본이라 그리로 쓴다(키인 이중화 금지) */
-      const muMap = { "장부가 국내채권": ["by_kr", null], "장부가 해외채권": ["by_fx", null] }[k]
-        || [null, { "시가 국내채권": "국내채권", "시가 해외채권": "해외채권" }[k] || k];
-      const muVal = muMap[0] ? st[muMap[0]] : st.mu_over[muMap[1]];
-      const muDflt = st.mu_dflt ? st.mu_dflt[muMap[0] || muMap[1]] : null;
+      const muVal = st.mu_over[k];
+      const muDflt = st.mu_dflt ? st.mu_dflt[k] : null;
       const muIn = el("input", { type: "number", step: "0.05",
         value: muVal == null ? "" : String(muVal), placeholder: "앵커/관측",
         "aria-label": `${k} 기대수익 % 키인` });
@@ -4788,12 +4761,11 @@ function renderAlloc() {
       }
       muIn.addEventListener("change", () => {
         const v = muIn.value === "" ? null : +muIn.value;
-        if (muMap[0]) st[muMap[0]] = v != null && isFinite(v) ? v : null;
-        else st.mu_over[muMap[1]] = v != null && isFinite(v) ? v : null;
+        st.mu_over[k] = v != null && isFinite(v) ? v : null;
         allocSaveState(st);
         renderAlloc();
       });
-      const as = E0.cmaAcctSig ? E0.cmaAcctSig(k) : null;
+      const as = E0.cmaSigInfo ? E0.cmaSigInfo(k) : null;
       const isAlt = allocIsAlt(k);
       /* 회색 값 = placeholder 지만 장식이 아니다 — 칸이 비어 있으면 벤치마크 실측 σ
          가 **그 숫자 그대로** 공분산에 들어간다(미입력 = 실측 적용. 프로브
@@ -4821,9 +4793,9 @@ function renderAlloc() {
 
     const fillCash = el("button", { type: "button", class: "btn-ghost", onclick: () => {
       /* 합계를 몰래 맞추지 않는다 — 사용자가 눌렀을 때만 잔여를 단기자금으로 채운다 */
-      const others = ALLOC_ACCT.filter((x) => x !== "단기자금")
-        .reduce((a, x) => a + (st.mix_acct[x] || 0), 0);
-      st.mix_acct["단기자금"] = Math.max(0, +(target() - others).toFixed(2));
+      const others = ALLOC_ECON.filter((x) => x !== "단기자금")
+        .reduce((a, x) => a + (st.mix[x] || 0), 0);
+      st.mix["단기자금"] = Math.max(0, +(target() - others).toFixed(1));
       syncRow("단기자금");
       refreshSimSum();
       markDirty();
@@ -4846,22 +4818,22 @@ function renderAlloc() {
        따라 움직였다). 드래그 중(recalc(false))에는 캐시를 쓰고, 시뮬 카드·도넛·
        합계만 매번 갱신한다. */
     let optCache = null;
-    simDyn = (E8, withCharts) => {
-      const w = ALLOC_ACCT.map((k) => (st.mix_acct[k] || 0) / 100);
-      const V8 = E8.V;
-      const sim = { mu: amDot(V8.mu, w), sig: E8.sigmaW(w, V8.C) };
+    simDyn = (Es, withCharts) => {
+      const w = ALLOC_ECON.map((k) => (st.mix[k] || 0) / 100);
+      const V8 = Es.V;
+      const sim = { mu: amDot(V8.mu, w), sig: Es.sigmaW(w, V8.C) };
       /* 실행 가능성도 목표 100% 기준으로 검사한다 — 현재 합계 기준이면 표류가
          최적 카드를 껐다 켰다 한다 */
-      const canOpt = E8.layer === "cma"
-        && allocFeasibility({ lo: E8.lo, hi: E8.hi, total: 1, groups: E8.groups }).length === 0;
+      const canOpt = Es.layer === "cma"
+        && allocFeasibility({ lo: Es.lo, hi: Es.hi, total: 1, groups: Es.groups }).length === 0;
       if (withCharts || optCache == null) {
         optCache = canOpt ? (() => {
-          const wo = E8.optimizeUtilAt(V8.mu, V8.C, +st.mvo_lambda || 1, 1);
-          return { w: wo, mu: amDot(V8.mu, wo), sig: E8.sigmaW(wo, V8.C) };
+          const wo = Es.optimizeUtilAt(V8.mu, V8.C, +st.mvo_lambda || 1, 1);
+          return { w: wo, mu: amDot(V8.mu, wo), sig: Es.sigmaW(wo, V8.C) };
         })() : null;
       }
       const opt = optCache;
-      ALLOC_ACCT.forEach((k, i) => {
+      ALLOC_ECON.forEach((k, i) => {
         const rr = rowRefs[k];
         if (!rr) return;
         rr.mark.hidden = !opt;
@@ -4876,7 +4848,7 @@ function renderAlloc() {
         el("div", { style: "font-size:19px;font-weight:700;margin:4px 0 2px" }, `위험 ${fmtNum(sig, 2)}%`),
         el("div", {}, `기대수익 ${fmtNum(mu, 2)}%`),
         el("div", { style: "color:var(--ink-3);font-size:11px;margin-top:3px" }, note));
-      const entries = (ws) => ALLOC_ACCT.map((k, i) => ({
+      const entries = (ws) => ALLOC_ECON.map((k, i) => ({
         label: k, w: Math.max(0, ws[i]), color: pal.series[i % pal.series.length] }));
       const dwrap = (title, ws) => el("div", { class: "sim8-donut" },
         allocDonutSVG(entries(ws), 210),
@@ -4896,12 +4868,14 @@ function renderAlloc() {
            「기본값으로 저장」 버튼만). */
         optCard.append(el("button", { type: "button", class: "btn-ghost",
           style: "margin-top:7px", onclick: () => {
-            const vals = opt.w.map((x) => +(x * 100).toFixed(2));
+            /* 0.1%p 단위(2026-08-12) — 각 값을 1자리로 반올림한 뒤 잔차(0.1 의 배수)를
+               최대 비중 자산에 흡수해 합계 100.0 을 정확히 유지한다. */
+            const vals = opt.w.map((x) => +(x * 100).toFixed(1));
             let iMax = 0;
             vals.forEach((v, i) => { if (v > vals[iMax]) iMax = i; });
-            vals[iMax] = +(vals[iMax] + (100 - vals.reduce((a, b) => a + b, 0))).toFixed(2);
-            ALLOC_ACCT.forEach((k, i) => { st.mix_acct[k] = vals[i]; });
-            ALLOC_ACCT.forEach(syncRow);
+            vals[iMax] = +(vals[iMax] + (100 - vals.reduce((a, b) => a + b, 0))).toFixed(1);
+            ALLOC_ECON.forEach((k, i) => { st.mix[k] = vals[i]; });
+            ALLOC_ECON.forEach(syncRow);
             refreshSimSum();
             markDirty();
             recalc(true);
@@ -4911,7 +4885,7 @@ function renderAlloc() {
         optCol = col(el("div", { class: "card sim8-card" },
           el("div", { class: "card-title" }, "① 최적 포트폴리오 — 보류"),
           el("div", { style: "font-size:12px;margin-top:4px" },
-            E8.layer !== "cma"
+            Es.layer !== "cma"
               ? "위험 원천을 기관 벤치마크(CMA)로 두면 계산됩니다."
               : "제약이 서로 모순입니다 — 수기 입력에서 밴드·상한을 확인하세요.")));
       }
@@ -4922,7 +4896,7 @@ function renderAlloc() {
         dwrap("시뮬레이션 비중", w));
       const cols = el("div", { class: "sim8-cols" }, optCol, simCol);
       const legend = el("div", { class: "sim8-legend" },
-        ...ALLOC_ACCT.map((k, i) => el("span", {},
+        ...ALLOC_ECON.map((k, i) => el("span", {},
           el("i", { class: "sim-dot", style: `background:${pal.series[i % pal.series.length]}` }), ` ${k}`)));
       dynBox.append(cols, legend);
     };
@@ -4940,18 +4914,13 @@ function renderAlloc() {
 
   const ctl = $("#alloc-controls");
   ctl.textContent = "";
-  const segWrap = el("div", { class: "seg", role: "group" });
-  const mkSeg = (label, v) => el("button", {
-    class: st.view === v ? "active" : "",
-    onclick: () => { st.view = v; allocSaveState(st); renderAlloc(); },
-  }, label);
-  segWrap.append(mkSeg("경제(시가) 관점 — 기본", "econ"), mkSeg("회계(손익) 관점", "acct"));
+  /* 구 「경제/회계 관점」 토글은 장부가 축과 함께 폐지(§7.7.11) — 전 화면이 시가
+     기준 하나다. 장부가 자산의 진짜 위험(재투자·ALM)은 듀레이션 갭 카드가 담당. */
   ctl.append(el("div", { style: "display:flex;gap:14px;flex-wrap:wrap;align-items:center" },
-    el("b", {}, "관점"), segWrap,
     el("span", { style: "color:var(--ink-3);font-size:12px" },
-      st.view === "acct"
-        ? "손익에 잡히는 변동만 봅니다 — 장부가 채권의 가격변동은 손익에 오지 않습니다"
-        : "시가 기준 경제적 가치의 변동을 봅니다 — 장부가/시가 구분이 없습니다")));
+      "전 화면 시가 기준입니다 — 장부가 자산 축은 배분 우주에서 제외했습니다(2026-08-12: " +
+      "원가법 BM 은 손익변동 σ 가 시장위험을 나르지 않아 MVO 방법론을 같은 방식으로 적용할 수 없음). " +
+      "장부 보유 채권의 경제적 위험은 국내채권·해외채권(시가) 축이 나릅니다.")));
 
   /* ---- 위험 원천(데이터층) — §7.7: 기관 벤치마크(CMA) 기본, 프록시는 대조용 ----
      층·창·매핑은 "어떤 모형으로 보나"이므로 시뮬레이션이 아니라 관측 설정이다 —
@@ -5090,9 +5059,7 @@ function renderAlloc() {
     el("button", { type: "button", class: "btn-ghost", onclick: () => {
       const dd = A.defaults || {};
       st.mu_over = { ...st.mu_over, ...(dd.mu_over || {}) };
-      if (dd.by_kr != null) st.by_kr = dd.by_kr;
-      if (dd.by_fx != null) st.by_fx = dd.by_fx;
-      ALLOC_ACCT.forEach((k) => { st.sig_over[k] = null; });   // σ 미입력 = 벤치마크 실측
+      ALLOC_ECON.forEach((k) => { st.sig_over[k] = null; });   // σ 미입력 = 벤치마크 실측
       allocSaveState(st);
       renderAlloc();
     } }, "μ·σ 디폴트로 되돌리기"),
@@ -5114,21 +5081,15 @@ function renderAlloc() {
   function recalc(withCharts) {
     const E = allocEngine(A, st);
     const { V, w0 } = E;
-    const acct = E.view === "acct";
     const sigCur = E.sigmaW(w0, V.C);
     const muCur = amDot(V.mu, w0);
     const se = E.seOf(sigCur);
     const target = st.target_ret != null ? st.target_ret : muCur;
+    /* 시뮬레이터(§7.7.8) — 우주가 하나(시가 7축 §7.7.11)라 같은 엔진을 그대로 쓴다 */
+    if (simDyn) simDyn(E, withCharts);
     /* 실행 불가능한 밴드·그룹 한도 — 최적화를 돌리지 않고 명시적으로 알린다 */
-    /* 시뮬레이터(§7.7.8) — 8축 회계 엔진 한 벌. acct 뷰면 E 재사용 */
-    const E8 = acct ? E : allocEngine(A, { ...st, view: "acct" });
-    if (simDyn) simDyn(E8, withCharts);
     const infeas = allocFeasibility(E);
-    /* 회계 관점 최적화는 **CMA 층에서만** 돈다(§7.7 ①) — 프록시층의 장부가 자산은
-       가격변동이 정확히 0이라 최적화기가 밴드 상한까지 쏠린다(§7.2-1). CMA 층은
-       장부가 손익변동성이 실측(0이 아님)이고, 상한 쏠림은 사용자가 예상·수용한
-       성질이며 장부가 합산 상한(수기 입력)이 그 쏠림을 막는 제약이다. */
-    const doOpt = (!acct || E.layer === "cma") && infeas.length === 0;
+    const doOpt = infeas.length === 0;
     const wMin = doOpt ? E.optimize(V.mu, V.C, null) : null;
     const wKeep = doOpt ? E.optimize(V.mu, V.C, target) : null;
     const sigMin = doOpt ? E.sigmaW(wMin, V.C) : 0, muMin = doOpt ? amDot(V.mu, wMin) : 0;
@@ -5141,7 +5102,7 @@ function renderAlloc() {
        환율 축이 없는 표본(fxLive=false)에서도 내지 않는다 — 모든 헤지비율이 동점이라
        한 점을 적으면 임의 선택이 된다(재점검 발견). */
     let hq = null;
-    if (doOpt && !acct && E.fxLive) {
+    if (doOpt && E.fxLive) {
       const q = E.xeQuad();
       const hbnds = allocHBands(st);
       const [xeLo, xeHi] = allocXeRange(E, hbnds);
@@ -5159,34 +5120,17 @@ function renderAlloc() {
     /* ----- 요약 — 「그래서 얼마인데?」의 답 한 표 (기능 1) ----- */
     const sumBox = $("#alloc-summary");
     sumBox.textContent = "";
-    /* 회계 8축 배분 → 경제 6축 병합(소수) — 듀레이션 계산은 경제 축을 받는다 */
-    const toEconW = (w) => {
-      if (!acct) return w;
-      const m = {};
-      V.keys.forEach((k, i) => {
-        const ek = k.includes("국내채권") ? "국내채권" : k.includes("해외채권") ? "해외채권" : k;
-        m[ek] = (m[ek] || 0) + w[i];
-      });
-      return ALLOC_ECON.map((k) => m[k] || 0);
-    };
-    if (acct && !doOpt && !infeas.length) {
-      /* 프록시층의 회계 관점 — 장부가 가격변동이 정확히 0이라 최적화하지 않는다 */
-      sumBox.append(el("div", { class: "card-title" }, "현재 vs 참고치 — 이 층의 회계 관점에는 없습니다"),
-        el("div", { class: "card-sub", style: "margin-top:4px" },
-          "프록시층의 장부가 자산은 가격변동이 정확히 0이라 최적화기에 넣지 않습니다(§7.2-1). " +
-          "회계 관점 참고치는 위험 원천을 기관 벤치마크(CMA)로 두면 계산됩니다 — 장부가 손익변동성이 실측되기 때문입니다. " +
-          "회계 관점의 진단(손익변동성·ALM 듀레이션 갭)은 아래 카드에 있습니다."));
-    } else if (!doOpt) {
+    if (!doOpt) {
       sumBox.append(el("div", { class: "card-title d-up" }, "현재 vs 참고치 — 제약 모순으로 보류"),
         el("div", { class: "card-sub", style: "margin-top:4px" },
           "밴드·그룹 한도가 서로 모순되어 참고치를 계산하지 않았습니다 — 아래 경고 카드를 보십시오."));
     } else {
-      const gCur = allocDurGap(st, allocAssetDuration(st, toEconW(w0)));
-      const gKeep = allocDurGap(st, allocAssetDuration(st, toEconW(wKeep)));
+      const gCur = allocDurGap(st, allocAssetDuration(st, w0));
+      const gKeep = allocDurGap(st, allocAssetDuration(st, wKeep));
       const hasGap = gCur != null && gKeep != null;
       const heads = ["", ...V.keys,
                      ...(hq ? ["헤지 채권/주식", "미헤지 환노출 Xe"] : []),
-                     "수익", acct ? "손익변동성" : "위험",
+                     "수익", "위험",
                      ...(hasGap ? ["듀레이션 갭"] : [])];
       const tS = el("table", { class: "mini-table" },
         el("tr", {}, ...heads.map((h, i) => el("th", { style: i === 0 ? "text-align:left" : "" }, h))));
@@ -5201,10 +5145,10 @@ function renderAlloc() {
         if (hasGap) tr.append(el("td", { class: "num" }, gap == null ? "–" : fmtNum(gap, 2) + "년"));
         tS.append(tr);
       };
-      if (dirty && !acct) {
-        const bw = ALLOC_ECON.map((k) => (baseE.mixEcon[k] || 0));
-        row("기준(저장값)", bw, `${baseSt.h_bond}/${baseSt.h_eq}%`, baseXe * 100,
-            baseMu, baseSig, hasGap ? allocDurGap(baseSt, allocAssetDuration(baseSt, baseE.w0)) : null);
+      if (dirty) {
+        row("기준(저장값)", baseE.w0.map((x) => x * 100), `${baseSt.h_bond}/${baseSt.h_eq}%`,
+            baseXe * 100, baseMu, baseSig,
+            hasGap ? allocDurGap(baseSt, allocAssetDuration(baseSt, baseE.w0)) : null);
       }
       row(dirty ? "지금 조정" : "현재", w0.map((x) => x * 100),
           `${st.h_bond}/${st.h_eq}%`, hq ? hq.xeCur * 100 : null, muCur, sigCur, gCur, dirty);
@@ -5236,8 +5180,7 @@ function renderAlloc() {
         `${gKeep - gCur > 0 ? "+" : ""}${fmtNum(gKeep - gCur, 2)}년`));
       tS.append(dtr);
       sumBox.append(el("div", { class: "card-head" },
-        el("span", { class: "card-title" },
-          acct ? "현재 vs 참고치 — 회계(손익) 관점" : "현재 vs 참고치 — 한눈에"),
+        el("span", { class: "card-title" }, "현재 vs 참고치 — 한눈에"),
         el("span", { class: "card-sub" }, `±표본오차 ${fmtNum(se, 2)}%p · 아래 조작을 움직이면 즉시 다시 계산`)),
         el("div", { class: "table-wrap", style: "max-height:none;border:0" }, tS),
         el("div", { class: "card-sub", style: "margin-top:5px" },
@@ -5248,12 +5191,8 @@ function renderAlloc() {
             hq.bound ? el("b", {}, `헤지 밴드가 물고 있습니다(무제약 Xe ${fmtNum(hq.xeFree * 100, 2)}%). `) : "",
             "같은 Xe를 만드는 헤지 조합은 위험이 정확히 같습니다 — ",
             el("a", { href: "#alloc-hedge" }, "왜? ›"),
-          ] : acct ? [
-            "회계 관점 참고치(수익 유지 ②) — 손익변동성이 낮은 장부가 자산으로 쏠리는 것이 이 관점의 예상된 성질입니다(§7.7 ①). ",
-            el("b", {}, "장부가 성격 합산 상한"),
-            "을 수기 입력하면 그 쏠림에 내규 한도가 걸립니다. 헤지 참고치는 경제 관점 전용입니다.",
           ] : [
-            /* 경제 관점 + 환율 축 부재(재점검 발견) — 헤지 참고치를 내지 않는 이유를 밝힌다 */
+            /* 환율 축 부재(재점검 발견) — 헤지 참고치를 내지 않는 이유를 밝힌다 */
             el("b", {}, "헤지 참고치가 없습니다"),
             " — 이 표본에는 환율 축(_fx)이 없어 헤지비율이 위험을 전혀 바꾸지 못합니다(모든 조합이 동점). ",
             "달러원 시리즈가 파이프라인에 들어오면 자동으로 복구됩니다.",
@@ -5272,7 +5211,7 @@ function renderAlloc() {
 
     /* ----- 3칸 카드 ----- */
     cardsBox.textContent = "";
-    const riskWord = acct ? "손익변동성" : "위험";
+    const riskWord = "위험";
     const card = (title, mu, sig, note, warnRisk) => {
       const c = el("div", { class: "card", style: "padding:14px 16px" });
       c.append(el("div", { class: "card-title" }, title),
@@ -5293,46 +5232,6 @@ function renderAlloc() {
         el("div", { style: "color:var(--ink-3);font-size:11.5px;margin-top:6px" },
           el("a", { href: "#alloc-sim" }, "수기 입력에서 밴드·그룹 한도를 고치십시오 →")));
       cardsBox.append(card("현재 배분 (입력값)", muCur, sigCur, "수기 입력(또는 예시) 그대로", capW(sigCur)), warnCard);
-    } else if (acct && !doOpt) {
-      /* 진단 카드: 현재 손익변동성 + ALM 듀레이션 갭. 참고치 카드는 없음 */
-      cardsBox.append(card("현재 배분 — 손익변동성 (연)", muCur, sigCur,
-        "손익에 인식되는 변동만 집계 — 장부가 채권의 가격변동은 포함되지 않습니다", capW(sigCur)));
-      const gapCard = el("div", { class: "card", style: "padding:14px 16px" });
-      /* 자산군별 듀레이션을 입력했으면 **배분에서 계산**하고, 없으면 수기 dur_asset 으로
-         물러난다. 계산 경로여야 배분을 바꿀 때 갭이 따라 움직인다. */
-      const dComputed = allocAssetDuration(st, E.mixEcon
-        ? ALLOC_ECON.map((k) => (E.mixEcon[k] || 0) / 100) : w0);
-      const dAsset = dComputed != null ? dComputed : st.dur_asset;
-      if (st.dur_liab != null && dAsset != null) {
-        const laR = st.la_ratio != null ? st.la_ratio : 1;
-        const gap = dAsset - laR * st.dur_liab;
-        gapCard.append(el("div", { class: "card-title" }, "ALM 듀레이션 갭 (표준 근사)"),
-          el("div", { style: "font-size:20px;font-weight:700;margin:6px 0 2px" }, `${fmtNum(gap, 2)}년`),
-          el("div", { style: "font-size:12px" },
-            `갭 = 자산 ${fmtNum(dAsset, 2)} − 부채/자산 ${fmtNum(laR, 2)} × 부채 ${fmtNum(st.dur_liab, 1)}`),
-          el("div", { style: "color:var(--ink-3);font-size:11.5px;margin-top:4px" },
-            dComputed != null
-              ? "자산 듀레이션은 자산군별 입력값과 비중으로 계산합니다 — 배분을 바꾸면 함께 움직입니다. "
-              : "자산 듀레이션은 수기 입력값입니다 — 자산군별 듀레이션을 넣으면 배분에 따라 자동으로 움직입니다. ",
-            `금리 +100bp 시 순자산가치 변화 ≈ ${fmtNum(-gap, 2)}%p (총자산 대비). 장부가 자산의 진짜 위험은 가격이 아니라 재투자·ALM입니다.`));
-      } else {
-        gapCard.append(el("div", { class: "card-title" }, "ALM 듀레이션 갭"),
-          el("div", { style: "font-size:12.5px;margin-top:6px" },
-            "부채 듀레이션 + (자산군별 듀레이션 또는 자산 듀레이션) + 부채/자산 비율을 입력하면 " +
-            "여기서 갭과 금리 ±100bp 민감도를 보여줍니다."),
-          el("div", { style: "margin-top:6px" }, el("a", { href: "#alloc-sim" }, "수기 입력 →")));
-      }
-      const whyCard = el("div", { class: "card", style: "padding:14px 16px" });
-      whyCard.append(el("div", { class: "card-title" }, "이 관점에는 배분 참고치가 없습니다"),
-        el("div", { style: "font-size:12.5px;margin-top:6px" },
-          "장부가 자산은 가격변동성이 0이라 평균-분산 최적화기에 넣으면 밴드 상한까지 쏠립니다(§7.2-1). ",
-          "그래서 회계 관점은 손익 변동·ALM 진단 전용이고, ",
-          /* 관점을 바꾸는 동작이지 이동이 아니다 → <button>. href 없는 <a> 였을 때는
-             Tab 으로 닿지 않아 키보드만으로는 경제 관점으로 넘어갈 길이 없었다. */
-          el("button", { type: "button", class: "linkish",
-            onclick: () => { st.view = "econ"; allocSaveState(st); renderAlloc(); } },
-            "배분 참고치는 경제 관점에서 계산합니다 →")));
-      cardsBox.append(gapCard, whyCard);
     } else {
       cardsBox.append(
         card("현재 배분 (입력값)", muCur, sigCur, "수기 입력(또는 예시) 그대로", capW(sigCur)),
@@ -5340,16 +5239,18 @@ function renderAlloc() {
         card("② 수익 유지 참고치", muKeep, sigKeep,
           st.target_ret != null ? `목표수익 ${fmtNum(target, 2)}% 입력값 기준` : "기대수익을 현재와 같게 두고 위험만 축소",
           capW(sigKeep)));
-      /* ALM 듀레이션 갭 — **제약이 아니라 결과 표시**. 배분을 바꾸면 갭이 따라 움직인다. */
-      const dCur = allocAssetDuration(st, toEconW(w0));
+      /* ALM 듀레이션 갭 — **제약이 아니라 결과 표시**. 배분을 바꾸면 갭이 따라 움직인다.
+         장부가 축 폐지 후에도 살아 있다 — 장부 보유 채권의 진짜 위험(재투자·ALM)을
+         보는 자리가 여기다(§7.7.11). */
+      const dCur = allocAssetDuration(st, w0);
       if (dCur != null && st.dur_liab != null) {
         const gCur = allocDurGap(st, dCur);
         const gapCard = el("div", { class: "card", style: "padding:14px 16px" });
         gapCard.append(el("div", { class: "card-title" }, "ALM 듀레이션 갭 — 이 배분을 택하면"),
           el("div", { style: "font-size:20px;font-weight:700;margin:6px 0 2px" }, `${fmtNum(gCur, 2)}년`));
         if (doOpt) {
-          const gMin = allocDurGap(st, allocAssetDuration(st, toEconW(wMin)));
-          const gKeep = allocDurGap(st, allocAssetDuration(st, toEconW(wKeep)));
+          const gMin = allocDurGap(st, allocAssetDuration(st, wMin));
+          const gKeep = allocDurGap(st, allocAssetDuration(st, wKeep));
           gapCard.append(el("div", { style: "font-size:12px" },
             `① 참고치 ${fmtNum(gMin, 2)}년 · ② 참고치 ${fmtNum(gKeep, 2)}년`));
         }
@@ -5362,17 +5263,9 @@ function renderAlloc() {
       }
     }
 
-    /* ----- 레버 두 개 (경제 관점) / 진단 안내 (회계 관점) ----- */
+    /* ----- 레버 두 개 ----- */
     leverBox.textContent = "";
-    if (acct) {
-      leverBox.append(el("b", {}, "회계 관점에서 헤지의 방향은 하나뿐입니다"), el("br"),
-        "장부가 해외채권은 상쇄해줄 가격변동이 손익에 없어 ",
-        el("b", {}, "헤지 100%가 언제나 손익변동 최소"),
-        "입니다 — 판단 변수는 위험이 아니라 비용입니다. 현재 슬라이더 기준 손익변동성 ",
-        `${fmtNum(sigCur, 2)}%. `,
-        el("a", { href: "#alloc-hedge", style: "margin-left:6px" }, "헤지 곡면 상세 ›"),
-        el("span", { style: "color:var(--ink-3)" }, " · 배분을 바꾸는 판단(레버 2)은 경제 관점에서 하십시오."));
-    } else if (infeas.length) {
+    if (infeas.length) {
       leverBox.append(el("b", {}, "제약 모순으로 레버 계산을 보류했습니다"),
         " — 위 카드의 항목을 수기 입력에서 고치면 자동으로 다시 계산됩니다.");
     } else if (!hq) {
@@ -5405,13 +5298,11 @@ function renderAlloc() {
     /* ----- 자산군 표 ----- */
     tableCard.textContent = "";
     tableCard.append(el("div", { class: "card-head" },
-      el("span", { class: "card-title" }, `자산군 표 — ${acct ? "회계(손익)" : "경제(시가)"} 관점`),
+      el("span", { class: "card-title" }, "자산군 표 — 시가 기준"),
       el("span", { class: "card-sub" },
         !doOpt
-          ? "이 층의 회계 관점은 진단 전용 — 참고치 열이 없습니다(§7.2-1)"
-          : acct
-            ? "장부가 쏠림은 §7.7 ① 수용 사항 — 장부가 합산 상한은 수기 입력 · ⚠ = 밴드 경계에 붙음"
-            : "⚠ = 밴드 경계에 붙음 · 대출금은 배분 우주에서 제외(2026-08-12)")));
+          ? "제약 모순으로 참고치 열이 없습니다 — 밴드·그룹 한도를 확인하십시오"
+          : "⚠ = 밴드 경계에 붙음 · 대출금·장부가 축은 배분 우주에서 제외(2026-08-12)")));
     const { rc: rcCur } = E.eulerRC(w0, V.C);
     const rcKeep = doOpt ? E.eulerRC(wKeep, V.C).rc : null;
     const srcTagFor = (k) => E.layer === "cma" ? allocCmaSrcTag(k, E) : allocSrcTag(k);
@@ -5435,7 +5326,7 @@ function renderAlloc() {
       }
       const ref = doOpt ? wKeep[i] * 100 : cur;
       const d = ref - cur;
-      const bandArr = (acct ? st.bands_acct : st.bands)[k] || [0, 100];
+      const bandArr = st.bands[k] || [0, 100];
       const bind = doOpt && (ref <= bandArr[0] + 0.05 || ref >= bandArr[1] - 0.05);
       t.append(el("tr", {},
         el("td", {}, el("a", { href: `#alloc-a-${i}` }, k)),
@@ -5451,9 +5342,7 @@ function renderAlloc() {
     });
     tableCard.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, t),
       el("div", { class: "card-sub", style: "margin-top:6px" },
-        acct
-          ? "손익변동 기여 = 오일러 분해(합계 = 총 손익변동성). 장부가 국내채권 행이 0인 것이 정상입니다 — 가격변동이 손익에 오지 않기 때문이며, 그 위험(재투자·ALM)은 위 듀레이션 갭 카드에서 봅니다."
-          : "위험기여 = 오일러 분해(합계 = 총위험). 행 이름을 클릭하면 그 자산군의 산식 전개로 이동합니다."));
+        "위험기여 = 오일러 분해(합계 = 총위험). 행 이름을 클릭하면 그 자산군의 산식 전개로 이동합니다."));
 
     /* ----- 상시 노출 — 이 숫자는 어디서 왔나 ----- */
     const R = A.rates;
@@ -5516,17 +5405,15 @@ function renderAlloc() {
       (E.layer === "cma"
         ? ` · 위험은 위 「대체투자 위험 (분류별)」 매핑이 정합니다(수기 alt_vol 은 이 층에서 미사용)`
         : ` · 위험 ${fmtNum(st.alt_vol, 0)}% (평가 스무딩 탓에 실측 σ는 과소평가)`) +
-      ` · 가중평균 스왑 만기 ${st.tenor_m}개월(3·6·12·12M+ 혼합의 금액가중 — 비용 보간과 MTM 잔존만기에 사용) · 북일드 ${st.by_kr != null ? "입력값" : "미입력 — 시장금리 대체"} — 전부 수기 입력에서 바꿀 수 있습니다`);
+      ` · 가중평균 스왑 만기 ${st.tenor_m}개월(3·6·12·12M+ 혼합의 금액가중 — 비용 보간과 MTM 잔존만기에 사용) — 전부 수기 입력에서 바꿀 수 있습니다`);
 
     /* ----- 차트 2개 (드래그 중에는 미루고 놓으면 갱신) ----- */
     if (!doOpt) {
-      /* 최적화 산출물(투자선·이행경로)은 경제 관점 + 실행 가능 제약에서만 */
+      /* 최적화 산출물(투자선·이행경로)은 실행 가능 제약에서만 */
       clearTimeout(chartTimer);
       allocCharts.forEach(destroyChart);
       allocCharts = [];
-      const why = infeas.length
-        ? "제약이 서로 모순되어 계산을 보류했습니다 — 수기 입력에서 밴드·그룹 한도를 고치십시오."
-        : "프록시층의 회계 관점에는 없습니다 — 장부가 자산(가격변동 0)을 평균-분산 최적화에 넣지 않기 때문입니다(§7.2-1). 경제 관점으로 전환하거나 위험 원천을 기관 벤치마크(CMA)로 두면 표시됩니다.";
+      const why = "제약이 서로 모순되어 계산을 보류했습니다 — 수기 입력에서 밴드·그룹 한도를 고치십시오.";
       [["효율적 투자선", frontierCard], ["이행 경로", pathCard],
        ["표본 민감도·시변", tvCard]].forEach(([title, box]) => {
         box.textContent = "";
@@ -5618,11 +5505,10 @@ function renderAlloc() {
   mth.append(el("summary", {}, "산식 · 출처 · 한계 (방법론)"));
   mth.append(el("p", {}, el("b", {}, "방법"),
     " — 평균-분산 최적화(Markowitz 1952) + 자산군 밴드 제약, 투영 경사법(역행렬 불사용). ",
-    el("b", {}, "프록시층의 배분 참고치(①②·투자선·이행경로)는 경제 관점 전용"),
-    "입니다 — 그 층의 장부가 자산은 가격변동성이 정확히 0이라 최적화기에 넣지 않습니다(§7.2-1). ",
-    el("b", {}, "벤치마크(CMA) 층에서는 회계 관점 참고치도 계산합니다(§7.7 ①)"),
-    " — 장부가 손익변동성이 실측(0이 아님)이고, 장부가 쏠림은 예상·수용된 성질이며 장부가 합산 상한(수기 입력)이 내규 한도 자리입니다. ",
-    "해외자산 원화수익률 = 현지수익률 + (1−헤지비율)×환율변동 + 헤지비율×스왑레이트, 장부가 해외채권 손익은 환헤지 화면의 5항 회계 모형과 동일 산식(프록시층)."));
+    el("b", {}, "자산군 우주는 시가 기준 7축 하나"),
+    "입니다 — 장부가 자산 축은 2026-08-12 배분 우주에서 제외했습니다(원가법 BM 의 손익변동 σ 는 시장위험을 나르지 않아 같은 MVO 방법론을 적용할 수 없음 — §7.7.11). ",
+    "장부 보유 채권의 경제적 위험은 시가 채권 축이 나르고, 원가법이 숨기는 진짜 위험(재투자·ALM)은 듀레이션 갭 카드가 표시합니다. ",
+    "해외자산 원화수익률 = 현지수익률 + (1−헤지비율)×환율변동 + 헤지비율×스왑레이트. 장부가 해외채권의 회계 손익 곡면은 환헤지 화면(5항 회계 모형)에 그대로 있습니다."));
   if (E0.layer === "cma" && E0.cmaAll) {
     const cm = E0.cmaAll;
     mth.append(el("p", {}, el("b", {}, "위험 원천 — 기관 전략 벤치마크(CMA)"),
@@ -5644,12 +5530,12 @@ function renderAlloc() {
       });
       mth.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, ct),
         el("div", { style: "font-size:11.5px;color:var(--ink-3)" },
-          "제외 = 배분 레버가 아닌 자산군(금융상품·대출금 — 2026-08-11 지시). 파일에는 있으나 행렬에서 빠지며, 여기 남겨 그 사실이 보이게 합니다."));
+          "제외 = 행렬 미게시 자산군(금융상품·대출금 — 2026-08-11 지시). 장부가 채권 두 계열은 행렬에는 있으나 " +
+          "배분 축이 아닙니다(2026-08-12 장부가 축 제거 — 원가법 σ 는 시장위험이 아니라서 진단·대조용으로만 남습니다)."));
     }
   }
   mth.append(el("p", {}, el("b", {}, "기대수익"),
-    " — 채권·현금은 현재 시장금리 [관측]. 주식은 손으로 ERP를 정하지 않고, 채권 시장이 지금 위험 1단위에 주는 보상(샤프)을 관측해 주식 σ에 곱합니다(동일 샤프 앵커 — 자유 모수 0개). 역사적 실현 평균은 기대수익으로 쓰지 않습니다(표본 구간을 고른 사람이 답을 고르게 되므로). 환율 기대변동은 0(랜덤워크)."));
-  (A.acct_model || []).forEach((s) => mth.append(el("div", { style: "font-size:12.5px" }, s)));
+    " — 키인(사용자 CMA)이 정본이고, 미입력 자산만 폴백을 씁니다: 채권·현금은 현재 시장금리 [관측], 주식은 손으로 ERP를 정하지 않고 채권 시장이 지금 위험 1단위에 주는 보상(샤프)을 관측해 주식 σ에 곱합니다(동일 샤프 앵커 — 자유 모수 0개). 역사적 실현 평균은 기대수익으로 쓰지 않습니다(표본 구간을 고른 사람이 답을 고르게 되므로). 환율 기대변동은 0(랜덤워크)."));
   mth.append(el("p", {}, el("b", {}, "한계"), ` — ${A.limits}`));
 }
 
@@ -5693,37 +5579,26 @@ function openAllocDetail(topic) {
     };
     const secHead = (txt) => el("div", { class: "card-head", style: "margin-top:10px" }, el("span", { class: "card-title" }, txt));
 
-    form.append(secHead("① 자산군 비중 (%) — 회계 구분 기준으로 입력하면 경제 관점은 자동 합산"));
+    form.append(secHead("① 자산군 비중 (%) — 시가 기준 7축 (장부가 축 제외 2026-08-12)"));
     const tw = el("table", { class: "grid-inp" },
       el("tr", {}, ...["자산군", "비중%", "밴드 하한", "밴드 상한"].map((h) => el("th", {}, h))));
-    ALLOC_ACCT.forEach((k) => {
+    ALLOC_ECON.forEach((k) => {
       tw.append(el("tr", {},
         el("td", {}, k),
-        el("td", {}, numIn(`mix:${k}`, st.mix_acct[k], 0.1)),
-        el("td", {}, numIn(`blo:${k}`, (st.bands_acct[k] || [0, 100])[0], 1)),
-        el("td", {}, numIn(`bhi:${k}`, (st.bands_acct[k] || [0, 100])[1], 1))));
-    });
-    form.append(el("div", { class: "table-wrap", style: "max-height:none;border:0;overflow:visible" }, tw));
-    form.append(el("div", { class: "section-note" },
-      "경제 관점 밴드(국내채권=장부+시가 합산 등)는 아래에 따로 입력합니다."));
-    const tw2 = el("table", { class: "grid-inp" },
-      el("tr", {}, ...["자산군(경제)", "밴드 하한", "밴드 상한"].map((h) => el("th", {}, h))));
-    ALLOC_ECON.forEach((k) => {
-      tw2.append(el("tr", {}, el("td", {}, k),
+        el("td", {}, numIn(`mix:${k}`, st.mix[k], 0.1)),
         el("td", {}, numIn(`elo:${k}`, (st.bands[k] || [0, 100])[0], 1)),
         el("td", {}, numIn(`ehi:${k}`, (st.bands[k] || [0, 100])[1], 1))));
     });
-    form.append(el("div", { class: "table-wrap", style: "max-height:none;border:0;overflow:visible" }, tw2));
+    form.append(el("div", { class: "table-wrap", style: "max-height:none;border:0;overflow:visible" }, tw));
+    form.append(el("div", { class: "section-note" },
+      "장부 보유 채권은 국내채권·해외채권(시가) 칸에 합산해 입력합니다 — 장부가 축은 배분 우주에서 " +
+      "제외됐습니다(원가법 BM 은 시장위험을 나르지 않음 — 재투자·ALM 위험은 아래 ③ 듀레이션 갭이 담당)."));
 
     form.append(secHead("② 제약"));
-    /* 대출금 칸은 2026-08-12 사용자 지시로 폐지 — 배분 우주에서 제외, 9개 자산군이 합 100 */
+    /* 대출금 칸(2026-08-12)·장부가 합산 상한(cap_book, §7.7.11)은 폐지 — 7개 자산군이 합 100 */
     form.append(el("div", { class: "tenor-row" },
       "해외 합계 상한 %", numIn("cap_foreign", st.cap_foreign, 1, "없음"),
-      " 주식 합계 상한 %", numIn("cap_equity", st.cap_equity, 1, "없음"),
-      " 장부가 성격 합산 상한 %", numIn("cap_book", st.cap_book, 1, "없음")));
-    form.append(el("div", { class: "section-note" },
-      "장부가 성격 = 장부가 국내채권 + 장부가 해외채권 + 단기자금의 **합산** 상한(§7.7 — 각각이 아닙니다). " +
-      "회계 관점 최적화(벤치마크 층)에서만 적용되고, 내규 수치이므로 기본값은 「없음」입니다."));
+      " 주식 합계 상한 %", numIn("cap_equity", st.cap_equity, 1, "없음")));
     form.append(el("div", { class: "tenor-row" },
       "목표수익률 %", numIn("target_ret", st.target_ret, 0.05, "미입력=현재 유지"),
       " 위험한도 %", numIn("risk_cap", st.risk_cap, 0.05, "없음")));
@@ -5751,13 +5626,9 @@ function openAllocDetail(topic) {
       "「과거」 배지는 벤치마크 창의 실현 평균이며 참고용입니다 — 기대수익으로 자동 사용하지 않습니다(§7.7). " +
       "전망 모델(모델 랩)이 완성되면 그 출력이 이 자리에 꽂힙니다."));
 
-    form.append(secHead("③ 장부가·ALM (회계 관점용)"));
-    form.append(el("div", { class: "tenor-row" },
-      "북일드 국내 %", numIn("by_kr", st.by_kr, 0.05, `미입력=${A.rates.kr5y.v}`),
-      " 북일드 해외 %", numIn("by_fx", st.by_fx, 0.05, `미입력=${A.rates.us_ytm.v}`),
-      " 장부채권 잔존만기(월)", numIn("book_mat_m", st.book_mat_m, 1, "차기 반영"),
-      el("span", { class: "section-note", style: "margin-left:6px" },
-        "잔존만기는 지금 수집만 합니다 — 재투자 위험 재정의(§7.2-1 차기)에 쓸 예정이며, 현재 계산에는 들어가지 않습니다.")));
+    /* 구 「북일드·장부채권 잔존만기」 칸은 장부가 축과 함께 폐지(§7.7.11) —
+       장부 보유 채권의 위험은 시가 축(σ)과 아래 듀레이션 갭(재투자·ALM)이 담당한다. */
+    form.append(secHead("③ ALM — 듀레이션 갭"));
     form.append(el("div", { class: "tenor-row" },
       "부채 듀레이션(년)", numIn("dur_liab", st.dur_liab, 0.1),
       " 자산 듀레이션(년)", numIn("dur_asset", st.dur_asset, 0.1, "자산군별 입력 시 무시"),
@@ -5861,9 +5732,7 @@ function openAllocDetail(topic) {
       el("button", { class: "btn-primary", onclick: () => {
         fields.forEach(([key, i]) => {
           const v = i.value === "" ? null : +i.value;
-          if (key.startsWith("mix:")) { if (v != null) st.mix_acct[key.slice(4)] = v; }
-          else if (key.startsWith("blo:")) { st.bands_acct[key.slice(4)][0] = v == null ? 0 : v; }
-          else if (key.startsWith("bhi:")) { st.bands_acct[key.slice(4)][1] = v == null ? 100 : v; }
+          if (key.startsWith("mix:")) { if (v != null) st.mix[key.slice(4)] = v; }
           else if (key.startsWith("elo:")) { st.bands[key.slice(4)][0] = v == null ? 0 : v; }
           else if (key.startsWith("ehi:")) { st.bands[key.slice(4)][1] = v == null ? 100 : v; }
           else if (key.startsWith("hlo:")) { st.h_bands[key.slice(4)][0] = v == null ? 0 : v; }
@@ -6139,12 +6008,10 @@ function openAllocDetail(topic) {
   /* --- 밴드·그룹 한도 --- */
   if (topic === "bands") {
     const inner = allocOverlayShell("밴드·그룹 한도 — 어떤 제약이 결과를 묶고 있나");
-    /* 참고치는 경제 관점 전용(§7.2-1) — 회계 관점에서 열어도 경제 기준으로 보여준다 */
-    const Ee = E.view === "acct" ? allocEngine(A, { ...st, view: "econ" }) : E;
+    const Ee = E;
     inner.append(el("div", { class: "qa" },
       el("div", { class: "q" }, "참고치가 밴드 경계에 붙어 있으면, 그 숫자는 모형이 아니라 제약이 정한 것입니다"),
-      el("div", { class: "a" }, "⚠ 표시 = 경계에 붙음 ",
-        el("small", {}, "참고치는 경제 관점 전용이므로 이 표도 경제 관점 기준입니다"))));
+      el("div", { class: "a" }, "⚠ 표시 = 경계에 붙음")));
     const infeas = allocFeasibility(Ee);
     if (infeas.length) {
       inner.append(el("div", { class: "howto" },
@@ -6192,7 +6059,7 @@ function openAllocDetail(topic) {
     srcLabels.forEach((l, j) => {
       if (Math.abs(row[j]) > 1e-12) parts.push(`${row[j] >= 0 ? "+" : "−"} ${fmtNum(Math.abs(row[j]), 3)} × ${l}`);
     });
-    lines.push(`재조립: ${k} = ${parts.length ? parts.join(" ") : "상수 (위험 0 — 장부가·유효이자만)"}`);
+    lines.push(`재조립: ${k} = ${parts.length ? parts.join(" ") : "상수 (위험 0)"}`);
     if (E.layer === "cma" && allocIsAlt(k) && E.altInfo && E.altInfo.mode === "factor") {
       lines.push(`+ 잔차(고유위험) σ ${fmtNum(E.altInfo.idio, 2)}% — 디스무딩 보조축(_alt)을 팩터 스팬에 회귀한 잔차. 분류별 독립 성분으로 더합니다. 팩터만 넣으면 공분산이 특이행렬이 됩니다`);
     }
@@ -6206,13 +6073,6 @@ function openAllocDetail(topic) {
         ? "원천 = 기관 전략 벤치마크 열(_alt = 디스무딩 보조축, _fx = 달러원). 프록시 재조립이 아니라 벤치마크 자체 통계입니다."
         : "원천 정의: " + A.sources.labels.map((l) => `${l} = ${desc[l] || ""}`).join(" · ")));
     inner.append(inner2);
-    if (k.includes("장부가") && st.dur_liab != null && st.dur_asset != null) {
-      const gap = st.dur_asset - (st.la_ratio != null ? st.la_ratio : 1) * st.dur_liab;
-      inner.append(el("div", { class: "howto", style: "margin-top:12px" },
-        el("b", {}, "ALM 듀레이션 갭"),
-        ` — 자산 ${fmtNum(st.dur_asset, 1)}년 − 부채/자산 ${fmtNum(st.la_ratio != null ? st.la_ratio : 1, 2)} × 부채 ${fmtNum(st.dur_liab, 1)}년 = ${fmtNum(gap, 2)}년. `,
-        "양수면 금리 하락 시 순자산 증가(자산이 더 길다). 장부가 자산의 진짜 위험은 가격이 아니라 재투자·ALM이며, 다음 단계에서 위험 재정의(§7.2-1)에 반영합니다."));
-    }
     $("#detail-overlay").scrollTop = 0;
     return;
   }

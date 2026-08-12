@@ -1338,12 +1338,12 @@ def test_hedge_band_defaults_do_not_hardcode_an_institution(probe):
     )
 
 
-def test_xe_collapse_guard_is_real_not_a_comment(probe):
-    """회계 관점에서 Xe 붕괴는 성립하지 않는다 — 가드가 실제로 던져야 한다.
-
-    주석만 남기고 가드를 지우는 회귀는 조용히 통과한다(이 저장소에서 이미 겪었다).
-    """
-    assert probe["hedgeXe"]["acctViewGuardThrows"] is True
+def test_universe_is_single_market_value_7axis(probe):
+    """장부가 축 제거(§7.7.11) — 우주는 시가 7축 하나이고, 구 저장분의 view:"acct" 가
+    남아 있어도 장부가 축이 되살아나지 않는다(구 xeQuad 회계 가드는 관점 폐지와 함께
+    내렸다 — 붕괴가 성립하지 않는 축 자체가 없어졌다)."""
+    assert probe["hedgeXe"]["universeIs7"] is True
+    assert probe["hedgeXe"]["noBookAxis"] is True
 
 
 def test_no_arbitrary_flatness_threshold_survives():
@@ -1574,8 +1574,7 @@ def test_cma_mu_keyin_window_and_anchor(probe):
     assert c["muOverridePlain"] is True
     assert c["muOverrideIsFinal"] is True, "키인에 캐리가 다시 더해진다 — §7.7.10 최종치 계약 위반"
     assert c["defaultMuIsUserCma"] is True, "μ 디폴트가 사용자 지정 수치와 다르다"
-    assert c["defaultBookYieldsAreFinal"] is True, "북일드 디폴트(3.04/3.34)가 그대로 실리지 않는다"
-    assert c["acctOrderAsSpecified"] is True, "회계 축 순서가 2026-08-12 사용자 지정과 다르다"
+    assert c["universeOrderIsEcon7"] is True, "우주가 시가 7축(삽입 위치 계약)이 아니다"
     assert c["windowSwitchChangesSample"] is True
     assert c["defaultWinIsFive"] is True, "위험 디폴트 창이 5년이 아니다"
     assert c["unpublishedWinFallsBackToLongest"] is True, "5년 창 미게시 시 최장 창 폴백이 깨졌다"
@@ -1589,20 +1588,14 @@ def test_cma_xe_collapse_holds_and_hedge_is_live(probe):
     assert c["hedgeSliderMatters"] is True
 
 
-def test_cma_acct_optimization_and_book_cap(probe):
-    """회계 관점 최적화(§7.7 ①) — 상한 없으면 장부가로 쏠리고, 합산 상한이 물린다.
-
-    쏠림 자체는 사용자가 예상·수용한 성질이고, 상한이 내규 한도의 자리다.
-    경제 관점에는 이 그룹이 없어야 한다(장부/시가 병합이라 정의 불가).
-    """
+def test_book_axis_and_cap_book_are_gone(probe):
+    """장부가 축 제거(§7.7.11) — 구 저장분의 cap_book 이 그룹을 되살리지 않고,
+    view:"acct" 저장분으로도 단일 요약(회계 제목 없음)이 그대로 렌더된다."""
     c = probe["cmaLayer"]
-    assert c["acctPilesIntoBookWithoutCap"] is True
-    assert c["capBookGroupExists"] is True
-    assert c["capBookBinds"] is True, "장부가 성격 합산 상한이 최적해를 실제로 구속하지 않는다"
-    assert c["capBookNotInEcon"] is True
-    assert c["acctSummaryHasReference"] is True
-    assert c["acctSummaryNotDeferred"] is True
-    assert c["acctRenderErrors"] == 0
+    assert c["capBookGone"] is True, "폐지된 cap_book 그룹이 되살아났다"
+    assert c["legacyViewSummaryHasReference"] is True
+    assert c["legacyViewNoAcctTitle"] is True
+    assert c["legacyViewRenderErrors"] == 0
 
 
 def test_cma_screen_shows_layer_mapping_and_provenance(probe):
@@ -1760,6 +1753,7 @@ def test_sim_panel_redistribution_is_exact(probe):
     """
     c = probe["simPanel"]
     assert c["lockKeepsSum"] is True and c["lockSetsValue"] is True
+    assert c["lockValuesAre1dp"] is True, "재분배 결과가 0.1%p 단위가 아니다(2026-08-12)"
     assert c["lockClamps"] is True
     assert c["lockSplitsEquallyWhenOthersZero"] is True
     assert c["lockModeRedistributesInUi"] is True
@@ -1778,12 +1772,12 @@ def test_sim_panel_sigma_keyin_scales_variance_not_correlation(probe):
 
 
 def test_sim_panel_renders_bars_markers_donuts_cards(probe):
-    """패널 렌더 — 목차 첫 버튼 = 시뮬레이터, 막대 9(대체투자 지분형/대출형 분리),
+    """패널 렌더 — 목차 첫 버튼 = 시뮬레이터, 막대 7(시가 7축 — 장부가 축 제외),
     ▼ 마커 = λ-MVO 산출 위치, 도넛 2(최적·시뮬), 카드 2(최적·시뮬), 상관 정책 문구."""
     c = probe["simPanel"]
     assert c["renderErrors"] == 0
     assert c["tocFirstIsSim"] is True
-    assert c["barCount"] == 9 and c["markerVisibleCount"] == 9
+    assert c["barCount"] == 7 and c["markerVisibleCount"] == 7
     assert c["donutCount"] == 2
     assert c["hasOptCard"] is True and c["hasSimCard"] is True
     assert c["statesCorrPolicy"] is True
@@ -1824,6 +1818,7 @@ def test_sim_apply_optimum_button(probe):
     assert c["applyButtonExists"] is True
     assert c["applyMakesSum100"] is True
     assert c["applyMatchesOptimum"] is True
+    assert c["applyValuesAre1dp"] is True, "최적 적용 결과가 0.1%p 단위가 아니다(2026-08-12)"
     assert c["applyClearsSumWarning"] is True
     assert c["applyDoesNotSave"] is True, "최적 적용이 몰래 저장한다 — 조정/저장 분리 위반"
 
@@ -1836,7 +1831,7 @@ def test_sim_sigma_placeholder_reads_as_applied(probe):
 
 
 def test_sim_panel_proxy_layer_degrades_loudly(probe):
-    """프록시층 — σ 키인 9칸 전부 비활성 + 최적 「보류」 안내(조용한 강등 금지)."""
+    """프록시층 — σ 키인 7칸 전부 비활성 + 최적 「보류」 안내(조용한 강등 금지)."""
     c = probe["simPanel"]
     assert c["proxySigDisabled"] is True
     assert c["proxyOptDeferred"] is True
@@ -1856,14 +1851,18 @@ def test_alt_split_legacy_state_migrates_preserving_totals(probe):
 
 
 def test_20260812_migration_loan_defaults_and_map(probe):
-    """2026-08-12 이관 — 대출금 강제 0(9개 자산군 합 100), 구 「예시」 그대로인
+    """2026-08-12 이관 — 대출금 강제 0(7개 자산군 합 100), 구 「예시」 그대로인
     저장분만 새 예시(합 100)로 교체, 구 매핑 기본값(65/35·0/100)은 새 기본 50/50 으로,
-    μ·북일드 미입력은 사용자 지정 디폴트로 채움. 사용자가 만진 값은 건드리지 않는다."""
+    μ 미입력은 사용자 지정 디폴트로 채움. 사용자가 만진 값은 건드리지 않는다.
+    장부가 축 제거(§7.7.11) — 회계 9축 저장분은 채권 쌍 합산으로 접히고(합계 보존),
+    구 스키마 키(mix_acct·bands_acct·by_kr·by_fx·view)는 폐기된다."""
     c = probe["cmaAudit"]
     assert c["migLoanForcedZero"] is True
     assert c["migOldExampleMixReplacedTo100"] is True
     assert c["migOldDefaultMapBecomesFiftyFifty"] is True
-    assert c["migFillsMuAndBookYieldDefaults"] is True
+    assert c["migFillsMuDefaults"] is True
+    assert c["migDropsLegacyFields"] is True, "구 스키마 키가 저장 상태에 남아 다음 저장을 오염시킨다"
+    assert c["migFoldsBondPairs"] is True, "회계 9축 저장분이 시가 7축으로 접히지 않는다"
     assert c["migKeepsUserTunedMap"] is True
 
 
@@ -2046,5 +2045,6 @@ def test_save_and_revert_are_explicit_buttons(probe):
     s = probe["simConsole"]
     assert s["saveButtonExists"] is True
     assert s["saveWritesStorage"] is True
+    assert s["saveSchemaHasNoLegacyKeys"] is True, "저장 스키마에 구 회계 축 키가 남는다"
     assert s["baselineResetAfterSave"] is True
     assert s["revertRestoresSaved"] is True
