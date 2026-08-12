@@ -4058,6 +4058,13 @@ function allocEngine(A, st) {
     optimizeUtil(mu, C, lam, iters) {
       return amOptimizeUtil(mu, C, lo, hi, total, lam, groups, iters);
     },
+    /* 같은 λ-효용을 **명시한 합계**로 푼다 — 시뮬레이터의 ① 최적은 목표 100% 기준이라
+       자유 조정으로 현재 합계가 표류해도 흔들리면 안 된다(사용자 발견 2026-08-12:
+       예산이 현재 합계를 따라가 드래그마다 "최적"이 움직였다 — μ·σ 를 안 건드렸는데
+       최적이 변하는 것은 그 자체로 버그 신호가 맞다). */
+    optimizeUtilAt(mu, C, lam, totalX, iters) {
+      return amOptimizeUtil(mu, C, lo, hi, totalX, lam, groups, iters);
+    },
     /* CMA 층 전용 — 임의 시점(롤링)·임의 창의 공분산으로 같은 로딩·매핑을 편다 */
     buildFrom: layer === "cma" ? buildCmaFrom : null,
   };
@@ -4764,12 +4771,17 @@ function renderAlloc() {
       });
       const as = E0.cmaAcctSig ? E0.cmaAcctSig(k) : null;
       const isAlt = allocIsAlt(k);
+      /* 회색 값 = placeholder 지만 장식이 아니다 — 칸이 비어 있으면 벤치마크 실측 σ
+         가 **그 숫자 그대로** 공분산에 들어간다(미입력 = 실측 적용. 프로브
+         domesticEquityVarExact 등이 행렬 원소 = 벤치마크 공분산임을 실행으로 확인).
+         "적용 중"을 붙여 미반영으로 오독되지 않게 한다(2026-08-12 사용자 질문). */
       const sgIn = el("input", { type: "number", step: "0.1", min: "0",
         value: !isAlt && st.sig_over[k] != null ? String(st.sig_over[k]) : "",
-        placeholder: !as ? "벤치마크 층 전용" : isAlt ? "매핑이 정함" : `실측 ${fmtNum(as.obs, 2)}`,
+        placeholder: !as ? "벤치마크 층 전용" : isAlt ? "매핑이 정함" : `실측 ${fmtNum(as.obs, 2)} 적용 중`,
         "aria-label": `${k} 위험 % 키인` });
       if (!as || isAlt) sgIn.disabled = true;
       if (isAlt) sgIn.title = "대체투자 위험은 σ 키인이 아니라 설정의 「대체투자 위험 (분류별)」 매핑 콘솔이 정합니다";
+      else if (as) sgIn.title = `비워 두면 벤치마크 실측 σ ${fmtNum(as.obs, 2)}% 가 그대로 계산에 들어갑니다 — 회색 표시는 적용 중인 값입니다`;
       sgIn.addEventListener("change", () => {
         const v = sgIn.value === "" ? null : +sgIn.value;
         st.sig_over[k] = v != null && isFinite(v) && v > 0 ? v : null;
@@ -4799,21 +4811,28 @@ function renderAlloc() {
       el("span", { style: "color:var(--ink-3);font-size:12px" },
         "비중은 즉시 반영·저장 안 함(저장은 아래 「기본값으로 저장」) · μ·σ 키인은 모형 입력이라 즉시 저장 · " +
         "μ 디폴트 = 사용자 지정 CMA(키인은 최종치 — 헤지캐리 미가산 §7.7.10) · " +
-        "σ 디폴트 = 벤치마크 실측(기본 5년 창 — 게시 전에는 최장 창), 키인 σ 는 환노출 제거 기준·상관은 실측 ρ 유지")),
+        "위험 칸의 회색 숫자 = 적용 중인 벤치마크 실측 σ(기본 5년 창 — 게시 전에는 최장 창): " +
+        "비워 두면 그 값이 그대로 계산에 들어가고, 키인하면 키인 σ × 실측 ρ 로 대체 · 키인 σ 는 환노출 제거 기준")),
       dynBox);
     refreshSimSum();
 
-    /* 동적 갱신 — 최적은 비중과 무관하므로 드래그 중(recalc(false))에는 다시 풀지
-       않고, 시뮬 카드·도넛·합계만 매번 갱신한다. */
+    /* 동적 갱신 — ① 최적은 **목표 합계 100% 기준**이라 비중(합계 표류 포함)과
+       무관하다: μ·σ·λ·헤지를 안 바꿨는데 막대를 끌었다고 최적이 움직이면 안 된다
+       (2026-08-12 사용자 발견 — 구현이 예산을 현재 합계로 풀어 드래그마다 최적이
+       따라 움직였다). 드래그 중(recalc(false))에는 캐시를 쓰고, 시뮬 카드·도넛·
+       합계만 매번 갱신한다. */
     let optCache = null;
     simDyn = (E8, withCharts) => {
       const w = ALLOC_ACCT.map((k) => (st.mix_acct[k] || 0) / 100);
       const V8 = E8.V;
       const sim = { mu: amDot(V8.mu, w), sig: E8.sigmaW(w, V8.C) };
-      const canOpt = E8.layer === "cma" && allocFeasibility(E8).length === 0;
+      /* 실행 가능성도 목표 100% 기준으로 검사한다 — 현재 합계 기준이면 표류가
+         최적 카드를 껐다 켰다 한다 */
+      const canOpt = E8.layer === "cma"
+        && allocFeasibility({ lo: E8.lo, hi: E8.hi, total: 1, groups: E8.groups }).length === 0;
       if (withCharts || optCache == null) {
         optCache = canOpt ? (() => {
-          const wo = E8.optimizeUtil(V8.mu, V8.C, +st.mvo_lambda || 1);
+          const wo = E8.optimizeUtilAt(V8.mu, V8.C, +st.mvo_lambda || 1, 1);
           return { w: wo, mu: amDot(V8.mu, wo), sig: E8.sigmaW(wo, V8.C) };
         })() : null;
       }
@@ -4843,16 +4862,35 @@ function renderAlloc() {
         if (donut) c.append(donut);
         return c;
       };
-      const optCol = opt
-        ? col(card8("① 최적 포트폴리오 (λ-MVO)", opt.mu, opt.sig,
-              "키인 μ·σ + 실측 상관 · 밴드·합산 상한 반영 · 막대 위 ▼ = 최적 위치", true),
-            dwrap("최적 포트폴리오 비중", opt.w))
-        : col(el("div", { class: "card sim8-card" },
-            el("div", { class: "card-title" }, "① 최적 포트폴리오 — 보류"),
-            el("div", { style: "font-size:12px;margin-top:4px" },
-              E8.layer !== "cma"
-                ? "위험 원천을 기관 벤치마크(CMA)로 두면 계산됩니다."
-                : "제약이 서로 모순입니다 — 수기 입력에서 밴드·상한을 확인하세요.")));
+      let optCol;
+      if (opt) {
+        const optCard = card8("① 최적 포트폴리오 (λ-MVO)", opt.mu, opt.sig,
+          "키인 μ·σ + 실측 상관 · 밴드·합산 상한 반영 · 합계 100% 기준(비중 조정과 무관) · 막대 위 ▼ = 최적 위치", true);
+        /* 「막대를 최적 비중으로」(2026-08-12 사용자 요청) — 최적 해를 막대·숫자에
+           얹는다. 반올림 잔차는 최대 비중 자산에 흡수해 합계 100 을 정확히 유지.
+           시뮬레이션 조정이므로 저장하지 않는다(조정/저장 분리 승계 — 저장은
+           「기본값으로 저장」 버튼만). */
+        optCard.append(el("button", { type: "button", class: "btn-ghost",
+          style: "margin-top:7px", onclick: () => {
+            const vals = opt.w.map((x) => +(x * 100).toFixed(2));
+            let iMax = 0;
+            vals.forEach((v, i) => { if (v > vals[iMax]) iMax = i; });
+            vals[iMax] = +(vals[iMax] + (100 - vals.reduce((a, b) => a + b, 0))).toFixed(2);
+            ALLOC_ACCT.forEach((k, i) => { st.mix_acct[k] = vals[i]; });
+            ALLOC_ACCT.forEach(syncRow);
+            refreshSimSum();
+            markDirty();
+            recalc(true);
+          } }, "막대를 최적 비중으로"));
+        optCol = col(optCard, dwrap("최적 포트폴리오 비중", opt.w));
+      } else {
+        optCol = col(el("div", { class: "card sim8-card" },
+          el("div", { class: "card-title" }, "① 최적 포트폴리오 — 보류"),
+          el("div", { style: "font-size:12px;margin-top:4px" },
+            E8.layer !== "cma"
+              ? "위험 원천을 기관 벤치마크(CMA)로 두면 계산됩니다."
+              : "제약이 서로 모순입니다 — 수기 입력에서 밴드·상한을 확인하세요.")));
+      }
       const simCol = col(card8("② 지금 시뮬레이션 (조정값)", sim.mu, sim.sig,
           opt ? `최적 대비 수익 ${sim.mu - opt.mu >= 0 ? "+" : ""}${fmtNum(sim.mu - opt.mu, 2)}%p · ` +
                 `위험 ${sim.sig - opt.sig >= 0 ? "+" : ""}${fmtNum(sim.sig - opt.sig, 2)}%p`

@@ -1776,10 +1776,49 @@ safe("simPanel", () => {
   r.cmaAltSigDisabled = sigInputsCma.filter((n) => n.disabled).length === 2
     && sigInputsCma.filter((n) => n.disabled)
       .every((n) => (n.getAttribute("placeholder") || "") === "매핑이 정함");
+  /* 실측 σ 자리표시자 — "적용 중"이 붙어 미반영으로 오독되지 않는다(2026-08-12) */
+  r.sigPlaceholderSaysApplied = sigInputsCma
+    .filter((n) => !n.disabled)
+    .every((n) => /실측 [\d.]+ 적용 중/.test(n.getAttribute("placeholder") || ""));
   const Ea = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), view: "acct" });
-  const wOpt = Ea.optimizeUtil(Ea.V.mu, Ea.V.C, 1);
+  const wOpt = Ea.optimizeUtilAt(Ea.V.mu, Ea.V.C, 1, 1);
   const mark0 = panel.querySelectorAll(".sim-opt-mark")[0];
   r.markerMatchesOptimum = Math.abs(parseFloat(mark0.style.left) - wOpt[0] * 100) < 0.6;
+
+  /* ⑥ 최적 불변(목표 100% 기준) + 「막대를 최적 비중으로」 버튼 — 2026-08-12 사용자
+     발견·요청. 엔진: 합계가 표류해도 optimizeUtilAt(…, 1) 해가 같아야 한다.
+     화면: 자유 조정으로 합계를 흩뜨려도 ▼ 위치가 그대로여야 하고, 버튼을 누르면
+     막대 = 최적·합계 100·경고 없음·저장 안 됨이어야 한다. */
+  const stDrift = { ...P.allocDefaults(CMA_ALLOC), view: "acct" };
+  stDrift.mix_acct = { ...stDrift.mix_acct, 해외주식: 26 };            // 합 120 으로 표류
+  const Edrift = P.allocEngine(CMA_ALLOC, stDrift);
+  const wOptDrift = Edrift.optimizeUtilAt(Edrift.V.mu, Edrift.V.C, 1, 1);
+  r.optimumIgnoresMixDrift = wOpt.every((x, i) => Math.abs(x - wOptDrift[i]) < 1e-12);
+  const markPos = () => Array.from(panel.querySelectorAll(".sim-opt-mark")).map((n) => n.style.left);
+  const marksBefore = JSON.stringify(markPos());
+  const drag = DOC.getElementById("sim-mix-해외주식");
+  drag.value = "26";
+  drag.dispatchEvent({ type: "input", target: drag });
+  drag.dispatchEvent({ type: "change", target: drag });
+  r.optMarkersStableUnderDrift = JSON.stringify(markPos()) === marksBefore;
+  const applyBtn = Array.from(panel.querySelectorAll("button"))
+    .find((n) => /최적 비중으로/.test(n.textContent));
+  r.applyButtonExists = !!applyBtn;
+  if (applyBtn) applyBtn.click();
+  /* id 로 읽되 getElementById 를 쓰지 않는다 — 셰이드의 getElementById 는
+     querySelector("#id") 위임이라 괄호가 든 id(대체투자(대출형))를 못 찾는다.
+     실제 브라우저의 getElementById 는 문제없다(문자 제한 없음) — 프로브 한정 우회. */
+  const mixById = {};
+  Array.from(panel.querySelectorAll("input"))
+    .filter((n) => (n.id || "").startsWith("sim-mix-"))
+    .forEach((n) => { mixById[n.id.slice("sim-mix-".length)] = n; });
+  const mixVals = P.ALLOC_ACCT.map((k) =>
+    +(mixById[k.replace(/\s+/g, "-")] || { value: NaN }).value);
+  const sumApplied = mixVals.reduce((a, b) => a + b, 0);
+  r.applyMakesSum100 = Math.abs(sumApplied - 100) < 0.05;
+  r.applyMatchesOptimum = mixVals.every((v, i) => Math.abs(v - wOpt[i] * 100) < 0.1);
+  r.applyClearsSumWarning = !panel.querySelector(".sim-sum").classList.contains("warn");
+  r.applyDoesNotSave = shim.localStorage.getItem("iaw-alloc") == null;
 
   /* ④ 합계 100% 유지 모드 — 숫자 입력 하나가 나머지를 재분배해 합을 지킨다 */
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, sum_lock: true }));
