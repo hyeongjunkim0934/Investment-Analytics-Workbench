@@ -889,11 +889,19 @@ button.vchip { cursor: pointer; }
   font-size: 11px; color: var(--ink-1); pointer-events: none; line-height: 1; }
 .sim8-row input[type="number"] { width: 100%; }
 .sim8-dyn { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
-.sim8-card { padding: 10px 14px; min-width: 200px; flex: 1 1 200px; }
+/* 카드 아래 중앙에 그 카드의 도넛(2026-08-12) — 열(카드+도넛) 두 개를 나란히,
+   도넛은 각 열 안에서 수평 중앙. 카드 높이가 달라도 도넛 시작선이 맞도록
+   카드에 flex:0 을 주지 않고 열 폭만 공유한다. */
+.sim8-cols { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
+.sim8-col { display: flex; flex-direction: column; gap: 10px; align-items: center;
+  flex: 1 1 260px; min-width: 240px; }
+.sim8-col > .sim8-card { width: 100%; box-sizing: border-box; }
+.sim8-card { padding: 10px 14px; min-width: 200px; }
 .sim8-strong { border-color: var(--accent, var(--ink-3)); }
 .sim8-donut { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.sim8-donut svg { max-width: 100%; height: auto; }
 .sim8-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px;
-  color: var(--ink-2); max-width: 420px; }
+  color: var(--ink-2); justify-content: center; }
 @media (max-width: 720px) {
   .sim8-row { grid-template-columns: 110px 1fr 60px 72px 72px; gap: 6px; }
 }

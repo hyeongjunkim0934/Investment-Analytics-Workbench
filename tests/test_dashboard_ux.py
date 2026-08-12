@@ -49,7 +49,10 @@ def probe() -> dict:
             "실행해서 확인하므로 node 가 필수다(GitHub 호스팅 러너에는 기본 탑재). "
             "건너뛰면 회귀가 조용히 통과하므로 skip 하지 않고 실패시킨다."
         )
-    r = subprocess.run([node, str(PROBE)], capture_output=True, text=True, timeout=120)
+    # timeout 은 성능 단정이 아니라 **행걸림 가드**다. CPU 스로틀링이 심한 컨테이너에서
+    # 프로브가 100초를 넘는 것을 실측했다(GitHub 러너에서는 수십 초) — 120으로 두면
+    # 느린 환경에서 117개가 가짜로 죽는다. 무한 대기만 막을 만큼 넉넉히 둔다.
+    r = subprocess.run([node, str(PROBE)], capture_output=True, text=True, timeout=420)
     assert r.returncode == 0, f"probe 실행 실패:\n{r.stdout[-3000:]}\n{r.stderr[-3000:]}"
     data = json.loads(r.stdout)
     broken = {k: v["ERROR"] for k, v in data.items() if isinstance(v, dict) and "ERROR" in v}
@@ -1543,16 +1546,21 @@ def test_cma_matrix_entries_are_benchmark_covariances_verbatim(probe):
 
 
 def test_cma_alt_factor_mapping_matches_closed_form(probe):
-    """대체투자 기관 방식(주식·채권 매핑) — 잔차분산까지 폐형 손계산과 일치한다.
-
-    잔차 없이 팩터만 넣으면 공분산이 특이행렬이 된다(실측 최소고유값 −1.8e−18).
+    """대체투자 분류별 매핑(§7.7.9 — 지분형 65/35·대출형 0/100) — 잔차분산까지 폐형
+    손계산과 일치한다. 잔차는 두 팩터 스팬 회귀에서 오고 분류마다 **독립**으로
+    들어간다 — 공유(완전상관)로 넣으면 네 행이 3차원에 갇혀 행렬이 도로 특이해진다
+    (실측: 완전헤지 촐레스키 피벗 −2.3e−14). 잔차 없이 팩터만 넣어도 특이(−1.8e−18).
     """
     c = probe["cmaLayer"]
     assert c["idioIsPositive"] is True
     assert c["altVarIsFactorPlusIdio"] is True
+    assert c["altDebtVarIsFactorPlusIdio"] is True
+    assert c["altClassCrossIsFactorOnly"] is True, "두 분류의 교차항은 팩터 교차만이어야 한다(잔차 독립)"
+    assert c["altAggregateIdioIsIndependent"] is True, "합산 분산이 (w₁²+w₂²) 잔차와 어긋난다"
     assert c["altCrossIsFactorCross"] is True
     assert c["econMatrixIsPD"] is True, "잔차를 더했는데도 행렬이 정칙이 아니다"
     assert c["bmModeUsesRawAlt"] is True, "「벤치마크 그대로(진단)」 모드가 관측 σ 로 돌아가지 않는다"
+    assert c["bmModeClassesIdentical"] is True, "bm 진단 모드에서 두 분류가 같은 행이 아니다"
 
 
 def test_cma_mu_keyin_window_and_anchor(probe):
@@ -1593,6 +1601,7 @@ def test_cma_screen_shows_layer_mapping_and_provenance(probe):
     assert c["renderErrors"] == 0
     assert c["controlsShowSource"] is True
     assert c["controlsShowMapping"] is True
+    assert c["controlsShowPerClassMapping"] is True, "매핑 콘솔에 지분형/대출형 분류가 없다"
     assert c["tableShowsMappingTag"] is True
     assert c["methodShowsFxBasis"] is True
     assert c["methodShowsExcluded"] is True
@@ -1663,6 +1672,7 @@ def test_char_card_renders_with_honest_mdd_labels(probe):
     assert c["mddLabeledAsModel"] is True
     assert c["showsEfficiencyGap"] is True
     assert c["hasCorrMatrix"] is True
+    assert c["mappedAltRowCount"] == 2, "자산군 표에 대체투자 두 분류가 없다"
     assert c["mappedAltMddBlank"] is True
 
 
@@ -1755,23 +1765,52 @@ def test_sim_panel_sigma_keyin_scales_variance_not_correlation(probe):
 
 
 def test_sim_panel_renders_bars_markers_donuts_cards(probe):
-    """패널 렌더 — 목차 첫 버튼 = 시뮬레이터, 막대 8, ▼ 마커 = λ-MVO 산출 위치,
-    도넛 2(지금·최적), 카드 2(최적·시뮬), 상관 정책 문구."""
+    """패널 렌더 — 목차 첫 버튼 = 시뮬레이터, 막대 9(대체투자 지분형/대출형 분리),
+    ▼ 마커 = λ-MVO 산출 위치, 도넛 2(최적·시뮬), 카드 2(최적·시뮬), 상관 정책 문구."""
     c = probe["simPanel"]
     assert c["renderErrors"] == 0
     assert c["tocFirstIsSim"] is True
-    assert c["barCount"] == 8 and c["markerVisibleCount"] == 8
+    assert c["barCount"] == 9 and c["markerVisibleCount"] == 9
     assert c["donutCount"] == 2
     assert c["hasOptCard"] is True and c["hasSimCard"] is True
     assert c["statesCorrPolicy"] is True
     assert c["markerMatchesOptimum"] is True, "막대 위 ▼ 가 최적화 산출과 어긋난다"
 
 
+def test_sim_panel_donuts_sit_under_their_cards(probe):
+    """도넛 배치(2026-08-12 사용자 지시) — 최적 카드 아래 최적 도넛, 시뮬 카드 아래
+    시뮬 도넛이 **같은 열**에 있고, 도넛이 210px 로 커졌다(구 132)."""
+    c = probe["simPanel"]
+    assert c["donutColumns"] == 2
+    assert c["optDonutUnderOptCard"] is True, "최적 도넛이 최적 카드의 열에 없다"
+    assert c["simDonutUnderSimCard"] is True, "시뮬 도넛이 시뮬 카드의 열에 없다"
+    assert c["donutSize"] == 210
+
+
+def test_sim_panel_alt_sigma_keyin_is_owned_by_the_mapping(probe):
+    """CMA 층에서 대체투자 두 분류의 σ 키인만 비활성 — 위험은 분류별 매핑 콘솔이
+    정하고, 두 회계 키가 같은 벤치마크 라벨을 공유해 σ 배율이 충돌하기 때문이다."""
+    assert probe["simPanel"]["cmaAltSigDisabled"] is True
+
+
 def test_sim_panel_proxy_layer_degrades_loudly(probe):
-    """프록시층 — σ 키인 8칸 전부 비활성 + 최적 「보류」 안내(조용한 강등 금지)."""
+    """프록시층 — σ 키인 9칸 전부 비활성 + 최적 「보류」 안내(조용한 강등 금지)."""
     c = probe["simPanel"]
     assert c["proxySigDisabled"] is True
     assert c["proxyOptDeferred"] is True
+
+
+def test_alt_split_legacy_state_migrates_preserving_totals(probe):
+    """§7.7.9 이관 — 구 저장분의 단일 「대체투자」 키가 분할 축으로 옮겨진다:
+    비중은 합계 보존 분할, μ 키인은 두 분류 복사(어떤 분할에서도 합계 μ 보존),
+    σ 키인·구 매핑은 폐기(새 정본이 화면에 그대로 보이므로 조용한 변경이 아니다)."""
+    c = probe["cmaAudit"]
+    assert c["migSplitsMixPreservingSum"] is True
+    assert c["migCopiesMuToBothClasses"] is True
+    assert c["migDropsLegacySigOver"] is True
+    assert c["migMapsBandsToEquityClass"] is True
+    assert c["migAltMapGetsClassKeys"] is True
+    assert c["migRenderErrors"] == 0
 
 
 # ---- 통화 구성 (실행해서 확인) ----------------------------------------------

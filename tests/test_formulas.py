@@ -348,7 +348,7 @@ def test_alloc_hedge_levers_collapse_to_one_axis_exactly():
     고르는 것은 무한한 동점 중 임의 선택이다. 화면 문구가 그 위에 서 있다.
     """
     covS = _rand_cov()
-    w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
+    w = np.array([0.4, 0.2, 0.05, 0.05, 0.12, 0.03, 0.03])
     k = 0.7
     sig = lambda hb, he: math.sqrt(float((w @ alloc.loadings(hb, he, k)) @ covS
                                          @ (w @ alloc.loadings(hb, he, k))))
@@ -368,7 +368,7 @@ def test_alloc_hedge_levers_collapse_to_one_axis_exactly():
 def test_alloc_hedge_xe_min_is_the_true_minimum():
     """폐형 Xe* 가 모든 (h채,h주) 조합보다 낮거나 같다 — 격자 argmin 을 대체한 근거."""
     covS = _rand_cov(5)
-    w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
+    w = np.array([0.4, 0.2, 0.05, 0.05, 0.12, 0.03, 0.03])
     k = 0.7
     xe, smin = alloc.hedge_xe_min(covS, w, k)
     for hb in np.arange(0, 1.0001, 0.02):
@@ -383,7 +383,7 @@ def test_alloc_hedge_xe_min_is_the_true_minimum():
 def test_alloc_hedge_xe_min_clips_to_band():
     """밴드가 물면 제약 하 최소는 잘린 끝점이다(볼록이므로)."""
     covS = _rand_cov(9)
-    w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
+    w = np.array([0.4, 0.2, 0.05, 0.05, 0.12, 0.03, 0.03])
     k = 0.7
     free, _ = alloc.hedge_xe_min(covS, w, k)
     lo, hi = free + 0.01, free + 0.05                 # 자유 최소점의 오른쪽만 허용
@@ -394,7 +394,7 @@ def test_alloc_hedge_xe_min_clips_to_band():
 
 
 def test_alloc_xe_range_matches_band_corners():
-    w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
+    w = np.array([0.4, 0.2, 0.05, 0.05, 0.12, 0.03, 0.03])
     bands = ((0.7, 1.0), (0.0, 0.2))
     lo, hi = alloc.xe_range(w, bands)
     assert abs(lo - alloc.unhedged_fx(w, 1.0, 0.2)) < 1e-15
@@ -404,7 +404,7 @@ def test_alloc_xe_range_matches_band_corners():
 
 def test_alloc_hedge_pair_for_xe_is_the_closest_feasible_point():
     """대표점 규칙 = 밴드 ∩ 등Xe 직선 위에서 현재값에 가장 가까운 점 (임의 계수 0개)."""
-    w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
+    w = np.array([0.4, 0.2, 0.05, 0.05, 0.12, 0.03, 0.03])
     bands = ((0.0, 1.0), (0.0, 1.0))
     cur = (0.98, 0.0)
     xe = alloc.unhedged_fx(w, 0.35, 1.00)
@@ -424,7 +424,7 @@ def test_alloc_hedge_pair_for_xe_is_the_closest_feasible_point():
 
 def test_alloc_hedge_pair_for_xe_reports_infeasible_instead_of_guessing():
     """밴드 안에서 만들 수 없는 Xe 는 None — 조용히 아무 점이나 돌려주지 않는다."""
-    w = np.array([0.4, 0.2, 0.05, 0.05, 0.15, 0.03])
+    w = np.array([0.4, 0.2, 0.05, 0.05, 0.12, 0.03, 0.03])
     bands = ((0.7, 1.0), (0.0, 0.2))
     lo, hi = alloc.xe_range(w, bands)
     assert alloc.hedge_pair_for_xe(w, hi + 0.01, (0.98, 0.0), bands) is None
@@ -434,11 +434,36 @@ def test_alloc_hedge_pair_for_xe_reports_infeasible_instead_of_guessing():
 
 def test_alloc_hedge_pair_handles_missing_foreign_sleeve():
     """해외주식이 0이면 주식헤지는 정보가 없다 — 현재값을 그대로 둔다(0 으로 만들지 않는다)."""
-    w = np.array([0.5, 0.3, 0.05, 0.0, 0.1, 0.05])
+    w = np.array([0.5, 0.3, 0.05, 0.0, 0.08, 0.02, 0.05])
     bands = ((0.0, 1.0), (0.0, 1.0))
     hb, he = alloc.hedge_pair_for_xe(w, alloc.unhedged_fx(w, 0.6, 0.4), (0.98, 0.4), bands)
     assert abs(he - 0.4) < 1e-12
     assert abs(hb - 0.6) < 1e-12
+
+
+def test_alloc_split_alt_shares_proxy_row_exactly():
+    """대체투자 지분형/대출형(§7.7.9) — 프록시층에서는 같은 행을 공유한다.
+
+    행이 동일하므로 두 분류는 완전상관이고, 합계 비중이 같으면 어떤 분할이든
+    총위험이 **정확히** 같다 — 구 단일 「대체투자」 축과의 연속성 근거다.
+    (분류별 위험 구분은 CMA 층의 팩터 매핑 몫 — app.js cmaAltRows.)
+    """
+    covS = _rand_cov(21)
+    B = alloc.loadings(0.9, 0.9, 0.7)
+    assert B.shape == (len(alloc.ECON_ASSETS), len(alloc.SOURCE_LABELS))
+    i_eq = alloc.ECON_ASSETS.index("대체투자(지분형)")
+    i_dt = alloc.ECON_ASSETS.index("대체투자(대출형)")
+    assert (B[i_eq] == B[i_dt]).all()
+    n = len(alloc.ECON_ASSETS)
+    w1 = np.zeros(n)
+    w1[i_eq] = 0.15
+    w2 = np.zeros(n)
+    w2[i_eq], w2[i_dt] = 0.06, 0.09
+    sig2 = lambda w: float((w @ B) @ covS @ (w @ B))
+    assert abs(sig2(w1) - sig2(w2)) < 1e-18
+    # 삽입 위치 계약 — 해외채권 1·해외주식 3 이 밀리면 Xe 산식이 조용히 틀어진다
+    assert alloc.ECON_ASSETS.index("해외채권") == 1
+    assert alloc.ECON_ASSETS.index("해외주식") == 3
 
 
 def test_alloc_anchor_definition():
