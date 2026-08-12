@@ -1692,6 +1692,47 @@ safe("cmaAudit", () => {
     alt_map: { mode: "factor", eq_we: 60, eq_wb: 40, dt_we: 0, dt_wb: 100 } }));
   r.migKeepsUserTunedMap = P.allocState(CMA_ALLOC).alt_map.eq_we === 60;
 
+  /* ⑩ μ 디폴트 갱신 전파(2026-08-12 실측 사고) — 옛 저장분이 새 디폴트를 영영
+     덮어 대체투자 두 분류가 같은 μ 로 굳어 있었다. `mu_dflt` 스냅숏으로 "자동
+     채움"과 "사용자 키인"을 구분해, 전자만 새 디폴트로 갱신되어야 한다. */
+  const D1 = { ...CMA_ALLOC, defaults: { ...CMA_ALLOC.defaults,
+    mu_over: { ...CMA_ALLOC.defaults.mu_over, "대체투자(지분형)": 6.86 } } };
+  const D2 = { ...CMA_ALLOC, defaults: { ...CMA_ALLOC.defaults,
+    mu_over: { ...CMA_ALLOC.defaults.mu_over, "대체투자(지분형)": 7.5 } } };
+  shim.localStorage.removeItem("iaw-alloc");
+  const sA = P.allocState(D1);                       // 디폴트 자동 채움
+  r.dfltFillsAndStamps = sA.mu_over["대체투자(지분형)"] === 6.86
+    && sA.mu_dflt["대체투자(지분형)"] === 6.86;
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ ...sA, saved: true }));
+  const sB = P.allocState(D2);                       // 디폴트가 바뀌면 따라간다
+  r.dfltUpdatePropagates = sB.mu_over["대체투자(지분형)"] === 7.5;
+  /* 사용자가 손댄 값은 디폴트가 바뀌어도 유지된다 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({
+    ...sA, saved: true, mu_over: { ...sA.mu_over, "대체투자(지분형)": 9.9 } }));
+  const sC = P.allocState(D2);
+  r.dfltKeepsUserKeyedValue = sC.mu_over["대체투자(지분형)"] === 9.9;
+  /* 스냅숏이 없는 옛 저장분(사고 상태)은 유지되지만 — 화면이 표시로 알리고
+     「μ·σ 디폴트로 되돌리기」 버튼이 한 번에 정리한다(아래 ⑪) */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
+    mu_over: { "대체투자(대출형)": 4.39, "대체투자(지분형)": 4.39 } }));
+  const sD = P.allocState(D1);
+  r.legacyStaleStateSurvivesUntilReset = sD.mu_over["대체투자(지분형)"] === 4.39;
+  P.DATA.alloc = D1;
+  P.renderSection("alloc");
+  const offMark = DOC.getElementById("alloc-sim-panel").querySelectorAll(".keyed-off-default").length;
+  r.offDefaultIsMarked = offMark >= 1;
+  /* ⑪ 「μ·σ 디폴트로 되돌리기」 — 눌러야만 게시 디폴트로 돌아간다(명시적 조작) */
+  const resetBtn = Array.from(DOC.getElementById("alloc-controls").querySelectorAll("button"))
+    .find((n) => /μ·σ 디폴트로 되돌리기/.test(n.textContent));
+  r.muResetButtonExists = !!resetBtn;
+  if (resetBtn) resetBtn.click();
+  const sE = P.allocState(D1);
+  r.muResetRestoresDefaults = sE.mu_over["대체투자(지분형)"] === 6.86
+    && sE.mu_over["대체투자(대출형)"] === 4.39;
+  r.muResetClearsSigOver = P.ALLOC_ACCT.every((k) => sE.sig_over[k] == null);
+  shim.localStorage.removeItem("iaw-alloc");
+  P.DATA.alloc = CMA_ALLOC;
+
   /* ⑦ 복구된 화면은 고장 배너를 걷는다 */
   shim.localStorage.removeItem("iaw-alloc");
   const realA = P.RENDERERS.alloc;

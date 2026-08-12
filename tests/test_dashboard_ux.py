@@ -1867,6 +1867,30 @@ def test_20260812_migration_loan_defaults_and_map(probe):
     assert c["migKeepsUserTunedMap"] is True
 
 
+def test_mu_default_updates_reach_untouched_keys(probe):
+    """게시 디폴트를 갱신하면 **사용자가 손대지 않은 칸**만 따라와야 한다.
+
+    2026-08-12 실측 사고: 옛 저장분이 새 μ 디폴트를 영영 덮어 대체투자 두 분류가
+    같은 값(4.39)으로 굳어 있었다 — 지분형 게시 디폴트는 6.86. `mu_dflt` 스냅숏이
+    "우리가 채운 값"과 "사용자 키인"을 구분해 이 전파를 가능하게 한다.
+    """
+    c = probe["cmaAudit"]
+    assert c["dfltFillsAndStamps"] is True
+    assert c["dfltUpdatePropagates"] is True, "디폴트를 바꿔도 옛 저장분이 계속 덮는다"
+    assert c["dfltKeepsUserKeyedValue"] is True, "사용자가 키인한 값을 디폴트가 덮어썼다"
+
+
+def test_stale_state_is_visible_and_resettable(probe):
+    """스냅숏이 없는 옛 저장분은 **조용히 덮어쓰지 않는다**(사용자 입력일 수 있으므로).
+    대신 화면이 「디폴트와 다름」을 표시하고, 명시적 버튼이 한 번에 정리한다."""
+    c = probe["cmaAudit"]
+    assert c["legacyStaleStateSurvivesUntilReset"] is True
+    assert c["offDefaultIsMarked"] is True, "디폴트와 다른 키인 값이 화면에 표시되지 않는다"
+    assert c["muResetButtonExists"] is True
+    assert c["muResetRestoresDefaults"] is True
+    assert c["muResetClearsSigOver"] is True, "σ 키인이 비워지지 않아 실측 디폴트로 못 돌아간다"
+
+
 def test_sum_badge_drops_the_loan_clause(probe):
     """합계 배지에 「대출 N% 제외」 문구가 없어야 한다 — 대출금은 배분 우주에서 제외됐다."""
     assert probe["simConsole"]["badgeHasNoLoanClause"] is True

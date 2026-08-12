@@ -905,3 +905,7 @@ button.vchip { cursor: pointer; }
 @media (max-width: 720px) {
   .sim8-row { grid-template-columns: 110px 1fr 60px 72px 72px; gap: 6px; }
 }
+
+/* 키인 값이 게시 디폴트와 다를 때 — 옛 저장분이 새 디폴트를 덮고 있어도 보이게
+   (2026-08-12 실측 사고: 대체투자 두 분류가 옛 저장분 때문에 같은 μ 로 굳어 있었다) */
+.keyed-off-default { border-color: var(--accent, var(--ink-3)); }

@@ -4575,12 +4575,27 @@ function allocState(A) {
   }
   /* μ·북일드 디폴트(사용자 지정 CMA) — 미입력(null)은 지정 디폴트로 채운다.
      "미입력 = 사용자 지정 디폴트"가 새 계약이다(§7.7.10 — 구 앵커/관측 도출은
-     디폴트가 게시되지 않은 자산의 폴백으로만 남는다). */
+     디폴트가 게시되지 않은 자산의 폴백으로만 남는다).
+
+     **채워 넣은 값은 `mu_dflt` 에 그대로 기억한다.** 그러지 않으면 저장된 옛 값과
+     "자동으로 채운 디폴트"를 구분할 수 없어, 파이프라인 디폴트를 갱신해도 예전에
+     저장된 화면에는 영영 반영되지 않는다(실측 사고: 대체투자 두 분류가 옛 저장분
+     때문에 같은 μ 4.39 로 굳어 있었다 — 지분형 게시 디폴트는 6.86). 지금 값이
+     "우리가 채운 그 값 그대로"면 새 디폴트로 갱신하고, 사용자가 고친 값이면
+     건드리지 않는다. */
+  if (!st.mu_dflt || typeof st.mu_dflt !== "object") st.mu_dflt = {};
+  const dfltSync = (cur, was, next) =>
+    (cur == null || (was != null && Math.abs(+cur - +was) < 1e-12)) ? +next : cur;
   if (d.mu_over) Object.entries(d.mu_over).forEach(([k, v]) => {
-    if (st.mu_over[k] == null && v != null && isFinite(+v)) st.mu_over[k] = +v;
+    if (v == null || !isFinite(+v)) return;
+    st.mu_over[k] = dfltSync(st.mu_over[k], st.mu_dflt[k], v);
+    st.mu_dflt[k] = +v;
   });
-  if (st.by_kr == null && d.by_kr != null) st.by_kr = d.by_kr;
-  if (st.by_fx == null && d.by_fx != null) st.by_fx = d.by_fx;
+  ["by_kr", "by_fx"].forEach((k) => {
+    if (d[k] == null || !isFinite(+d[k])) return;
+    st[k] = dfltSync(st[k], st.mu_dflt[k], d[k]);
+    st.mu_dflt[k] = +d[k];
+  });
   st.sum_lock = st.sum_lock === true;
   return st;
 }
@@ -4759,9 +4774,18 @@ function renderAlloc() {
       const muMap = { "장부가 국내채권": ["by_kr", null], "장부가 해외채권": ["by_fx", null] }[k]
         || [null, { "시가 국내채권": "국내채권", "시가 해외채권": "해외채권" }[k] || k];
       const muVal = muMap[0] ? st[muMap[0]] : st.mu_over[muMap[1]];
+      const muDflt = st.mu_dflt ? st.mu_dflt[muMap[0] || muMap[1]] : null;
       const muIn = el("input", { type: "number", step: "0.05",
         value: muVal == null ? "" : String(muVal), placeholder: "앵커/관측",
         "aria-label": `${k} 기대수익 % 키인` });
+      /* 게시 디폴트를 툴팁에 상시 노출하고, 저장된 값이 그와 다르면 화면에서 보이게
+         표시한다 — 옛 저장분이 새 디폴트를 덮고 있어도 눈에 띄도록(실측 사고 대응) */
+      if (muDflt != null) {
+        muIn.title = `게시 디폴트 ${fmtNum(muDflt, 2)}%`
+          + (muVal != null && Math.abs(+muVal - +muDflt) > 1e-9
+            ? ` — 지금 값은 수기 입력분입니다(디폴트로 되돌리려면 아래 「μ·σ 디폴트로 되돌리기」)` : "");
+        if (muVal != null && Math.abs(+muVal - +muDflt) > 1e-9) muIn.classList.add("keyed-off-default");
+      }
       muIn.addEventListener("change", () => {
         const v = muIn.value === "" ? null : +muIn.value;
         if (muMap[0]) st[muMap[0]] = v != null && isFinite(v) ? v : null;
@@ -5061,6 +5085,17 @@ function renderAlloc() {
     el("button", { type: "button", class: "btn-ghost",
       onclick: () => renderAlloc() },                       // 저장 안 된 조정을 버리고 저장값으로
       "저장값으로 되돌리기"),
+    /* μ·σ 만 게시 디폴트로 — 비중·밴드·헤지는 그대로 둔다. 옛 저장분이 갱신된
+       디폴트를 덮고 있을 때 한 번에 정리하는 자리다(실측 사고 대응, 2026-08-12). */
+    el("button", { type: "button", class: "btn-ghost", onclick: () => {
+      const dd = A.defaults || {};
+      st.mu_over = { ...st.mu_over, ...(dd.mu_over || {}) };
+      if (dd.by_kr != null) st.by_kr = dd.by_kr;
+      if (dd.by_fx != null) st.by_fx = dd.by_fx;
+      ALLOC_ACCT.forEach((k) => { st.sig_over[k] = null; });   // σ 미입력 = 벤치마크 실측
+      allocSaveState(st);
+      renderAlloc();
+    } }, "μ·σ 디폴트로 되돌리기"),
     dirtyBadge,
     el("a", { href: "#alloc-sim", style: "font-size:12.5px" }, "상세 수기 입력 (밴드·듀레이션·통화 구성) →"),
     el("span", { style: "color:var(--ink-3);font-size:12px" },
