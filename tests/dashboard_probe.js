@@ -177,7 +177,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
   "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256",
   "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil", "allocCharStats",
-  "allocRedistribute"];
+  "allocRedistribute", "ALLOC_ACCT", "allocIsAlt"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -986,14 +986,18 @@ const ALLOC_FIXTURE = (() => {
                      curve: { "3M": -0.9, "6M": -0.85, "12M": -0.7 } }],
     anchor_ref: {},
     defaults: {
-      mix: { 국내채권: 42, 해외채권: 18, 국내주식: 3, 해외주식: 5, 대체투자: 15, 단기자금: 5 },
+      mix: { 국내채권: 42, 해외채권: 18, 국내주식: 3, 해외주식: 5,
+             "대체투자(지분형)": 12, "대체투자(대출형)": 3, 단기자금: 5 },
       bands: { 국내채권: [20, 55], 해외채권: [0, 30], 국내주식: [0, 10],
-               해외주식: [0, 15], 대체투자: [5, 25], 단기자금: [2, 15] },
+               해외주식: [0, 15], "대체투자(지분형)": [0, 25],
+               "대체투자(대출형)": [0, 10], 단기자금: [2, 15] },
       mix_acct: { "장부가 국내채권": 30, "시가 국내채권": 12, "장부가 해외채권": 12,
-                  "시가 해외채권": 6, 국내주식: 3, 해외주식: 5, 대체투자: 15, 단기자금: 5 },
+                  "시가 해외채권": 6, 국내주식: 3, 해외주식: 5,
+                  "대체투자(지분형)": 12, "대체투자(대출형)": 3, 단기자금: 5 },
       bands_acct: { "장부가 국내채권": [15, 45], "시가 국내채권": [0, 25],
                     "장부가 해외채권": [0, 25], "시가 해외채권": [0, 20],
-                    국내주식: [0, 10], 해외주식: [0, 15], 대체투자: [5, 25], 단기자금: [2, 15] },
+                    국내주식: [0, 10], 해외주식: [0, 15],
+                    "대체투자(지분형)": [0, 25], "대체투자(대출형)": [0, 10], 단기자금: [2, 15] },
       loan_w: 12, loan_y: 4, alt_alpha: 3, alt_vol: 8, tenor_m: 9,
       h_bond: 90, h_eq: 90,
       h_bands: { 해외채권: [0, 100], 해외주식: [0, 100] },
@@ -1055,7 +1059,7 @@ safe("hedgeXe", () => {
   /* ④ 자연헤지 부호 — 해외주식만 담았을 때 최소점이 '거의 오픈' 쪽인가 */
   const stEq = { ...st, mix_acct: { "장부가 국내채권": 0, "시가 국내채권": 0,
     "장부가 해외채권": 0, "시가 해외채권": 0, 국내주식: 0, 해외주식: 100,
-    대체투자: 0, 단기자금: 0 } };
+    "대체투자(지분형)": 0, "대체투자(대출형)": 0, 단기자금: 0 } };
   const Eq = P.allocEngine(A, stEq);
   const xeEq = Eq.xeStar(null, null, Eq.xeQuad());
   r.equityOnlyHedgePct = 100 - xeEq * 100;     // Xe=w(1−h), w=1 → h = 1−Xe
@@ -1264,22 +1268,43 @@ safe("cmaLayer", () => {
 
   /* ② 경제 관점 행렬 — 손계산 대조 (기본 헤지 90% → 환노출 0.1) */
   const V = E.V;
-  const iKr = 0, iFb = 1, iEq = 3, iAlt = 4;           // ALLOC_ECON 순서
+  const iKr = 0, iFb = 1, iEq = 3, iAlt = 4, iAltD = 5;   // ALLOC_ECON 순서(지분형 4·대출형 5)
   r.domesticEquityVarExact =
     Math.abs(V.C[2][2] - quad(eV("시가 국내주식"), M) * 1e4) < 1e-9;
   const fbRow = eV("시가 해외채권", [["_fx", 0.1]]);
   r.foreignBondVarWithFxExact = Math.abs(V.C[iFb][iFb] - quad(fbRow, M) * 1e4) < 1e-9;
   r.krBondUsesMarketTwin = Math.abs(V.C[iKr][iKr] - quad(eV("시가 국내채권"), M) * 1e4) < 1e-9;
 
-  /* ③ 대체투자 팩터 매핑(기관 방식 50/50) — 잔차까지 폐형 손계산과 일치해야 한다 */
-  const f = eV("시가 해외주식", [["시가 국내채권", 1]]).map((x) => x * 0.5);
-  const varF = quad(f, M);
-  const cAf = dot(f, M.map((row) => row[CI._alt]));
-  const idio = M[CI._alt][CI._alt] - cAf * cAf / varF;
+  /* ③ 대체투자 분류별 팩터 매핑(§7.7.9 — 지분형 65/35 · 대출형 0/100) — 잔차까지
+     폐형 손계산과 일치해야 한다. 잔차 = _alt 를 두 팩터 스팬에 회귀한 잔차분산
+     (매핑 비율과 무관), 두 분류가 공유(대각 2 + 교차항). */
+  const mkF = (we, wb) => {
+    const v = new Array(cm.cols.length).fill(0);
+    v[CI["시가 해외주식"]] = we; v[CI["시가 국내채권"]] = wb;
+    return v;
+  };
+  const fEq = mkF(0.65, 0.35), fDt = mkF(0, 1);
+  const fEE = M[CI["시가 해외주식"]][CI["시가 해외주식"]];
+  const fEB = M[CI["시가 해외주식"]][CI["시가 국내채권"]];
+  const fBB = M[CI["시가 국내채권"]][CI["시가 국내채권"]];
+  const cE = M[CI["시가 해외주식"]][CI._alt], cB = M[CI["시가 국내채권"]][CI._alt];
+  const det = fEE * fBB - fEB * fEB;
+  const idio = M[CI._alt][CI._alt]
+    - (fBB * cE * cE - 2 * fEB * cE * cB + fEE * cB * cB) / det;
   r.idioIsPositive = idio > 1e-10;
-  r.altVarIsFactorPlusIdio = Math.abs(V.C[iAlt][iAlt] - (varF + idio) * 1e4) < 1e-9;
+  r.altVarIsFactorPlusIdio = Math.abs(V.C[iAlt][iAlt] - (quad(fEq, M) + idio) * 1e4) < 1e-9;
+  r.altDebtVarIsFactorPlusIdio = Math.abs(V.C[iAltD][iAltD] - (quad(fDt, M) + idio) * 1e4) < 1e-9;
+  /* 두 분류 사이 — 팩터 교차만(잔차는 분류별 독립 — 공유하면 행렬이 도로 특이해진다.
+     실측: 공유안은 완전헤지에서 촐레스키 피벗 −2.3e−14 로 죽었다) */
+  r.altClassCrossIsFactorOnly =
+    Math.abs(V.C[iAlt][iAltD] - dot(fEq, mv(M, fDt)) * 1e4) < 1e-9;
+  /* 합산 잔차 = (w1²+w2²)·σ²res — 12/3 배분의 대체투자 합산 분산 손계산 */
+  const wMix = [0, 0, 0, 0, 0.12, 0.03, 0];
+  const fMix = fEq.map((x, j) => 0.12 * x + 0.03 * fDt[j]);
+  r.altAggregateIdioIsIndependent =
+    Math.abs(quad(wMix, V.C) - (quad(fMix, M) + (0.12 ** 2 + 0.03 ** 2) * idio) * 1e4) < 1e-9;
   const eqRow = eV("시가 해외주식", [["_fx", 0.1]]);
-  r.altCrossIsFactorCross = Math.abs(V.C[iAlt][iEq] - dot(eqRow, mv(M, f)) * 1e4) < 1e-9;
+  r.altCrossIsFactorCross = Math.abs(V.C[iAlt][iEq] - dot(eqRow, mv(M, fEq)) * 1e4) < 1e-9;
   /* 잔차 덕에 정칙 — 촐레스키가 끝까지 간다 */
   const chol = (C) => {
     const n = C.length, L = C.map((row) => row.slice());
@@ -1296,9 +1321,12 @@ safe("cmaLayer", () => {
   r.econMatrixIsPD = chol(V.C);
   /* 벤치마크 그대로(진단) 모드 — 관측 σ 로 되돌아간다 */
   const Ebm = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC),
-    alt_map: { mode: "bm", w_eq: 50, w_bd: 50 } });
+    alt_map: { mode: "bm", eq_we: 65, eq_wb: 35, dt_we: 0, dt_wb: 100 } });
   r.bmModeUsesRawAlt =
     Math.abs(Ebm.V.C[iAlt][iAlt] - quad(eV("시가 대체투자"), M) * 1e4) < 1e-9;
+  /* bm 진단 모드에서 두 분류는 같은 벤치마크 행(잔차 0) — 완전상관(교차 = 분산) */
+  r.bmModeClassesIdentical =
+    Math.abs(Ebm.V.C[iAlt][iAltD] - Ebm.V.C[iAlt][iAlt]) < 1e-9;
 
   /* ④ 창 전환·표본 표기 */
   const E1 = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), cma_win: "1" });
@@ -1347,6 +1375,7 @@ safe("cmaLayer", () => {
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
   r.controlsShowSource = /위험 원천/.test(ctlTxt) && /기관 벤치마크/.test(ctlTxt);
   r.controlsShowMapping = /대체투자 위험/.test(ctlTxt) && /디스무딩/.test(ctlTxt);
+  r.controlsShowPerClassMapping = /지분형/.test(ctlTxt) && /대출형/.test(ctlTxt);
   r.tableShowsMappingTag = /\[매핑\]/.test(DOC.getElementById("alloc-table-card").textContent);
   const mthTxt = DOC.getElementById("alloc-method").textContent;
   r.methodShowsFxBasis = /환노출 제거 기준/.test(mthTxt);
@@ -1475,10 +1504,14 @@ safe("allocChar", () => {
   r.mddLabeledAsModel = /\[모형\]/.test(txt) && /기하브라운/.test(txt);
   r.showsEfficiencyGap = /효율 갭|투자선 위에 있습니다/.test(txt);
   r.hasCorrMatrix = /상관 행렬/.test(txt);
-  /* 매핑 자산의 실측 MDD 는 원지수가 대표하지 않으므로 비워야 한다 */
+  /* 매핑 자산의 실측 MDD 는 원지수가 대표하지 않으므로 비워야 한다 — 두 분류 모두.
+     상관 행렬 표의 행도 "대체투자"를 담으므로 5칸짜리(자산군 표) 행만 고른다. */
   const rows = [...box.querySelectorAll("table tr")];
-  const altRow = rows.find((tr) => /대체투자/.test(tr.textContent));
-  r.mappedAltMddBlank = altRow ? /–/.test(altRow.children[3].textContent) : false;
+  const altRows = rows.filter((tr) => tr.children.length === 5
+    && /대체투자/.test(tr.children[0].textContent));
+  r.mappedAltRowCount = altRows.length;
+  r.mappedAltMddBlank = altRows.length === 2
+    && altRows.every((tr) => /–/.test(tr.children[3].textContent));
   /* 목차 — 버튼이 있고, 눌러도 죽지 않는다(scrollIntoView 가드) */
   const toc = DOC.getElementById("alloc-toc");
   const btns = toc ? [...toc.querySelectorAll("button")] : [];
@@ -1564,18 +1597,41 @@ safe("cmaAudit", () => {
   r.sanitizedRenderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
   r.sanitizedHasReference = /참고치/.test(DOC.getElementById("alloc-summary").textContent);
 
-  /* ⑤ 매핑 가중 합≠100 — 몰래 정규화하지 않고 배지로 알린다 */
+  /* ⑤ 매핑 가중 합≠100 — 몰래 정규화하지 않고 분류별 배지로 알린다 */
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
-    alt_map: { mode: "factor", w_eq: 200, w_bd: 0 } }));
+    alt_map: { mode: "factor", eq_we: 200, eq_wb: 0, dt_we: 0, dt_wb: 100 } }));
   P.renderSection("alloc");
-  r.sumBadgeShown = /100%가 아닙니다/.test(DOC.getElementById("alloc-controls").textContent);
+  r.sumBadgeShown = /⚠ 합 200%/.test(DOC.getElementById("alloc-controls").textContent);
 
   /* ⑥ 효율 갭 정직성 — 현재 배분이 밴드 밖이라 목표 μ 도달 불가면 그렇다고 적는다 */
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
     mix_acct: { "장부가 국내채권": 5, "시가 국내채권": 5, "장부가 해외채권": 5,
-      "시가 해외채권": 5, 국내주식: 5, 해외주식: 65, 대체투자: 5, 단기자금: 5 } }));
+      "시가 해외채권": 5, 국내주식: 5, 해외주식: 65,
+      "대체투자(지분형)": 4, "대체투자(대출형)": 1, 단기자금: 5 } }));
   P.renderSection("alloc");
   r.gapUnreachableFlagged = /도달 불가/.test(DOC.getElementById("alloc-char-card").textContent);
+
+  /* ⑧ §7.7.9 이관 — 구 저장분(단일 「대체투자」 키·구 매핑)이 분할 축으로 옮겨지고
+     합계가 보존되며, 렌더가 죽지 않는다 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
+    mix_acct: { "장부가 국내채권": 30, "시가 국내채권": 12, "장부가 해외채권": 12,
+      "시가 해외채권": 6, 국내주식: 3, 해외주식: 5, 대체투자: 15, 단기자금: 5 },
+    bands_acct: { "장부가 국내채권": [15, 45], 대체투자: [5, 25] },
+    mu_over: { 대체투자: 5.5 },
+    sig_over: { 대체투자: 9 },
+    alt_map: { mode: "factor", w_eq: 50, w_bd: 50 } }));
+  const stM = P.allocState(CMA_ALLOC);
+  r.migSplitsMixPreservingSum = stM.mix_acct["대체투자"] === undefined
+    && Math.abs(stM.mix_acct["대체투자(지분형)"] + stM.mix_acct["대체투자(대출형)"] - 15) < 1e-9;
+  r.migCopiesMuToBothClasses = stM.mu_over["대체투자(지분형)"] === 5.5
+    && stM.mu_over["대체투자(대출형)"] === 5.5 && stM.mu_over["대체투자"] === undefined;
+  r.migDropsLegacySigOver = stM.sig_over["대체투자"] === undefined;
+  r.migMapsBandsToEquityClass = JSON.stringify(stM.bands_acct["대체투자(지분형)"]) === "[5,25]"
+    && Array.isArray(stM.bands_acct["대체투자(대출형)"]);
+  r.migAltMapGetsClassKeys = stM.alt_map.eq_we === 65 && stM.alt_map.dt_wb === 100
+    && stM.alt_map.w_eq === undefined;
+  P.renderSection("alloc");
+  r.migRenderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
 
   /* ⑦ 복구된 화면은 고장 배너를 걷는다 */
   shim.localStorage.removeItem("iaw-alloc");
@@ -1601,7 +1657,8 @@ safe("simPanel", () => {
 
   /* ① 재분배 — 합 유지·값 고정·클램프·0-나머지 균등 */
   const mix0 = { "장부가 국내채권": 30, "시가 국내채권": 12, "장부가 해외채권": 12,
-    "시가 해외채권": 6, 국내주식: 3, 해외주식: 5, 대체투자: 15, 단기자금: 5 };   // 합 88
+    "시가 해외채권": 6, 국내주식: 3, 해외주식: 5,
+    "대체투자(지분형)": 12, "대체투자(대출형)": 3, 단기자금: 5 };   // 합 88
   const tot = (m) => Object.values(m).reduce((a, b) => a + b, 0);
   const m1 = P.allocRedistribute(mix0, "해외주식", 25, 88);
   r.lockKeepsSum = Math.abs(tot(m1) - 88) < 0.1;
@@ -1636,6 +1693,23 @@ safe("simPanel", () => {
   r.hasOptCard = /① 최적 포트폴리오/.test(ptxt);
   r.hasSimCard = /② 지금 시뮬레이션/.test(ptxt);
   r.statesCorrPolicy = /상관은 벤치마크 실측/.test(ptxt);
+  /* 도넛이 각자 자기 카드의 열(sim8-col) 안에 있다 — 카드 아래 중앙 배치의 구조 검증.
+     최적 열: 최적 카드 + 「최적 포트폴리오 비중」 도넛 / 시뮬 열: 시뮬 카드 + 「시뮬레이션 비중」. */
+  const cols9 = [...panel.querySelectorAll(".sim8-col")];
+  r.donutColumns = cols9.length;
+  const colHas = (re, reDonut) => cols9.some((c) =>
+    re.test(c.textContent) && reDonut.test(c.textContent) && c.querySelectorAll("svg").length === 1);
+  r.optDonutUnderOptCard = colHas(/① 최적 포트폴리오/, /최적 포트폴리오 비중/);
+  r.simDonutUnderSimCard = colHas(/② 지금 시뮬레이션/, /시뮬레이션 비중/);
+  /* 도넛 크기 — 210 (구 132 에서 확대, 2026-08-12 사용자 지시) */
+  const svg0 = panel.querySelector(".sim8-donut svg");
+  r.donutSize = svg0 ? +svg0.getAttribute("width") : null;
+  /* CMA 층에서 대체투자 두 분류의 σ 키인만 비활성 — 매핑 콘솔이 정본이라서 */
+  const sigInputsCma = Array.from(panel.querySelectorAll("input"))
+    .filter((n) => (n.getAttribute("aria-label") || "").includes("위험 % 키인"));
+  r.cmaAltSigDisabled = sigInputsCma.filter((n) => n.disabled).length === 2
+    && sigInputsCma.filter((n) => n.disabled)
+      .every((n) => (n.getAttribute("placeholder") || "") === "매핑이 정함");
   const Ea = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), view: "acct" });
   const wOpt = Ea.optimizeUtil(Ea.V.mu, Ea.V.C, 1);
   const mark0 = panel.querySelectorAll(".sim-opt-mark")[0];
@@ -1659,7 +1733,7 @@ safe("simPanel", () => {
   const p2 = DOC.getElementById("alloc-sim-panel");
   const sigInputs = Array.from(p2.querySelectorAll("input"))
     .filter((n) => (n.getAttribute("aria-label") || "").includes("위험 % 키인"));
-  r.proxySigDisabled = sigInputs.length === 8 && sigInputs.every((n) => n.disabled === true);
+  r.proxySigDisabled = sigInputs.length === 9 && sigInputs.every((n) => n.disabled === true);
   r.proxyOptDeferred = /최적 포트폴리오 — 보류/.test(p2.textContent);
   shim.localStorage.removeItem("iaw-alloc");
   return r;
