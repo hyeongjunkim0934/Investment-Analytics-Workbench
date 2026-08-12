@@ -1806,6 +1806,35 @@ def test_sim_panel_alt_sigma_keyin_is_owned_by_the_mapping(probe):
     assert probe["simPanel"]["cmaAltSigDisabled"] is True
 
 
+def test_sim_optimum_is_pinned_to_target_total(probe):
+    """① 최적은 목표 합계 100% 기준 — 자유 조정으로 합계가 표류해도 흔들리지 않는다.
+
+    2026-08-12 사용자 발견: 예산이 현재 합계를 따라가 μ·σ 를 안 건드려도 드래그마다
+    "최적"이 움직였다. 엔진(같은 해)과 화면(▼ 위치 불변) 둘 다 실행으로 잰다.
+    """
+    c = probe["simPanel"]
+    assert c["optimumIgnoresMixDrift"] is True, "합계 표류가 최적 해를 바꾼다 — 예산이 목표 100%에 고정되지 않았다"
+    assert c["optMarkersStableUnderDrift"] is True, "드래그 후 ▼ 마커가 움직였다"
+
+
+def test_sim_apply_optimum_button(probe):
+    """「막대를 최적 비중으로」 — 누르면 막대 = 최적 해, 합계 정확히 100(경고 없음),
+    그리고 저장되지 않는다(조정/저장 분리 승계 — 저장은 명시적 버튼만)."""
+    c = probe["simPanel"]
+    assert c["applyButtonExists"] is True
+    assert c["applyMakesSum100"] is True
+    assert c["applyMatchesOptimum"] is True
+    assert c["applyClearsSumWarning"] is True
+    assert c["applyDoesNotSave"] is True, "최적 적용이 몰래 저장한다 — 조정/저장 분리 위반"
+
+
+def test_sim_sigma_placeholder_reads_as_applied(probe):
+    """위험 칸의 회색 숫자는 장식이 아니라 **적용 중인 실측 σ** 다 — "적용 중"이 붙어
+    미반영으로 오독되지 않아야 한다(2026-08-12 사용자 질문). 실제 반영 여부 자체는
+    행렬 원소 = 벤치마크 공분산 손계산(cmaLayer 프로브)이 별도로 고정한다."""
+    assert probe["simPanel"]["sigPlaceholderSaysApplied"] is True
+
+
 def test_sim_panel_proxy_layer_degrades_loudly(probe):
     """프록시층 — σ 키인 9칸 전부 비활성 + 최적 「보류」 안내(조용한 강등 금지)."""
     c = probe["simPanel"]
