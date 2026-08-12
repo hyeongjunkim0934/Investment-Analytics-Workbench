@@ -1280,7 +1280,10 @@ def test_hedge_levers_collapse_to_one_axis_exactly(probe):
     """
     h = probe["hedgeXe"]
     assert h["tieCount"] >= 5, f"동률 능선 위의 표본이 너무 적다: {h['tieCount']}"
-    assert h["tieSpread"] == 0, f"같은 Xe 인데 위험이 갈린다: {h['tieSpread']}"
+    # 항등식은 정확하지만 부동소수 합산 순서가 (hb,he)마다 달라 1 ULP(≈4e-16)가
+    # 생길 수 있다 — 예시 비중이 42/18 이던 시절엔 우연히 정확히 0 이었다.
+    # 1e-12 는 σ(≈수 %) 대비 10⁻¹⁰% 수준으로, 성질 위반과는 10자리 이상 떨어져 있다.
+    assert h["tieSpread"] <= 1e-12, f"같은 Xe 인데 위험이 갈린다: {h['tieSpread']}"
 
 
 def test_hedge_xe_quadratic_reproduces_the_risk_function(probe):
@@ -1553,6 +1556,7 @@ def test_cma_alt_factor_mapping_matches_closed_form(probe):
     """
     c = probe["cmaLayer"]
     assert c["idioIsPositive"] is True
+    assert c["defaultMappingIsFiftyFifty"] is True, "기본 매핑이 50/50(기관 방식, 2026-08-12)이 아니다"
     assert c["altVarIsFactorPlusIdio"] is True
     assert c["altDebtVarIsFactorPlusIdio"] is True
     assert c["altClassCrossIsFactorOnly"] is True, "두 분류의 교차항은 팩터 교차만이어야 한다(잔차 독립)"
@@ -1564,11 +1568,17 @@ def test_cma_alt_factor_mapping_matches_closed_form(probe):
 
 
 def test_cma_mu_keyin_window_and_anchor(probe):
-    """기대수익 키인은 base 를 대체하고 헤지캐리는 별도 가산 · 창 전환 · 앵커 σ 출처."""
+    """기대수익 키인 = 최종치(§7.7.10) · 디폴트 = 사용자 지정 CMA · 창 전환·기본 5년 ·
+    앵커 σ 출처. 캐리 중복 가산이 되살아나면 사용자 정본 숫자가 화면에서 달라진다."""
     c = probe["cmaLayer"]
     assert c["muOverridePlain"] is True
-    assert c["muOverrideKeepsCarry"] is True, "키인 시 헤지캐리가 죽는다 — 슬라이더가 μ에서 무력화됨"
+    assert c["muOverrideIsFinal"] is True, "키인에 캐리가 다시 더해진다 — §7.7.10 최종치 계약 위반"
+    assert c["defaultMuIsUserCma"] is True, "μ 디폴트가 사용자 지정 수치와 다르다"
+    assert c["defaultBookYieldsAreFinal"] is True, "북일드 디폴트(3.04/3.34)가 그대로 실리지 않는다"
+    assert c["acctOrderAsSpecified"] is True, "회계 축 순서가 2026-08-12 사용자 지정과 다르다"
     assert c["windowSwitchChangesSample"] is True
+    assert c["defaultWinIsFive"] is True, "위험 디폴트 창이 5년이 아니다"
+    assert c["unpublishedWinFallsBackToLongest"] is True, "5년 창 미게시 시 최장 창 폴백이 깨졌다"
     assert c["anchorSigmaFromBm"] is True, "앵커 σ 가 활성 층(벤치마크)에서 오지 않는다"
 
 
@@ -1626,7 +1636,8 @@ def test_tv_weights_respond_to_risk_structure_not_bands(probe):
 
     단 밴드에 붙은 자산은 표본이 바뀌어도 못 움직인다(λ=1 의 국내주식 상한 붙음
     확인) — 방향성은 내부해가 되는 λ 에서 잰다. 이 구분이 없으면 "시변인데 왜
-    안 움직이나"를 코드 결함으로 오진한다.
+    안 움직이나"를 코드 결함으로 오진한다. 프로브는 μ 를 앵커 폴백으로 고정해
+    잰다 — 검사 대상은 최적화기의 성질이지 μ 디폴트 숫자가 아니다(§7.7.10).
     """
     c = probe["cmaTv"]
     assert c["bandPinnedAtLowLambda"] is True
@@ -1756,12 +1767,14 @@ def test_sim_panel_redistribution_is_exact(probe):
 
 def test_sim_panel_sigma_keyin_scales_variance_not_correlation(probe):
     """σ 키인의 계약 — 분산은 (키인/실측)² 배, **상관은 벤치마크 실측 ρ 불변**,
-    앵커는 관측 σ 유지(출처 오염 금지), 주식 μ 디폴트(샤프×σ)는 유효 σ 를 따른다."""
+    앵커는 관측 σ 유지(출처 오염 금지). μ 키인(디폴트 포함)이 있으면 μ 는 최종치라
+    σ 키인과 무관하고, μ 키인을 비운 폴백에서만 주식 μ(샤프×σ)가 유효 σ 를 따른다."""
     c = probe["simPanel"]
     assert c["sigmaScales"] is True
     assert c["corrPreserved"] is True, "σ 키인이 상관을 건드렸다 — 키인 σ × 실측 ρ 계약 위반"
     assert c["anchorUnpolluted"] is True
     assert c["equityMuFollowsKeyedSigma"] is True
+    assert c["keyedMuUnaffectedBySigma"] is True, "키인 μ(최종치)가 σ 키인에 흔들린다"
 
 
 def test_sim_panel_renders_bars_markers_donuts_cards(probe):
@@ -1811,6 +1824,23 @@ def test_alt_split_legacy_state_migrates_preserving_totals(probe):
     assert c["migMapsBandsToEquityClass"] is True
     assert c["migAltMapGetsClassKeys"] is True
     assert c["migRenderErrors"] == 0
+
+
+def test_20260812_migration_loan_defaults_and_map(probe):
+    """2026-08-12 이관 — 대출금 강제 0(9개 자산군 합 100), 구 「예시」 그대로인
+    저장분만 새 예시(합 100)로 교체, 구 매핑 기본값(65/35·0/100)은 새 기본 50/50 으로,
+    μ·북일드 미입력은 사용자 지정 디폴트로 채움. 사용자가 만진 값은 건드리지 않는다."""
+    c = probe["cmaAudit"]
+    assert c["migLoanForcedZero"] is True
+    assert c["migOldExampleMixReplacedTo100"] is True
+    assert c["migOldDefaultMapBecomesFiftyFifty"] is True
+    assert c["migFillsMuAndBookYieldDefaults"] is True
+    assert c["migKeepsUserTunedMap"] is True
+
+
+def test_sum_badge_drops_the_loan_clause(probe):
+    """합계 배지에 「대출 N% 제외」 문구가 없어야 한다 — 대출금은 배분 우주에서 제외됐다."""
+    assert probe["simConsole"]["badgeHasNoLoanClause"] is True
 
 
 # ---- 통화 구성 (실행해서 확인) ----------------------------------------------
@@ -1948,7 +1978,7 @@ def test_adjustment_is_visibly_marked_and_compared_to_baseline(probe):
 
 
 def test_sum_guard_warns_and_never_silently_fixes(probe):
-    """합계가 목표(100−대출)와 다르면 경고한다. 잔여 채우기는 **명시적 버튼**이고,
+    """합계가 목표 100(대출금 제외 확정)과 다르면 경고한다. 잔여 채우기는 **명시적 버튼**이고,
     과다 배분은 버튼으로도 못 맞추므로 경고가 남아야 한다 — 조용히 맞추면
     "합계가 맞는 줄 알았다"는 사고가 된다."""
     s = probe["simConsole"]

@@ -986,19 +986,22 @@ const ALLOC_FIXTURE = (() => {
                      curve: { "3M": -0.9, "6M": -0.85, "12M": -0.7 } }],
     anchor_ref: {},
     defaults: {
-      mix: { 국내채권: 42, 해외채권: 18, 국내주식: 3, 해외주식: 5,
-             "대체투자(지분형)": 12, "대체투자(대출형)": 3, 단기자금: 5 },
+      mix: { 국내채권: 48, 해외채권: 21, 국내주식: 3, 해외주식: 6,
+             "대체투자(대출형)": 3, "대체투자(지분형)": 13, 단기자금: 6 },
       bands: { 국내채권: [20, 55], 해외채권: [0, 30], 국내주식: [0, 10],
-               해외주식: [0, 15], "대체투자(지분형)": [0, 25],
-               "대체투자(대출형)": [0, 10], 단기자금: [2, 15] },
-      mix_acct: { "장부가 국내채권": 30, "시가 국내채권": 12, "장부가 해외채권": 12,
-                  "시가 해외채권": 6, 국내주식: 3, 해외주식: 5,
-                  "대체투자(지분형)": 12, "대체투자(대출형)": 3, 단기자금: 5 },
-      bands_acct: { "장부가 국내채권": [15, 45], "시가 국내채권": [0, 25],
-                    "장부가 해외채권": [0, 25], "시가 해외채권": [0, 20],
-                    국내주식: [0, 10], 해외주식: [0, 15],
-                    "대체투자(지분형)": [0, 25], "대체투자(대출형)": [0, 10], 단기자금: [2, 15] },
-      loan_w: 12, loan_y: 4, alt_alpha: 3, alt_vol: 8, tenor_m: 9,
+               해외주식: [0, 15], "대체투자(대출형)": [0, 10],
+               "대체투자(지분형)": [0, 25], 단기자금: [2, 15] },
+      mix_acct: { "장부가 국내채권": 34, "장부가 해외채권": 14, 단기자금: 6,
+                  국내주식: 3, 해외주식: 6, "시가 국내채권": 14, "시가 해외채권": 7,
+                  "대체투자(대출형)": 3, "대체투자(지분형)": 13 },
+      bands_acct: { "장부가 국내채권": [15, 45], "장부가 해외채권": [0, 25],
+                    단기자금: [2, 15], 국내주식: [0, 10], 해외주식: [0, 15],
+                    "시가 국내채권": [0, 25], "시가 해외채권": [0, 20],
+                    "대체투자(대출형)": [0, 10], "대체투자(지분형)": [0, 25] },
+      loan_w: 0, loan_y: 0, alt_alpha: 3, alt_vol: 8, tenor_m: 9,
+      by_kr: 3.04, by_fx: 3.34,
+      mu_over: { 국내채권: 3.25, 해외채권: 2.94, 국내주식: 6.29, 해외주식: 5.43,
+                 "대체투자(대출형)": 4.39, "대체투자(지분형)": 6.86, 단기자금: 2.09 },
       h_bond: 90, h_eq: 90,
       h_bands: { 해외채권: [0, 100], 해외주식: [0, 100] },
       h_tol_hi: { 해외채권: null, 해외주식: null },
@@ -1057,9 +1060,9 @@ safe("hedgeXe", () => {
   r.xeStarPct = xeFree * 100;
 
   /* ④ 자연헤지 부호 — 해외주식만 담았을 때 최소점이 '거의 오픈' 쪽인가 */
-  const stEq = { ...st, mix_acct: { "장부가 국내채권": 0, "시가 국내채권": 0,
-    "장부가 해외채권": 0, "시가 해외채권": 0, 국내주식: 0, 해외주식: 100,
-    "대체투자(지분형)": 0, "대체투자(대출형)": 0, 단기자금: 0 } };
+  const stEq = { ...st, mix_acct: { "장부가 국내채권": 0, "장부가 해외채권": 0, 단기자금: 0,
+    국내주식: 0, 해외주식: 100, "시가 국내채권": 0, "시가 해외채권": 0,
+    "대체투자(대출형)": 0, "대체투자(지분형)": 0 } };
   const Eq = P.allocEngine(A, stEq);
   const xeEq = Eq.xeStar(null, null, Eq.xeQuad());
   r.equityOnlyHedgePct = 100 - xeEq * 100;     // Xe=w(1−h), w=1 → h = 1−Xe
@@ -1148,9 +1151,9 @@ safe("durationGap", () => {
   const st2 = { ...st, dur_by: { 국내채권: 4.5, 해외채권: 6.0, 단기자금: 0.25 },
                 dur_liab: 9.0, la_ratio: 0.9 };
   const d = P.allocAssetDuration(st2, w);
-  /* 손으로 재계산: 0.42×4.5 + 0.18×6.0 + 0.05×0.25 (주식·대체는 0) */
+  /* 손으로 재계산: 0.48×4.5 + 0.21×6.0 + 0.06×0.25 (주식·대체는 0) */
   r.assetDuration = d;
-  r.assetDurationHand = 0.42 * 4.5 + 0.18 * 6.0 + 0.05 * 0.25;
+  r.assetDurationHand = 0.48 * 4.5 + 0.21 * 6.0 + 0.06 * 0.25;
   r.gap = P.allocDurGap(st2, d);
   r.gapHand = d - 0.9 * 9.0;
 
@@ -1164,7 +1167,7 @@ safe("durationGap", () => {
 
   /* 해외채권을 0 으로 두면 그만큼만 빠진다(사용자가 위험요인을 분리할 수 있는 길) */
   const stNoFx = { ...st2, dur_by: { ...st2.dur_by, 해외채권: 0 } };
-  r.foreignCanBeExcluded = Math.abs((d - P.allocAssetDuration(stNoFx, w)) - 0.18 * 6.0) < 1e-12;
+  r.foreignCanBeExcluded = Math.abs((d - P.allocAssetDuration(stNoFx, w)) - 0.21 * 6.0) < 1e-12;
 
   /* 부채 입력이 없으면 갭도 없다 */
   r.gapNullWithoutLiability = P.allocDurGap({ ...st2, dur_liab: null }, d) === null;
@@ -1268,16 +1271,21 @@ safe("cmaLayer", () => {
 
   /* ② 경제 관점 행렬 — 손계산 대조 (기본 헤지 90% → 환노출 0.1) */
   const V = E.V;
-  const iKr = 0, iFb = 1, iEq = 3, iAlt = 4, iAltD = 5;   // ALLOC_ECON 순서(지분형 4·대출형 5)
+  const iKr = 0, iFb = 1, iEq = 3, iAltD = 4, iAlt = 5;   // ALLOC_ECON 순서(대출형 4·지분형 5)
   r.domesticEquityVarExact =
     Math.abs(V.C[2][2] - quad(eV("시가 국내주식"), M) * 1e4) < 1e-9;
   const fbRow = eV("시가 해외채권", [["_fx", 0.1]]);
   r.foreignBondVarWithFxExact = Math.abs(V.C[iFb][iFb] - quad(fbRow, M) * 1e4) < 1e-9;
   r.krBondUsesMarketTwin = Math.abs(V.C[iKr][iKr] - quad(eV("시가 국내채권"), M) * 1e4) < 1e-9;
 
-  /* ③ 대체투자 분류별 팩터 매핑(§7.7.9 — 지분형 65/35 · 대출형 0/100) — 잔차까지
-     폐형 손계산과 일치해야 한다. 잔차 = _alt 를 두 팩터 스팬에 회귀한 잔차분산
-     (매핑 비율과 무관), 두 분류가 공유(대각 2 + 교차항). */
+  /* ③ 대체투자 분류별 팩터 매핑 — 잔차까지 폐형 손계산과 일치해야 한다.
+     기본 매핑은 두 분류 모두 50/50(2026-08-12 사용자 지시)이라 분류 구분이 시험되지
+     않으므로, 손계산 대조는 **서로 다른 블렌드를 명시로 걸어** 잰다(65/35 · 0/100 —
+     §7.7.9 민감도 대안). 잔차 = _alt 를 두 팩터 스팬에 회귀한 잔차분산(매핑 비율과
+     무관), 분류별 독립(대각 2, 교차항 없음). */
+  const Es = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC),
+    alt_map: { mode: "factor", eq_we: 65, eq_wb: 35, dt_we: 0, dt_wb: 100 } });
+  const Vs = Es.V;
   const mkF = (we, wb) => {
     const v = new Array(cm.cols.length).fill(0);
     v[CI["시가 해외주식"]] = we; v[CI["시가 국내채권"]] = wb;
@@ -1292,19 +1300,23 @@ safe("cmaLayer", () => {
   const idio = M[CI._alt][CI._alt]
     - (fBB * cE * cE - 2 * fEB * cE * cB + fEE * cB * cB) / det;
   r.idioIsPositive = idio > 1e-10;
-  r.altVarIsFactorPlusIdio = Math.abs(V.C[iAlt][iAlt] - (quad(fEq, M) + idio) * 1e4) < 1e-9;
-  r.altDebtVarIsFactorPlusIdio = Math.abs(V.C[iAltD][iAltD] - (quad(fDt, M) + idio) * 1e4) < 1e-9;
+  /* 기본 매핑 = 두 분류 모두 50/50 (2026-08-12 사용자 지시) — 기본 엔진 E 로 확인 */
+  r.defaultMappingIsFiftyFifty =
+    Math.abs(V.C[iAlt][iAlt] - (quad(mkF(0.5, 0.5), M) + idio) * 1e4) < 1e-9
+    && Math.abs(V.C[iAltD][iAltD] - V.C[iAlt][iAlt]) < 1e-9;
+  r.altVarIsFactorPlusIdio = Math.abs(Vs.C[iAlt][iAlt] - (quad(fEq, M) + idio) * 1e4) < 1e-9;
+  r.altDebtVarIsFactorPlusIdio = Math.abs(Vs.C[iAltD][iAltD] - (quad(fDt, M) + idio) * 1e4) < 1e-9;
   /* 두 분류 사이 — 팩터 교차만(잔차는 분류별 독립 — 공유하면 행렬이 도로 특이해진다.
      실측: 공유안은 완전헤지에서 촐레스키 피벗 −2.3e−14 로 죽었다) */
   r.altClassCrossIsFactorOnly =
-    Math.abs(V.C[iAlt][iAltD] - dot(fEq, mv(M, fDt)) * 1e4) < 1e-9;
-  /* 합산 잔차 = (w1²+w2²)·σ²res — 12/3 배분의 대체투자 합산 분산 손계산 */
-  const wMix = [0, 0, 0, 0, 0.12, 0.03, 0];
+    Math.abs(Vs.C[iAlt][iAltD] - dot(fEq, mv(M, fDt)) * 1e4) < 1e-9;
+  /* 합산 잔차 = (w1²+w2²)·σ²res — 대출형 3%·지분형 12% 배분의 합산 분산 손계산 */
+  const wMix = [0, 0, 0, 0, 0.03, 0.12, 0];
   const fMix = fEq.map((x, j) => 0.12 * x + 0.03 * fDt[j]);
   r.altAggregateIdioIsIndependent =
-    Math.abs(quad(wMix, V.C) - (quad(fMix, M) + (0.12 ** 2 + 0.03 ** 2) * idio) * 1e4) < 1e-9;
+    Math.abs(quad(wMix, Vs.C) - (quad(fMix, M) + (0.12 ** 2 + 0.03 ** 2) * idio) * 1e4) < 1e-9;
   const eqRow = eV("시가 해외주식", [["_fx", 0.1]]);
-  r.altCrossIsFactorCross = Math.abs(V.C[iAlt][iEq] - dot(eqRow, mv(M, fEq)) * 1e4) < 1e-9;
+  r.altCrossIsFactorCross = Math.abs(Vs.C[iAlt][iEq] - dot(eqRow, mv(M, fEq)) * 1e4) < 1e-9;
   /* 잔차 덕에 정칙 — 촐레스키가 끝까지 간다 */
   const chol = (C) => {
     const n = C.length, L = C.map((row) => row.slice());
@@ -1328,15 +1340,31 @@ safe("cmaLayer", () => {
   r.bmModeClassesIdentical =
     Math.abs(Ebm.V.C[iAlt][iAltD] - Ebm.V.C[iAlt][iAlt]) < 1e-9;
 
-  /* ④ 창 전환·표본 표기 */
+  /* ④ 창 전환·표본 표기 — 기본 창 "5"는 픽스처에 미게시라 최장(전체 54개월)으로
+     물러나야 한다(2026-08-12: 위험 디폴트 = BM 5년, 게시 전엔 최장 폴백) */
   const E1 = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), cma_win: "1" });
   r.windowSwitchChangesSample = E1.sample.n_months === 12 && E.sample.n_months === 54;
+  r.defaultWinIsFive = P.allocDefaults(CMA_ALLOC).cma_win === "5";
+  r.unpublishedWinFallsBackToLongest = E.cmaW.key === "all";
 
-  /* ⑤ 기대수익 키인 — base 대체 + 캐리 별도 가산 (해외채권 90% 헤지, HP 9M 보간 −0.775) */
+  /* ⑤ 기대수익 키인 — **최종치**(§7.7.10): 키인이 그대로 μ 가 되고 캐리를 다시
+     더하지 않는다. 디폴트도 사용자 지정 CMA 수치가 그대로 실려야 한다. */
   const Emu = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC),
     mu_over: { 국내주식: 9, 해외채권: 5 } });
   r.muOverridePlain = Math.abs(Emu.V.mu[2] - 9) < 1e-12;
-  r.muOverrideKeepsCarry = Math.abs(Emu.V.mu[1] - (5 + 0.9 * (-0.775))) < 1e-12;
+  r.muOverrideIsFinal = Math.abs(Emu.V.mu[1] - 5) < 1e-12;
+  /* 디폴트 μ = 사용자 지정 수치 그대로 (경제 관점: 국내채권·해외채권·국내주식·
+     해외주식·대출형·지분형·단기자금) */
+  r.defaultMuIsUserCma = [3.25, 2.94, 6.29, 5.43, 4.39, 6.86, 2.09]
+    .every((v, i) => Math.abs(E.V.mu[i] - v) < 1e-12);
+  /* 회계 관점 — 북일드 디폴트(3.04/3.34)도 최종치로 그대로 */
+  const EmuA = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), view: "acct" });
+  r.defaultBookYieldsAreFinal =
+    Math.abs(EmuA.V.mu[0] - 3.04) < 1e-12 && Math.abs(EmuA.V.mu[1] - 3.34) < 1e-12;
+  /* 순서 계약 — 회계 축이 사용자 지정 순서 그대로인가 */
+  r.acctOrderAsSpecified = JSON.stringify(EmuA.V.keys) === JSON.stringify(
+    ["장부가 국내채권", "장부가 해외채권", "단기자금", "국내주식", "해외주식",
+     "시가 국내채권", "시가 해외채권", "대체투자(대출형)", "대체투자(지분형)"]);
 
   /* ⑥ 앵커 σ 가 벤치마크에서 온다 (시가 국내채권 2.1%) */
   r.anchorSigmaFromBm = Math.abs(E.V.anchor.kr.sigma - 2.1) < 1e-9;
@@ -1425,15 +1453,24 @@ safe("cmaTv", () => {
   r.lambda1SolutionHasHigherUtility = util(B1, w1, 1) >= util(B1, wHi, 1) - 1e-9;
 
   /* ② 방향성 — 국내주식 σ 가 두 배인 롤링 시점에서는 국내주식 비중이 준다.
-     λ=1 에서는 이 자산이 밴드 상한(10%)에 붙어 σ 가 변해도 못 움직인다 — 그래서
-     내부해가 되는 λ=15 로 잰다(같은 목적함수 족·같은 코드 경로). λ=1 의 상한
-     붙음 자체도 확인한다: 밴드가 물면 표본이 바뀌어도 비중이 그대로여야 한다. */
+     이 두 검사는 μ 지형이 만드는 기하(상한 붙음/내부해)를 전제하므로, μ 를 앵커
+     폴백(mu_over 비움)으로 고정해 잰다 — 2026-08-12 부터 기본 μ 가 사용자 지정
+     CMA 수치라 기본 상태의 λ 지형이 달라졌기 때문이다(검사 대상은 최적화기의
+     성질이지 디폴트 숫자가 아니다). λ=1 에서는 이 자산이 밴드 상한(10%)에 붙어
+     σ 가 변해도 못 움직인다 — 방향성은 내부해가 되는 λ=15 로 잰다(같은 목적함수
+     족·같은 코드 경로). */
+  const Ean = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), mu_over: {} });
+  const optAn = (M2, lam) => {
+    const B = Ean.buildFrom(M2, "econ", 0.9, 0.9);
+    return { B, w: Ean.optimizeUtil(B.mu, B.C, lam, 2000) };
+  };
   const iEq = P.ALLOC_ECON.indexOf("국내주식");
-  const { w: w2at1 } = opt(cm.tv[0].cov[0], 1);
+  const { w: w1an } = optAn(M, 1);
+  const { w: w2at1 } = optAn(cm.tv[0].cov[0], 1);
   r.bandPinnedAtLowLambda =
-    Math.abs(w1[iEq] - 0.10) < 5e-3 && Math.abs(w2at1[iEq] - w1[iEq]) < 5e-3;
-  const { w: wA15 } = opt(M, 15);
-  const { w: wB15 } = opt(cm.tv[0].cov[0], 15);
+    Math.abs(w1an[iEq] - 0.10) < 5e-3 && Math.abs(w2at1[iEq] - w1an[iEq]) < 5e-3;
+  const { w: wA15 } = optAn(M, 15);
+  const { w: wB15 } = optAn(cm.tv[0].cov[0], 15);
   r.riskierAssetGetsLess = wB15[iEq] < wA15[iEq] - 1e-3;
 
   /* ③ 롤링 종점 = 고정 창(같은 표본·같은 결정 알고리즘 → 같은 해) — 단, 프로브
@@ -1612,26 +1649,48 @@ safe("cmaAudit", () => {
   r.gapUnreachableFlagged = /도달 불가/.test(DOC.getElementById("alloc-char-card").textContent);
 
   /* ⑧ §7.7.9 이관 — 구 저장분(단일 「대체투자」 키·구 매핑)이 분할 축으로 옮겨지고
-     합계가 보존되며, 렌더가 죽지 않는다 */
+     합계가 보존되며, 렌더가 죽지 않는다. 대체투자 20 은 구 예시값(15)이 아니어서
+     "사용자가 만진 숫자"로 취급돼 보존 분할되어야 한다. */
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
     mix_acct: { "장부가 국내채권": 30, "시가 국내채권": 12, "장부가 해외채권": 12,
-      "시가 해외채권": 6, 국내주식: 3, 해외주식: 5, 대체투자: 15, 단기자금: 5 },
+      "시가 해외채권": 6, 국내주식: 3, 해외주식: 5, 대체투자: 20, 단기자금: 5 },
     bands_acct: { "장부가 국내채권": [15, 45], 대체투자: [5, 25] },
     mu_over: { 대체투자: 5.5 },
     sig_over: { 대체투자: 9 },
     alt_map: { mode: "factor", w_eq: 50, w_bd: 50 } }));
   const stM = P.allocState(CMA_ALLOC);
   r.migSplitsMixPreservingSum = stM.mix_acct["대체투자"] === undefined
-    && Math.abs(stM.mix_acct["대체투자(지분형)"] + stM.mix_acct["대체투자(대출형)"] - 15) < 1e-9;
+    && Math.abs(stM.mix_acct["대체투자(지분형)"] + stM.mix_acct["대체투자(대출형)"] - 20) < 1e-9;
   r.migCopiesMuToBothClasses = stM.mu_over["대체투자(지분형)"] === 5.5
     && stM.mu_over["대체투자(대출형)"] === 5.5 && stM.mu_over["대체투자"] === undefined;
   r.migDropsLegacySigOver = stM.sig_over["대체투자"] === undefined;
   r.migMapsBandsToEquityClass = JSON.stringify(stM.bands_acct["대체투자(지분형)"]) === "[5,25]"
     && Array.isArray(stM.bands_acct["대체투자(대출형)"]);
-  r.migAltMapGetsClassKeys = stM.alt_map.eq_we === 65 && stM.alt_map.dt_wb === 100
+  r.migAltMapGetsClassKeys = stM.alt_map.eq_we === 50 && stM.alt_map.dt_wb === 50
     && stM.alt_map.w_eq === undefined;
   P.renderSection("alloc");
   r.migRenderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+
+  /* ⑨ 2026-08-12 이관 — 대출금 제외(강제 0)·구 예시 그대로인 저장분의 예시 교체·
+     구 매핑 기본값(65/35·0/100) → 50/50·μ/북일드 디폴트 채움 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, loan_w: 12,
+    mix_acct: { "장부가 국내채권": 30, "시가 국내채권": 12, "장부가 해외채권": 12,
+      "시가 해외채권": 6, 국내주식: 3, 해외주식: 5,
+      "대체투자(지분형)": 12, "대체투자(대출형)": 3, 단기자금: 5 },
+    alt_map: { mode: "factor", eq_we: 65, eq_wb: 35, dt_we: 0, dt_wb: 100 } }));
+  const stO = P.allocState(CMA_ALLOC);
+  r.migLoanForcedZero = stO.loan_w === 0;
+  const sumO = P.ALLOC_ACCT.reduce((a, k) => a + stO.mix_acct[k], 0);
+  r.migOldExampleMixReplacedTo100 = Math.abs(sumO - 100) < 1e-9
+    && stO.mix_acct["장부가 국내채권"] === 34;
+  r.migOldDefaultMapBecomesFiftyFifty = stO.alt_map.eq_we === 50 && stO.alt_map.eq_wb === 50
+    && stO.alt_map.dt_we === 50 && stO.alt_map.dt_wb === 50;
+  r.migFillsMuAndBookYieldDefaults = stO.mu_over["국내주식"] === 6.29
+    && stO.mu_over["대체투자(대출형)"] === 4.39 && stO.by_kr === 3.04 && stO.by_fx === 3.34;
+  /* 사용자가 만진 매핑(60/40 등)은 이관이 건드리지 않는다 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
+    alt_map: { mode: "factor", eq_we: 60, eq_wb: 40, dt_we: 0, dt_wb: 100 } }));
+  r.migKeepsUserTunedMap = P.allocState(CMA_ALLOC).alt_map.eq_we === 60;
 
   /* ⑦ 복구된 화면은 고장 배너를 걷는다 */
   shim.localStorage.removeItem("iaw-alloc");
@@ -1655,28 +1714,35 @@ safe("simPanel", () => {
   const r = {};
   shim.localStorage.removeItem("iaw-alloc");
 
-  /* ① 재분배 — 합 유지·값 고정·클램프·0-나머지 균등 */
-  const mix0 = { "장부가 국내채권": 30, "시가 국내채권": 12, "장부가 해외채권": 12,
-    "시가 해외채권": 6, 국내주식: 3, 해외주식: 5,
-    "대체투자(지분형)": 12, "대체투자(대출형)": 3, 단기자금: 5 };   // 합 88
+  /* ① 재분배 — 합 유지·값 고정·클램프·0-나머지 균등 (목표 100 — 대출금 제외) */
+  const mix0 = { "장부가 국내채권": 34, "장부가 해외채권": 14, 단기자금: 6,
+    국내주식: 3, 해외주식: 6, "시가 국내채권": 14, "시가 해외채권": 7,
+    "대체투자(대출형)": 3, "대체투자(지분형)": 13 };   // 합 100
   const tot = (m) => Object.values(m).reduce((a, b) => a + b, 0);
-  const m1 = P.allocRedistribute(mix0, "해외주식", 25, 88);
-  r.lockKeepsSum = Math.abs(tot(m1) - 88) < 0.1;
+  const m1 = P.allocRedistribute(mix0, "해외주식", 25, 100);
+  r.lockKeepsSum = Math.abs(tot(m1) - 100) < 0.1;
   r.lockSetsValue = Math.abs(m1["해외주식"] - 25) < 1e-9;
-  r.lockClamps = Math.abs(P.allocRedistribute(mix0, "해외주식", 250, 88)["해외주식"] - 88) < 0.1;
+  r.lockClamps = Math.abs(P.allocRedistribute(mix0, "해외주식", 250, 100)["해외주식"] - 100) < 0.1;
   const zeros = Object.fromEntries(Object.keys(mix0).map((k) => [k, k === "해외주식" ? 50 : 0]));
-  r.lockSplitsEquallyWhenOthersZero = Math.abs(tot(P.allocRedistribute(zeros, "해외주식", 30, 88)) - 88) < 0.1;
+  r.lockSplitsEquallyWhenOthersZero = Math.abs(tot(P.allocRedistribute(zeros, "해외주식", 30, 100)) - 100) < 0.1;
 
-  /* ② σ 키인 — 실측 30% 를 15% 로: 분산 1/4, 상관 불변, 앵커 관측 유지, 주식 μ 하락 */
+  /* ② σ 키인 — 실측 30% 를 15% 로: 분산 1/4, 상관 불변, 앵커 관측 유지, 주식 μ 하락.
+     μ 하락 검사는 앵커 폴백 경로의 성질이므로 μ 키인을 비운 상태에서 잰다(§7.7.10 —
+     키인(디폴트 포함)이 있으면 μ 는 최종치라 σ 와 무관해야 한다). */
   const st0 = P.allocDefaults(CMA_ALLOC);
-  const E0c = P.allocEngine(CMA_ALLOC, st0);
+  const stAnchor = { ...st0, mu_over: {} };
+  const E0c = P.allocEngine(CMA_ALLOC, stAnchor);
   const iEq = P.ALLOC_ECON.indexOf("국내주식"), iFb = P.ALLOC_ECON.indexOf("해외채권");
-  const ES = P.allocEngine(CMA_ALLOC, { ...st0, sig_over: { ...st0.sig_over, 국내주식: 15 } });
+  const ES = P.allocEngine(CMA_ALLOC, { ...stAnchor, sig_over: { ...st0.sig_over, 국내주식: 15 } });
   r.sigmaScales = Math.abs(ES.V.C[iEq][iEq] - E0c.V.C[iEq][iEq] / 4) < 1e-9;
   const corr = (E, i, j) => E.V.C[i][j] / Math.sqrt(E.V.C[i][i] * E.V.C[j][j]);
   r.corrPreserved = Math.abs(corr(ES, iEq, iFb) - corr(E0c, iEq, iFb)) < 1e-9;
   r.anchorUnpolluted = Math.abs(ES.V.anchor.kr.sigma - E0c.V.anchor.kr.sigma) < 1e-12;
   r.equityMuFollowsKeyedSigma = ES.V.mu[iEq] < E0c.V.mu[iEq] - 1e-9;
+  /* 키인(디폴트) μ 는 σ 키인과 무관 — 최종치 계약 */
+  const ESd = P.allocEngine(CMA_ALLOC, { ...st0, sig_over: { ...st0.sig_over, 국내주식: 15 } });
+  const E0d = P.allocEngine(CMA_ALLOC, st0);
+  r.keyedMuUnaffectedBySigma = Math.abs(ESd.V.mu[iEq] - E0d.V.mu[iEq]) < 1e-12;
 
   /* ③ 렌더 — 목차 첫 버튼·막대 8·▼ = 최적 위치·도넛 2·카드 2·상관 정책 문구 */
   P.DATA.alloc = CMA_ALLOC;
@@ -1724,7 +1790,7 @@ safe("simPanel", () => {
   const mixInputs = Array.from(DOC.getElementById("alloc-sim-panel").querySelectorAll("input"))
     .filter((n) => (n.id || "").startsWith("sim-mix-"));
   const sumNow = mixInputs.reduce((a, n) => a + (+n.value || 0), 0);
-  r.lockModeRedistributesInUi = Math.abs(sumNow - 88) < 0.2 && Math.abs(+inp.value - 25) < 1e-9;
+  r.lockModeRedistributesInUi = Math.abs(sumNow - 100) < 0.2 && Math.abs(+inp.value - 25) < 1e-9;
 
   /* ⑤ 프록시층 — σ 키인 비활성·최적 보류 안내(조용한 강등 금지) */
   P.DATA.alloc = ALLOC_FIXTURE;
@@ -1800,7 +1866,7 @@ safe("simConsole", () => {
   r.summaryHasBothAnswers = /참고치/.test(txt0) && /미헤지 환노출 Xe/.test(txt0) && /헤지 채권\/주식/.test(txt0);
   r.summaryAdmitsPartiality = /동시 최적해가 아닙니다/.test(txt0);
 
-  /* ① 배분 입력 즉시 반영 — 해외주식을 5→20 으로 올리면 요약 위험이 변해야 한다 */
+  /* ① 배분 입력 즉시 반영 — 해외주식을 6→20 으로 올리면 요약 위험이 변해야 한다 */
   const sigOf = (t) => {
     const m = t.match(/(\d+\.\d+)%/g);           // 셀 텍스트에서 숫자만 — 위치 비교는 아래에서
     return m ? m.join("|") : "";
@@ -1830,16 +1896,17 @@ safe("simConsole", () => {
   }
   r.sliderNotAutoSaved = store.getItem("iaw-alloc") == null;
 
-  /* ③ 합계 가드 — 20 으로 올렸으니 목표(100−대출12=88)와 어긋나 경고여야 한다 */
+  /* ③ 합계 가드 — 20 으로 올렸으니 목표 100(대출금 제외 확정)과 어긋나 경고여야 한다 */
   const badge = DOC.body.querySelector(".sim-sum");
   r.sumBadgeWarns = !!badge && badge.classList.contains("warn");
-  /* 과다 배분(합계 98 > 목표 88)은 단기자금을 0 으로 눌러도 못 맞춘다 — 버튼이
+  r.badgeHasNoLoanClause = !!badge && !/대출/.test(badge.textContent);
+  /* 과다 배분(합계 114 > 목표 100)은 단기자금을 0 으로 눌러도 못 맞춘다 — 버튼이
      조용히 "맞췄다"고 하면 안 된다. 눌러도 warn 이 남아야 한다. */
   const fillBtn = Array.from(DOC.getElementById("alloc").querySelectorAll("button"))
     .find((n) => n.textContent.includes("잔여"));
   if (fillBtn) fillBtn.click();
   r.fillCashCannotFixOverAllocation = !!badge && badge.classList.contains("warn");
-  /* 과소 배분(해외주식 2 → 합계 80)은 잔여 8%p 를 단기자금에 채워 목표에 맞는다 */
+  /* 과소 배분(해외주식 2 → 합계 96)은 잔여 4%p 를 단기자금에 채워 목표에 맞는다 */
   inp.value = "2";
   inp.dispatchEvent({ type: "input", target: inp });
   if (fillBtn) fillBtn.click();
