@@ -5464,16 +5464,35 @@ function renderAlloc() {
       el("span", { style: "color:var(--ink-3);font-size:12px" },
         "귀 기관 전략 벤치마크의 월간 수익률에서 직접 계산한 σ·상관입니다 — 프록시 근사가 없습니다"));
     /* μ 기준일 컷(§7.7.16) — 데이터가 더 있는데 잘랐다는 사실을 화면이 말한다.
-       조용히 자르면 사용자는 σ 가 최신인 줄 안다(μ·σ 시점 불일치의 반대 사고). */
+       조용히 자르면 사용자는 σ 가 최신인 줄 안다(μ·σ 시점 불일치의 반대 사고).
+
+       **표시하는 날짜는 요청한 컷(`sample_end`, 상수)이 아니라 실제로 도달한 표본 끝
+       (`asof`)이다** (§7.7.18 — 재점검 발견). 둘은 갈릴 수 있다: BM 파일이 짧거나,
+       μ 를 새 기준일로 옮겼는데 새 BM 데이터가 아직 안 온 경우다(후자는 문서가 지시하는
+       **정상 유지보수 순서**라 실제로 일어난다). 상수를 그대로 적으면 표본이 닿지도 않은
+       달을 「표본 종료」라 쓰고, 하지도 않은 절단을 했다고 단언하며, **무엇보다 μ·σ 시점이
+       어긋난 사실을 숨긴다** — §7.7.16 이 막으려던 바로 그 상태다. 그래서 세 갈래로 적는다. */
     const cmaCut = E0.cmaAll && E0.cmaAll.sample_end;
+    const cmaAsof = E0.cmaAll && E0.cmaAll.asof;
     const cmaDataLast = E0.cmaAll && E0.cmaAll.data_last;
-    if (cmaCut) {
-      const later = cmaDataLast && cmaDataLast > cmaCut;
+    if (cmaCut && cmaAsof) {
+      const mon = (s) => String(s).slice(0, 7);
+      const short = cmaAsof < cmaCut;                       // 데이터가 컷에 못 미침
+      const later = cmaDataLast && cmaDataLast > cmaCut;    // 컷이 실제로 잘라냄
       srcRow.append(el("span", { class: "cma-cut-note", style: "font-size:12px" },
-        el("b", {}, `표본 종료 ${String(cmaCut).slice(0, 7)}`),
-        " — 기대수익(μ) 키인 기준일에 맞춰 잘랐습니다",
-        later ? el("span", { style: "color:var(--ink-3)" },
-          ` (데이터는 ${String(cmaDataLast).slice(0, 7)} 까지 있습니다 — μ 를 새 기준일로 갱신하면 이 컷도 함께 옮깁니다)`) : ""));
+        /* `el` 은 attrs 를 그대로 setAttribute/className 한다 — `class: null` 을 주면
+           className 이 문자열 "null" 이 된다(조용히 어긋나는 종류). 객체를 갈라 넘긴다. */
+        el("b", short ? { class: "d-up" } : {}, `표본 종료 ${mon(cmaAsof)}`),
+        short
+          ? el("span", { class: "d-up" },
+              ` — 기대수익(μ) 기준일 ${mon(cmaCut)} 보다 데이터가 짧습니다 · σ 와 μ 의 시점이 어긋납니다`)
+          : " — 기대수익(μ) 키인 기준일에 맞춰 잘랐습니다",
+        short
+          ? el("span", { style: "color:var(--ink-3)" },
+              " (BM 파일을 갱신하거나 μ 기준일을 데이터에 맞추십시오)")
+          : later ? el("span", { style: "color:var(--ink-3)" },
+              ` (데이터는 ${mon(cmaDataLast)} 까지 있습니다 — μ 를 새 기준일로 갱신하면 이 컷도 함께 옮깁니다)`)
+          : el("span", { style: "color:var(--ink-3)" }, " (자를 데이터가 없었습니다)")));
     }
   } else if (E0.layerNote) {
     srcRow.append(el("span", { class: "d-up", style: "font-size:12px" }, E0.layerNote));

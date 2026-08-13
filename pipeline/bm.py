@@ -245,6 +245,13 @@ def build_cma(series_store: dict, warn) -> dict:
                 "reason": f"공통 표본 {len(df)}개월{cutmsg} — 최소 12개월 필요"}
 
     asof = df.index.max()
+    # μ 기준일에 **못 미치는** 표본은 조용히 넘기지 않는다(§7.7.18). BM 파일이 짧거나,
+    # μ 를 새 기준일로 옮겼는데 새 BM 데이터가 아직 안 온 경우다 — 후자는 문서가 지시하는
+    # 정상 유지보수 순서라 실제로 일어난다. 이때 σ 와 μ 의 시점이 어긋나며, 그 사실이
+    # meta.json 경고와 화면 양쪽에 남아야 한다(화면 쪽은 app.js 의 `cma-cut-note`).
+    if cut is not None and asof < cut:
+        warn(f"cma: 공통 표본이 {asof.date()} 에서 끝나 μ 기준일({CMA_SAMPLE_END})에 "
+             f"못 미칩니다 — σ 와 μ 의 시점이 어긋납니다")
     windows = []
     for y in WINDOW_YEARS:
         need = y * 12
