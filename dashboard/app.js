@@ -436,27 +436,79 @@ function deltaSpan(label, v, kind, big = false) {
 
 /* ---------------- section renderers ---------------- */
 
+/* 섹션 id → 사람이 읽는 이름. 상단 탭이 7개로 줄면서(2026-08-13) 내려온 화면들의
+   이름을 화면 안에서 부를 자리가 필요해졌다 — index.html 의 <h2> 와 같은 문자열이며
+   계약 테스트가 둘을 대조한다(어긋나면 버튼 이름과 도착 화면 제목이 달라진다). */
+const SECTION_LABELS = {
+  overview: "시장 개요", risk: "리스크", estimate: "수익률 추정", alloc: "자산배분",
+  hedge: "환헤지", events: "이벤트", panel: "관계분석", rates: "금리",
+  irs: "IRS 포워드", credit: "크레딧", fx: "FX · 환율", inflation: "기대인플레이션",
+  acwi: "MSCI ACWI", macro: "매크로", catalog: "시리즈 카탈로그",
+};
+
+/* 상세 화면으로 들어가는 버튼 한 벌 — 개요 구역·리스크·카탈로그가 같은 모양을 쓴다. */
+function sectionLink(id, extra) {
+  return el("a", { href: `#${id}`, class: "btn-ghost sec-link" },
+    SECTION_LABELS[id] || id, extra ? el("span", { class: "sec-link-sub" }, ` ${extra}`) : "", " ›");
+}
+
 function renderOverview() {
-  const wrap = $("#cards");
-  wrap.textContent = "";
+  const host = $("#ov-groups");
+  if (!host) return;
+  host.textContent = "";
   const pal = palette();
   const ov = DATA.overview;
-  if (!ov || !ov.cards) { wrap.append(el("div", { class: "chart-empty" }, "데이터 없음")); return; }
-  for (const c of ov.cards) {
-    const kpi = el("div", { class: "kpi" });
+  if (!ov || !ov.cards) {
+    host.append(el("div", { class: "chart-empty" }, "데이터 없음"));
+    return;
+  }
+  /* 카드 한 장. `link` 가 있으면 그 화면으로 들어가는 링크가 된다 —
+     "개요의 ACWI 카드를 클릭하면 ACWI 화면" (2026-08-13 사용자 지시).
+     **링크가 없는 카드는 <div> 그대로 둔다** — 전용 화면이 없는 지표(VIX·VKOSPI·WTI)를
+     눌리게 만들면 눌러도 아무 일이 없어 고장으로 읽힌다. */
+  const kpiOf = (c) => {
+    const linked = !!c.link;
+    const kpi = linked
+      ? el("a", { class: "kpi kpi-link", href: `#${c.link}`,
+                  "aria-label": `${c.label} — ${SECTION_LABELS[c.link] || c.link} 화면으로` })
+      : el("div", { class: "kpi" });
     kpi.append(el("div", { class: "kpi-label" },
       el("span", {}, c.label), el("span", { class: "kpi-date" }, c.date)));
     const val = el("div", { class: "kpi-value" }, fmtNum(c.value, String(c.value).includes(".") ? 2 : 0));
     if (c.unit) val.append(el("span", { class: "unit" }, c.unit));
     kpi.append(val);
-    const d1 = el("div", { class: "kpi-delta" }, deltaSpan("1일", c.chg.d1, c.kind, true));
-    kpi.append(d1);
+    kpi.append(el("div", { class: "kpi-delta" }, deltaSpan("1일", c.chg.d1, c.kind, true)));
     kpi.append(el("div", { class: "kpi-delta" },
       deltaSpan("1개월", c.chg.m1, c.kind),
       deltaSpan("YTD", c.chg.ytd, c.kind),
       deltaSpan("1년", c.chg.y1, c.kind)));
     kpi.append(sparkSVG(c.spark, pal.accent));
-    wrap.append(kpi);
+    return kpi;
+  };
+
+  /* 구역(주식 → 금리 → 환율 → 기타). 페이로드에 groups 가 없는 옛 빌드에서는
+     한 덩어리로 떨어뜨린다 — 화면이 통째로 비는 것보다 낫다(조용한 실패 금지). */
+  const groups = (ov.groups && ov.groups.length)
+    ? ov.groups : [{ key: null, label: "", sections: [] }];
+  groups.forEach((g) => {
+    const mine = g.key ? ov.cards.filter((c) => c.group === g.key) : ov.cards;
+    if (!mine.length) return;
+    const box = el("section", { class: "ov-group" });
+    const head = el("div", { class: "ov-group-head" });
+    if (g.label) head.append(el("h3", { class: "ov-group-title" }, g.label));
+    (g.sections || []).forEach((sid) => head.append(sectionLink(sid)));
+    if (head.childNodes.length) box.append(head);
+    const cards = el("div", { class: "cards" });
+    mine.forEach((c) => cards.append(kpiOf(c)));
+    box.append(cards);
+    host.append(box);
+  });
+
+  /* 카탈로그 — 상단 탭에서 내려와 개요 맨 아래 한 줄로만 남는다 */
+  const cat = $("#ov-catalog");
+  if (cat) {
+    cat.textContent = "";
+    cat.append(sectionLink("catalog", "— 게시 중인 전 시리즈의 출처·기간·관측 수"));
   }
 }
 
@@ -1023,26 +1075,6 @@ function buildRiskMethod(r) {
   box.append(el("p", {}, el("b", {}, "한계"), ` — ${r.limits}`));
 }
 
-function prependRiskCards(r) {
-  const wrap = $("#cards");
-  if (!wrap || wrap.querySelector(".kpi-risk")) return;
-  const asofTs = Math.floor(Date.parse(r.asof + "T00:00:00Z") / 1000);
-  ["vuln", "stress"].forEach((k) => {
-    const L = r.layers[k];
-    if (!L || L.score == null) return;
-    const kpi = el("a", { class: "kpi kpi-risk", href: "#risk", style: "cursor:pointer",
-      "aria-label": `${L.name} ${Math.round(L.score)}점 ${L.grade} — 리스크 화면으로` });
-    kpi.append(el("div", { class: "kpi-label" },
-      el("span", {}, L.name), el("span", { class: "kpi-date" }, r.asof)));
-    const val = el("div", { class: "kpi-value" }, String(Math.round(L.score)));
-    val.append(el("span", { class: "unit" }, "점 "), gradeChip(L.grade));
-    kpi.append(val);
-    kpi.append(el("div", { class: "kpi-delta" }, el("span", {}, "1개월 "), deltaPts(L.delta)));
-    kpi.append(sparkSVG(withToday(L.hist, asofTs, L.score), palette().accent));
-    wrap.prepend(kpi);
-  });
-}
-
 function renderRisk() {
   const r = DATA.risk;
   if (!$("#risk")) return;
@@ -1102,7 +1134,14 @@ function renderRisk() {
   renderFactorGroup("#risk-stress-title", "#risk-stress-rows", "stress", S, "무엇이 흔들리고 있나", r, asofTs);
   renderFactorGroup("#risk-vuln-title", "#risk-vuln-rows", "vuln", V, "무엇이 쌓여 있나", r, asofTs);
   buildRiskMethod(r);
-  prependRiskCards(r);
+  /* 관계분석은 리스크 안의 입구가 되었다(2026-08-13 사용자 지시 — 상단 탭에서 내려옴).
+     화면 자체는 그대로이므로 여기서는 들어가는 자리만 만든다. */
+  const pl = $("#risk-panel-link");
+  if (pl) {
+    pl.textContent = "";
+    pl.append(sectionLink("panel",
+      "— 위험 지표와 시장 변수의 상관·교차상관·회귀"));
+  }
 }
 
 /* ---------------- 이벤트 타임라인 ---------------- */

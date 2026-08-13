@@ -50,22 +50,19 @@
     <nav class="nav" id="nav">
       <!-- 순서는 사용자 지정(2026-08-11): 마을·개요·리스크 다음에 자산배분·환헤지 —
            자산배분 포트폴리오 최적화가 이 대시보드의 중심 기능이라 앞으로 뺐다. -->
+      <!-- 상단 탭은 **7개만** (2026-08-13 사용자 지시 — "덜 중요한 애들이 메인 탭에 있어").
+           내려온 화면들은 사라진 게 아니라 부모 화면 안의 입구로 옮겨졌다:
+             · 금리·IRS·크레딧·FX·물가·ACWI·매크로 → 개요 (구역별 카드 + 화면 버튼)
+             · 관계분석 → 리스크
+             · 카탈로그 → 개요 맨 아래 버튼
+           해시 라우팅·렌더러·마을 구역은 그대로다 — 딥링크(#rates 등)도 계속 산다. -->
       <a href="#village" class="home">마을</a>
       <a href="#overview">개요</a>
+      <a href="#events">이벤트</a>
       <a href="#risk">리스크</a>
       <a href="#estimate">수익률 추정</a>
       <a href="#alloc">자산배분</a>
       <a href="#hedge">환헤지</a>
-      <a href="#events">이벤트</a>
-      <a href="#panel">관계분석</a>
-      <a href="#rates">금리</a>
-      <a href="#irs">IRS</a>
-      <a href="#credit">크레딧</a>
-      <a href="#fx">FX</a>
-      <a href="#inflation">물가</a>
-      <a href="#acwi">ACWI</a>
-      <a href="#macro">매크로</a>
-      <a href="#catalog">카탈로그</a>
     </nav>
     <button class="theme-btn" id="theme-btn" title="라이트/다크 전환" aria-label="라이트/다크 전환">◐</button>
   </div>
@@ -103,10 +100,14 @@
     <h2>시장 개요</h2>
     <!-- HANDOVER §3.1 "화면이 답하는 질문을 맨 위에 한 줄로 쓴다" — 14개 섹션 중
          이 화면에만 그 줄이 없었다(나머지 13개는 .qa 또는 .section-note 로 갖고 있음). -->
-    <p class="section-note">이 화면이 답하는 질문 — 오늘 주요 시장 지표(주가·환율·금리·변동성·유가)가
-       어디에 있고, 하루·한 달·연초 이후·1년 사이 얼마나 움직였나. 맨 앞 두 장은 리스크 화면의 종합
-       점수이며, 누르면 그 화면으로 들어갑니다.</p>
-    <div class="cards" id="cards"></div>
+    <p class="section-note">이 화면이 답하는 질문 — 오늘 주요 시장 지표가 어디에 있고, 하루·한 달·연초
+       이후·1년 사이 얼마나 움직였나. 주식 · 금리 · 환율 · 기타 네 구역이며, 카드를 누르면 그 지표의
+       상세 화면으로 들어갑니다. 위험 점수는 <a href="#risk">리스크</a> 화면에 있습니다.</p>
+    <!-- 구역(주식·금리·환율·기타)은 renderOverview 가 payload 의 groups 로 조립한다.
+         구역마다 그 구역에서 들어갈 수 있는 상세 화면 버튼이 따라붙는다. -->
+    <div id="ov-groups"></div>
+    <!-- 카탈로그는 상단 탭에서 내려와 여기 한 줄로만 남는다(2026-08-13 사용자 지시) -->
+    <p id="ov-catalog" style="margin-top:18px"></p>
   </section>
 
   <section id="risk" class="section">
@@ -126,6 +127,9 @@
     <div class="frows" id="risk-stress-rows"></div>
     <h3 class="rows-title" id="risk-vuln-title"></h3>
     <div class="frows" id="risk-vuln-rows"></div>
+    <!-- 관계분석은 상단 탭에서 내려와 리스크 안의 입구가 되었다(2026-08-13 사용자 지시).
+         화면 자체는 그대로이고 #panel 딥링크도 산다. -->
+    <p id="risk-panel-link" style="margin-top:20px"></p>
     <details class="method" id="risk-method"></details>
   </section>
 

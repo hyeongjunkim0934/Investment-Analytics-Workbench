@@ -1892,6 +1892,33 @@ def test_hedge_ust_merit_monitor(probe):
     assert c["inactiveExplains"] is True
 
 
+def test_overview_groups_cards_and_opens_the_detail_screens(probe):
+    """개요가 시장 화면의 입구가 되었는가(§7.9, 2026-08-13 사용자 지시).
+
+    · 구역은 주식 → 금리 → 환율 → 기타 순이고, **페이로드의 groups 순서**를 따른다
+      (카드 배열 순서를 그대로 쓰면 구역이 뒤섞인다 — 프로브가 일부러 섞어 넣는다)
+    · 겹치는 지표는 그 화면으로 들어가는 링크다("개요의 ACWI 카드를 클릭하면 ACWI 화면")
+    · **전용 화면이 없는 카드(VIX·VKOSPI·WTI)는 링크가 아니다** — 눌러도 아무 일이
+      없는 카드는 고장으로 읽힌다. 없는 링크를 지어내지 않는 자리다
+    · 카탈로그는 맨 아래 한 줄, 위험 점수 카드는 개요에서 빠졌다
+    """
+    c = probe["infoArchitecture"]
+    assert c["renderErrors"] == 0
+    assert c["groupCount"] == 4, "구역이 주식·금리·환율·기타 넷이 아니다"
+    assert c["groupOrderFollowsPayload"] is True, "구역 순서가 페이로드를 따르지 않는다"
+    assert c["cardsGroupedNotFlat"] is True, "카드가 구역별로 나뉘지 않았다"
+    assert c["overlappingCardIsLink"] is True, "겹치는 지표 카드가 상세 화면으로 안 간다"
+    assert c["linkCardHasAriaLabel"] is True, "링크 카드가 어디로 가는지 읽어주지 않는다"
+    assert c["cardWithoutScreenIsNotLink"] is True, "전용 화면이 없는 카드를 링크로 만들었다"
+    assert c["everyLinkPointsAtRealSection"] is True
+    assert c["groupHeadLinks"] == "#rates,#irs", "금리 구역의 상세 화면 버튼이 다르다"
+    assert c["groupHeadUsesSectionTitles"] is True, "버튼 이름이 도착 화면 제목과 다르다"
+    assert c["catalogEntryExists"] is True, "카탈로그 입구가 개요에 없다"
+    assert c["riskScoreCardsGone"] is True, "위험 점수 카드가 개요에 남아 있다"
+    assert c["legacyPayloadStillRenders"] is True, "구역 없는 옛 페이로드에서 화면이 빈다"
+    assert c["labelsCoverEverySection"] is True, "이름표가 없는 섹션이 있다"
+
+
 def test_estimate_annualizes_by_day_count_and_excludes_equities(probe):
     """수익률 추정의 핵심 산식(§7.8) — 손계산과 대조한다.
 

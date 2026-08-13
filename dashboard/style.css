@@ -923,3 +923,22 @@ button.vchip { cursor: pointer; }
    tbody 가 없으므로 `table > tr > td` 벌이 함께 있어야 한다(CLAUDE.md 「함정」). */
 .est-table td, .est-table th { padding: 5px 7px; }
 .est-table input { font-size: 12.5px; padding: 2px 5px; }
+
+/* ── 개요 구역 (2026-08-13 — 상단 탭 7개로 축소하며 시장 화면들이 개요로 내려왔다) ──
+   구역 = 주식 · 금리 · 환율 · 기타. 각 구역 머리에 그 구역의 상세 화면 버튼이 붙는다. */
+.ov-group { margin-top: 22px; }
+.ov-group:first-child { margin-top: 6px; }
+.ov-group-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.ov-group-title { margin: 0; font-size: 15px; font-weight: 700; }
+/* 상세 화면 버튼 — 개요 구역·리스크의 관계분석·카탈로그가 같은 모양을 공유한다 */
+.sec-link { font-size: 12.5px; padding: 3px 9px; text-decoration: none; }
+.sec-link-sub { color: var(--ink-3); font-weight: 400; }
+/* 카드 자체가 링크인 경우(겹치는 지표 → 그 화면). 밑줄 없이 카드 모양을 유지하되
+   커서·호버·포커스로 누를 수 있음을 알린다 — 색만으로는 알 수 없다(WCAG 1.4.1). */
+a.kpi-link { text-decoration: none; color: inherit; display: block; cursor: pointer; }
+a.kpi-link:hover { border-color: var(--ink-3); }
+/* 「누르면 들어간다」 표식은 **제목 옆**에 붙인다. 카드 끝(::after)에 두면 스파크라인
+   아래에 홀로 뜬 글리프가 되어 값의 일부처럼 읽힌다(실측). */
+a.kpi-link .kpi-label > span:first-child::after {
+  content: " ›"; color: var(--ink-3); font-weight: 400;
+}

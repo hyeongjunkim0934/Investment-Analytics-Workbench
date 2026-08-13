@@ -389,37 +389,60 @@ def changes(s: pd.Series, kind: str) -> dict:
 # panel builders
 # --------------------------------------------------------------------------
 
+# 개요 구역 — 2026-08-13 사용자 지시로 개요가 **시장 화면 전체의 입구**가 되었다
+# (금리·IRS·크레딧·FX·물가·ACWI·매크로가 상단 탭에서 내려와 여기로 들어왔다).
+# 순서는 사용자가 정한 것이다: 주식 → 금리 → 환율 → 기타.
+# `sections` 는 그 구역에서 들어갈 수 있는 화면들이며, 화면 자체는 그대로 살아 있다
+# (해시 라우팅·렌더러 불변 — 상단 탭에서만 내려왔다).
+OVERVIEW_GROUPS = [
+    ("equity", "주식",  ["acwi"]),
+    ("rate",   "금리",  ["rates", "irs"]),
+    ("fx",     "환율",  ["fx"]),
+    ("other",  "기타",  ["credit", "inflation", "macro"]),
+]
+
+# key, label, kind, decimals, unit, group, link
+#
+# `link` = 그 카드를 누르면 열리는 화면(사용자 지시: "겹치는 지표, 예를들어 개요의 ACWI
+# 카드를 클릭하면 탭 중에 ACWI 눌러서 나오는 화면"). **전용 화면이 없는 카드는 링크를
+# 비운다** — VIX·VKOSPI·WTI 는 이 대시보드에 자기 화면이 없으므로 없는 링크를 지어내지
+# 않는다(눌러도 아무 일이 없는 카드는 고장으로 읽힌다).
 OVERVIEW_CARDS = [
-    # key, label, kind, decimals, unit suffix on value
-    ("idx:ACWI",                 "MSCI ACWI",        "price", 1, ""),
-    ("info:USDKRW",              "달러/원",           "price", 1, ""),
-    ("info:한국_3y",             "국고 3년",          "rate",  3, "%"),
-    ("info:한국_10y",            "국고 10년",         "rate",  3, "%"),
-    ("info:UST10y",              "미국채 10년",       "rate",  3, "%"),
-    ("info:한국_기준금리",        "한국 기준금리",     "rate",  2, "%"),
-    ("bb:미국_기준금리",          "미국 기준금리",     "rate",  2, "%"),
-    ("bb:달러지수",               "달러지수(DXY)",     "price", 1, ""),
-    ("bb:미국_변동성지수_VIX",    "VIX",              "level", 1, ""),
-    ("info:VKOSPI",              "VKOSPI",           "level", 1, ""),
-    ("bb:WTI유가",                "WTI 유가",         "price", 1, "$"),
-    ("bb:미국_하이일드_스프레드", "미 HY 스프레드",    "rate",  2, "%p"),
+    ("idx:ACWI",                 "MSCI ACWI",        "price", 1, "",   "equity", "acwi"),
+    ("bb:미국_변동성지수_VIX",    "VIX",              "level", 1, "",   "equity", ""),
+    ("info:VKOSPI",              "VKOSPI",           "level", 1, "",   "equity", ""),
+    ("info:한국_3y",             "국고 3년",          "rate",  3, "%",  "rate",   "rates"),
+    ("info:한국_10y",            "국고 10년",         "rate",  3, "%",  "rate",   "rates"),
+    ("info:UST10y",              "미국채 10년",       "rate",  3, "%",  "rate",   "rates"),
+    ("info:한국_기준금리",        "한국 기준금리",     "rate",  2, "%",  "rate",   "rates"),
+    ("bb:미국_기준금리",          "미국 기준금리",     "rate",  2, "%",  "rate",   "rates"),
+    ("info:USDKRW",              "달러/원",           "price", 1, "",   "fx",     "fx"),
+    ("bb:달러지수",               "달러지수(DXY)",     "price", 1, "",   "fx",     "fx"),
+    ("bb:미국_하이일드_스프레드", "미 HY 스프레드",    "rate",  2, "%p", "other",  "credit"),
+    ("bb:WTI유가",                "WTI 유가",         "price", 1, "$",  "other",  ""),
 ]
 
 
 def build_overview() -> dict:
     cards = []
-    for key, label, kind, dec, unit in OVERVIEW_CARDS:
+    for key, label, kind, dec, unit, group, link in OVERVIEW_CARDS:
         s = get(key)
         if s is None:
             continue
         cards.append({
             "key": key, "label": label, "kind": kind, "unit": unit,
+            "group": group, "link": link,
             "value": round(float(s.iloc[-1]), dec),
             "date": s.index[-1].strftime("%Y-%m-%d"),
             "chg": changes(s, kind),
             "spark": spark(s),
         })
-    return {"cards": cards}
+    # 구역은 **카드가 하나라도 살아남은 것만** 내보낸다 — 시리즈가 빠져 텅 빈 구역
+    # 제목이 화면에 남으면 "여기 뭔가 있어야 하는데 안 나온다"로 읽힌다.
+    live = {c["group"] for c in cards}
+    groups = [{"key": g, "label": lb, "sections": secs}
+              for g, lb, secs in OVERVIEW_GROUPS if g in live]
+    return {"cards": cards, "groups": groups}
 
 
 CURVES = {
