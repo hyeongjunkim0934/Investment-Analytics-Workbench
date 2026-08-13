@@ -923,6 +923,17 @@ button.vchip { cursor: pointer; }
    tbody 가 없으므로 `table > tr > td` 벌이 함께 있어야 한다(CLAUDE.md 「함정」). */
 .est-table td, .est-table th { padding: 5px 7px; }
 .est-table input { font-size: 12.5px; padding: 2px 5px; }
+/* 기준일 블록 ‖ 추정일 블록 경계 (§7.11 — 한 행에 나란히 두면서 생긴 자리).
+   **색이 아니라 선으로만** 가른다 — 배경색으로 칠하면 d-up/d-down 부호색과 겹쳐
+   두 신호가 서로를 죽인다. 두 벌을 두는 이유는 위 주석과 같다(tbody 없음). */
+.est-table th.est-sep, .est-table td.est-sep { border-left: 1px solid var(--border); }
+.est-table > tr > th.est-sep, .est-table > tr > td.est-sep { border-left: 1px solid var(--border); }
+/* 메모 열만 접히게 한다. 전역 `table > tr > td` 가 nowrap 이라 "장부가 — 원가법이라
+   가격효과 없음" 한 줄이 14열짜리 표를 카드 밖으로 밀어낸다(실측: 오른쪽 끝이 잘렸다).
+   숫자 칸은 nowrap 이어야 읽히므로 **이 열만** 푼다. */
+.est-table td.est-memo, .est-table > tr > td.est-memo {
+  white-space: normal; max-width: 168px; line-height: 1.35;
+}
 
 /* ── 개요 구역 (2026-08-13 — 상단 탭 7개로 축소하며 시장 화면들이 개요로 내려왔다) ──
    구역 = 주식 · 금리 · 환율 · 기타. 각 구역 머리에 그 구역의 상세 화면 버튼이 붙는다. */

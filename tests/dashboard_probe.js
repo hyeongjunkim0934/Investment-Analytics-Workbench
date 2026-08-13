@@ -2114,27 +2114,31 @@ safe("estimateCalc", () => {
   /* 앵커가 없는 해는 조용히 0 이 아니라 **오류를 돌려준다** */
   r.missingAnchorErrors = !!P.estIndexYtd(ix, "2024-06-30").error;
 
-  /* ③ 엔진 — 손계산 대조. 주식만 연환산에서 빠져야 한다. */
+  /* ③ 엔진 — 손계산 대조. **입력이 그 자체로 연환산 수익률이다**(§7.11 — 2026-08-13
+     사용자 지시). 화면이 계수를 다시 곱하면 이중 연환산이므로 곱하지 않는다.
+     주식은 애초에 연환산 대상이 아니라 연초이후 지수 변화 그대로다. */
   const st = { asof: "2026-06-30",
     amt: { "장부가 국내채권": 6000, "국내주식": 2000, "대체투자": 2000 },
     ret: { "장부가 국내채권": 1.5, "대체투자": 3.0 }, dur: { "장부가 국내채권": 5 } };
   const E = P.estEngine(A, st);
   const f = 365 / 181;
   const row = (k) => E.rows.find((x) => x.key === k);
-  r.equityNotAnnualized = row("국내주식").factor === 1
-    && Math.abs(row("국내주식").applied - 0.20) < 1e-9;
-  r.bondAnnualized = Math.abs(row("장부가 국내채권").applied - 0.015 * f) < 1e-12;
-  r.altAnnualized = Math.abs(row("대체투자").applied - 0.03 * f) < 1e-12;
-  const manual = (6000 * 0.015 * f + 2000 * 0.20 + 2000 * 0.03 * f) / 10000;
-  r.portfolioMatchesHandCalc = Math.abs(E.port - manual) < 1e-12;
+  r.equityUsesIndexYtd = Math.abs(row("국내주식").r - 0.20) < 1e-9;
+  r.keyedInputNotReAnnualized = Math.abs(row("장부가 국내채권").r - 0.015) < 1e-15
+    && Math.abs(row("대체투자").r - 0.03) < 1e-15;
+  /* 계수를 곱하던 옛 동작이 되살아나면 여기서 깨진다(1.50% → 3.02% 였다) */
+  r.noDoubleAnnualization = Math.abs(row("장부가 국내채권").r - 0.015 * f) > 1e-6;
+  r.appliedFieldRemoved = row("장부가 국내채권").applied === undefined
+    && row("장부가 국내채권").factor === undefined;
+  r.profitUsesInputDirectly = Math.abs(row("장부가 국내채권").profit - 6000 * 0.015) < 1e-12;
+  const manual = (6000 * 0.015 + 2000 * 0.20 + 2000 * 0.03) / 10000;
+  r.portfolioMatchesHandCalc = Math.abs(E.port - manual) < 1e-15;
   r.totalAmt = E.totalAmt;
   /* 기여도 합 = 포트폴리오 수익률 (항등식) */
   const csum = E.rows.reduce((a, x) => a + (x.contrib || 0), 0);
-  r.contribSumsToPortfolio = Math.abs(csum - E.port) < 1e-12;
-  /* 미연환산 참고치는 계수를 빼고 계산된 다른 수여야 한다 */
-  const manualPeriod = (6000 * 0.015 + 2000 * 0.20 + 2000 * 0.03) / 10000;
-  r.periodReturnMatchesHandCalc = Math.abs(E.portPeriod - manualPeriod) < 1e-12;
-  r.periodDiffersFromAnnualized = Math.abs(E.portPeriod - E.port) > 1e-6;
+  r.contribSumsToPortfolio = Math.abs(csum - E.port) < 1e-15;
+  /* 「미연환산 참고치」는 폐지됐다 — 입력이 곧 연환산이면 본치와 같은 수라 두 칸이 될 수 없다 */
+  r.periodReferenceRemoved = E.portPeriod === undefined;
   r.bondDurationWeighted = E.durW === 5;
 
   /* ④ 자동 vs 수기 — 수기값이 자동을 이기고, 지우면 자동으로 돌아간다 */
@@ -2160,22 +2164,45 @@ safe("estimateCalc", () => {
   r.renderErrors = sec.querySelectorAll(".render-error").length;
   /* **축을 좁혀서 센다** — `.est-table` 은 시나리오 카드의 축 표도 함께 쓰므로 전체
      셀렉터로 세면 기준일 표 11행이 17행이 된다(§7.7.15 의 `.sim-bar-wrap` 과 같은 함정). */
+  /* 헤더가 **2행**이다(기준일/추정일 그룹 + 세부 열) — §7.11 로 표를 합치며 생긴 구조라
+     `-1` 로 세면 자산군 행이 12개로 잡힌다. */
+  r.headerRowCount = DOC.getElementById("est-table-card")
+    .querySelectorAll(".est-table th").length > 0
+    ? Array.from(DOC.getElementById("est-table-card").querySelectorAll(".est-table tr"))
+        .filter((tr) => tr.querySelectorAll("th").length > 0).length : 0;   // 2
   r.assetRowCount = DOC.getElementById("est-table-card")
-    .querySelectorAll(".est-table tr").length - 1;                      // 헤더 제외 → 11
+    .querySelectorAll(".est-table tr").length - r.headerRowCount;        // 11
   r.inputCount = DOC.getElementById("est-table-card")
     .querySelectorAll(".est-table input").length;                       // 규모11+수익11+듀레6
   /* 자동 표식은 **자동값이 실제로 들어간 칸에만** — 빈 칸까지 칠하면 채워진 것처럼 읽힌다 */
   r.autoMarkCount = DOC.getElementById("est-table-card")
     .querySelectorAll(".est-auto").length;                              // 국내주식·해외주식 2
+  /* 한 표 안에 기준일 블록과 추정일 블록이 **나란히** 있는가(§7.11 의 요구 그 자체).
+     폐지된 두 열(반영 수익률·기여도)이 되살아나면 함께 잡힌다. */
+  const headTxt = Array.from(DOC.getElementById("est-table-card").querySelectorAll("th"))
+    .map((n) => n.textContent).join("|");
+  r.headerHasBothDateBlocks = /기준일/.test(headTxt) && /추정일/.test(headTxt);
+  r.headerDroppedAppliedColumn = !/반영 수익률/.test(headTxt) && !/연환산\|/.test(headTxt);
+  r.headerDroppedContribColumn = !/기여도/.test(headTxt);
+  r.headerHasFourTerms = /캐리/.test(headTxt) && /가격효과/.test(headTxt)
+    && /환효과/.test(headTxt) && /스왑 MTM/.test(headTxt);
+  r.headerHasDiffColumn = /차이/.test(headTxt);
+  /* 구분선은 **클래스로** 붙는다 — 재계산이 className 을 통째로 다시 써도 살아남아야 한다 */
+  r.sepCellsPresent = DOC.getElementById("est-table-card")
+    .querySelectorAll(".est-sep").length >= 11;
   const secTxt = sec.textContent.replace(/\s+/g, " ");
-  r.screenStatesFactor = /연환산 계수 2\.0166/.test(secTxt);
   r.screenStatesElapsed = /경과 181일/.test(secTxt);
-  r.screenSaysEquityExcluded = /주식\(국내·해외\)은 연환산하지 않습니다/.test(secTxt);
+  r.screenSaysInputIsAnnualized = /기준일 수익률은 이미 연환산된 값을 넣으십시오/.test(secTxt);
+  r.screenSaysEquityExcluded = /주식\(국내·해외\)은 연환산하지 않는/.test(secTxt);
   r.screenWarnsPrNotTr = /PR/.test(secTxt) && /⚠/.test(secTxt);
   r.screenStatesUstUnavailable = /미국채 총수익 지수 부재/.test(secTxt);
-  r.screenSaysDurationUnused = /지금 수익률 계산에 쓰이지 않습니다/.test(secTxt);
-  /* 입력은 모형 입력이라 즉시 저장된다(자산배분 비중 시뮬레이션과 다른 축) */
-  const amtIn = DOC.querySelectorAll(".est-table input")[0];
+  /* 듀레이션은 **이제 실제로 쓰인다**(시나리오 가격효과) — 옛 문장이 남아 있으면 거짓말이다 */
+  r.screenSaysDurationUsedForPrice = /추정일 가격효과/.test(secTxt);
+  r.screenDropsStaleDurationClaim = !/지금 수익률 계산에 쓰이지 않습니다/.test(secTxt);
+  /* 입력은 모형 입력이라 즉시 저장된다(자산배분 비중 시뮬레이션과 다른 축).
+     **축을 좁혀서 집는다** — 시나리오 카드가 표보다 위로 올라가서(§7.11) 문서 전체의
+     `.est-table input`[0] 은 이제 축 입력이다. */
+  const amtIn = DOC.getElementById("est-table-card").querySelectorAll(".est-table input")[0];
   amtIn.value = "7777";
   amtIn.dispatchEvent({ type: "input" });
   const savedNow = JSON.parse(shim.localStorage.getItem("iaw-estimate"));
@@ -2276,30 +2303,29 @@ safe("estimateCalc", () => {
   retIn.dispatchEvent({ type: "blur" });
   r.blurRestoresAutoFill = retIn.value !== "";
 
-  // (b) CRITICAL: 기준일이 없으면 연환산 헤드라인은 **정의되지 않는다**
-  //     (예전에는 「주식 수익 ÷ 전체 규모」가 26px 로 나가 참고치보다 작았다)
+  /* (b) 기준일이 없어도 **키인한 수익률은 그대로 계산된다**(§7.11 — 계수를 안 쓰므로).
+     §7.10.1 이 잡았던 CRITICAL(계수가 없어 비주식 행이 통째로 빠지고 「주식 수익 ÷ 전체
+     규모」가 헤드라인으로 나가던 상태)은 계수 자체가 없어져 구조적으로 사라졌다. 대신
+     남는 위험은 **수익률이 하나도 없는데 0.00% 를 내는 것**이라 그쪽을 고정한다. */
   const EnoAsof = P.estEngine(A, { asof: null, amt: { "장부가 국내채권": 5000, "국내주식": 1000 },
     ret: { "장부가 국내채권": 1.5, "국내주식": 4 }, dur: {}, dlt: {}, hedge: {} });
-  r.noAsofPortIsNull = EnoAsof.port === null;
-  r.noAsofStillHasPeriodRef = EnoAsof.portPeriod != null;   // 참고치는 계수가 필요 없다
-  r.noAsofFlagged = EnoAsof.portBlockedByAsof === true;
-  /* 화면에서의 실제 도달 경로는 **사용자가 기준일 칸을 지우는 것**이다 — 렌더 진입 시에는
-     페이로드의 asof_all 이 기본값으로 채워지므로 저장분만 null 로 두면 재현되지 않는다. */
+  r.noAsofStillComputesKeyedRows =
+    Math.abs(EnoAsof.port - (5000 * 0.015 + 1000 * 0.04) / 6000) < 1e-15;
+  r.noAsofNotFlaggedWhenKeyed = EnoAsof.portBlockedNoRet === false;
+  const EnoRet = P.estEngine(A, { asof: "2026-06-30", amt: { "대출금": 5000 },
+    ret: {}, dur: {}, dlt: {}, hedge: {} });
+  r.noReturnsPortIsNull = EnoRet.port === null;      // 0.00% 는 「계산했더니 0」이라는 뜻이다
+  r.noReturnsFlagged = EnoRet.portBlockedNoRet === true;
   shim.localStorage.setItem("iaw-estimate", JSON.stringify({ saved: true,
-    amt: { "장부가 국내채권": 5000, "국내주식": 1000 },
-    ret: { "장부가 국내채권": 1.5, "국내주식": 4 }, dur: {}, dlt: {}, hedge: {} }));
+    asof: "2026-06-30", amt: { "대출금": 5000 }, ret: {}, dur: {}, dlt: {}, hedge: {} }));
   P.renderSection("estimate");
-  const asofIn = Array.from(DOC.getElementById("est-controls").querySelectorAll("input"))
-    .find((n) => n.getAttribute("type") === "date");
-  asofIn.value = "";
-  asofIn.dispatchEvent({ type: "input" });
-  const sumTxt = DOC.getElementById("est-summary").textContent;
-  r.noAsofExplainedOnScreen = /기준일이 없어 연환산 계수를 만들 수 없습니다/.test(sumTxt);
-  /* 헤드라인이 「주식 수익 ÷ 전체 규모」라는 뜻 없는 수를 내지 않는가 —
-     예전에는 참고치(미연환산)가 본치보다 **큰** 상태가 나왔다 */
-  r.noAsofHeadlineBlank = /연환산 반영 \(주식 제외\)\s*–/.test(sumTxt.replace(/\s+/g, " "));
-  /* 「총 운용수익(연환산 반영)」도 같은 이유로 주식만 담게 되므로 함께 비어야 한다 */
-  r.noAsofProfitBlank = /총 운용수익 \(연환산 반영\)\s*–/.test(sumTxt.replace(/\s+/g, " "));
+  const sumTxt = DOC.getElementById("est-summary").textContent.replace(/\s+/g, " ");
+  r.noReturnsExplainedOnScreen = /수익률이 하나도 없어 포트폴리오 수익률을 내지 않았습니다/.test(sumTxt);
+  r.noReturnsHeadlineBlank = /기준일 수익률 \(연환산\)\s*–/.test(sumTxt);
+  r.noReturnsProfitBlank = /총 운용수익 \(연환산 기준\)\s*–/.test(sumTxt);
+  /* 추정일이 없으면 추정일 헤드라인도 비고 **왜 비었는지**를 적는다 */
+  r.noEstDateHeadlineBlank = /추정일 수익률 \(연환산\)\s*–/.test(sumTxt);
+  r.noEstDateExplained = /추정일 수익률은 아직 없습니다/.test(sumTxt);
 
   // (c) NaN 경과일수 — `days <= 0` 만으로는 통과한다(연도 0000 → 전년이 -1년)
   r.rejectsNaNElapsed = P.estDayCount("0000-01-01") === null;
@@ -2348,7 +2374,8 @@ safe("estimateScenario", () => {
       { key: "acwi", label: "ACWI", kind: "price", unit: "%", index: "acwi" },
     ],
     unavailable: [], annualize: { basis: "days", day_count: 365, note: "n" },
-    scenario: { formula: "F", terms: ["a"], book_value: "BV", limits: "L" },
+    scenario: { formula: "F", terms: ["a"], book_value: "BV", limits: "L",
+                cumulative: "CUM", cross_year: "XY" },
   };
   /* 기준일 6/30 → 추정일 12/31 (184일). 전부 수기 시나리오. */
   const st = {
@@ -2396,7 +2423,8 @@ safe("estimateScenario", () => {
   r.fullHedgeZeroesFx = Math.abs(P.estScenario(A, stFull).rows
     .find((x) => x.key === "해외주식").fx) < 1e-15;
 
-  /* ⑤ 캐리 — 기준일 연환산 수익률의 구간 비례분. 주식은 캐리가 없다(가격이 곧 수익). */
+  /* ⑤ 캐리 — 기준일 **연환산** 수익률(=입력값 그대로)의 구간 비례분.
+     주식은 캐리가 없다(가격이 곧 수익). */
   r.carryIsProRated = Math.abs(kb.carry - (0.0365 * 184 / 365)) < 1e-15;
   r.equityHasNoCarry = eq.carry === 0 && row("국내주식").carry === 0;
   r.equityPriceIsIndexMove = Math.abs(row("국내주식").price - 0.05) < 1e-15;
@@ -2406,6 +2434,49 @@ safe("estimateScenario", () => {
     Math.abs(x.total - (x.carry + x.price + x.fx + x.swap)) < 1e-15);
   const manual = S.rows.reduce((a, x) => a + (x.amt || 0) * (x.total || 0), 0) / S.totalAmt;
   r.portfolioMatchesHandCalc = Math.abs(S.portPeriod - manual) < 1e-15;
+
+  /* ⑥-b **나란히 놓기의 항등식**(§7.11) — 기준일 값이 연환산이므로 기간수익으로 되돌려
+     더한 뒤 추정일 기준으로 다시 연환산한다. 캐리가 연환산율을 보존하므로 결과는
+     `추정일 = 기준일 + 시장효과 × 365 ÷ 연초→추정일 일수` 와 **대수적으로 같아야** 한다.
+     되돌리기를 빠뜨리면(옛 코드처럼 `r + total`) 이 단언이 깨진다. */
+  const yd = S.yearDays;                                    // 2026-12-31 → 365
+  r.yearDaysIsToEstDate = yd === 365;
+  r.cumIdentityNonEquity = ["시가 국내채권 직접", "장부가 해외채권"].every((k) => {
+    const x = row(k);
+    return Math.abs(x.cumAnnual - (x.r + (x.price + x.fx + x.swap) * 365 / yd)) < 1e-15;
+  });
+  r.basePeriodIsUnAnnualized = Math.abs(kb.basePeriod - 0.0365 * 181 / 365) < 1e-15;
+  /* 주식은 양쪽 다 연환산하지 않으므로 차이 = 지수 변화(+환효과) 그대로 */
+  r.cumIdentityEquity = Math.abs(row("국내주식").cumAnnual
+    - (row("국내주식").r + row("국내주식").total)) < 1e-15;
+  /* **계수가 1 이 아닌 날로 한 번 더 잰다.** 위 검사들의 추정일이 12/31 이라 재연환산
+     계수가 정확히 1 이고, 그 상태에서는 주식/비주식 구분이 수에 드러나지 않아 규약이
+     조용히 뒤집혀도 통과한다(§7.8 의 「2.0 이 아님」 단언과 같은 성격의 자리다). */
+  const S9 = P.estScenario(A, { ...st, est_date: "2026-09-30" });
+  const f9 = 365 / S9.yearDays;                              // 365/273 ≈ 1.337
+  r.reannualFactorNotOne = Math.abs(f9 - 1) > 0.3;
+  const eq9 = S9.rows.find((x) => x.key === "국내주식");
+  const kb9 = S9.rows.find((x) => x.key === "시가 국내채권 직접");
+  r.equityNotReannualized = Math.abs(eq9.cumAnnual - (eq9.r + eq9.total)) < 1e-15;
+  r.nonEquityReannualized =
+    Math.abs(kb9.cumAnnual - (kb9.r + (kb9.price + kb9.fx + kb9.swap) * f9)) < 1e-15;
+  r.nonEquityDiffersFromRaw = Math.abs(kb9.cumAnnual - (kb9.r + kb9.total)) > 1e-6;
+  r.diffIsCumMinusBase = S.rows.filter((x) => x.diff != null).every((x) =>
+    Math.abs(x.diff - (x.cumAnnual - x.r)) < 1e-15);
+  /* 포트폴리오 차이는 **두 헤드라인을 그대로 뺀 값**이어야 한다(세 수가 서로 맞아야 한다) */
+  r.portDiffMatchesHeadlines =
+    Math.abs(S.portDiff - (S.portCumAnnual - S.portBase)) < 1e-15;
+  r.portBaseMatchesEngine = Math.abs(S.portBase - P.estEngine(A, st).port) < 1e-15;
+
+  /* ⑥-c 추정일이 **다른 해**면 연초 기준이 달라져 누적을 잇지 못한다.
+     옛 코드는 그때도 `기준일값 + 구간` 을 만들고 추정일 연도의 짧은 경과일수로 연환산했다
+     (2026-07-21 → 2027-03-31 이면 ×365/90 = 4.06배). 지어낸 수를 내지 않는지 본다. */
+  const SX = P.estScenario(A, { ...st, est_date: "2027-03-31" });
+  r.crossYearFlagged = SX.ready === true && SX.crossYear === true;
+  r.crossYearNoCumulative = SX.portCumAnnual === null && SX.portDiff === null
+    && SX.rows.every((x) => x.cumAnnual === null);
+  r.crossYearStillGivesPeriod = SX.portPeriod != null
+    && Math.abs(SX.rows.find((x) => x.key === "시가 국내채권 직접").total) > 0;
 
   /* ⑦ 입력이 모자라면 **0 으로 대체하지 않고** 막고 사유를 남긴다 */
   const stNoDur = { ...st, dur: {} };
@@ -2436,15 +2507,32 @@ safe("estimateScenario", () => {
   r.renderErrors = sec.querySelectorAll(".render-error").length;
   r.axisRowCount = DOC.getElementById("est-scenario-card")
     .querySelectorAll(".est-table tr").length - 1;                       // 6
-  r.resultRowCount = DOC.getElementById("est-scenario-result")
-    .querySelectorAll(".est-table tr").length - 1;                       // 11
+  /* **4항 분해는 결과 카드가 아니라 통합 표에 있다**(§7.11) — 두 곳에 그리면 같은 수가
+     한 화면에 두 번 나오고 한쪽만 고쳤을 때 조용히 갈린다. */
+  r.resultCardHasNoAssetTable = DOC.getElementById("est-scenario-result")
+    .querySelectorAll(".est-table").length === 0;
+  /* 통합 표의 추정일 칸이 실제로 채워졌는가 — 계산이 되는데 화면이 비면 그게 §7.11 의 실패다 */
+  const tableTxt = DOC.getElementById("est-table-card").textContent.replace(/\s+/g, " ");
+  const kbCum = (kb.cumAnnual * 100).toFixed(2);
+  r.tableShowsEstReturn = tableTxt.indexOf(kbCum) >= 0;
+  const kbDiff = (kb.diff * 100).toFixed(2);
+  r.tableShowsDiff = tableTxt.indexOf(kbDiff) >= 0;
   const txt = sec.textContent.replace(/\s+/g, " ");
   r.screenStatesSignRule = /금리 상승 = 채권 가격 하락/.test(txt);
   r.screenStatesSwapSign = /스왑레이트 상승 = 스왑 MTM 손실/.test(txt);
   r.screenStatesBookValue = /BV/.test(txt);
   r.screenStatesLimits = /L/.test(txt);
+  r.screenStatesCumulativeRule = /CUM/.test(txt);      // 나란히 놓기의 항등식 문장
   r.screenShowsFourTerms = /캐리/.test(txt) && /가격효과/.test(txt)
     && /환효과/.test(txt) && /스왑 MTM/.test(txt);
+  /* 다른 해면 화면이 **사유를 적는다** — 조용히 비우면 고장으로 읽힌다 */
+  shim.localStorage.setItem("iaw-estimate", JSON.stringify({ saved: true, ...st,
+    est_date: "2027-03-31" }));
+  P.renderSection("estimate");
+  r.screenStatesCrossYear = /XY/.test(
+    DOC.getElementById("estimate").textContent.replace(/\s+/g, " "));
+  shim.localStorage.setItem("iaw-estimate", JSON.stringify({ saved: true, ...st }));
+  P.renderSection("estimate");
   /* 시나리오 입력도 즉시 저장(모형 입력) */
   const tauIn = Array.from(DOC.getElementById("est-scenario-card").querySelectorAll("input"))
     .find((n) => /스왑 잔존만기/.test(n.getAttribute("aria-label") || ""));
