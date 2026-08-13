@@ -1288,6 +1288,8 @@ const CMA_ALLOC = (() => {
       active: true, asof: "2030-06-30", labels, cols,
       groups: labels.map((l) => l.split(" ")[0]),
       fx_col: "_fx", alt: { label: "시가 대체투자", alpha: 0.31, n_fit: 90 },
+      /* §7.7.16 μ 기준일 컷 — 데이터는 더 있는데(2030-08) 표본은 2030-06 에서 끊었다 */
+      sample_end: "2030-06-30", data_last: "2030-08-31",
       econ_map: { "장부가 국내채권": "시가 국내채권", "장부가 해외채권": "시가 해외채권",
                   "장부가 단기자금": "장부가 단기자금", "시가 국내주식": "시가 국내주식",
                   "시가 해외주식": "시가 해외주식", "시가 국내채권": "시가 국내채권",
@@ -1956,6 +1958,32 @@ safe("simPanel", () => {
   return r;
 });
 
+/* ====== P20-j. μ 기준일 컷(§7.7.16) — σ 표본을 μ 기준일에 맞춰 잘랐음을 밝히는가 ==
+   조용히 자르면 사용자는 σ 가 최신이라고 믿는다(μ·σ 시점 불일치의 반대 방향 사고).
+   화면이 ① 컷 날짜 ② 데이터는 어디까지 있는지 두 수를 모두 말해야 한다. */
+safe("cmaSampleCut", () => {
+  const r = {};
+  P.DATA.alloc = CMA_ALLOC;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const ctl = DOC.getElementById("alloc-controls");
+  const txt = ctl ? ctl.textContent : "";
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  r.noteRendered = !!ctl && !!ctl.querySelector(".cma-cut-note");
+  r.statesCutMonth = /표본 종료 2030-06/.test(txt);
+  r.statesDataLast = /데이터는 2030-08 까지 있습니다/.test(txt);
+  r.tiesToMu = /기대수익\(μ\) 키인 기준일에 맞춰/.test(txt);
+  /* 컷이 없으면(구 페이로드) 문장을 만들지 않는다 — 없는 사실을 적지 않는다 */
+  const noCut = { ...CMA_ALLOC, cma: { ...CMA_ALLOC.cma, sample_end: null, data_last: null } };
+  P.DATA.alloc = noCut;
+  P.renderSection("alloc");
+  r.absentWhenNoCut = !DOC.getElementById("alloc-controls").querySelector(".cma-cut-note");
+  r.absentRenderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  P.DATA.alloc = CMA_ALLOC;
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
 /* ====== P20-i. 카드 위계 — 기대수익이 위·크고 위험이 아래·작다 (§7.7.15) =====
    2026-08-12 사용자 지시. 라벨 문자열은 그대로 두고 **순서와 크기만** 바꾼 것이므로,
    문자열 검사로는 회귀를 못 잡는다 — DOM 순서와 font-size 를 실제로 읽어 잰다. */
@@ -2121,9 +2149,18 @@ safe("hedgeTracks", () => {
   const applyH = Array.from(panel.querySelectorAll("button"))
     .find((n) => /헤지 슬라이더를 최적으로/.test(n.textContent));
   r.applyHedgeButtonExists = !!applyH;
+  /* 이미 최적이면 버튼이 스스로 그 사실을 말한다(눌리는데 무동작 = 고장으로 읽힌다) */
+  const noopBtnBefore = Array.from(panel.querySelectorAll("button"))
+    .find((n) => /헤지 슬라이더 — 이미 최적/.test(n.textContent));
+  r.noopButtonAbsentWhenMovable = !noopBtnBefore;
   if (applyH) applyH.click();
   const st2 = P.allocState(CMA_ALLOC);   // 저장 안 됨 — 디폴트 그대로여야 한다
   r.applyHedgeDoesNotSave = shim.localStorage.getItem("iaw-alloc") == null;
+  /* 적용 후 재렌더에서는 「이미 최적」 비활성 버튼이 되어 있어야 한다 */
+  const p2b = DOC.getElementById("alloc-sim-panel");
+  const noopBtn = Array.from(p2b.querySelectorAll("button"))
+    .find((n) => /헤지 슬라이더 — 이미 최적/.test(n.textContent));
+  r.noopButtonAppearsAfterApply = !!noopBtn && noopBtn.disabled === true;
   const sliderVals = sliders.map((n) => +n.value);
   r.applyHedgeMovesSliders = !!jo
     && Math.abs(sliderVals[0] - Math.round(jo.hb * 100)) < 1.5
@@ -2173,12 +2210,31 @@ safe("hedgeTracks", () => {
   P.renderSection("alloc");
   const whyTxt = DOC.getElementById("alloc-sim-panel").textContent;
   r.inertSleeveExplained = /해외채권 비중이 0이라 채권 헤지비율은 위험에 영향이 없습니다/.test(whyTxt);
-  /* 밴드가 물면 무제약 Xe 를 밝힌다 */
+  /* 구속의 **출처**를 구분하는가 — 내규 밴드(band) vs 해외자산 비중 상한(cap).
+     한 문장으로 뭉치면 중립 밴드 상태에서도 「밴드가 물고 있다」가 나가 사용자를
+     밴드 완화라는 틀린 조치로 보낸다(재점검 발견). */
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
     h_bands: { 해외채권: [95, 100], 해외주식: [95, 100] } }));
   P.renderSection("alloc");
   const bandTxt = DOC.getElementById("alloc-sim-panel").textContent;
-  r.bandBindExplained = /헤지 밴드가 물고 있습니다/.test(bandTxt);
+  r.bandBindExplained = /헤지 밴드\(내규 키인\)가 물고 있습니다/.test(bandTxt);
+  r.bandCaseNotCalledCap = !/환노출의 상한이라 밴드 문제가 아닙니다/.test(bandTxt);
+  const stBand = { ...P.allocDefaults(CMA_ALLOC),
+    h_bands: { 해외채권: [95, 100], 해외주식: [95, 100] } };
+  const joBand = P.allocJointOpt(P.allocEngine(CMA_ALLOC, stBand), stBand);
+  r.bandFlagOnlyBand = joBand.bandBinds === true && joBand.capBinds === false;
+  /* 중립 밴드 + 노출 상한 구속 — 밴드가 아니라 비중이 원인이라고 적어야 한다.
+     해외 비중을 눌러(밴드 [0,2]) 최적 노출 폭을 좁히면 이 상태가 만들어진다. */
+  const dflt2 = P.allocDefaults(CMA_ALLOC);
+  const stCap = { ...dflt2,
+    bands: { ...dflt2.bands, 해외채권: [0, 2], 해외주식: [0, 2] } };
+  const joCap = P.allocJointOpt(P.allocEngine(CMA_ALLOC, stCap), stCap);
+  r.capFlagSet = joCap.capBinds === true && joCap.bandBinds === false;
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, bands: stCap.bands }));
+  P.renderSection("alloc");
+  const capTxt = DOC.getElementById("alloc-sim-panel").textContent;
+  r.capExplainedAsExposure = /환노출의 상한이라 밴드 문제가 아닙니다/.test(capTxt);
+  r.capCaseNotCalledBand = !/헤지 밴드\(내규 키인\)가 물고 있습니다/.test(capTxt);
   shim.localStorage.removeItem("iaw-alloc");
 
   /* ④ 환율 축 부재 — 무력 명시 + 배분만 최적화 */

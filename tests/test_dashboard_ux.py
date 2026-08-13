@@ -1884,6 +1884,19 @@ def test_hedge_ust_merit_monitor(probe):
     assert c["inactiveExplains"] is True
 
 
+def test_screen_states_cma_sample_cut(probe):
+    """μ 기준일 컷을 화면이 밝히는가(§7.7.16) — 조용히 자르면 사용자는 σ 가 최신인
+    줄 안다. 컷 날짜와 "데이터는 어디까지 있는지" 두 수를 모두 적어야 하고,
+    컷이 없는 페이로드에서는 문장을 만들지 않아야 한다(없는 사실을 적지 않는다)."""
+    c = probe["cmaSampleCut"]
+    assert c["renderErrors"] == 0 and c["absentRenderErrors"] == 0
+    assert c["noteRendered"] is True
+    assert c["statesCutMonth"] is True
+    assert c["statesDataLast"] is True, "데이터가 컷보다 더 있다는 사실을 화면이 숨긴다"
+    assert c["tiesToMu"] is True, "컷의 이유(μ 기준일)를 밝히지 않는다"
+    assert c["absentWhenNoCut"] is True
+
+
 def test_cards_lead_with_return_not_risk(probe):
     """카드 위계(§7.7.15, 2026-08-12 사용자 지시) — 기대수익이 **위·크게**, 위험이 아래·작게.
 
@@ -1915,6 +1928,13 @@ def test_hedge_optimum_markers_and_inert_reasons(probe):
     assert c["hedgeMarkHiddenWhenInert"] is True, "위험에 무영향인 슬리브에 최적 마커를 찍었다"
     assert c["inertSleeveExplained"] is True, "비중 0 슬리브의 헤지 무영향을 화면이 설명하지 않는다"
     assert c["bandBindExplained"] is True, "헤지 밴드가 물었을 때 그 사실을 밝히지 않는다"
+    assert c["bandCaseNotCalledCap"] is True
+    assert c["bandFlagOnlyBand"] is True, "밴드 구속인데 cap 플래그까지 켜졌다"
+    assert c["capFlagSet"] is True, "노출 상한 구속을 cap 으로 판정하지 못한다"
+    assert c["capExplainedAsExposure"] is True, "중립 밴드인데 원인을 밴드로 적는다 — 틀린 조치로 유도"
+    assert c["capCaseNotCalledBand"] is True
+    assert c["noopButtonAbsentWhenMovable"] is True
+    assert c["noopButtonAppearsAfterApply"] is True, "이미 최적인데 버튼이 계속 눌린다"
 
 
 def test_hedge_two_tracks_joint_and_sim(probe):
