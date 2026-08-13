@@ -1857,8 +1857,13 @@ safe("simPanel", () => {
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
   r.tocFirstIsSim =
     (DOC.getElementById("alloc-toc").querySelectorAll("button")[0] || {}).textContent === "시뮬레이터";
-  r.barCount = panel.querySelectorAll(".sim-bar-wrap").length;
-  r.markerVisibleCount = Array.from(panel.querySelectorAll(".sim-opt-mark")).filter((n) => !n.hidden).length;
+  /* **비중 막대만** 센다 — §7.7.15 에서 헤지 슬라이더도 같은 .sim-bar-wrap 래퍼를
+     쓰게 되어(최적 ▼ 마커 공유) 패널 전체 셀렉터는 9개를 세게 됐다. 축이 다른 둘을
+     한 수로 묶으면 어느 쪽이 깨져도 이 검사가 거짓말한다 — 행(.sim8-row)으로 좁힌다.
+     헤지 쪽 개수·마커는 hedgeTracks 프로브가 따로 잰다. */
+  r.barCount = panel.querySelectorAll(".sim8-row .sim-bar-wrap").length;
+  r.markerVisibleCount = Array.from(panel.querySelectorAll(".sim8-row .sim-opt-mark"))
+    .filter((n) => !n.hidden).length;
   r.donutCount = panel.querySelectorAll("svg").length;
   const ptxt = panel.textContent;
   r.hasOptCard = /① 최적 포트폴리오/.test(ptxt);
@@ -1947,6 +1952,46 @@ safe("simPanel", () => {
     .filter((n) => (n.getAttribute("aria-label") || "").includes("위험 % 키인"));
   r.proxySigDisabled = sigInputs.length === 7 && sigInputs.every((n) => n.disabled === true);
   r.proxyOptDeferred = /최적 포트폴리오 — 보류/.test(p2.textContent);
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
+/* ====== P20-i. 카드 위계 — 기대수익이 위·크고 위험이 아래·작다 (§7.7.15) =====
+   2026-08-12 사용자 지시. 라벨 문자열은 그대로 두고 **순서와 크기만** 바꾼 것이므로,
+   문자열 검사로는 회귀를 못 잡는다 — DOM 순서와 font-size 를 실제로 읽어 잰다. */
+safe("cardHierarchy", () => {
+  const r = {};
+  P.DATA.alloc = CMA_ALLOC;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const px = (n) => {
+    const m = /font-size:\s*([\d.]+)px/.exec(n.getAttribute("style") || "");
+    return m ? +m[1] : null;
+  };
+  const check = (card) => {
+    const divs = Array.from(card.querySelectorAll("div"));
+    const mu = divs.find((d) => /^기대수익 [\d.]+%/.test(d.textContent));
+    const sg = divs.find((d) => /^위험 [\d.]+%/.test(d.textContent));
+    if (!mu || !sg) return null;
+    const order = divs.indexOf(mu) < divs.indexOf(sg);
+    const fMu = px(mu), fSg = px(sg);
+    return { order, fMu, fSg, bigger: fMu != null && fSg != null && fMu > fSg };
+  };
+  const simCards = Array.from(DOC.getElementById("alloc-sim-panel").querySelectorAll(".sim8-card"))
+    .map(check).filter(Boolean);
+  r.simCardCount = simCards.length;
+  r.simReturnFirst = simCards.length > 0 && simCards.every((c) => c.order);
+  r.simReturnBigger = simCards.length > 0 && simCards.every((c) => c.bigger);
+  r.simFontPair = simCards.length ? [simCards[0].fMu, simCards[0].fSg] : null;
+  const refCards = Array.from(DOC.getElementById("alloc-cards").querySelectorAll(".card"))
+    .map(check).filter(Boolean);
+  r.refCardCount = refCards.length;
+  r.refReturnFirst = refCards.length > 0 && refCards.every((c) => c.order);
+  r.refReturnBigger = refCards.length > 0 && refCards.every((c) => c.bigger);
+  /* 라벨 문자열은 유지돼야 한다(다른 검사가 문자열을 본다) */
+  const txt = DOC.getElementById("alloc").textContent;
+  r.labelsIntact = /기대수익 /.test(txt) && /위험 /.test(txt);
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
   shim.localStorage.removeItem("iaw-alloc");
   return r;
 });
@@ -2099,6 +2144,42 @@ safe("hedgeTracks", () => {
   const det = panel.querySelector(".sim-ccy");
   r.ccyTableRendered = !!det && /통화별 환헤지 분해/.test(det.textContent);
   r.ccyHonestAboutUniform = !!det && /같은 비율이 걸립니다/.test(det.textContent);
+
+  /* ③-b 최적 헤지 마커(§7.7.15, 2026-08-12 사용자 지시) — 비중 막대의 ▼ 와 같은 방식.
+     비중 0 슬리브는 위험에 무영향이라 마커를 숨기고, 그 사실을 카드가 적어야 한다. */
+  P.DATA.alloc = CMA_ALLOC;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const p3 = DOC.getElementById("alloc-sim-panel");
+  const hedgeWraps = Array.from(p3.querySelectorAll(".sim-hedge-row .sim-bar-wrap"));
+  r.hedgeMarkWrappers = hedgeWraps.length;
+  const hMarks = hedgeWraps.map((w) => w.querySelector(".sim-opt-mark")).filter(Boolean);
+  r.hedgeMarksExist = hMarks.length === 2;
+  const jo2 = P.allocJointOpt(P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC)),
+    P.allocDefaults(CMA_ALLOC));
+  const shown = hMarks.filter((m) => !m.hidden);
+  /* 보이는 마커의 위치가 최적쌍과 일치하는가(무영향 슬리브는 숨김이 정답) */
+  r.hedgeMarkMatchesOptimum = shown.every((m) => {
+    const left = parseFloat(m.style.left);
+    return Math.abs(left - jo2.hb * 100) < 0.6 || Math.abs(left - jo2.he * 100) < 0.6;
+  });
+  r.hedgeMarkSaysRepresentative = shown.every((m) => /대표점/.test(m.title || ""));
+  r.hedgeMarkHiddenWhenInert =
+    (!jo2.inertBond || hMarks[0].hidden) && (!jo2.inertEq || hMarks[1].hidden);
+  /* 비중 0 슬리브가 있으면 카드가 그 사유를 적는다 — 합성으로 강제한다:
+     해외채권 밴드를 [0,0] 으로 눌러 최적 배분의 해외채권을 0 으로 만든다. */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
+    bands: { ...P.allocDefaults(CMA_ALLOC).bands, 해외채권: [0, 0] } }));
+  P.renderSection("alloc");
+  const whyTxt = DOC.getElementById("alloc-sim-panel").textContent;
+  r.inertSleeveExplained = /해외채권 비중이 0이라 채권 헤지비율은 위험에 영향이 없습니다/.test(whyTxt);
+  /* 밴드가 물면 무제약 Xe 를 밝힌다 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
+    h_bands: { 해외채권: [95, 100], 해외주식: [95, 100] } }));
+  P.renderSection("alloc");
+  const bandTxt = DOC.getElementById("alloc-sim-panel").textContent;
+  r.bandBindExplained = /헤지 밴드가 물고 있습니다/.test(bandTxt);
+  shim.localStorage.removeItem("iaw-alloc");
 
   /* ④ 환율 축 부재 — 무력 명시 + 배분만 최적화 */
   const NOFX2 = { ...CMA_ALLOC, cma: stripCmaCol(CMA_ALLOC.cma, "_fx") };

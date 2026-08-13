@@ -1884,6 +1884,39 @@ def test_hedge_ust_merit_monitor(probe):
     assert c["inactiveExplains"] is True
 
 
+def test_cards_lead_with_return_not_risk(probe):
+    """카드 위계(§7.7.15, 2026-08-12 사용자 지시) — 기대수익이 **위·크게**, 위험이 아래·작게.
+
+    라벨 문자열은 그대로 두고 순서·크기만 바꾼 변경이라 문자열 검사로는 회귀를 못 잡는다.
+    DOM 순서와 font-size 를 실제로 읽어 잰다. 시뮬레이터 두 카드와 참고치 3칸 카드 모두.
+    """
+    c = probe["cardHierarchy"]
+    assert c["renderErrors"] == 0
+    assert c["simCardCount"] == 2, "시뮬레이터 카드(①②)를 찾지 못했다"
+    assert c["simReturnFirst"] is True, "시뮬레이터 카드에서 위험이 기대수익보다 위에 있다"
+    assert c["simReturnBigger"] is True, "시뮬레이터 카드에서 기대수익이 위험보다 작다"
+    assert c["refCardCount"] >= 1
+    assert c["refReturnFirst"] is True and c["refReturnBigger"] is True
+    assert c["labelsIntact"] is True, "라벨 문자열(위험/기대수익)이 사라졌다 — 다른 검사가 이걸 본다"
+
+
+def test_hedge_optimum_markers_and_inert_reasons(probe):
+    """헤지 슬라이더의 최적 ▼ 마커(§7.7.15) — 비중 막대와 같은 방식, 다른 의미.
+
+    헤지쌍은 유일하지 않으므로(Xe 붕괴) 마커는 **대표점**이고 title 이 그 사실을 밝힌다.
+    비중 0 슬리브는 헤지비율이 위험에 무영향이라 마커를 숨기고 카드가 사유를 적는다 —
+    "버튼을 눌러도 안 움직인다"를 고장으로 읽지 않게 하는 장치(2026-08-12 사용자 보고).
+    """
+    c = probe["hedgeTracks"]
+    assert c["hedgeMarkWrappers"] == 2, "헤지 슬라이더에 마커 래퍼가 없다"
+    assert c["hedgeMarksExist"] is True
+    assert c["hedgeMarkMatchesOptimum"] is True, "▼ 위치가 최적 헤지쌍과 어긋난다"
+    assert c["hedgeMarkSaysRepresentative"] is True, "마커가 대표점임을 밝히지 않는다"
+    assert c["hedgeMarkHiddenWhenInert"] is True, "위험에 무영향인 슬리브에 최적 마커를 찍었다"
+    assert c["inertSleeveExplained"] is True, "비중 0 슬리브의 헤지 무영향을 화면이 설명하지 않는다"
+    assert c["bandBindExplained"] is True, "헤지 밴드가 물었을 때 그 사실을 밝히지 않는다"
+
+
 def test_hedge_two_tracks_joint_and_sim(probe):
     """헤지 2트랙(§7.7.13) — ① 최적 = 배분+헤지 교대(블록 좌표) 최적화 한 쌍,
     ② 시뮬 = 사용자 배분+슬라이더. 카드 둘 다 헤지 문장을 달고, ①의 쌍은
