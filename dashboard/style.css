@@ -935,7 +935,11 @@ button.vchip { cursor: pointer; }
 .sec-link-sub { color: var(--ink-3); font-weight: 400; }
 /* 카드 자체가 링크인 경우(겹치는 지표 → 그 화면). 밑줄 없이 카드 모양을 유지하되
    커서·호버·포커스로 누를 수 있음을 알린다 — 색만으로는 알 수 없다(WCAG 1.4.1). */
-a.kpi-link { text-decoration: none; color: inherit; display: block; cursor: pointer; }
+/* **`display` 을 건드리지 말 것** — `.kpi` 가 `display:flex; flex-direction:column; gap:4px`
+   인데 여기서 block 으로 덮으면 gap 이 무력화돼 카드 내부 4px 간격 넷이 통째로 사라진다.
+   실측: 링크 카드가 이웃보다 스파크라인이 16px 위에 그려져 같은 줄에서 어긋났다(9/12장).
+   오류도 경고도 없고 규칙의 주석은 "카드 모양을 유지"라고 적혀 있었다 — 재점검이 잡았다. */
+a.kpi-link { text-decoration: none; color: inherit; cursor: pointer; }
 a.kpi-link:hover { border-color: var(--ink-3); }
 /* 「누르면 들어간다」 표식은 **제목 옆**에 붙인다. 카드 끝(::after)에 두면 스파크라인
    아래에 홀로 뜬 글리프가 되어 값의 일부처럼 읽힌다(실측). */

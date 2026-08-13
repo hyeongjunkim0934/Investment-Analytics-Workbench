@@ -71,7 +71,10 @@ REQUIRED_KEYS = {
     # 수익률 추정(§7.8) 자동 채움 지수. 시리즈가 하나도 없어도 active:false 로
     # 게시된다 — `unavailable`/`annualize` 는 **부재 상태에서도** 화면이 「왜 수기인가」와
     # 연환산 규약을 적는 데 쓰이므로 두 키는 언제나 있어야 한다.
-    "estimate": ["active", "indices", "unavailable", "annualize"],
+    "estimate": ["active", "indices", "unavailable", "annualize",
+                 # axes/scenario = 추정일 시나리오(§7.10). 축이 하나도 없어도 빈 배열로
+                 # 나가야 하고, scenario 는 화면이 산식을 적는 정본이라 부재를 막는다.
+                 "axes", "scenario"],
 }
 # 배열 페이로드의 **행 스키마** — 행 하나만 봐도 개명·누락이 드러난다.
 # 경로에 `.` 을 쓰면 중첩 배열도 지목할 수 있다(`boot.rows`).
