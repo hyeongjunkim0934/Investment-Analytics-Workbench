@@ -1919,17 +1919,20 @@ def test_overview_groups_cards_and_opens_the_detail_screens(probe):
     assert c["labelsCoverEverySection"] is True, "이름표가 없는 섹션이 있다"
 
 
-def test_estimate_annualizes_by_day_count_and_excludes_equities(probe):
-    """수익률 추정의 핵심 산식(§7.8) — 손계산과 대조한다.
+def test_estimate_takes_the_keyed_return_as_already_annualized(probe):
+    """수익률 추정의 핵심 산식(§7.8 → §7.11 개정) — 손계산과 대조한다.
 
-    2026-08-13 사용자 지시 두 가지가 여기서 강제된다:
+    2026-08-13 사용자 지시가 같은 날 두 번 바뀐 자리라 **둘 다** 고정한다:
       ① **연환산은 일수 기준** — 계수 = 365 ÷ 경과일수(전년 12/31 → 기준일).
          6/30 이면 181일 → 2.0166 이다. 월수 기준이면 정확히 2.0 이 되므로, 계수가
          2.0 이 **아님**을 함께 확인해 규약이 조용히 되돌아가는 것을 막는다.
-      ② **주식만 연환산하지 않는다** — 국내주식·해외주식의 계수는 1 이어야 한다.
+         계수는 없어지지 않았다 — 추정일 시나리오가 되돌리기·재연환산에 쓴다.
+      ② **입력값이 그 자체로 연환산 수익률**(주식 제외)이다. 화면이 계수를 다시 곱하면
+         이중 연환산이다(실측 대비: 1.50% 입력이 3.02% 로 나가던 상태).
 
     값이 그럴듯하기만 하면 통과하는 검사는 이 화면에서 특히 위험하다 — 계수를 잘못
-    잡아도 숫자는 여전히 "수익률처럼" 보인다. 그래서 프로브가 손계산 값과 직접 비교한다.
+    잡아도 숫자는 여전히 "수익률처럼" 보인다. 그래서 프로브가 손계산 값과 직접 비교하고,
+    옛 동작(×계수)과 **다름**까지 함께 단언한다.
     """
     c = probe["estimateCalc"]
     assert c["renderErrors"] == 0
@@ -1938,13 +1941,44 @@ def test_estimate_annualizes_by_day_count_and_excludes_equities(probe):
     assert c["factorIsDayCount"] is True, "연환산 계수가 365÷경과일수가 아니다"
     assert c["factorIsNotMonthBased"] is True, "일수 기준이어야 하는데 월수 기준(2.0)이 나왔다"
     assert c["rejectsBadDate"] is True, "형식이 틀린 기준일을 조용히 받아들인다"
-    assert c["equityNotAnnualized"] is True, "주식을 연환산했다"
-    assert c["bondAnnualized"] is True and c["altAnnualized"] is True
+    assert c["keyedInputNotReAnnualized"] is True, "입력값에 계수를 다시 곱했다(이중 연환산)"
+    assert c["noDoubleAnnualization"] is True, "옛 동작(입력 × 계수)이 되살아났다"
+    assert c["appliedFieldRemoved"] is True, "폐지된 반영수익률·계수 필드가 남아 있다"
+    assert c["profitUsesInputDirectly"] is True, "운용수익이 입력값 그대로를 쓰지 않는다"
+    assert c["equityUsesIndexYtd"] is True, "주식이 지수 연초이후 수익률을 쓰지 않는다"
     assert c["portfolioMatchesHandCalc"] is True, "포트폴리오 수익률이 손계산과 다르다"
     assert c["contribSumsToPortfolio"] is True, "기여도 합이 포트폴리오 수익률과 다르다"
-    assert c["periodReturnMatchesHandCalc"] is True
-    assert c["periodDiffersFromAnnualized"] is True, "미연환산 참고치가 연환산과 같다"
+    assert c["periodReferenceRemoved"] is True, (
+        "폐지된 「미연환산 참고치」가 남아 있다 — 입력이 곧 연환산이면 본치와 같은 수다")
     assert c["bondDurationWeighted"] is True
+
+
+def test_estimate_table_puts_asof_and_estimate_side_by_side(probe):
+    """§7.11 — 2026-08-13 사용자 지시 「기준일과 추정일을 나란히 볼 수 있게 해줘」.
+
+    표를 하나로 합치고, 그 자리를 만들려고 세 열(연환산 계수·반영 수익률·기여도)을
+    뺐다. 기여도는 바로 아래 막대그래프가 이미 같은 값을 보여 준다.
+
+    한 행에서 **기준일 → 4항(무엇이 움직였나) → 추정일 → 차이** 가 그대로 읽혀야
+    하므로, 열이 다시 갈라지거나 폐지된 열이 되살아나면 여기서 잡힌다. 헤더가 2행이
+    된 것도 함께 고정한다 — `-1` 로 세던 검사가 자산군 12개를 보고도 통과했었다.
+    """
+    c = probe["estimateCalc"]
+    assert c["headerRowCount"] == 2, "기준일/추정일 그룹 헤더가 사라졌다"
+    assert c["assetRowCount"] == 11, "자산군 행이 11개가 아니다"
+    assert c["inputCount"] == 28, "입력칸이 규모11+수익률11+듀레이션6 이 아니다"
+    assert c["headerHasBothDateBlocks"] is True, "한 표에 기준일·추정일 블록이 없다"
+    assert c["headerHasFourTerms"] is True, "4항 분해가 표에서 사라졌다"
+    assert c["headerHasDiffColumn"] is True, "차이 열이 없다"
+    assert c["headerDroppedAppliedColumn"] is True, "폐지된 연환산·반영수익률 열이 남아 있다"
+    assert c["headerDroppedContribColumn"] is True, (
+        "기여도 열이 남아 있다 — 막대그래프와 같은 값을 두 번 보여 준다")
+    assert c["sepCellsPresent"] is True, "기준일/추정일 경계선이 재계산에 지워졌다"
+    assert c["screenSaysInputIsAnnualized"] is True, (
+        "입력이 이미 연환산이라는 규약을 화면이 적지 않는다")
+    assert c["screenSaysDurationUsedForPrice"] is True, "듀레이션이 어디 쓰이는지 안 적는다"
+    assert c["screenDropsStaleDurationClaim"] is True, (
+        "「지금 수익률 계산에 쓰이지 않습니다」가 남아 있다 — 시나리오가 실제로 쓰므로 거짓이다")
 
 
 def test_estimate_autofill_yields_to_manual_and_never_invents_zero(probe):
@@ -2019,18 +2053,17 @@ def test_estimate_screen_states_its_conventions_and_data_gaps(probe):
 
     ACWI 는 요청(TR)과 달리 가격지수(PR)라 배당수익률만큼 낮게 나오고, 미국채는 총수익
     지수가 없어 자동 채움 자체가 불가능하다. 둘 다 조용히 넘기면 사용자는 자동값이
-    요청한 계열인 줄 안다. 듀레이션이 아직 계산에 안 쓰인다는 사실도 화면이 적어야
-    한다 — 안 쓰는 입력칸을 말없이 두면 반영된 줄 안다.
+    요청한 계열인 줄 안다. 듀레이션이 **어디에 쓰이는지**도 화면이 적어야 한다 —
+    §7.10 시나리오가 실제로 쓰기 시작했으므로 §7.8 의 "안 쓴다" 문장은 이제 거짓이다.
     """
     c = probe["estimateCalc"]
     assert c["assetRowCount"] == 11, "자산군 11개가 아니다"
     assert c["inputCount"] == 28, "입력칸 수가 규모11+수익률11+듀레이션6 과 다르다"
     assert c["autoMarkCount"] == 2, "자동 표식이 자동값 없는 빈 칸에도 붙었다"
-    assert c["screenStatesFactor"] is True and c["screenStatesElapsed"] is True
+    assert c["screenStatesElapsed"] is True, "경과일수를 화면이 적지 않는다"
     assert c["screenSaysEquityExcluded"] is True, "주식 제외 규약을 화면이 밝히지 않는다"
     assert c["screenWarnsPrNotTr"] is True, "PR 을 TR 인 것처럼 조용히 채운다"
     assert c["screenStatesUstUnavailable"] is True, "미국채 자동 채움 부재를 밝히지 않는다"
-    assert c["screenSaysDurationUnused"] is True, "안 쓰는 듀레이션 입력을 말없이 둔다"
     assert c["inputsSaveImmediately"] is True, "모형 입력인데 즉시 저장되지 않는다"
     # 지수가 없어도 화면은 수기 입력으로 살아 있어야 한다
     assert c["inactiveRenderErrors"] == 0
@@ -2481,12 +2514,54 @@ def test_estimate_scenario_terms_and_blocking(probe):
     assert c["rejectsBackwardEstDate"] is True, "추정일이 기준일보다 앞인데 받아들인다"
     assert c["axisAutoFilled"] is True, "과거 추정일인데 시장 변화를 조회하지 않는다"
     assert c["keyedAxisBeatsAuto"] is True, "수기 시나리오가 자동 조회에 밀린다"
-    assert c["axisRowCount"] == 6 and c["resultRowCount"] == 11
+    assert c["axisRowCount"] == 6
     assert c["screenShowsFourTerms"] is True, "네 항 분해가 화면에 없다"
     assert c["screenStatesSignRule"] is True and c["screenStatesSwapSign"] is True
     assert c["screenStatesBookValue"] is True, "장부가 규약을 화면이 밝히지 않는다"
     assert c["screenStatesLimits"] is True, "1차 근사·평행이동 한계를 밝히지 않는다"
     assert c["scenarioInputsSave"] is True
+    # §7.11 — 분해는 **통합 표에만** 있고 결과 카드에는 없다(두 곳에 그리면 조용히 갈린다)
+    assert c["resultCardHasNoAssetTable"] is True, (
+        "결과 카드에 자산군 표가 남아 있다 — 같은 수가 한 화면에 두 번 나온다")
+    assert c["tableShowsEstReturn"] is True, "계산된 추정일 수익률이 표에 안 나온다"
+    assert c["tableShowsDiff"] is True, "차이 열이 표에 안 나온다"
+
+
+def test_estimate_chains_asof_to_estimate_date_on_the_same_annualized_basis(probe):
+    """§7.11 — 두 열을 **같은 기준**으로 잇는다. 이 화면에서 가장 틀리기 쉬운 자리다.
+
+    기준일 값이 연환산이므로 그대로 구간수익에 더하면 단위가 섞인다(연율 + 기간). 그래서
+    사용자 규칙의 정확한 역으로 기간수익까지 되돌린 뒤(× 경과일수 ÷ 365) 더하고, 추정일
+    기준으로 다시 연환산한다. 캐리가 연환산율을 보존하므로 결과는 대수적으로
+
+        추정일 = 기준일 + (가격효과 + 환효과 + 스왑 MTM) × 365 ÷ 연초→추정일 일수
+
+    가 되고, **두 열의 차이가 곧 시장효과의 연환산분**이 된다 — 나란히 놓는 것이 뜻을
+    갖는 이유다. 되돌리기를 빠뜨리면(옛 코드의 `r + total`) 이 항등식이 깨진다.
+
+    추정일이 **다른 해**면 연초 기준 자체가 달라져 누적을 이을 수 없다(그 해 1/1 → 기준일
+    구간의 수익을 우리는 모른다). 옛 코드는 그때도 수를 만들고 추정일 연도의 짧은
+    경과일수로 연환산했다 — 2026-07-21 → 2027-03-31 이면 ×365/90 = 4.06배다.
+    """
+    c = probe["estimateScenario"]
+    assert c["yearDaysIsToEstDate"] == 365 or c["yearDaysIsToEstDate"] is True
+    assert c["basePeriodIsUnAnnualized"] is True, "기준일 값을 기간수익으로 되돌리지 않았다"
+    assert c["cumIdentityNonEquity"] is True, "누적 항등식이 깨졌다 — 되돌리기가 빠졌다"
+    assert c["cumIdentityEquity"] is True, "주식 누적이 항의 합과 다르다"
+    assert c["reannualFactorNotOne"] is True, (
+        "재연환산 계수가 1 이면 아래 두 검사가 주식/비주식을 가르지 못한다")
+    assert c["equityNotReannualized"] is True, "주식을 추정일 기준으로 연환산했다"
+    assert c["nonEquityReannualized"] is True, "비주식을 추정일 기준으로 연환산하지 않았다"
+    assert c["nonEquityDiffersFromRaw"] is True, "재연환산이 실제로 적용되지 않았다"
+    assert c["diffIsCumMinusBase"] is True, "행의 차이가 두 열의 뺄셈과 다르다"
+    assert c["portDiffMatchesHeadlines"] is True, (
+        "포트폴리오 차이가 두 헤드라인의 뺄셈과 다르다 — 한 화면의 세 수가 서로 안 맞는다")
+    assert c["portBaseMatchesEngine"] is True, "기준일 수익률이 요약과 표에서 갈렸다"
+    assert c["crossYearFlagged"] is True, "추정일이 다른 해인데 표시하지 않는다"
+    assert c["crossYearNoCumulative"] is True, "연초 기준이 다른데 누적을 만들어냈다"
+    assert c["crossYearStillGivesPeriod"] is True, "다른 해라고 추정 구간까지 없앴다"
+    assert c["screenStatesCrossYear"] is True, "다른 해인 사유를 화면이 적지 않는다"
+    assert c["screenStatesCumulativeRule"] is True, "누적 산식을 화면이 적지 않는다"
 
 
 def test_linked_overview_card_keeps_the_card_layout(probe):
@@ -2524,20 +2599,29 @@ def test_estimate_typing_is_never_destroyed_by_autofill(probe):
     assert c["blurRestoresAutoFill"] is True, "포커스를 뺐는데 자동값으로 안 돌아온다"
 
 
-def test_estimate_headline_is_blank_without_a_reference_date(probe):
-    """기준일이 없으면 연환산 헤드라인을 **만들지 않는다**(§7.10.1 — CRITICAL).
+def test_estimate_headline_is_blank_when_it_would_be_meaningless(probe):
+    """뜻 없는 헤드라인은 **만들지 않는다**(§7.10.1 CRITICAL 의 §7.11 개정판).
 
-    계수가 없으면 주식을 뺀 자산군이 전부 계산되지 않는데, 분모는 전체 규모를 그대로
-    쓴다. 예전에는 그 결과인 「주식 수익 ÷ 전체 규모」가 26px 헤드라인으로 나갔고,
-    참고치(미연환산)가 본치보다 **커지는** 상태였다. 이제 비우고 사유를 적는다.
+    §7.10.1 이 잡았던 사고는 「기준일이 없어 계수가 없으면 주식을 뺀 자산군이 전부
+    계산되지 않는데 분모는 전체 규모를 그대로 써서, 「주식 수익 ÷ 전체 규모」가 26px
+    헤드라인으로 나가던」 것이었다. §7.11 로 **계수를 안 쓰게 되면서 그 경로 자체가
+    없어졌다** — 이제 기준일 없이도 키인한 수익률은 정상 계산된다.
+
+    그래서 검사를 남은 위험으로 옮긴다: **수익률이 하나도 없는데 0.00% 를 내는 것**이다
+    (`Σ수익 ÷ Σ규모` 는 그 상태에서 0 을 돌려주는데, 0% 는 「계산했더니 0」이라는 뜻이라
+    「아직 못 냈다」와 전혀 다르다). 추정일이 없을 때의 추정일 칸도 같은 규약이다.
     """
     c = probe["estimateCalc"]
-    assert c["noAsofPortIsNull"] is True, "계수가 없는데 포트폴리오 수익률을 만들어냈다"
-    assert c["noAsofFlagged"] is True
-    assert c["noAsofStillHasPeriodRef"] is True, "계수가 필요 없는 참고치까지 없앴다"
-    assert c["noAsofHeadlineBlank"] is True, "헤드라인에 뜻 없는 수가 남아 있다"
-    assert c["noAsofProfitBlank"] is True, "총 운용수익이 주식만 담은 채 표시된다"
-    assert c["noAsofExplainedOnScreen"] is True, "왜 비었는지 화면이 적지 않는다"
+    assert c["noAsofStillComputesKeyedRows"] is True, (
+        "기준일이 없다고 키인한 수익률을 버렸다 — §7.11 에서는 계수가 필요 없다")
+    assert c["noAsofNotFlaggedWhenKeyed"] is True, "계산되는데 막혔다고 표시한다"
+    assert c["noReturnsPortIsNull"] is True, "수익률이 하나도 없는데 0.00% 를 냈다"
+    assert c["noReturnsFlagged"] is True
+    assert c["noReturnsHeadlineBlank"] is True, "헤드라인에 뜻 없는 수가 남아 있다"
+    assert c["noReturnsProfitBlank"] is True, "총 운용수익이 0 인 채 표시된다"
+    assert c["noReturnsExplainedOnScreen"] is True, "왜 비었는지 화면이 적지 않는다"
+    assert c["noEstDateHeadlineBlank"] is True, "추정일이 없는데 추정일 수익률이 나왔다"
+    assert c["noEstDateExplained"] is True, "추정일 칸이 왜 비었는지 적지 않는다"
     assert c["rejectsNaNElapsed"] is True, "경과일수 NaN 이 통과한다"
     assert c["compactionGapSaysTruth"] is True, "축약 구간 오류의 사유가 사실과 다르다"
     assert c["compactionGapNotMislabelled"] is True

@@ -182,20 +182,23 @@
     <details class="method" id="hedge-method"></details>
   </section>
 
-  <!-- 수익률 추정 (§7.8) — 자산군별 규모·기준일 수익률·듀레이션을 넣으면 포트폴리오의
-       연초이후 수익률을 기준일로 계산한다. 주식을 뺀 자산은 연환산(365÷경과일수).
+  <!-- 수익률 추정 (§7.8·§7.10·§7.11) — 자산군별 규모·기준일 수익률·듀레이션을 넣으면
+       포트폴리오의 연초이후 수익률이 나오고, 추정일과 시장 6축 변화를 넣으면 그 날의
+       수익률까지 **같은 표 한 행에 나란히** 나온다(§7.11 — 2026-08-13 사용자 지시).
+       기준일 수익률은 이미 연환산된 값을 넣는다(주식 제외) — 화면이 다시 곱하지 않는다.
        입력값은 브라우저 localStorage 에만 남는다(공개 저장소에 기관 수치 금지). -->
   <section id="estimate" class="section">
     <h2>수익률 추정</h2>
-    <!-- 답 먼저 — 포트폴리오 수익률 한 줄. 그 아래가 입력표다. -->
+    <!-- 답 먼저 — 기준일·추정일 수익률과 차이. 그 아래가 조작이고 그 아래가 표다. -->
     <div class="card" id="est-summary" style="padding:12px 16px"></div>
     <div class="howto" id="est-controls"></div>
-    <div class="card" id="est-table-card" style="margin-top:10px"></div>
-    <div class="card" id="est-contrib-card" style="margin-top:10px"></div>
     <!-- 추정일 시나리오 (§7.10) — 추정일 + 시장 6축 변화 + 헤지비율·스왑 잔존만기.
-         과거 추정일이면 실제 변화를 조회하고, 미래면 사용자가 예상값을 넣는다. -->
-    <div class="card" id="est-scenario-card" style="margin-top:16px"></div>
+         과거 추정일이면 실제 변화를 조회하고, 미래면 사용자가 예상값을 넣는다.
+         **표보다 위에 둔다** — 표의 오른쪽 절반이 이 입력의 결과이기 때문이다. -->
+    <div class="card" id="est-scenario-card" style="margin-top:10px"></div>
     <div class="card" id="est-scenario-result" style="margin-top:10px"></div>
+    <div class="card" id="est-table-card" style="margin-top:16px"></div>
+    <div class="card" id="est-contrib-card" style="margin-top:10px"></div>
     <div class="howto" id="est-sources"></div>
     <details class="method" id="est-method"></details>
   </section>

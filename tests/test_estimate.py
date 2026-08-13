@@ -112,12 +112,22 @@ def test_us_treasury_is_declared_unavailable_not_approximated():
         "채권 자산군에 자동 채움 지수가 붙어 있다 — 총수익 지수가 없으므로 있을 수 없다")
 
 
-def test_annualize_convention_is_day_count():
-    """연환산은 **일수 기준**(2026-08-13 사용자 지시). 월수로 바꾸면 6/30 이 정확히 ×2 가
-    되지만 사용자가 일수를 골랐다 — 규약을 코드가 임의로 되돌리지 않게 고정한다."""
+def test_annualize_convention_is_day_count_and_input_is_already_annualized():
+    """연환산 규약 두 겹을 고정한다 — 둘 다 사용자가 정한 것이라 코드가 임의로 못 바꾼다.
+
+    ① **일수 기준**(2026-08-13). 월수로 바꾸면 6/30 이 정확히 ×2 가 되지만 일수를 골랐다.
+    ② **입력이 그 자체로 연환산 수익률**(같은 날 2차 지시, §7.11). 화면이 계수를 다시
+       곱하면 이중 연환산이다 — 그 상태로 되돌아가면 이 문장부터 어긋난다.
+
+    계수가 사라진 것은 아니다: 추정일 시나리오가 기간수익 되돌리기와 재연환산에 쓴다.
+    """
     assert estimate.ANNUALIZE["basis"] == "days"
     assert estimate.ANNUALIZE["day_count"] == 365
-    assert "주식" in estimate.ANNUALIZE["note"], "주식 제외 규약이 문장에 없다"
+    assert estimate.ANNUALIZE["input_is_annualized"] is True
+    note = estimate.ANNUALIZE["note"]
+    assert "주식" in note, "주식 제외 규약이 문장에 없다"
+    assert "이미 연환산된" in note, "입력이 이미 연환산이라는 규약이 문장에 없다"
+    assert "시나리오" in note, "계수를 어디에 쓰는지 문장이 밝히지 않는다"
 
 
 # --------------------------------------------------------------------------
@@ -257,6 +267,13 @@ def test_scenario_model_states_the_signs_the_screen_must_use():
     assert "1 − 헤지비율" in joined, "환효과가 미헤지분 비례임을 밝히지 않는다"
     assert "원가법" in m["book_value"] and "0" in m["book_value"]
     assert "볼록성" in m["limits"] and "평행이동" in m["limits"]
+    # 캐리가 **연환산 입력값 그대로**임을 밝혀야 한다 — 이 문장이 흐려지면 이중 연환산으로
+    # 되돌아간 코드와 화면이 서로 맞는 것처럼 보인다(§7.11).
+    assert "입력값 그대로" in joined, "캐리가 입력값(연환산) 기준임을 산식이 밝히지 않는다"
+    # 나란히 놓기의 항등식과 다른-해 가드 — 화면이 이 두 문장을 그대로 적는다
+    assert "차이가 곧 시장효과" in m["cumulative"], "두 열의 차이가 무엇인지 밝히지 않는다"
+    assert "365" in m["cumulative"] and "연초→추정일" in m["cumulative"]
+    assert "다른 해" in m["cross_year"], "다른 해 가드 문장이 없다"
 
 
 def test_scenario_axes_survive_missing_series():
