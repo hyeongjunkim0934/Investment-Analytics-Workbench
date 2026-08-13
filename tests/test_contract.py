@@ -96,6 +96,24 @@ def test_risk_and_hedge_actually_ran(built):
     assert risk, "risk.json 이 비어 있습니다"
 
 
+def test_hedge_ust_merit_identity(built):
+    """미국채 메리트 블록(§7.7.14) — 항등식과 백분위 범위를 합성 데이터로 검증.
+
+    헤지 후 = UST10y + 스왑레이트(부호 규약: 양수 = 받음 → 덧셈),
+    스프레드 = 헤지 후 − 국고10y. 산식에 임의 계수가 없으므로 전 행이 정확해야 한다.
+    """
+    out, _ = built
+    H = json.loads((out / "hedge.json").read_text(encoding="utf-8"))
+    m = H["ust_merit"]
+    assert m["active"] is True, f"합성 데이터에서 메리트 블록이 비활성: {m.get('reason')}"
+    assert len(m["t"]) == len(m["spread"]) == len(m["hedged"]) == m["n_weeks"]
+    for i in range(len(m["t"])):
+        assert abs(m["hedged"][i] - round(m["ust"][i] + m["cost"][i], 3)) < 2e-3
+        assert abs(m["spread"][i] - round(m["hedged"][i] - m["ktb"][i], 3)) < 2e-3
+    assert 0 <= m["now"]["spread_pctile"] <= 100
+    assert m["now"]["spread"] == m["spread"][-1]
+
+
 def test_alloc_publishes_covariance_not_returns(built):
     """alloc.json 공개 범위: 원천 공분산·평균·분위수만 — 원본 수익률 시계열 금지.
 

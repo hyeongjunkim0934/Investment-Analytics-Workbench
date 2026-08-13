@@ -227,6 +227,49 @@ def build(series_store: dict, warn) -> dict:
         if s is not None:
             cost_hist_curve[m] = pack(s.dropna(), 3)
 
+    # ----- 미국채 투자 메리트 — 헤지 후 원화수익률 vs 국고 (2026-08-12 사용자 요청) -----
+    # 사용자 관심 관계: 위험수준 ↔ 환헤지 비용, 그리고 "비용은 미국채 수익률에서
+    # 차감된다"는 맥락의 투자 메리트. 산식은 항등식 수준이라 임의 계수가 없다:
+    #   헤지 후 UST = UST10y + 스왑레이트  (부호 규약 공유 — 양수 = 받음이므로 덧셈.
+    #                                       내는 국면에서는 스왑레이트가 음수라 차감이 된다)
+    #   메리트 스프레드 = 헤지 후 UST − 국고10y
+    # 이력 축은 SMB 3M 연율(2001~) — 화면 매트릭스의 현재 수준(HP 12M)과 계열이 다르므로
+    # 화면이 반드시 두 만기를 구분해 적어야 한다(cost_stats 의 역할 분담과 동일).
+    # 시리즈가 없으면 active:false 로 게시한다(bm.build_cma 와 같은 체인 안전장치).
+    ust10 = g("info:UST10y")
+    ktb10 = g("info:한국_10y")
+    if ust10 is None or ktb10 is None:
+        ust_merit = {"active": False, "reason": "원천 시리즈 없음 (info:UST10y / info:한국_10y)"}
+    else:
+        jm = pd.concat([ust10, ktb10, smb3], axis=1).dropna()
+        jm.columns = ["ust", "ktb", "cost"]
+        wk = jm.resample("W-FRI").last().dropna()
+        hedged = wk["ust"] + wk["cost"]
+        spread = hedged - wk["ktb"]
+        cur = float(spread.iloc[-1])
+        ust_merit = {
+            "active": True,
+            "asof": wk.index[-1].strftime("%Y-%m-%d"),
+            "freq": "W-FRI",
+            "series": {"cost": "3개월 스왑레이트(SMB, 연율)", "ust": "미국채 10년",
+                       "ktb": "국고 10년"},
+            "start": wk.index[0].strftime("%Y-%m"),
+            "n_weeks": int(len(wk)),
+            "t": epoch_seconds(wk.index),
+            "cost": [round(float(x), 3) for x in wk["cost"]],
+            "ust": [round(float(x), 3) for x in wk["ust"]],
+            "ktb": [round(float(x), 3) for x in wk["ktb"]],
+            "hedged": [round(float(x), 3) for x in hedged],
+            "spread": [round(float(x), 3) for x in spread],
+            "now": {"cost": round(float(wk["cost"].iloc[-1]), 3),
+                    "ust": round(float(wk["ust"].iloc[-1]), 3),
+                    "ktb": round(float(wk["ktb"].iloc[-1]), 3),
+                    "hedged": round(float(hedged.iloc[-1]), 3),
+                    "spread": round(cur, 3),
+                    # 현재 스프레드의 자기 이력 내 백분위 — 관측 통계(임의 기준 아님)
+                    "spread_pctile": round(float((spread <= cur).mean() * 100), 1)},
+        }
+
     payload = {
         "asof": usdkrw.index[-1].strftime("%Y-%m-%d"),
         "default_tenor_m": DEFAULT_TENOR_M,
@@ -240,6 +283,7 @@ def build(series_store: dict, warn) -> dict:
         "backtest": backtest,
         "cost_hist_curve": cost_hist_curve,
         "cost_hist_usd": pack(smb_m),
+        "ust_merit": ust_merit,
         # 계열명·표본기간·관측수를 함께 싣는다 — 화면이 「25년 평균」을 하드코딩하고
         # 있었다. 표본이 늘거나 줄어도 문장이 25년에 멈춰 있으면 거짓이 된다
         # (이 저장소는 「주식 10%는 어느 산식에서도 나오지 않는 수」로 같은 사고를

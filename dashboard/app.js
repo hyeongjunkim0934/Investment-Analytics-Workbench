@@ -3091,6 +3091,101 @@ function renderHedge() {
     tsCardEl.append(el("p", { class: "card-sub" }, "헤지비용 커브 이력을 불러오지 못했습니다."));
   }
 
+  /* ── 미국채 투자 메리트 모니터(§7.7.14 — 2026-08-12 사용자 요청) ─────────────
+     "헤지비용은 미국채 수익률에서 차감된다 → 비용이 오르면(더 내면) 미국채 메리트가
+     준다"는 관계와, 위험수준과 비용의 연동을 한 카드에서 상시 감시한다.
+     산식은 파이프라인 항등식(헤지 후 UST = UST10y + 스왑레이트 — 부호 규약상 덧셈,
+     내는 국면은 음수라 차감이 된다). 위험 연동은 관계분석과 같은 pearson 을 쓰되,
+     수준이 아니라 **13주 변화**로 잰다 — 둘 다 추세가 강한 수준 계열이라 수준 상관은
+     허구 상관이 되기 쉽다(정식 통계는 관계분석 화면으로 안내). */
+  const meritCard = $("#hedge-merit-card");
+  if (meritCard) {
+    meritCard.textContent = "";
+    const M = H2.ust_merit;
+    if (!M || !M.active) {
+      meritCard.append(el("div", { class: "card-title" }, "미국채 투자 메리트 — 데이터 없음"),
+        el("p", { class: "card-sub" },
+          (M && M.reason ? M.reason + " — " : "") + "원천 시리즈가 들어오면 자동으로 복구됩니다."));
+    } else {
+      const now = M.now || {};
+      const tile = (label, val, sub, cls) => el("div",
+        { class: "card", style: "padding:10px 14px;min-width:150px" },
+        el("div", { class: "card-title", style: "font-size:11.5px" }, label),
+        el("div", { class: cls || "", style: "font-size:18px;font-weight:700;margin:3px 0 1px" }, val),
+        el("div", { style: "color:var(--ink-3);font-size:11px" }, sub));
+      const sgn2 = (x, d) => (x == null ? "—" : `${x > 0 ? "+" : ""}${fmtNum(x, d == null ? 2 : d)}%`);
+      meritCard.append(el("div", { class: "card-head" },
+        el("span", { class: "card-title" }, "미국채 투자 메리트 — 헤지 후 원화수익률 vs 국고"),
+        el("span", { class: "card-sub" },
+          `헤지 후 미국채 = 미국채 10년 + 3개월 스왑레이트(연율) · ${COST_SIGN_KEY} — ` +
+          "내는 국면에서는 스왑레이트가 음수라 수익률에서 차감됩니다 · 주간(W-FRI) · " +
+          `${M.start}~ (${M.n_weeks}주)`)));
+      const tiles = el("div", { style: "display:flex;gap:10px;flex-wrap:wrap;margin:8px 0" });
+      tiles.append(
+        tile("헤지비용 (3M 스왑레이트)", sgn2(now.cost), "이력 축 — 현재 수준 정본은 위 매트릭스(HP 12M)와 만기가 다릅니다"),
+        tile("헤지 후 미국채 10년", fmtNum(now.hedged, 2) + "%", `미국채 ${fmtNum(now.ust, 2)}% + 스왑 ${sgn2(now.cost)}`),
+        tile("국고 10년", fmtNum(now.ktb, 2) + "%", "비교 기준"),
+        tile("메리트 스프레드", sgn2(now.spread) + "p",
+          `헤지 후 미국채 − 국고 · 자기 이력 백분위 ${fmtNum(now.spread_pctile, 0)}%`,
+          now.spread > 0 ? "d-down" : "d-up"));
+      meritCard.append(tiles);
+      /* cardScaffold 는 컨테이너를 **비우고** 시작한다(container.textContent = "") —
+         카드에 직접 걸면 위의 머리글·타일이 지워진다(실측). 차트 전용 호스트를 분리. */
+      const chartHost = el("div", {});
+      meritCard.append(chartHost);
+      const mbox = cardScaffold(chartHost, {
+        title: "헤지 후 미국채 10년 vs 국고 10년 — 메리트 스프레드",
+        sub: "스프레드 > 0 이면 헤지하고도 미국채가 국고보다 수익률이 높다는 뜻",
+        csvName: "미국채-메리트.csv",
+        tableFn: tsTableFn(["헤지 후 미국채(%)", "국고 10년(%)", "메리트 스프레드(%p)"],
+          [M.t, M.hedged, M.ktb, M.spread], 2),
+      });
+      makeTimeChart(mbox, {
+        labels: ["헤지 후 미국채 10년", "국고 10년", "메리트 스프레드"],
+        colors: [pal.series[0], pal.series[1], pal.series[3]],
+        data: [M.t, M.hedged, M.ktb, M.spread], dec: 2, unit: "%", height: 240,
+      });
+      /* 위험수준 연동 — 관계분석 패널의 주간 위험 점수(stress)와 13주 변화 상관.
+         패널이 없으면 문장을 빼고 관계분석 링크만 남긴다(없는 수를 만들지 않는다). */
+      const P13 = 13;
+      const chg = (arr) => arr.map((v, i) => (i >= P13 && v != null && arr[i - P13] != null
+        ? v - arr[i - P13] : null));
+      let riskLine = null;
+      const PN = DATA.panel;
+      if (PN && PN.risk && PN.risk.stress && PN.t) {
+        const byT = new Map();
+        PN.t.forEach((t, i) => byT.set(t, PN.risk.stress[i]));
+        const riskOnMerit = M.t.map((t) => (byT.has(t) ? byT.get(t) : null));
+        const dRisk = chg(riskOnMerit), dCost = chg(M.cost), dSpr = chg(M.spread);
+        const pairs = (a, b) => {
+          const xs = [], ys = [];
+          a.forEach((x, i) => { if (x != null && b[i] != null) { xs.push(x); ys.push(b[i]); } });
+          return [xs, ys];
+        };
+        const [x1, y1] = pairs(dRisk, dCost);
+        const [x2, y2] = pairs(dRisk, dSpr);
+        if (x1.length >= 30) {
+          /* pearson 은 {r, n} 을 돌려준다(관계분석 엔진과 공유) — r 만 뽑는다 */
+          const c1 = pearson(x1, y1).r, c2 = pearson(x2, y2).r;
+          riskLine = el("div", { class: "card-sub", style: "margin-top:6px;line-height:1.7" },
+            el("b", {}, "위험수준과의 관계"),
+            ` — 13주 변화 기준 상관: 위험지수↔헤지비용 ${fmtNum(c1, 2)}, ` +
+            `위험지수↔메리트 스프레드 ${fmtNum(c2, 2)} (겹치는 표본 ${x1.length}주). `,
+            c1 < -0.1
+              ? "음(−)이면 위험이 오를 때 비용이 더 내는 쪽으로 움직여 미국채 메리트가 함께 준다는 뜻입니다. "
+              : "이 표본에서는 위험 상승과 비용 악화의 동행이 뚜렷하지 않습니다. ",
+            "지연·교차상관·회귀(HAC)는 ",
+            el("a", { href: "#panel" }, "관계분석"),
+            " 에서 「환헤지 비용 (3개월 스왑레이트)」 변수로 보십시오.");
+        }
+      }
+      meritCard.append(riskLine || el("div", { class: "card-sub", style: "margin-top:6px" },
+        "위험수준과의 정식 통계(상관·교차상관·회귀)는 ",
+        el("a", { href: "#panel" }, "관계분석"),
+        " 에서 「환헤지 비용 (3개월 스왑레이트)」 변수로 보십시오."));
+    }
+  }
+
   const mtm = $("#hedge-mtm-card");
   mtm.textContent = "";
   /* mtm 통계가 없으면 이 카드도 통째로 건너뛴다 — 없는 수로 표를 그리면 NaN 이 나간다. */

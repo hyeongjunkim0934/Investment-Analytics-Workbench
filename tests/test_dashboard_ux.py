@@ -1864,6 +1864,26 @@ def test_lambda_reverse_optimization_reproduces_risk(probe):
     assert c["fitButtonReproducesCurrentRisk"] is True, "버튼이 저장한 λ 가 현재 위험을 재현하지 못한다"
 
 
+def test_hedge_ust_merit_monitor(probe):
+    """미국채 투자 메리트 모니터(§7.7.14) — 헤지비용이 수익률에서 차감되는 관계의
+    상시 감시. 항등식(헤지 후 = UST + 스왑, 스프레드 = 헤지 후 − 국고)이 픽스처
+    손계산과 맞고, 부호 규약·만기 구분(이력 SMB 3M vs 수준 HP 12M)을 화면이 밝히며,
+    위험수준 연동은 13주 변화 상관으로만 말한다(수준 상관은 허구 상관 위험).
+    패널이 없으면 상관 문장 대신 관계분석 링크로 물러난다."""
+    c = probe["hedgeMerit"]
+    assert c["identityHolds"] is True
+    assert c["renderErrors"] == 0 and c["inactiveRenderErrors"] == 0
+    assert c["cardRendered"] is True
+    assert c["tilesShowSpread"] is True
+    assert c["statesSignKey"] is True, "부호 규약(양수=받음) 열쇠가 카드에 없다"
+    assert c["statesTenorSplit"] is True, "이력(3M)과 수준(HP 12M)의 만기 구분이 없다"
+    assert c["subtractionExplained"] is True
+    assert c["panelLinkFallback"] is True
+    assert c["riskCorrRendered"] is True
+    assert c["riskCostCorrIsNegative"] is True, "합성 역행 표본에서 상관 부호가 틀렸다"
+    assert c["inactiveExplains"] is True
+
+
 def test_hedge_two_tracks_joint_and_sim(probe):
     """헤지 2트랙(§7.7.13) — ① 최적 = 배분+헤지 교대(블록 좌표) 최적화 한 쌍,
     ② 시뮬 = 사용자 배분+슬라이더. 카드 둘 다 헤지 문장을 달고, ①의 쌍은

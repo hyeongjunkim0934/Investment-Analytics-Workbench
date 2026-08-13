@@ -87,7 +87,7 @@ secNodes.events.append(elem("details", "events-rules"));
    이 목록 자체가 index.html 과의 계약이다. */
 ["hedge-headline", "hedge-views", "hedge-lead", "hedge-matrix",
  "hedge-curve-card", "hedge-bt-card", "hedge-cost-card", "hedge-mtm-card",
- "hedge-ts-card"]
+ "hedge-ts-card", "hedge-merit-card"]
   .forEach((id) => secNodes.hedge.append(elem("div", id, "card")));
 secNodes.hedge.append(elem("details", "hedge-method"));
 
@@ -517,6 +517,20 @@ const HEDGE_FIXTURE = (() => {
     sim: { labels: ["e_USD", "b_USD", "eq", "ds_USD", "e_JPY", "b_JPY"],
            cov: Array.from({ length: 6 }, (_, i) => Array.from({ length: 6 }, (_, j) => (i === j ? 0.01 : 0.001))),
            sample: "2010-01 ~ 2029-12", n_months: 240 },
+    /* §7.7.14 미국채 메리트 — 손계산 가능한 4주: spread = ust + cost − ktb */
+    ust_merit: {
+      active: true, asof: "2029-12-22", freq: "W-FRI",
+      series: { cost: "3개월 스왑레이트(SMB, 연율)", ust: "미국채 10년", ktb: "국고 10년" },
+      start: "2029-12", n_weeks: 4,
+      t: [mk(2029, 11), mk(2029, 11) + 7 * 86400, mk(2029, 11) + 14 * 86400,
+          mk(2029, 11) + 21 * 86400],
+      cost: [-1.5, -1.4, -1.6, -1.5],
+      ust: [4.2, 4.25, 4.3, 4.4],
+      ktb: [3.0, 3.05, 3.0, 3.1],
+      hedged: [2.7, 2.85, 2.7, 2.9],
+      spread: [-0.3, -0.2, -0.3, -0.2],
+      now: { cost: -1.5, ust: 4.4, ktb: 3.1, hedged: 2.9, spread: -0.2, spread_pctile: 75 },
+    },
     acct_model: ["① 유효이자 — 상수"], limits: "한계 문장",
   };
 })();
@@ -585,6 +599,61 @@ safe("hedgeScreen", () => {
 });
 
 /* 필수 필드가 빠진 payload 로도 "undefined" 를 화면에 찍지 않는다 */
+/* ====== §7.7.14 미국채 메리트 모니터 — 항등식·부호·만기 정직성 =============== */
+safe("hedgeMerit", () => {
+  const r = {};
+  /* mk 는 HEDGE_FIXTURE IIFE 스코프 안에 있다 — 여기서는 지역 헬퍼를 쓴다 */
+  const wmk = (y, m) => Math.floor(Date.UTC(y, m, 1) / 1000) - 86400;
+  const M = HEDGE_FIXTURE.ust_merit;
+  /* ① 항등식 — hedged = ust + cost, spread = hedged − ktb (픽스처 손계산 대조) */
+  r.identityHolds = M.t.every((_, i) =>
+    Math.abs(M.hedged[i] - (M.ust[i] + M.cost[i])) < 1e-9
+    && Math.abs(M.spread[i] - (M.hedged[i] - M.ktb[i])) < 1e-9);
+  /* ② 렌더 — 타일·차트·부호 규약·만기 구분 문장 */
+  P.DATA.hedge = HEDGE_FIXTURE;
+  P.DATA.panel = null;               // 패널 없음 — 상관 문장 대신 링크 폴백이어야 한다
+  P.renderSection("hedge");
+  const card = DOC.getElementById("hedge-merit-card");
+  const txt = card ? card.textContent : "";
+  r.renderErrors = DOC.getElementById("hedge").querySelectorAll(".render-error").length;
+  r.cardRendered = /미국채 투자 메리트/.test(txt);
+  r.tilesShowSpread = /메리트 스프레드/.test(txt) && /백분위 75%/.test(txt);
+  r.statesSignKey = txt.includes(P.COST_SIGN_KEY);
+  r.statesTenorSplit = /HP 12M/.test(txt) && /3M 스왑레이트|3개월 스왑레이트/.test(txt);
+  r.subtractionExplained = /차감/.test(txt);
+  r.panelLinkFallback = /관계분석/.test(txt) && !/13주 변화 기준 상관/.test(txt);
+  /* ③ 위험 연동 — 패널(주간 stress)이 있으면 13주 변화 상관 문장이 붙는다.
+     40주 합성: 위험과 비용이 정확히 반대로 움직이게 만들어 부호를 고정 관측한다. */
+  const N = 60;   // 13주 차분 후 47쌍 — 렌더 최소 표본(30쌍)을 넘겨야 한다
+  const t40 = Array.from({ length: N }, (_, i) => wmk(2029, 0) + i * 7 * 86400);
+  const stress = Array.from({ length: N }, (_, i) => 50 + 20 * Math.sin(i / 4));
+  const M2 = { ...M, t: t40,
+    cost: stress.map((x) => -x / 20),                       // 위험↑ → 더 내는 쪽(음수 확대)
+    ust: Array.from({ length: N }, () => 4.0),
+    ktb: Array.from({ length: N }, () => 3.0) };
+  M2.hedged = M2.ust.map((u, i) => +(u + M2.cost[i]).toFixed(3));
+  M2.spread = M2.hedged.map((h, i) => +(h - M2.ktb[i]).toFixed(3));
+  M2.now = { cost: M2.cost[N - 1], ust: 4, ktb: 3, hedged: M2.hedged[N - 1],
+             spread: M2.spread[N - 1], spread_pctile: 50 };
+  P.DATA.hedge = { ...HEDGE_FIXTURE, ust_merit: M2 };
+  P.DATA.panel = { t: t40, risk: { stress } };
+  P.renderSection("hedge");
+  const txt2 = DOC.getElementById("hedge-merit-card").textContent;
+  r.riskCorrRendered = /13주 변화 기준 상관/.test(txt2);
+  /* fmtNum(toLocaleString ko-KR)은 음수 부호가 U+2212(−)일 수 있다 — 둘 다 허용 */
+  const mCorr = txt2.match(/위험지수↔헤지비용 ([-\u2212]?[\d.]+)/);
+  r.riskCostCorrIsNegative = !!mCorr && +mCorr[1].replace("\u2212", "-") < -0.9;
+  /* ④ active:false — 사유를 적고 죽지 않는다 */
+  P.DATA.hedge = { ...HEDGE_FIXTURE, ust_merit: { active: false, reason: "프로브 사유" } };
+  P.renderSection("hedge");
+  const txt3 = DOC.getElementById("hedge-merit-card").textContent;
+  r.inactiveExplains = /데이터 없음/.test(txt3) && /프로브 사유/.test(txt3);
+  r.inactiveRenderErrors = DOC.getElementById("hedge").querySelectorAll(".render-error").length;
+  P.DATA.hedge = HEDGE_FIXTURE;
+  P.DATA.panel = null;
+  return r;
+});
+
 safe("hedgeMissingFields", () => {
   const thin = JSON.parse(JSON.stringify(HEDGE_FIXTURE));
   delete thin.default_tenor_m; delete thin.curves; delete thin.mtm;

@@ -17,7 +17,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 |---|---|
 | `pipeline/process.py` | CLI 진입점. 엑셀 파싱 → 시리즈 저장소(`SERIES`) → 패널 빌더 → JSON 15개 출력 |
 | `pipeline/risk.py` | `build(SERIES, warn)` → `risk.json` + `events.json` + 관계분석용 주간 프레임 (요인 점수·IC가중 합성·이벤트 검출). 브리핑 원고 조립(`compose_brief`)도 여기 — 호출은 `process.py` 가 시장 폭 병합 **뒤**에 한다 |
-| `pipeline/hedge.py` | `build(SERIES, warn)` → `hedge.json` (7통화 헤지 매트릭스·백테스트·시뮬레이터 공분산) |
+| `pipeline/hedge.py` | `build(SERIES, warn)` → `hedge.json` (7통화 헤지 매트릭스·백테스트·시뮬레이터 공분산·`ust_merit` 미국채 투자 메리트 모니터 §7.7.14 — 헤지 후 UST = UST10y + 스왑레이트, 시리즈 없으면 `active:false` 게시) |
 | `pipeline/alloc.py` | `build(SERIES, warn)` → `alloc.json` (자산배분 원천 10개 공분산·현재 금리·동일 샤프 앵커·블록 부트스트랩 사전계산. **원본 수익률 미게시** — 공분산·평균·분위수만) |
 | `pipeline/bm.py` | 자산군 전략 벤치마크(BM) 파서 + `build_cma(SERIES, warn)` → `alloc.json.cma` (자본시장가정 사전계산 — §7.7 재설계의 데이터층). **원본 수준·수익률 미게시** — 창별 연환산 σ·상관·공분산·과거 평균과 표본 메타만. BM 파일이 없어도 `active:false` 블록을 항상 게시한다(체인 안전장치) |
 | `pipeline/panel.py` | `build(SERIES, risk_weekly, warn)` → `panel.json` (관계분석용 주간 정렬 패널. 공개 변수는 `VARS` 화이트리스트로만 통제) |
@@ -46,7 +46,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 355개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 357개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (약 2.5분)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js                 (약 2.5분)
 #   ↑ 하네스가 시간을 다 쓴다(실측) — 최적화를 실제로 여러 번 돌리는 프로브
@@ -147,7 +147,7 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   `build_credit` / `build_fx` / `build_inflation` 안에 **인라인으로 박힌 `series_group([...])`
   리스트**에 절반씩 흩어져 있다(전수는 `grep -n "series_group(\[" pipeline/process.py`).
   여기에 더해 `risk.py` 의 `Indicator` `spark` 와 `hedge.py` 의 `cost_hist_usd`·`cost_hist_curve`,
-  그리고 **`panel.py` 의 `VARS`** (관계분석용 30개 변수의 주간 수준값 전 구간)도 원본 값을
+  그리고 **`panel.py` 의 `VARS`** (관계분석용 31개 변수의 주간 수준값 전 구간)도 원본 값을
   그대로 싣는다. `alloc.py` 는 예외적으로 **원본 값을 싣지 않는다**
   — 게시물은 원천 10개의 공분산·평균·부트스트랩 분위수뿐이다(`tests/test_contract.py` 의 유출 가드가 이를 강제).
   어느 경로든 넣은 시리즈의 **값이 Pages로 나간다** — 상수만 훑고 공개 범위를 판단하면 크게 과소평가한다.
