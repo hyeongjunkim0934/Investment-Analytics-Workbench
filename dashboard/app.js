@@ -4503,11 +4503,25 @@ function allocJointOpt(E, st) {
   }
   const B = E.build(hb, he);
   w = E.optimizeUtilAt(B.mu, B.C, lam, 1);         // 최종 헤지에서 배분 한 번 더 — 보고값 정합
+  /* 진단 — "버튼을 눌러도 헤지가 안 움직인다"의 **이유**를 화면이 말할 수 있어야 한다
+     (2026-08-12 사용자 보고). 무반응은 대개 버그가 아니라 다음 셋 중 하나다:
+     ① 최적 배분에서 그 슬리브 비중이 0 → 그 헤지비율은 Xe 에 기여가 없어 위험과 무관
+        (hedgePairForXeW 가 현재값을 그대로 둔다 — 임의로 움직이지 않는 것이 옳다)
+     ② 밴드가 물어 Xe\* 가 경계로 잘림 → 최적쌍이 현재값과 같아질 수 있다
+     ③ 이미 최적점에 있음.
+     셋을 구분하지 않으면 사용자는 전부 "고장"으로 읽는다. */
+  const q = E.fxLive ? E.xeQuadW(w) : null;
+  const xeFree = q ? E.xeStar(null, null, q) : null;
+  const xe = E.fxLive ? E.xeOfW(w, hb, he) : null;
   return {
-    w, hb, he,
-    xe: E.fxLive ? E.xeOfW(w, hb, he) : null,
+    w, hb, he, xe,
     sig: E.sigmaW(w, B.C), mu: amDot(B.mu, w),
     fxLive: E.fxLive, converged, iters,
+    /* 슬리브 비중이 사실상 0이면 그 헤지비율은 위험에 무영향 */
+    inertBond: E.fxLive && w[1] < 1e-9,
+    inertEq: E.fxLive && w[3] < 1e-9,
+    xeFree,
+    bandBinds: xeFree != null && xe != null && Math.abs(xe - xeFree) > 1e-9,
   };
 }
 
@@ -5047,6 +5061,12 @@ function renderAlloc() {
       const lbl = el("span", { class: "hlbl" }, `${st[key]}%`);
       const inp = el("input", { type: "range", min: "0", max: "100", step: "1",
         value: String(st[key]), "aria-label": label });
+      /* 비중 막대와 같은 방식의 최적 위치 마커(2026-08-12 사용자 지시 "환헤지 비율도
+         최적을 표시"). 다만 의미가 다르다 — 헤지쌍은 유일하지 않으므로(Xe 붕괴)
+         이 마커는 **대표점**이고, title/aria 로 그 사실을 밝힌다. 비중 0 슬리브의
+         마커는 아예 숨긴다(위험에 무영향인 축에 「최적」을 찍으면 거짓 정보다). */
+      const mark = el("span", { class: "sim-opt-mark", hidden: true }, "▼");
+      const wrap = el("div", { class: "sim-bar-wrap" }, inp, mark);
       inp.addEventListener("input", () => {
         st[key] = +inp.value;
         lbl.textContent = `${st[key]}%`;
@@ -5054,10 +5074,10 @@ function renderAlloc() {
         recalc(false);
       });
       inp.addEventListener("change", () => recalc(true));
-      hedgeRefs[key] = { inp, lbl };
+      hedgeRefs[key] = { inp, lbl, mark };
       return el("div", {},
         el("div", { style: "font-size:12.5px" }, el("b", {}, label)),
-        el("div", {}, inp, " ", lbl));
+        el("div", { style: "display:flex;gap:8px;align-items:center" }, wrap, lbl));
     };
     const syncHedgeUi = () => {
       ["h_bond", "h_eq"].forEach((k) => {
@@ -5066,6 +5086,21 @@ function renderAlloc() {
         r.inp.value = String(st[k]);
         r.lbl.textContent = `${st[k]}%`;
       });
+    };
+    /* 최적 헤지쌍을 슬라이더 위 ▼ 로 — opt 이 없거나 그 슬리브가 무영향이면 숨긴다 */
+    const syncHedgeMarks = (opt) => {
+      [["h_bond", "hb", "inertBond", "해외채권"], ["h_eq", "he", "inertEq", "해외주식"]]
+        .forEach(([k, hk, inertK, name]) => {
+          const r = hedgeRefs[k];
+          if (!r) return;
+          const show = !!(opt && opt.fxLive && !opt[inertK]);
+          r.mark.hidden = !show;
+          if (!show) return;
+          r.mark.style.left = `${Math.min(100, Math.max(0, opt[hk] * 100))}%`;
+          r.mark.title = `${name} 최적 헤지비율 ${fmtNum(opt[hk] * 100, 0)}% — `
+            + "같은 미헤지 환노출(Xe)을 만드는 조합 중 현재값 최근접 대표점입니다";
+          r.mark.setAttribute("aria-label", `${name} 최적 헤지비율(대표점) ${fmtNum(opt[hk] * 100, 0)}%`);
+        });
     };
     simBox.append(el("div", { class: "sim-hedge-row",
       style: "display:flex;gap:26px;flex-wrap:wrap;align-items:center;margin-top:8px" },
@@ -5134,14 +5169,18 @@ function renderAlloc() {
         rr.mark.hidden = !opt;
         if (opt) rr.mark.style.left = `${Math.min(100, Math.max(0, opt.w[i] * 100))}%`;
       });
+      syncHedgeMarks(opt);
       dynBox.textContent = "";
       /* 카드 아래 중앙에 그 카드의 도넛(2026-08-12 사용자 지시) — ① 최적 카드+최적
          도넛, ② 시뮬 카드+시뮬 도넛을 세로 열로 묶어 위치를 일치시킨다. */
+      /* 기대수익이 크고 위, 위험이 작고 아래 (2026-08-12 사용자 지시) — 담당자가
+         먼저 보는 수가 기대수익이라는 판단. 라벨 문자열("위험 "/"기대수익 ")은
+         그대로 둔다(다른 검사가 문자열을 본다 — 크기·순서만 바꾼다). */
       const card8 = (title, mu, sig, note, strong) => el("div",
         { class: "card sim8-card" + (strong ? " sim8-strong" : "") },
         el("div", { class: "card-title" }, title),
-        el("div", { style: "font-size:19px;font-weight:700;margin:4px 0 2px" }, `위험 ${fmtNum(sig, 2)}%`),
-        el("div", {}, `기대수익 ${fmtNum(mu, 2)}%`),
+        el("div", { style: "font-size:19px;font-weight:700;margin:4px 0 2px" }, `기대수익 ${fmtNum(mu, 2)}%`),
+        el("div", { style: "font-size:13px" }, `위험 ${fmtNum(sig, 2)}%`),
         el("div", { style: "color:var(--ink-3);font-size:11px;margin-top:3px" }, note));
       const entries = (ws) => ALLOC_ECON.map((k, i) => ({
         label: k, w: Math.max(0, ws[i]), color: pal.series[i % pal.series.length] }));
@@ -5169,6 +5208,27 @@ function renderAlloc() {
         if (opt.fxLive) {
           optCard.append(hedgeLine(opt.hb, opt.he, opt.xe,
             "대표점 — 같은 Xe 조합은 위험이 정확히 같음"));
+          /* 「최적으로」를 눌러도 슬라이더가 안 움직이는 경우의 **이유**를 적는다
+             (2026-08-12 사용자 보고 — 무반응을 고장으로 읽지 않게).
+             ① 최적 배분에서 그 슬리브 비중이 0 → 그 헤지비율은 위험과 무관
+             ② 밴드가 물어 Xe 가 경계로 잘림  ③ 이미 최적점 */
+        const why = [];
+        if (opt.inertBond) {
+          why.push("이 최적 배분은 해외채권 비중이 0이라 채권 헤지비율은 위험에 영향이 없습니다(어떤 값이든 동일)");
+        }
+        if (opt.inertEq) {
+          why.push("이 최적 배분은 해외주식 비중이 0이라 주식 헤지비율은 위험에 영향이 없습니다(어떤 값이든 동일)");
+        }
+        if (opt.bandBinds && opt.xeFree != null) {
+          why.push(`헤지 밴드가 물고 있습니다 — 무제약 위험최소 Xe ${fmtNum(opt.xeFree * 100, 2)}%`);
+        }
+        const same = Math.round(opt.hb * 100) === st.h_bond && Math.round(opt.he * 100) === st.h_eq;
+        if (same) why.push("현재 슬라이더가 이미 이 대표점이라 「최적으로」를 눌러도 값이 그대로입니다");
+        if (why.length) {
+          optCard.append(el("div",
+            { class: "sim-hedge-why", style: "color:var(--ink-3);font-size:11px;margin-top:2px" },
+            "· " + why.join(" · ")));
+        }
         }
         /* 「막대를 최적 비중으로」(2026-08-12 사용자 요청) — 최적 해를 막대·숫자에
            얹는다. 반올림 잔차는 최대 비중 자산에 흡수해 합계 100 을 정확히 유지.
@@ -5557,13 +5617,16 @@ function renderAlloc() {
     /* ----- 3칸 카드 ----- */
     cardsBox.textContent = "";
     const riskWord = "위험";
+    /* 참고치 카드도 시뮬레이터 카드와 같은 위계 — 기대수익이 크고 위(2026-08-12
+       사용자 지시). 표본오차는 위험에 붙는 값이라 위험 줄로 함께 내린다. */
     const card = (title, mu, sig, note, warnRisk) => {
       const c = el("div", { class: "card", style: "padding:14px 16px" });
       c.append(el("div", { class: "card-title" }, title),
         el("div", { style: "font-size:20px;font-weight:700;margin:6px 0 2px" },
+          `기대수익 ${fmtNum(mu, 2)}%`),
+        el("div", { style: "font-size:13px" },
           `${riskWord} ${fmtNum(sig, 2)}%`,
-          el("small", { style: "font-weight:400;color:var(--ink-3)" }, ` ±${fmtNum(se, 2)} (표본오차)`)),
-        el("div", {}, `기대수익 ${fmtNum(mu, 2)}%`),
+          el("small", { style: "color:var(--ink-3)" }, ` ±${fmtNum(se, 2)} (표본오차)`)),
         el("div", { style: "color:var(--ink-3);font-size:11.5px;margin-top:4px" }, note));
       if (warnRisk) c.append(el("div", { class: "d-up", style: "font-size:11.5px" },
         `⚠ 위험한도 ${fmtNum(st.risk_cap, 2)}% 초과`));

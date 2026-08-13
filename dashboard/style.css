@@ -885,6 +885,10 @@ button.vchip { cursor: pointer; }
 .sim-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
 .sim-bar-wrap { position: relative; padding-top: 10px; }
 .sim-bar-wrap input[type="range"] { width: 100%; margin: 0; }
+/* 헤지 슬라이더(§7.7.13)에도 같은 래퍼를 쓴다 — 비중 막대와 달리 표 셀이 아니라
+   가로 플렉스 안에 있어서, 폭을 주지 않으면 내용 폭으로 쪼그라들어 ▼ 위치가
+   슬라이더와 어긋난다(2026-08-12 최적 마커 추가 시 실측). */
+.sim-hedge-row .sim-bar-wrap { flex: 0 0 200px; width: 200px; }
 .sim-opt-mark { position: absolute; top: -3px; transform: translateX(-50%);
   font-size: 11px; color: var(--ink-1); pointer-events: none; line-height: 1; }
 .sim8-row input[type="number"] { width: 100%; }
