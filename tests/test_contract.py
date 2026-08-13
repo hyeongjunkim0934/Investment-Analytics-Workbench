@@ -1165,3 +1165,88 @@ def test_built_brief_covers_its_own_events(built):
         if e["sev"] in ("경계", "주의"):
             assert e["title"] in body, f"브리핑에서 빠진 이벤트: {e['title']}"
             assert e["value"] in body, f"브리핑에서 빠진 값: {e['value']}"
+
+
+# --------------------------------------------------------------------------
+# 정보구조 (§7.9) — 상단 탭 7개, 나머지는 부모 화면 안의 입구로
+# --------------------------------------------------------------------------
+
+EXPECTED_TABS = ["village", "overview", "events", "risk", "estimate", "alloc", "hedge"]
+
+
+def _nav_hrefs() -> list[str]:
+    block = re.search(r'<nav class="nav" id="nav"[^>]*>(.*?)</nav>', _index_html(), re.S)
+    assert block, "index.html 에서 #nav 블록을 찾지 못했습니다"
+    return re.findall(r'href="#([a-z]+)"', block.group(1))
+
+
+def test_top_tabs_are_exactly_the_seven_the_user_asked_for():
+    """상단 탭은 마을·개요·이벤트·리스크·수익률 추정·자산배분·환헤지 **7개뿐**.
+
+    2026-08-13 사용자 지시("덜 중요한 애들이 메인 탭에 있어"). 탭을 다시 늘리려면
+    사용자와 합의해야 한다 — 여기가 그 합의를 지키는 자리다.
+    """
+    assert _nav_hrefs() == EXPECTED_TABS, f"상단 탭이 바뀌었습니다: {_nav_hrefs()}"
+
+
+def test_sections_dropped_from_tabs_are_still_reachable():
+    """탭에서 내려온 화면은 **사라진 게 아니다** — 섹션·렌더러·마을 구역이 그대로여야 한다.
+
+    딥링크(#rates 등)와 마을 접근이 살아 있지 않으면 "정리"가 아니라 기능 삭제다.
+    """
+    ids = set(re.findall(r'<section id="([a-z]+)" class="section">', _index_html()))
+    demoted = ids - set(EXPECTED_TABS)
+    assert demoted, "탭에서 내려온 섹션이 하나도 없습니다 — 검사가 아무것도 안 하고 있습니다"
+    r = _renderer_map()
+    for sid in sorted(demoted):
+        assert sid in r, f"{sid} 에 렌더러가 없습니다"
+    assert not demoted - _village_targets(), (
+        f"마을에서도 갈 수 없게 된 섹션: {sorted(demoted - _village_targets())}")
+
+
+def test_section_labels_match_the_section_headings():
+    """`SECTION_LABELS` 는 각 섹션의 <h2> 와 같은 문자열이어야 한다.
+
+    이 이름은 개요 구역 버튼·리스크의 관계분석 입구·카탈로그 버튼에 그대로 찍힌다 —
+    어긋나면 버튼 이름과 도착 화면 제목이 달라 "다른 데 왔다"고 읽힌다.
+    """
+    js = _app_js()
+    block = re.search(r"const SECTION_LABELS = \{(.*?)\n\};", js, re.S)
+    assert block, "app.js 에서 SECTION_LABELS 를 찾지 못했습니다"
+    labels = dict(re.findall(r'(\w+):\s*"([^"]+)"', block.group(1)))
+    heads = dict(re.findall(
+        r'<section id="([a-z]+)" class="section">\s*<h2>([^<]+)</h2>', _index_html()))
+    assert heads, "index.html 에서 섹션 제목을 읽지 못했습니다"
+    ids = set(re.findall(r'"([a-z]+)"', re.search(
+        r"const SECTION_IDS = \[(.*?)\];", js, re.S).group(1)))
+    assert set(labels) == ids, (
+        f"이름표와 SECTION_IDS 가 다릅니다: {set(labels) ^ ids}")
+    for sid, head in heads.items():
+        assert labels[sid] == head.strip(), (
+            f"{sid}: 이름표 '{labels[sid]}' vs 제목 '{head.strip()}'")
+
+
+def test_overview_card_links_point_at_real_sections():
+    """개요 카드의 `link` 는 실재하는 섹션이어야 한다(빈 문자열 = 전용 화면 없음).
+
+    오타는 눌러도 아무 일이 없는 카드를 만들고, 그건 고장으로 읽힌다.
+    """
+    import process
+    ids = set(re.findall(r'"([a-z]+)"', re.search(
+        r"const SECTION_IDS = \[(.*?)\];", _app_js(), re.S).group(1)))
+    for key, _lb, _k, _d, _u, group, link in process.OVERVIEW_CARDS:
+        if link:
+            assert link in ids, f"{key}: 링크 '{link}' 가 섹션이 아닙니다"
+        assert group in {g for g, _l, _s in process.OVERVIEW_GROUPS}, (
+            f"{key}: 구역 '{group}' 이 OVERVIEW_GROUPS 에 없습니다")
+    for _g, _lb, secs in process.OVERVIEW_GROUPS:
+        for sid in secs:
+            assert sid in ids, f"구역 화면 '{sid}' 가 섹션이 아닙니다"
+
+
+def test_overview_no_longer_carries_the_risk_scores():
+    """현재위험·잠재위험 카드는 개요에서 빠졌다(2026-08-13 사용자 지시 — 리스크에 있는 내용)."""
+    js = _app_js()
+    assert "prependRiskCards" not in js, "위험 점수 카드를 개요에 넣는 코드가 남아 있습니다"
+    assert 'id="cards"' not in _index_html(), (
+        "개요의 옛 단일 카드 컨테이너가 남아 있습니다 — 구역 조립으로 대체됐습니다")

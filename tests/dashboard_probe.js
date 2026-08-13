@@ -72,6 +72,12 @@ secNodes.alloc.append(elem("nav", "alloc-toc"));
  "alloc-table-card", "alloc-inputs-box", "alloc-method"]
   .forEach((id) => secNodes.alloc.append(elem("div", id)));
 
+/* 개요 뼈대(§7.9) — 상단 탭이 7개로 줄면서 시장 화면들이 여기로 내려왔다.
+   renderOverview 는 구역을 #ov-groups 에 조립하고 카탈로그 입구를 #ov-catalog 에 둔다. */
+secNodes.overview.append(elem("div", "ov-groups"), elem("p", "ov-catalog"));
+/* 리스크 안의 관계분석 입구 */
+secNodes.risk.append(elem("p", "risk-panel-link"));
+
 /* 수익률 추정 뼈대(§7.8) — renderEstimate 가 $("#est-…") 로 집는 자리들.
    `est-method` 만 <details> 다(다른 섹션과 같은 규약). */
 ["est-summary", "est-controls", "est-table-card", "est-contrib-card", "est-sources"]
@@ -185,7 +191,8 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil", "allocCharStats",
   "allocRedistribute", "allocIsAlt", "allocLambdaForSigma", "allocJointOpt", "allocCcyHedgeRows",
   "allocXeBinds", "allocXeBindNotes", "allocXeRange", "openAllocDetail",
-  "estEngine", "estDayCount", "estIndexYtd", "EST_ASSETS"];
+  "estEngine", "estDayCount", "estIndexYtd", "EST_ASSETS",
+  "SECTION_LABELS", "sectionLink"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -2007,6 +2014,80 @@ const EST_FIXTURE = (() => {
     annualize: { basis: "days", day_count: 365, note: "주식은 연환산하지 않습니다" },
   };
 })();
+
+/* ====== 정보구조 개편 (§7.9) — 개요가 시장 화면의 입구가 되었는가 ============== */
+safe("infoArchitecture", () => {
+  const r = {};
+  const card = (key, label, group, link, v) => ({
+    key, label, kind: "price", unit: "", group, link, value: v, date: "2026-06-30",
+    chg: { d1: 0.1, m1: 0.2, ytd: 0.3, y1: 0.4 },
+    spark: { t: [1, 2, 3], v: [1, 2, 3] },
+  });
+  const OV = {
+    groups: [
+      { key: "equity", label: "주식", sections: ["acwi"] },
+      { key: "rate", label: "금리", sections: ["rates", "irs"] },
+      { key: "fx", label: "환율", sections: ["fx"] },
+      { key: "other", label: "기타", sections: ["credit", "inflation", "macro"] },
+    ],
+    /* 일부러 **구역 순서와 섞어서** 넣는다 — 렌더가 payload 의 groups 순서를 따르는지
+       보려는 것이다(카드 배열 순서를 그대로 쓰면 이 검사가 통과하지 못한다). */
+    cards: [card("a", "미 HY", "other", "credit", 2.6),
+            card("b", "MSCI ACWI", "equity", "acwi", 1117),
+            card("c", "달러/원", "fx", "fx", 1555),
+            card("d", "국고 3년", "rate", "rates", 3.87),
+            card("e", "VIX", "equity", "", 15.8),
+            card("f", "WTI", "other", "", 75)],
+  };
+  P.DATA.overview = OV;
+  P.renderSection("overview");
+  const sec = DOC.getElementById("overview");
+  r.renderErrors = sec.querySelectorAll(".render-error").length;
+
+  const groups = Array.from(DOC.querySelectorAll(".ov-group"));
+  r.groupCount = groups.length;
+  r.groupOrderFollowsPayload = groups.map((g) =>
+    (g.querySelector(".ov-group-title") || {}).textContent).join(",") === "주식,금리,환율,기타";
+  r.cardsGroupedNotFlat = groups.map((g) => g.querySelectorAll(".kpi").length).join(",") === "2,1,1,2";
+
+  /* 겹치는 지표는 **그 화면으로 들어가는 링크**여야 한다(사용자 지시) */
+  const acwi = Array.from(DOC.querySelectorAll(".kpi"))
+    .find((n) => /MSCI ACWI/.test(n.textContent));
+  r.overlappingCardIsLink = acwi.tagName === "A" && acwi.getAttribute("href") === "#acwi";
+  r.linkCardHasAriaLabel = /MSCI ACWI 화면으로/.test(acwi.getAttribute("aria-label") || "");
+  /* 전용 화면이 없는 카드는 링크가 **아니어야** 한다 — 눌러도 무동작이면 고장으로 읽힌다 */
+  const vix = Array.from(DOC.querySelectorAll(".kpi")).find((n) => /VIX/.test(n.textContent));
+  r.cardWithoutScreenIsNotLink = vix.tagName !== "A" && !vix.getAttribute("href");
+  r.everyLinkPointsAtRealSection = Array.from(DOC.querySelectorAll(".kpi-link"))
+    .every((n) => P.SECTION_IDS.includes(n.getAttribute("href").slice(1)));
+
+  /* 구역 머리의 상세 화면 버튼 */
+  const rateHead = groups[1].querySelectorAll(".sec-link");
+  r.groupHeadLinks = Array.from(rateHead).map((n) => n.getAttribute("href")).join(",");
+  r.groupHeadUsesSectionTitles = /금리/.test(rateHead[0].textContent)
+    && /IRS 포워드/.test(rateHead[1].textContent);
+
+  /* 카탈로그는 개요 맨 아래 한 줄로만 남는다 */
+  const cat = DOC.getElementById("ov-catalog").querySelector("a");
+  r.catalogEntryExists = !!cat && cat.getAttribute("href") === "#catalog";
+
+  /* 위험 점수 카드는 개요에서 **빠졌다**(리스크 화면에 있는 내용 — 사용자 지시) */
+  r.riskScoreCardsGone = DOC.querySelectorAll(".kpi-risk").length === 0
+    && !/prependRiskCards/.test(String(P.renderSection));
+
+  /* 옛 페이로드(groups 없음)에서도 화면이 비지 않아야 한다 */
+  P.DATA.overview = { cards: OV.cards };
+  P.renderSection("overview");
+  r.legacyPayloadStillRenders = DOC.querySelectorAll("#ov-groups .kpi").length === 6
+    && DOC.getElementById("overview").querySelectorAll(".render-error").length === 0;
+
+  /* 섹션 이름표가 SECTION_IDS 전부를 덮는가 — 버튼 이름이 도착 화면과 어긋나면
+     사용자는 다른 화면에 왔다고 느낀다 */
+  r.labelsCoverEverySection = P.SECTION_IDS.every((id) => !!P.SECTION_LABELS[id]);
+
+  P.DATA.overview = OV;
+  return r;
+});
 
 safe("estimateCalc", () => {
   const r = {};

@@ -47,7 +47,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 380개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 386개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (약 2.5분)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js                 (약 2.5분)
 #   ↑ 하네스가 시간을 다 쓴다(실측) — 최적화를 실제로 여러 번 돌리는 프로브
@@ -396,6 +396,20 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   **평가 설계**(가중 방식·타깃·표본 외 구간)뿐이다.
 - **JSON 16개 계약은 세 곳에 적혀 있다**: `process.py` 의 `payloads`, `dashboard/app.js` 의 `FILES`,
   `pipeline/check_output.py` 의 `EXPECTED`. 하나만 고치면 `tests/test_contract.py` 가 잡는다.
+- **상단 탭은 7개뿐이다(§7.9 — 2026-08-13 사용자 지시).** 마을·개요·이벤트·리스크·
+  수익률 추정·자산배분·환헤지. 나머지 8개 화면은 **사라진 게 아니라 부모 화면 안의
+  입구로 내려왔다** — 금리·IRS·크레딧·FX·물가·ACWI·매크로는 개요 구역으로, 관계분석은
+  리스크로, 카탈로그는 개요 맨 아래 한 줄로. **섹션·렌더러·마을 구역·딥링크는 전부
+  그대로다**(계약 테스트가 강제한다 — 탭에서 내렸다고 렌더러나 마을 접근을 지우면
+  그건 정리가 아니라 기능 삭제다). 탭을 다시 늘리려면 사용자와 합의할 것.
+  개요 구역·카드 링크의 정본은 `process.py` 의 `OVERVIEW_GROUPS`/`OVERVIEW_CARDS`
+  (튜플에 `group`·`link` 가 붙어 있다), 화면 쪽은 `app.js` 의 `renderOverview`·
+  `SECTION_LABELS`·`sectionLink`. **전용 화면이 없는 카드는 `link` 를 비울 것** —
+  VIX·VKOSPI·WTI 가 그 경우이며, 없는 링크를 지어내면 눌러도 무동작인 카드가 되어
+  고장으로 읽힌다. `SECTION_LABELS` 는 각 섹션 `<h2>` 와 **문자 단위로 같아야 한다**
+  (버튼 이름과 도착 화면 제목이 어긋나면 다른 데 왔다고 느낀다 — 대조 테스트 있음).
+  **개요에 위험 점수(현재위험·잠재위험)를 되살리지 말 것** — 리스크 화면의 내용이라
+  같은 지시로 내려갔고, `prependRiskCards` 는 삭제됐다.
 - **화면 전환·마을 내비게이션** = `app.js` 의 `routeView()`. 섹션은 **한 번에 하나만** 보인다
   (마을 또는 섹션 1개) — 14개를 세로로 쌓지 않는 것이 이 구조의 요점이다. 섹션을 추가하면
   `SECTION_IDS`·`VILLAGE_ZONES`·`index.html` 세 곳을 함께 고쳐야 하고, 오버레이 해시를 추가하면
