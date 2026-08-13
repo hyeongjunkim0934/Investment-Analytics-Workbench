@@ -4103,8 +4103,8 @@ function allocFeasibility(E) {
 
 /* ---- 시변·창 민감도 카드 — λ-효용 MVO 로 표본을 바꿔 가며 최적 배분 재계산 ----
    목적함수는 요약의 ①②(위험최소·수익유지)와 **다른 세 번째 참고축**이다:
-   max μ'w − (λ/2)·w'Σw, λ=1 소수 단위(2026-08-11 사용자 지정 — 커스터마이징 UI 는
-   차기). μ·밴드·그룹 한도·대체투자 매핑·헤지비율은 현재 설정으로 **고정**하므로
+   max μ'w − (λ/2)·w'Σw, λ = 시뮬레이터의 위험회피계수 키인(소수 단위, 기본 1 —
+   2026-08-12 부터 화면에서 선택). μ·밴드·그룹 한도·대체투자 매핑·헤지비율은 현재 설정으로 **고정**하므로
    경로의 움직임은 위험 구조(σ·상관)의 변화만 반영한다 — 롤링 실현 평균을 μ 로
    쓰는 문은 일부러 열지 않았다(§7.7: 과거 평균을 기대수익으로 쓰지 않는다). */
 function renderAllocTv(box, E, st, pal, rerender) {
@@ -4142,7 +4142,7 @@ function renderAllocTv(box, E, st, pal, rerender) {
   const note = () => el("div", { class: "card-sub", style: "margin-top:6px" },
     "목적함수 max μ'w − (λ/2)·w'Σw — 요약의 ①②(위험최소·수익유지)와 다른 세 번째 참고축입니다. ",
     el("b", {}, "μ·밴드·그룹 한도·대체투자 매핑·헤지비율은 현재 설정으로 고정"),
-    " — 움직임은 위험 구조(σ·상관)의 변화만 반영합니다(롤링 실현 평균을 μ 로 쓰지 않습니다). λ 커스터마이징은 차기.");
+    " — 움직임은 위험 구조(σ·상관)의 변화만 반영합니다(롤링 실현 평균을 μ 로 쓰지 않습니다). λ 는 시뮬레이터에서 바꿉니다.");
 
   if (mode === "roll") {
     const blk = tvAll.find((b) => b.key === String(st.tv_len)) || tvAll[tvAll.length - 1];
@@ -4335,6 +4335,37 @@ function allocRedistribute(mix, key, newV, target) {
   return out;
 }
 
+/* ---- λ 역산 — 「지금 감수 중인 위험을 재현하는 위험회피계수」 (2026-08-12) --------
+   λ 자체는 관측되지 않는 선호 모수라 **정답 숫자가 없다**. 그래서 임의의 권장값을
+   코드에 박는 대신(자의성 금지), 관측 가능한 앵커 하나 — **현재 배분의 위험 수준** —
+   을 재현하는 λ 를 역산해 준다. 이것이 실무의 역최적화(reverse optimization)
+   앵커이고, 사용자가 "지금과 같은 위험을 감수한다면 배분은 어디로 가야 하나"를
+   물을 수 있게 한다.
+
+   σ*(λ) = 최적해의 위험은 λ 에 대해 **단조 감소**(위험회피가 커질수록 위험을 줄인다)
+   하므로 이분법이 안전하다 — 격자 스캔이나 임의 초기값이 필요 없다. 반환의
+   `bounded` 는 목표 위험이 탐색 구간 밖(밴드 제약상 도달 불가)임을 알리는 정직성
+   신호다: 그 경우 조용히 끝값을 "정답"이라 적지 않고 화면이 사실을 밝힌다. */
+function allocLambdaForSigma(E, sigTarget, opts) {
+  const o = opts || {};
+  /* 비용 주의: 이분법 1회 = STEPS × IT 번의 경사 반복이라 프로브·CI 시간에 직접 잡힌다.
+     로그 이분법이라 14스텝이면 구간비가 25000^(1/2^14) ≈ 1.0006 로 이미 과잉 정밀하다. */
+  const LO = o.lo || 0.02, HI = o.hi || 500, IT = o.iters || 400, STEPS = o.steps || 14;
+  const { mu, C } = E.V;
+  const sigAt = (lam) => E.sigmaW(E.optimizeUtilAt(mu, C, lam, 1, IT), C);
+  const sLo = sigAt(LO), sHi = sigAt(HI);
+  if (!(sigTarget > 0) || !isFinite(sigTarget)) return null;
+  if (sigTarget >= sLo) return { lam: LO, sig: sLo, bounded: "low" };
+  if (sigTarget <= sHi) return { lam: HI, sig: sHi, bounded: "high" };
+  let lo = LO, hi = HI;
+  for (let i = 0; i < STEPS; i++) {
+    const mid = Math.sqrt(lo * hi);          // 로그 중점 — λ 는 스케일 모수라 배수로 움직인다
+    if (sigAt(mid) > sigTarget) lo = mid; else hi = mid;
+  }
+  const lam = Math.sqrt(lo * hi);
+  return { lam, sig: sigAt(lam), bounded: null };
+}
+
 /* 도넛 — 비중 시각화 전용(값 왜곡 없음: 각도 = 비중/합). 합이 0이면 빈 링. */
 function allocDonutSVG(entries, size) {
   const NS = "http://www.w3.org/2000/svg";
@@ -4409,7 +4440,7 @@ function allocDefaults(A) {
                "대체투자(대출형)": null, "대체투자(지분형)": null, 단기자금: null,
                ...(d.mu_over || {}) },
     /* 시변·창 민감도 카드 — λ-효용 MVO. λ=1 소수 단위(2026-08-11 사용자 지정,
-       커스터마이징 UI 는 차기). tv_len 은 롤링 길이(년) — null = 게시된 것 중 최장. */
+       2026-08-12 부터 시뮬레이터에서 선택). tv_len 은 롤링 길이(년) — null = 게시된 것 중 최장. */
     mvo_lambda: 1, tv_mode: "roll", tv_len: null,
     /* 시뮬레이터(§7.7.8) — 자산군별 위험 키인(연 %, 대체투자 두 분류 제외 5키).
        null = 벤치마크 실측. **상관은 항상 벤치마크 실측 ρ 를 유지**하고 σ 만
@@ -4699,6 +4730,47 @@ function renderAlloc() {
         `최적 = λ-효용 MVO(λ=${fmtNum(+st.mvo_lambda || 1, 1)} — 위험회피계수, 클수록 보수적) · ` +
         (E0.layer === "cma" ? "상관은 벤치마크 실측 ρ 유지" : "프록시층 — 최적·σ 키인은 벤치마크 층 전용")),
       el("span", {}, lockSeg)));
+
+    /* ---- λ(위험회피계수) 선택 — 2026-08-12 사용자 지시 「람다도 선택할 수 있게」 ----
+       모형 입력이라 즉시 저장한다(μ·σ 키인과 같은 규약 — 비중만 시뮬레이션이다).
+       **권장값을 코드에 박지 않는다**: λ 는 관측되지 않는 선호 모수라 "보험사 표준
+       숫자" 같은 것이 없고(자의성 금지), 대신 관측 가능한 앵커를 역산해 준다 —
+       ⓐ 현재 배분의 위험을 재현하는 λ(아래 버튼) ⓑ 화면에서 λ 를 바꿔 가며 보기. */
+    const lamIn = el("input", { type: "number", step: "0.1", min: "0.02",
+      value: String(+st.mvo_lambda || 1), id: "alloc-lambda",
+      style: "width:88px", "aria-label": "위험회피계수 λ" });
+    lamIn.addEventListener("change", () => {
+      const v = +lamIn.value;
+      st.mvo_lambda = isFinite(v) && v > 0 ? v : 1;
+      allocSaveState(st);
+      renderAlloc();
+    });
+    const lamNote = el("span", { style: "color:var(--ink-3);font-size:12px" });
+    const lamFit = el("button", { type: "button", class: "btn-ghost", onclick: () => {
+      /* 현재 배분의 위험을 재현하는 λ — 관측 앵커(역최적화). 비중이 밴드 밖이거나
+         탐색 구간 밖이면 **그 사실을 적고** 값을 바꾸지 않는다(조용한 대체 금지). */
+      const Ef = allocEngine(A, st);
+      const sigCur = Ef.sigmaW(Ef.w0, Ef.V.C);
+      const fit = allocLambdaForSigma(Ef, sigCur);
+      if (!fit) { lamNote.textContent = "현재 위험을 읽을 수 없습니다."; return; }
+      if (fit.bounded) {
+        lamNote.textContent = fit.bounded === "low"
+          ? `현재 위험 ${fmtNum(sigCur, 2)}% 는 λ→0 의 최적(${fmtNum(fit.sig, 2)}%)보다도 높습니다 — 재현하는 λ 가 없습니다(밴드 확인).`
+          : `현재 위험 ${fmtNum(sigCur, 2)}% 는 λ→∞ 의 최소위험(${fmtNum(fit.sig, 2)}%)보다 낮습니다 — 재현하는 λ 가 없습니다.`;
+        return;
+      }
+      st.mvo_lambda = +fit.lam.toFixed(2);
+      allocSaveState(st);
+      renderAlloc();
+    } }, "현재 위험과 같은 λ 찾기");
+    simBox.append(el("div", { class: "tenor-row", style: "margin:2px 0 8px" },
+      el("b", { style: "font-size:12.5px" }, "위험회피계수 λ"), lamIn, lamFit, lamNote,
+      el("span", { style: "color:var(--ink-3);font-size:12px" },
+        "최적 = max(기대수익 − λ/2 × 분산). 클수록 보수적이고, λ→∞ 는 최소위험 · λ→0 은 " +
+        "기대수익 최대(밴드까지 몰림)입니다. 소수 단위 — λ=1 이면 위험 5→6%를 " +
+        "기대수익 +0.06%p 로 교환합니다. 관측되지 않는 선호 모수라 표준값이 없어 " +
+        "권장값을 넣지 않았습니다: 「현재 위험과 같은 λ」로 지금 배분이 함의하는 값을 " +
+        "역산해 출발점으로 쓰십시오.")));
 
     const simSum = el("span", { class: "sim-sum" });
     const refreshSimSum = () => {

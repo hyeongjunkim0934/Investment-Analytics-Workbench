@@ -1830,6 +1830,40 @@ def test_sim_sigma_placeholder_reads_as_applied(probe):
     assert probe["simPanel"]["sigPlaceholderSaysApplied"] is True
 
 
+def test_lambda_is_selectable_and_monotone(probe):
+    """λ(위험회피계수) 선택 — 2026-08-12 사용자 지시.
+
+    λ 는 관측되지 않는 선호 모수라 **권장 상수를 코드에 박지 않는다**(자의성 금지).
+    대신 ① 화면에서 고를 수 있고 ② σ*(λ) 가 단조 감소하며 ③ 관측 앵커(현재 위험)를
+    재현하는 λ 를 역산해 준다. 이 셋이 깨지면 λ 는 "아무 숫자나 넣는 칸"이 된다.
+    """
+    c = probe["lambdaControl"]
+    assert c["sigmaMonotoneInLambda"] is True, "λ↑ 인데 최적 위험이 줄지 않는다 — 이분법 전제 붕괴"
+    assert c["sigmaActuallyMoves"] is True, "λ 를 바꿔도 최적이 움직이지 않는다"
+    assert c["inputExists"] is True
+    assert c["savesImmediately"] is True, "λ 는 모형 입력이라 즉시 저장돼야 한다(비중과 반대)"
+    assert c["optimumFollowsLambda"] is True, "화면의 최적 카드가 λ 를 따라가지 않는다"
+    assert c["badLambdaSanitized"] is True
+    assert c["renderErrors"] == 0
+
+
+def test_lambda_reverse_optimization_reproduces_risk(probe):
+    """「현재 위험과 같은 λ 찾기」 — 역산값을 **다시 최적화에 넣어** 위험을 대조한다.
+
+    손계산 상수 없이 왕복으로 재는 자기무결성 검사다. 도달 불가한 목표는 끝값을
+    조용히 "정답"이라 적지 않고 bounded 로 알려야 한다(정직성).
+    """
+    c = probe["lambdaControl"]
+    assert c["fitFound"] is True
+    assert c["fitReproducesSigma"] is True, "역산 λ 가 목표 위험을 재현하지 못한다"
+    assert c["fitLambdaCloseToTruth"] is True, "왕복 역산이 원래 λ 로 돌아오지 않는다"
+    assert c["boundedHigh"] is True and c["boundedLow"] is True, "도달 불가를 bounded 로 알리지 않는다"
+    assert c["rejectsBadTarget"] is True
+    assert c["fitButtonExists"] is True
+    assert c["fitButtonSavedLambda"] is True
+    assert c["fitButtonReproducesCurrentRisk"] is True, "버튼이 저장한 λ 가 현재 위험을 재현하지 못한다"
+
+
 def test_sim_panel_proxy_layer_degrades_loudly(probe):
     """프록시층 — σ 키인 7칸 전부 비활성 + 최적 「보류」 안내(조용한 강등 금지)."""
     c = probe["simPanel"]

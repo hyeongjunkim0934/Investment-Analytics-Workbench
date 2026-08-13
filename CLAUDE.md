@@ -46,9 +46,12 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 2분). 현재 351개.
-#   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (1초 미만)
-#   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 353개.
+#   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (약 2.5분)
+#   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js                 (약 2.5분)
+#   ↑ 하네스가 시간을 다 쓴다(실측) — 최적화를 실제로 여러 번 돌리는 프로브
+#     (cmaTv·simPanel·lambdaControl)가 대부분이다. 프로브를 추가할 때 반복 횟수를
+#     아끼지 않으면 CI 시간이 바로 늘어난다.
 python -m pytest
 
 # 배포 게이트 — 파이프라인 출력이 JSON 계약을 지키는지. 실패하면 exit 1
@@ -211,9 +214,16 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   끼우지 말 것(`tests/test_formulas.py` 가 인덱스를 고정한다).
   ③ 기대수익 키인은 `st.mu_over`(7키, 자산군명 그대로) — base 를 통째로 대체하는
   **최종치**다(§7.7.10 — 캐리 미가산, 슬라이더는 위험에만 작용).
-  **시변·창 민감도 카드**(`renderAllocTv` + `#alloc-tv-card`)는 λ-효용 MVO
-  (`amOptimizeUtil`, λ = `st.mvo_lambda` 기본 1 — **소수 단위**, 2026-08-11 사용자 지정,
-  커스터마이징 UI 는 차기)로 표본만 바꿔 가며 최적 배분을 다시 푼다 — 요약의 ①②와
+  ④ **λ(위험회피계수)는 화면에서 고른다**(2026-08-12 사용자 지시). 시뮬레이터의
+  `#alloc-lambda` 키인 → `st.mvo_lambda`(모형 입력이라 즉시 저장, 기본 1 · **소수 단위**).
+  **권장값을 코드에 박지 말 것** — λ 는 관측되지 않는 선호 모수라 "표준 숫자"가 없다
+  (자의성 금지). 대신 관측 앵커를 역산하는 `allocLambdaForSigma()`(「현재 위험과 같은
+  λ 찾기」 버튼)를 둔다: σ\*(λ) 가 λ 에 **단조 감소**하는 성질을 이용한 로그 이분법이라
+  격자·초기값이 필요 없고, 목표 위험이 구간 밖이면 `bounded` 로 알린다(끝값을 조용히
+  「정답」이라 적지 않는다). 프로브 `lambdaControl` 이 단조성·역산 왕복·경계 처리·
+  즉시 저장을 실행으로 확인한다.
+  **시변·창 민감도 카드**(`renderAllocTv` + `#alloc-tv-card`)는 같은 λ-효용 MVO
+  (`amOptimizeUtil`)로 표본만 바꿔 가며 최적 배분을 다시 푼다 — 요약의 ①②와
   **다른 세 번째 목적함수**이고 화면이 그 사실을 밝힌다. 데이터는 `bm.py` 가 게시하는
   `cma.tv`(길이별 롤링 공분산 — **가중치 경로가 아니라 공분산**을 싣는 이유: 경로를
   파이프라인이 굳히면 λ·매핑·제약 커스터마이징이 전부 죽는다). μ·제약·매핑·헤지는

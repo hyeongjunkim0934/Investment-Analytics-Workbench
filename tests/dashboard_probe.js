@@ -177,7 +177,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
   "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256",
   "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil", "allocCharStats",
-  "allocRedistribute", "allocIsAlt"];
+  "allocRedistribute", "allocIsAlt", "allocLambdaForSigma"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -1878,6 +1878,84 @@ safe("simPanel", () => {
     .filter((n) => (n.getAttribute("aria-label") || "").includes("위험 % 키인"));
   r.proxySigDisabled = sigInputs.length === 7 && sigInputs.every((n) => n.disabled === true);
   r.proxyOptDeferred = /최적 포트폴리오 — 보류/.test(p2.textContent);
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
+/* ====== P20-g. λ(위험회피계수) 선택 — 2026-08-12 사용자 지시 =================
+   ① λ 단조성이 화면 경로에서도 성립하는가(키인 → 최적 위험이 준다)
+   ② 역산(현재 위험을 재현하는 λ)이 **실제로 그 위험을 재현**하는가 — 손계산이 아니라
+      역산값을 다시 최적화에 넣어 σ 를 대조한다
+   ③ 도달 불가면 조용히 끝값을 쓰지 않고 `bounded` 로 알리는가
+   ④ λ 는 모형 입력이라 즉시 저장되고(비중과 반대), 손상값은 소독되는가 */
+safe("lambdaControl", () => {
+  const r = {};
+  shim.localStorage.removeItem("iaw-alloc");
+  const A = CMA_ALLOC;
+  const st = P.allocDefaults(A);
+  const E = P.allocEngine(A, st);
+  const { mu, C } = E.V;
+  const sigAt = (lam) => E.sigmaW(E.optimizeUtilAt(mu, C, lam, 1, 700), C);
+
+  /* ① 단조성 — λ 가 커지면 최적해의 위험이 준다(역산 이분법의 전제) */
+  const s1 = sigAt(0.5), s2 = sigAt(5), s3 = sigAt(50);
+  r.sigmaMonotoneInLambda = s1 >= s2 - 1e-9 && s2 >= s3 - 1e-9;
+  r.sigmaActuallyMoves = s1 - s3 > 1e-3;
+
+  /* ② 역산 — 임의의 λ 로 만든 최적해의 위험을 목표로 주면 그 λ 가 되돌아온다
+     (자기무결성 검사: 손계산 상수 없이 왕복으로 잰다) */
+  const lamTrue = 4;
+  const sigTrue = sigAt(lamTrue);
+  const fit = P.allocLambdaForSigma(E, sigTrue);
+  r.fitFound = !!fit && fit.bounded === null;
+  r.fitReproducesSigma = !!fit && Math.abs(fit.sig - sigTrue) < 0.02;
+  r.fitLambdaCloseToTruth = !!fit && Math.abs(fit.lam - lamTrue) / lamTrue < 0.25;
+
+  /* ③ 도달 불가 — 아주 낮은/높은 목표는 bounded 로 알린다(끝값을 정답이라 하지 않는다) */
+  const tooLow = P.allocLambdaForSigma(E, sigAt(500) * 0.5);
+  const tooHigh = P.allocLambdaForSigma(E, sigAt(0.02) * 2);
+  r.boundedHigh = !!tooLow && tooLow.bounded === "high";
+  r.boundedLow = !!tooHigh && tooHigh.bounded === "low";
+  r.rejectsBadTarget = P.allocLambdaForSigma(E, 0) === null;
+
+  /* ④ 화면 — 입력칸이 있고, 바꾸면 즉시 저장되며(모형 입력), 최적 카드가 따라 움직인다 */
+  P.DATA.alloc = A;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const panel = DOC.getElementById("alloc-sim-panel");
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  const inp = DOC.getElementById("alloc-lambda");
+  r.inputExists = !!inp;
+  const riskOf = () => {
+    const m = (panel.textContent.match(/① 최적 포트폴리오[^위]*위험 ([\d.]+)%/) || [])[1];
+    return m ? +m : null;
+  };
+  const riskBefore = riskOf();
+  inp.value = "50";
+  inp.dispatchEvent({ type: "change", target: inp });
+  const savedLam = JSON.parse(shim.localStorage.getItem("iaw-alloc") || "null");
+  r.savesImmediately = !!savedLam && savedLam.mvo_lambda === 50;
+  const riskAfter = riskOf();
+  r.optimumFollowsLambda = riskBefore != null && riskAfter != null && riskAfter < riskBefore - 1e-9;
+  /* 손상값 소독 — 0·음수·문자는 기본 1 로 */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, mvo_lambda: -3 }));
+  r.badLambdaSanitized = P.allocState(A).mvo_lambda === 1;
+
+  /* ⑤ 「현재 위험과 같은 λ 찾기」 버튼 — 눌렀을 때 저장된 λ 가 현재 위험을 재현한다 */
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const p2 = DOC.getElementById("alloc-sim-panel");
+  const fitBtn = Array.from(p2.querySelectorAll("button"))
+    .find((n) => /현재 위험과 같은 λ/.test(n.textContent));
+  r.fitButtonExists = !!fitBtn;
+  const Ecur = P.allocEngine(A, P.allocDefaults(A));
+  const sigCur = Ecur.sigmaW(Ecur.w0, Ecur.V.C);
+  if (fitBtn) fitBtn.click();
+  const st2 = P.allocState(A);
+  r.fitButtonSavedLambda = st2.mvo_lambda > 0 && st2.mvo_lambda !== 1;
+  const E2 = P.allocEngine(A, st2);
+  const sigOpt = E2.sigmaW(E2.optimizeUtilAt(E2.V.mu, E2.V.C, st2.mvo_lambda, 1, 700), E2.V.C);
+  r.fitButtonReproducesCurrentRisk = Math.abs(sigOpt - sigCur) < 0.05;
   shim.localStorage.removeItem("iaw-alloc");
   return r;
 });
