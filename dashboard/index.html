@@ -53,6 +53,7 @@
       <a href="#village" class="home">마을</a>
       <a href="#overview">개요</a>
       <a href="#risk">리스크</a>
+      <a href="#estimate">수익률 추정</a>
       <a href="#alloc">자산배분</a>
       <a href="#hedge">환헤지</a>
       <a href="#events">이벤트</a>
@@ -175,6 +176,20 @@
     <p style="margin-top:14px"><a id="hedge-sim-btn" href="#hedge-sim" class="btn-primary">우리 포트폴리오 숫자로 계산해 보기 (7통화 시뮬레이터) →</a>
        <span class="filter-note" style="margin-left:10px">통화별 금액·헤지비율을 넣으면 두 관점의 변동성과 연간 헤지 캐리가 바로 나옵니다</span></p>
     <details class="method" id="hedge-method"></details>
+  </section>
+
+  <!-- 수익률 추정 (§7.8) — 자산군별 규모·기준일 수익률·듀레이션을 넣으면 포트폴리오의
+       연초이후 수익률을 기준일로 계산한다. 주식을 뺀 자산은 연환산(365÷경과일수).
+       입력값은 브라우저 localStorage 에만 남는다(공개 저장소에 기관 수치 금지). -->
+  <section id="estimate" class="section">
+    <h2>수익률 추정</h2>
+    <!-- 답 먼저 — 포트폴리오 수익률 한 줄. 그 아래가 입력표다. -->
+    <div class="card" id="est-summary" style="padding:12px 16px"></div>
+    <div class="howto" id="est-controls"></div>
+    <div class="card" id="est-table-card" style="margin-top:10px"></div>
+    <div class="card" id="est-contrib-card" style="margin-top:10px"></div>
+    <div class="howto" id="est-sources"></div>
+    <details class="method" id="est-method"></details>
   </section>
 
   <section id="alloc" class="section">

@@ -1892,6 +1892,79 @@ def test_hedge_ust_merit_monitor(probe):
     assert c["inactiveExplains"] is True
 
 
+def test_estimate_annualizes_by_day_count_and_excludes_equities(probe):
+    """수익률 추정의 핵심 산식(§7.8) — 손계산과 대조한다.
+
+    2026-08-13 사용자 지시 두 가지가 여기서 강제된다:
+      ① **연환산은 일수 기준** — 계수 = 365 ÷ 경과일수(전년 12/31 → 기준일).
+         6/30 이면 181일 → 2.0166 이다. 월수 기준이면 정확히 2.0 이 되므로, 계수가
+         2.0 이 **아님**을 함께 확인해 규약이 조용히 되돌아가는 것을 막는다.
+      ② **주식만 연환산하지 않는다** — 국내주식·해외주식의 계수는 1 이어야 한다.
+
+    값이 그럴듯하기만 하면 통과하는 검사는 이 화면에서 특히 위험하다 — 계수를 잘못
+    잡아도 숫자는 여전히 "수익률처럼" 보인다. 그래서 프로브가 손계산 값과 직접 비교한다.
+    """
+    c = probe["estimateCalc"]
+    assert c["renderErrors"] == 0
+    assert c["daysFromPriorYearEnd"] == 181, "연초를 전년 12/31 이 아닌 곳으로 잡았다"
+    assert c["baseIsPriorYearEnd"] is True
+    assert c["factorIsDayCount"] is True, "연환산 계수가 365÷경과일수가 아니다"
+    assert c["factorIsNotMonthBased"] is True, "일수 기준이어야 하는데 월수 기준(2.0)이 나왔다"
+    assert c["rejectsBadDate"] is True, "형식이 틀린 기준일을 조용히 받아들인다"
+    assert c["equityNotAnnualized"] is True, "주식을 연환산했다"
+    assert c["bondAnnualized"] is True and c["altAnnualized"] is True
+    assert c["portfolioMatchesHandCalc"] is True, "포트폴리오 수익률이 손계산과 다르다"
+    assert c["contribSumsToPortfolio"] is True, "기여도 합이 포트폴리오 수익률과 다르다"
+    assert c["periodReturnMatchesHandCalc"] is True
+    assert c["periodDiffersFromAnnualized"] is True, "미연환산 참고치가 연환산과 같다"
+    assert c["bondDurationWeighted"] is True
+
+
+def test_estimate_autofill_yields_to_manual_and_never_invents_zero(probe):
+    """자동 채움 규약(§7.8, 2026-08-13 사용자 선택 「자동 채움 + 수기 덮어쓰기」).
+
+    · YTD = 지수(기준일 이하 마지막 관측) ÷ 지수(전년 마지막 관측) − 1, 두 날짜를 밝힌다
+    · 수기값이 있으면 자동을 이기고, **지우면 자동으로 돌아간다**
+    · 앵커가 없으면 조용히 0 이 아니라 오류를 돌려준다
+    · 규모는 있는데 수익률이 비면 **0 으로 채우지 않고** 미입력으로 세어 화면이 경고한다
+      (0 으로 채우면 포트폴리오 수익률이 이유 없이 낮아 보인다)
+    """
+    c = probe["estimateCalc"]
+    assert c["ytdExact"] is True, "YTD 산식이 손계산과 다르다"
+    assert c["ytdUsesPriorYearEndAnchor"] is True, "분모가 전년 연말 앵커가 아니다"
+    assert c["ytdReportsObservationDate"] is True, "실제로 쓴 관측일을 돌려주지 않는다"
+    assert c["missingAnchorErrors"] is True, "앵커가 없는데 값을 만들어냈다"
+    assert c["autoUsedWhenBlank"] is True
+    assert c["keyedBeatsAuto"] is True, "수기값이 자동값에 밀린다"
+    assert c["clearingRevertsToAuto"] is True, "지워도 자동으로 돌아가지 않는다"
+    assert c["missingReturnFlagged"] is True, "수익률 미입력을 화면이 세지 않는다"
+    assert c["missingReturnNotZeroFilled"] is True, "빈 수익률을 0 으로 대체했다"
+
+
+def test_estimate_screen_states_its_conventions_and_data_gaps(probe):
+    """화면이 규약과 **데이터 부재**를 밝히는가.
+
+    ACWI 는 요청(TR)과 달리 가격지수(PR)라 배당수익률만큼 낮게 나오고, 미국채는 총수익
+    지수가 없어 자동 채움 자체가 불가능하다. 둘 다 조용히 넘기면 사용자는 자동값이
+    요청한 계열인 줄 안다. 듀레이션이 아직 계산에 안 쓰인다는 사실도 화면이 적어야
+    한다 — 안 쓰는 입력칸을 말없이 두면 반영된 줄 안다.
+    """
+    c = probe["estimateCalc"]
+    assert c["assetRowCount"] == 11, "자산군 11개가 아니다"
+    assert c["inputCount"] == 28, "입력칸 수가 규모11+수익률11+듀레이션6 과 다르다"
+    assert c["autoMarkCount"] == 2, "자동 표식이 자동값 없는 빈 칸에도 붙었다"
+    assert c["screenStatesFactor"] is True and c["screenStatesElapsed"] is True
+    assert c["screenSaysEquityExcluded"] is True, "주식 제외 규약을 화면이 밝히지 않는다"
+    assert c["screenWarnsPrNotTr"] is True, "PR 을 TR 인 것처럼 조용히 채운다"
+    assert c["screenStatesUstUnavailable"] is True, "미국채 자동 채움 부재를 밝히지 않는다"
+    assert c["screenSaysDurationUnused"] is True, "안 쓰는 듀레이션 입력을 말없이 둔다"
+    assert c["inputsSaveImmediately"] is True, "모형 입력인데 즉시 저장되지 않는다"
+    # 지수가 없어도 화면은 수기 입력으로 살아 있어야 한다
+    assert c["inactiveRenderErrors"] == 0
+    assert c["inactiveExplains"] is True, "지수 부재 사유를 적지 않는다"
+    assert c["inactiveStillHasInputs"] is True, "지수가 없다고 입력표까지 사라졌다"
+
+
 def test_screen_states_cma_sample_cut(probe):
     """μ 기준일 컷을 화면이 밝히는가(§7.7.16) — 조용히 자르면 사용자는 σ 가 최신인
     줄 안다. 컷 날짜와 "데이터는 어디까지 있는지" 두 수를 모두 적어야 하고,

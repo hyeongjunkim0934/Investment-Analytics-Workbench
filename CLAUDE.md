@@ -15,11 +15,12 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 
 | 경로 | 역할 |
 |---|---|
-| `pipeline/process.py` | CLI 진입점. 엑셀 파싱 → 시리즈 저장소(`SERIES`) → 패널 빌더 → JSON 15개 출력 |
+| `pipeline/process.py` | CLI 진입점. 엑셀 파싱 → 시리즈 저장소(`SERIES`) → 패널 빌더 → JSON 16개 출력 |
 | `pipeline/risk.py` | `build(SERIES, warn)` → `risk.json` + `events.json` + 관계분석용 주간 프레임 (요인 점수·IC가중 합성·이벤트 검출). 브리핑 원고 조립(`compose_brief`)도 여기 — 호출은 `process.py` 가 시장 폭 병합 **뒤**에 한다 |
 | `pipeline/hedge.py` | `build(SERIES, warn)` → `hedge.json` (7통화 헤지 매트릭스·백테스트·시뮬레이터 공분산·`ust_merit` 미국채 투자 메리트 모니터 §7.7.14 — 헤지 후 UST = UST10y + 스왑레이트, 시리즈 없으면 `active:false` 게시) |
 | `pipeline/alloc.py` | `build(SERIES, warn)` → `alloc.json` (자산배분 원천 10개 공분산·현재 금리·동일 샤프 앵커·블록 부트스트랩 사전계산. **원본 수익률 미게시** — 공분산·평균·분위수만) |
 | `pipeline/bm.py` | 자산군 전략 벤치마크(BM) 파서 + `build_cma(SERIES, warn)` → `alloc.json.cma` (자본시장가정 사전계산 — §7.7 재설계의 데이터층). **원본 수준·수익률 미게시** — 창별 연환산 σ·상관·공분산·과거 평균과 표본 메타만. BM 파일이 없어도 `active:false` 블록을 항상 게시한다(체인 안전장치) |
+| `pipeline/estimate.py` | `build(SERIES, warn)` → `estimate.json` (수익률 추정 화면 §7.8 의 **자동 채움 지수만**. 수익률 계산은 전부 사용자 입력이라 브라우저가 한다). KOSPI TR·ACWI 일별 + **축약 전 원본에서 뽑은 연말 앵커** + 미국채 부재 사유. 지수가 없어도 `active:false` 로 항상 게시 |
 | `pipeline/panel.py` | `build(SERIES, risk_weekly, warn)` → `panel.json` (관계분석용 주간 정렬 패널. 공개 변수는 `VARS` 화이트리스트로만 통제) |
 | `pipeline/breadth.py` | 미국 증시 데일리 리포트 → **집계 지표만** (`us:*` 12개). 파일 하나 = 관측 하루라 이력은 날짜별 파일이 쌓여야 생긴다. **종목 단위(티커·회사명·현재가)는 한 줄도 읽지 않는다** — 공개 저장소이므로 그 계약이 값 정확도만큼 중요하고, `tests/test_breadth.py` 가 상세 시트를 일부러 넣고 유출이 없는지 확인한다 |
 | `pipeline/common.py` | 공용 산식 한 벌 — `epoch_seconds`/`pack_values`/`spearman`/`auc`. 위 넷과 연구 하네스가 전부 여기서 가져온다 |
@@ -31,7 +32,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `tests/domshim.js` `tests/dashboard_probe.js` | `dashboard/app.js` 를 **node 안에서 실제로 실행**시키는 최소 DOM 셰이드와 측정 하네스. npm 의존성 0(node 표준 라이브러리만). 소스 문자열만 보는 테스트가 "이름은 남기고 동작만 뒤집는" 회귀를 못 잡아서 만든 것이다 — 이 하네스를 만들 때 쓴 뮤테이션 18건은 18/18을 잡는다. **다만 이것을 전면 커버리지로 읽지 말 것**: 독립적으로 만든 뮤테이션 32건으로 다시 재면 24/32다. 지금 **안 잡히는 것이 확인된 자리** — ① `stampLatest` 의 다계열 최신 인덱스 선택(`Math.max` → `Math.min`) ② `baseAxes` 의 refmt 를 조건 없이 항상 적용 ③ 오버레이 닫을 때 `body.style.overflow` 미복구 ④ `aria-current` 미설정 ⑤ 뒤에 오는 CSS 규칙으로 `:focus-visible` outline 무력화(테스트가 첫 규칙만 본다) ⑥ `stampLatest` 의 중복 표기 가드 제거 ⑦ index.html 의 본문 바로가기 링크 삭제(마크업 검사 없음) ⑧ 모션 축소 블록 뒤에서 `scroll-behavior: smooth` 재활성화. 이 여덟은 지금 코드에서는 정상이지만 **회귀가 조용히 통과한다** — 손댈 때 테스트를 먼저 붙일 것. app.js가 새 DOM API를 쓰면 셰이드가 먼저 터지므로 그때 채워 넣으면 된다(그렇게 `after()`·`play()`/`pause()`·`visibilityState` 를 채웠다). **장면 자동 순환 검사도 여기 있다** — `setInterval` 을 기록만 하도록 바꿔 15초를 기다리지 않고 틱 본문을 직접 돌린다(자작 뮤테이션 20/20, 같은 이유로 과대평가로 읽을 것). **환헤지 2차 패스(141개)에도 같은 성격의 공백 10곳이 실측돼 있다** — 그중 넷이 부호·단위 자리다(`carryTxt` 의 ± · `index.html` `#fx` 의 정적 부호 문장 · `#hedge-lead` 의 받는/내는 분류 · MTM 연율화 `√12`). 목록은 `docs/HANDOVER.md` §5.3.1 |
 | `tests/requirements.txt` | 테스트 전용 의존성(pytest). `pipeline/requirements.txt` 와 분리. **node 는 여기 없다** — `test_dashboard_ux.py` 가 쓰는 node 는 GitHub 호스팅 러너 기본 탑재분이며, 없으면 skip 이 아니라 **실패**한다(조용히 건너뛰면 막으려던 회귀가 되살아난다) |
 | `pytest.ini` | `testpaths = tests` |
-| `dashboard/index.html` `app.js` `style.css` | 정적 대시보드 (섹션 14개, **다크 기본**+라이트, 기간 필터, 마을 홈+관문. 명암과 마을 낮/밤은 **별개 축** — 아래 「어디를 고치면 무엇이 바뀌나」). **app.js 가 DOM 으로 조립하는 표에는 `<tbody>` 가 없다** — `createElement("table")` 에 `<tr>` 을 직접 붙이면 브라우저가 tbody 를 끼워 넣지 않기 때문이다. 그래서 `style.css` 에는 `thead th`/`tbody td` 와 `table > tr > th|td` **두 벌**이 있어야 한다. 한 벌만 두면 조립 표(#hedge·#alloc·#panel)의 숫자 셀이 조용히 padding 1px·왼쪽 정렬로 렌더된다 (실제로 117칸이 그 상태였다). 회귀 테스트 있음 |
+| `dashboard/index.html` `app.js` `style.css` | 정적 대시보드 (섹션 15개, **다크 기본**+라이트, 기간 필터, 마을 홈+관문. 명암과 마을 낮/밤은 **별개 축** — 아래 「어디를 고치면 무엇이 바뀌나」). **app.js 가 DOM 으로 조립하는 표에는 `<tbody>` 가 없다** — `createElement("table")` 에 `<tr>` 을 직접 붙이면 브라우저가 tbody 를 끼워 넣지 않기 때문이다. 그래서 `style.css` 에는 `thead th`/`tbody td` 와 `table > tr > th|td` **두 벌**이 있어야 한다. 한 벌만 두면 조립 표(#hedge·#alloc·#panel)의 숫자 셀이 조용히 padding 1px·왼쪽 정렬로 렌더된다 (실제로 117칸이 그 상태였다). 회귀 테스트 있음 |
 | `dashboard/assets/` | 마을 지도 이미지(`village-day.webp`·`village-night.webp`)를 두는 자리. 넣는 법·금지 사항은 같은 폴더 `README.md` |
 | `dashboard/vendor/uplot.min.{js,css}` | 벤더링된 유일한 프런트 의존성 (외부 네트워크 요청 없음) |
 | `.github/workflows/build-dashboard.yml` | dispatch/수동/push 트리거 → **test → build(+배포 게이트) → deploy**. build 잡은 게이트 뒤에 `Build summary` 단계로 시리즈 수·최종 관측일·JSON 수·경고를 `$GITHUB_STEP_SUMMARY` 에 표로 붙인다(`if: always()` — 게이트가 막아 실패한 실행에서도 남는다) |
@@ -46,7 +47,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 366개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 380개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (약 2.5분)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js                 (약 2.5분)
 #   ↑ 하네스가 시간을 다 쓴다(실측) — 최적화를 실제로 여러 번 돌리는 프로브
@@ -69,9 +70,9 @@ cd _site && python -m http.server 8000     # http://localhost:8000
 python pipeline/research/wf_validation.py --data-dir ../Data
 ```
 
-- 파이프라인 정상 출력: 약 **40~55초**(자산배분 표본 재추출 사전계산 포함), exit 0, `parsed N series from M files` 뒤에 `wrote …` **15줄**
-  (합계 약 2.1MB), 마지막 줄 `N warning(s) — see meta.json`.
-- **15는 코드가 정한 수**(아래 JSON 계약)라 달라지면 그 자체가 버그다. 반대로 `N`·`M`·경고 건수는
+- 파이프라인 정상 출력: 약 **40~55초**(자산배분 표본 재추출 사전계산 포함), exit 0, `parsed N series from M files` 뒤에 `wrote …` **16줄**
+  (합계 약 2.2MB), 마지막 줄 `N warning(s) — see meta.json`.
+- **16은 코드가 정한 수**(아래 JSON 계약)라 달라지면 그 자체가 버그다. 반대로 `N`·`M`·경고 건수는
   `--data-dir` 의 엑셀에서 오는 수라 데이터를 갱신하면 정상적으로 바뀐다 — 현재 `../Data` 기준선은
   **481 시리즈 / 8 파일 / 경고 15건**(duplicate column 14건 = 같은 중복 라벨 6종이
   `data_bb.xlsx`·`data_bb_대체투자.xlsx` 두 파일에서 각 7건 + 파일 간 병합 고지 1건)이며, 이 기준선의
@@ -85,8 +86,8 @@ python pipeline/research/wf_validation.py --data-dir ../Data
 
 ## 출력 JSON 계약
 
-`process.py` 의 `payloads` 딕셔너리와 `dashboard/app.js` 의 `FILES` 상수가 **같은 15개**로 1:1 대응한다:
-`meta` `overview` `risk` `events` `panel` `hedge` `alloc` `rates` `irs` `credit` `fx` `inflation` `acwi` `macro` `catalog`.
+`process.py` 의 `payloads` 딕셔너리와 `dashboard/app.js` 의 `FILES` 상수가 **같은 16개**로 1:1 대응한다:
+`meta` `overview` `risk` `events` `panel` `hedge` `alloc` `estimate` `rates` `irs` `credit` `fx` `inflation` `acwi` `macro` `catalog`.
 JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 
 - 대시보드는 `fetch("data/<이름>.json")` 상대경로로 읽는다 → `--out` 은 항상 `index.html` 옆 `data/` 여야 하고,
@@ -369,13 +370,31 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   `hq` **한 벌을 공유**한다 — 따로 계산하면 어긋난 두 "최적"이 공존하게 된다.
   요약 표는 **부분해임을 명시**한다(배분은 헤지 고정 ②, 헤지는 배분 고정 Xe 대표점) —
   동시 최적해 표시는 통화축 확장 후의 일이다.
+- **수익률 추정(§7.8) = 화면이 계산하고 파이프라인은 지수만 싣는다.** 산식 정본은
+  `app.js` 의 `estEngine`/`estDayCount`/`estIndexYtd`, 자산군 축은 `EST_ASSETS`(11개).
+  규약 셋은 **사용자가 정한 것이라 코드가 임의로 바꾸지 말 것**(2026-08-13):
+  ① **연환산은 일수 기준** — 계수 = 365 ÷ 경과일수(연초 = **전년 12/31**, 1/1 이 아니다).
+  6/30 이면 181일 → 2.0166. 월수 기준이면 정확히 2.0 이 되므로 프로브가 「2.0 이 아님」을
+  함께 고정한다(규약이 조용히 되돌아가는 것을 막는 자리다).
+  ② **주식(국내·해외)만 연환산하지 않는다** — 나머지는 수익이 안정적으로 확보된다는 가정.
+  ③ **듀레이션은 지금 계산에 안 쓰인다** — 향후 「금리·주가 변화로 추정일 성과를 보는」
+  기능의 입력이다. 입력·저장·가중평균 표시까지만 하고 **화면이 그 사실을 밝힌다**
+  (안 쓰는 칸을 말없이 두면 반영된 줄 안다).
+  자동 채움은 `estimate.json.indices` 의 `asset` 이 `EST_ASSETS` 이름과 **문자 단위로**
+  같을 때만 붙는다 — 어긋나면 오류 없이 조용히 사라진다(`tests/test_estimate.py` 가 대조).
+  **요청과 실제 계열이 다른 자리를 숨기지 말 것**: ACWI 는 요청(TR)과 달리 가격지수(PR)라
+  `basis_matches_request:false` 로 나가고 화면이 ⚠ 를 단다. 미국채는 총수익 지수가 없어
+  (보유분은 전부 금리) **근사하지 않고** `unavailable` 로 부재를 적는다 — 듀레이션으로
+  −D·Δy 를 만들 수는 있지만 그것은 실현 성과가 아니라 지어낸 추정치다.
+  입력은 전부 **모형 입력이라 즉시 저장**되며 저장 위치는 브라우저 localStorage 뿐이다
+  (기관 수치이므로 공개 저장소에 기본값으로 박지 말 것).
 - **관계분석 변수 목록·기본 선택** = `panel.py` 의 `VARS`/`DEFAULT_VARS`. 통계(상관·교차상관·OLS+HAC)는
   파이썬이 아니라 `app.js` 의 통계 엔진(`pearson`/`crossCorr`/`ols`/`normInv`)에서 브라우저가 돌린다 —
   방법론을 바꾸려면 그쪽을 고친다.
 - `wf_validation.py` 는 `process.load_data_dir()` + `risk.derive_inputs`/`risk.factor_specs` +
   `risk` 의 상수 + `common.spearman`/`common.auc` 를 import 한다. 이 파일이 스스로 정하는 것은
   **평가 설계**(가중 방식·타깃·표본 외 구간)뿐이다.
-- **JSON 15개 계약은 세 곳에 적혀 있다**: `process.py` 의 `payloads`, `dashboard/app.js` 의 `FILES`,
+- **JSON 16개 계약은 세 곳에 적혀 있다**: `process.py` 의 `payloads`, `dashboard/app.js` 의 `FILES`,
   `pipeline/check_output.py` 의 `EXPECTED`. 하나만 고치면 `tests/test_contract.py` 가 잡는다.
 - **화면 전환·마을 내비게이션** = `app.js` 의 `routeView()`. 섹션은 **한 번에 하나만** 보인다
   (마을 또는 섹션 1개) — 14개를 세로로 쌓지 않는 것이 이 구조의 요점이다. 섹션을 추가하면
@@ -420,7 +439,7 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   확인할 때는 `newPage({ locale: 'en-US' })` 를 줄 것 — 코드 결함으로 오진하기 쉽다.
 - **테스트는 합성 픽스처로만 돈다.** `tests/synth.py` 가 만드는 워크북에는 벤더 값이 한 톨도 없다 —
   공개 저장소이므로 `../Data` 의 값이나 그 파생물을 픽스처로 커밋하지 말 것. 실데이터 회귀는 여전히
-  파이프라인을 완주시켜 시리즈 수·JSON 15개·경고 건수를 변경 전과 비교하는 방식으로 한다.
+  파이프라인을 완주시켜 시리즈 수·JSON 16개·경고 건수를 변경 전과 비교하는 방식으로 한다.
 - **기본 브랜치는 아직 기계 생성 세션명**(`claude/data-repo-dashboard-automation-cj8y59`)이다.
   `main` 으로의 rename 은 **아직 하지 않았다** — GitHub 웹 Settings 작업이라 사람이 해야 한다.
   `build-dashboard.yml` 의 `push:` 트리거는 `[main, master, "claude/…cj8y59"]` 세 이름을 모두 담고

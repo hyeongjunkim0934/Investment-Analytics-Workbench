@@ -2,7 +2,7 @@
 """출력 JSON 계약 + 배포 게이트.
 
 여기서 지키는 계약: `process.py` 의 `payloads` = `dashboard/app.js` 의 `FILES`
-= `pipeline/check_output.py` 의 `EXPECTED` = **같은 15개**. 셋 중 하나만 고치면
+= `pipeline/check_output.py` 의 `EXPECTED` = **같은 16개**. 셋 중 하나만 고치면
 대시보드의 한 섹션이 조용히 사라진다.
 
 개수 assert 는 교차 대조와 별개로 남겨 둔다 — 세 곳을 일관되게 고치면 교차 대조는
@@ -40,9 +40,10 @@ def _app_js_files() -> list[str]:
     return re.findall(r'["\']([A-Za-z_]+)["\']', m.group(1))
 
 
-def test_contract_is_fifteen():
-    assert len(check_output.EXPECTED) == 15
-    assert len(set(check_output.EXPECTED)) == 15
+def test_contract_is_sixteen():
+    # §7.8 에서 estimate.json 이 더해져 15 → 16 이 되었다.
+    assert len(check_output.EXPECTED) == 16
+    assert len(set(check_output.EXPECTED)) == 16
 
 
 def test_app_js_files_match_contract():
@@ -75,11 +76,11 @@ def built(synth_dir, tmp_path_factory):
     return out, r
 
 
-def test_pipeline_writes_exactly_fifteen(built):
+def test_pipeline_writes_exactly_sixteen(built):
     out, r = built
     written = sorted(p.stem for p in out.glob("*.json"))
     assert written == sorted(check_output.EXPECTED), r.stdout[-2000:]
-    assert r.stdout.count("wrote ") == 15
+    assert r.stdout.count("wrote ") == 16
 
 
 def test_risk_and_hedge_actually_ran(built):
@@ -406,7 +407,7 @@ def test_process_globals_are_not_leaked_by_tests():
 
 
 # --------------------------------------------------------------------------
-# 마을(홈) 내비게이션 계약 — 구역이 14개 섹션을 빠짐없이·중복 없이 덮는가.
+# 마을(홈) 내비게이션 계약 — 구역이 15개 섹션을 빠짐없이·중복 없이 덮는가.
 # 지도 이미지는 글자가 없고 라벨을 코드가 얹으므로, 이 대응이 깨지면 화면에서
 # 도달 불가능한 섹션이 조용히 생긴다. 사람 눈으로는 안 보이는 종류의 결함이다.
 # --------------------------------------------------------------------------
@@ -471,9 +472,9 @@ def _village_targets() -> set[str]:
 
 
 def test_village_zones_cover_every_section():
-    """마을에서 14개 섹션 전부에 도달할 수 있어야 한다."""
+    """마을에서 15개 섹션 전부에 도달할 수 있어야 한다."""
     ids = set(re.findall(r'<section id="([a-z]+)" class="section">', _index_html()))
-    assert len(ids) == 14, f"섹션 수가 14가 아닙니다: {sorted(ids)}"
+    assert len(ids) == 15, f"섹션 수가 15가 아닙니다: {sorted(ids)}"
     missing = ids - _village_targets()
     assert not missing, f"마을에서 도달할 수 없는 섹션: {sorted(missing)}"
 
@@ -853,7 +854,7 @@ def _renderer_map() -> dict[str, str]:
 
 
 def test_every_section_has_a_renderer():
-    """SECTION_IDS 의 14개가 전부 RENDERERS 에 있어야 한다.
+    """SECTION_IDS 의 15개가 전부 RENDERERS 에 있어야 한다.
 
     빠뜨리면 그 섹션은 **아무 오류 없이 영영 비어 있다** — 클릭해서 들어가야만
     보이는 구조라 눈으로 알아채기까지 오래 걸린다.
@@ -863,7 +864,7 @@ def test_every_section_has_a_renderer():
     r = _renderer_map()
     assert set(ids) - set(r) == set(), f"렌더러가 없는 섹션: {sorted(set(ids) - set(r))}"
     assert set(r) - set(ids) == set(), f"섹션에 없는 렌더러: {sorted(set(r) - set(ids))}"
-    assert len(ids) == 14
+    assert len(ids) == 15
 
 
 def test_renderers_named_in_the_map_actually_exist():
@@ -982,7 +983,7 @@ def test_docs_state_the_real_test_count():
 
 
 def test_docs_state_the_real_json_contract_size():
-    """JSON 계약 크기(15)는 코드가 정한 수다 — 문서의 다른 수를 잡는다."""
+    """JSON 계약 크기(16)는 코드가 정한 수다 — 문서의 다른 수를 잡는다."""
     n = len(check_output.EXPECTED)
     for name, txt in _docs().items():
         for claimed in re.findall(r"JSON\s*(\d+)개", txt):
