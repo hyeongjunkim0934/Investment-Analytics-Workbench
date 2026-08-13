@@ -913,3 +913,13 @@ button.vchip { cursor: pointer; }
 /* 키인 값이 게시 디폴트와 다를 때 — 옛 저장분이 새 디폴트를 덮고 있어도 보이게
    (2026-08-12 실측 사고: 대체투자 두 분류가 옛 저장분 때문에 같은 μ 로 굳어 있었다) */
 .keyed-off-default { border-color: var(--accent, var(--ink-3)); }
+
+/* ── 수익률 추정 (§7.8) ─────────────────────────────────────────────────
+   자동 채움 중인 수익률 칸. 회색이지만 **장식이 아니라 계산에 실제로 들어가는 값**
+   이다(자산배분 σ placeholder 와 같은 성격이라 같은 위계로 둔다). 색만으로 구분하지
+   않도록 출처 열에 「자동 · <지수명>」이라는 글자가 함께 나간다(WCAG 1.4.1). */
+.est-auto { color: var(--ink-3); font-style: italic; }
+/* 입력이 많은 표라 셀 여백을 조금 줄인다 — app.js 가 DOM 으로 조립하는 표에는
+   tbody 가 없으므로 `table > tr > td` 벌이 함께 있어야 한다(CLAUDE.md 「함정」). */
+.est-table td, .est-table th { padding: 5px 7px; }
+.est-table input { font-size: 12.5px; padding: 2px 5px; }

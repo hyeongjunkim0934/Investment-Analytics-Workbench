@@ -44,7 +44,7 @@ filterRow.append(rangeGroup);
 main.append(filterRow);
 
 /* 섹션 — SECTION_IDS 와 같은 목록. 마을 포함. */
-const SECTIONS = ["overview", "risk", "events", "panel", "hedge", "alloc", "rates",
+const SECTIONS = ["overview", "risk", "estimate", "alloc", "hedge", "events", "panel", "rates",
   "irs", "credit", "fx", "inflation", "acwi", "macro", "catalog"];
 const secNodes = {};
 SECTIONS.forEach((id) => { const n = elem("section", id, "section"); secNodes[id] = n; main.append(n); });
@@ -71,6 +71,12 @@ secNodes.alloc.append(elem("nav", "alloc-toc"));
  "alloc-frontier-card", "alloc-path-card", "alloc-tv-card", "alloc-char-card",
  "alloc-table-card", "alloc-inputs-box", "alloc-method"]
   .forEach((id) => secNodes.alloc.append(elem("div", id)));
+
+/* 수익률 추정 뼈대(§7.8) — renderEstimate 가 $("#est-…") 로 집는 자리들.
+   `est-method` 만 <details> 다(다른 섹션과 같은 규약). */
+["est-summary", "est-controls", "est-table-card", "est-contrib-card", "est-sources"]
+  .forEach((id) => secNodes.estimate.append(elem("div", id)));
+secNodes.estimate.append(elem("details", "est-method"));
 
 /* 카탈로그 뼈대 */
 const catTable = elem("table", "catalog-table");
@@ -178,7 +184,8 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256",
   "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil", "allocCharStats",
   "allocRedistribute", "allocIsAlt", "allocLambdaForSigma", "allocJointOpt", "allocCcyHedgeRows",
-  "allocXeBinds", "allocXeBindNotes", "allocXeRange", "openAllocDetail"];
+  "allocXeBinds", "allocXeBindNotes", "allocXeRange", "openAllocDetail",
+  "estEngine", "estDayCount", "estIndexYtd", "EST_ASSETS"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -1966,6 +1973,139 @@ safe("simPanel", () => {
 /* ====== P20-j. μ 기준일 컷(§7.7.16) — σ 표본을 μ 기준일에 맞춰 잘랐음을 밝히는가 ==
    조용히 자르면 사용자는 σ 가 최신이라고 믿는다(μ·σ 시점 불일치의 반대 방향 사고).
    화면이 ① 컷 날짜 ② 데이터는 어디까지 있는지 두 수를 모두 말해야 한다. */
+/* ====== 수익률 추정 (§7.8) — 연환산 산식·주식 제외·자동 채움 ==================
+   합성 지수를 직접 만들어 **손계산과 대조**한다. 값이 그럴듯하기만 하면 통과하는
+   검사는 이 화면에서 특히 위험하다 — 연환산 계수를 잘못 잡아도 숫자는 여전히
+   "수익률처럼" 보이기 때문이다. */
+const EST_FIXTURE = (() => {
+  /* 2025-01-01 ~ 2026-12-31 일별. 2025 년말을 정확히 1000 으로 놓고 2026-06-30 을
+     1200 으로 놓아 YTD 가 **정확히 +20%** 가 되게 만든다(손계산 앵커). */
+  const t = [], v = [];
+  const start = Date.UTC(2025, 0, 1), end = Date.UTC(2026, 11, 31);
+  const y0 = Date.UTC(2025, 11, 31), y1 = Date.UTC(2026, 5, 30);
+  for (let d = start; d <= end; d += 86400000) {
+    t.push(Math.floor(d / 1000));
+    /* 구간 선형: 연말 1000 → 6/30 1200 → 이후 완만. 어느 날을 집어도 결정적이다. */
+    v.push(d <= y0 ? 900 + 100 * (d - start) / (y0 - start)
+         : d <= y1 ? 1000 + 200 * (d - y0) / (y1 - y0)
+         : 1200 + 60 * (d - y1) / (end - y1));
+  }
+  const mk = (key, asset, label, ok) => ({
+    key, asset, label, src: `test:${key}`,
+    basis: ok ? "총수익 지수(배당 포함)" : "가격지수(배당 미포함, PR)",
+    basis_matches_request: ok, caveat: ok ? "" : "TR 이 아니라 PR 입니다",
+    t, v, year_end: { 2024: { v: 900, d: "2024-12-31" }, 2025: { v: 1000, d: "2025-12-31" } },
+    first: "2025-01-01", last: "2026-12-31",
+  });
+  return {
+    active: true, asof: "2026-12-31",
+    indices: [mk("kospi_tr", "국내주식", "KOSPI TR", true),
+              mk("acwi", "해외주식", "MSCI ACWI", false)],
+    unavailable: [{ assets: ["시가 해외채권 직접", "장부가 해외채권"],
+                    want: "미국채 총수익 지수",
+                    reason: "보유 시리즈는 전부 금리(yield)입니다", have_kind: "금리(yield)" }],
+    annualize: { basis: "days", day_count: 365, note: "주식은 연환산하지 않습니다" },
+  };
+})();
+
+safe("estimateCalc", () => {
+  const r = {};
+  const A = EST_FIXTURE;
+
+  /* ① 경과일수·계수 — 2026-06-30 은 전년 12/31 로부터 181일 */
+  const dc = P.estDayCount("2026-06-30");
+  r.daysFromPriorYearEnd = dc.days;                       // 181
+  r.baseIsPriorYearEnd = dc.base === "2025-12-31";
+  r.factorIsDayCount = Math.abs(dc.factor - 365 / 181) < 1e-12;
+  /* 월수 기준이면 정확히 2.0 이다 — 일수 기준을 골랐으므로 2.0 이 **아니어야** 한다 */
+  r.factorIsNotMonthBased = Math.abs(dc.factor - 2) > 1e-6;
+  r.rejectsBadDate = P.estDayCount("2026-6-30") === null && P.estDayCount("") === null;
+
+  /* ② 지수 YTD — 픽스처가 정확히 +20% 가 되게 만들어져 있다 */
+  const ix = A.indices[0];
+  const y = P.estIndexYtd(ix, "2026-06-30");
+  r.ytdExact = Math.abs(y.ytd - 0.20) < 1e-9;
+  r.ytdUsesPriorYearEndAnchor = y.base.d === "2025-12-31" && y.base.v === 1000;
+  r.ytdReportsObservationDate = y.obs.d === "2026-06-30";
+  /* 앵커가 없는 해는 조용히 0 이 아니라 **오류를 돌려준다** */
+  r.missingAnchorErrors = !!P.estIndexYtd(ix, "2024-06-30").error;
+
+  /* ③ 엔진 — 손계산 대조. 주식만 연환산에서 빠져야 한다. */
+  const st = { asof: "2026-06-30",
+    amt: { "장부가 국내채권": 6000, "국내주식": 2000, "대체투자": 2000 },
+    ret: { "장부가 국내채권": 1.5, "대체투자": 3.0 }, dur: { "장부가 국내채권": 5 } };
+  const E = P.estEngine(A, st);
+  const f = 365 / 181;
+  const row = (k) => E.rows.find((x) => x.key === k);
+  r.equityNotAnnualized = row("국내주식").factor === 1
+    && Math.abs(row("국내주식").applied - 0.20) < 1e-9;
+  r.bondAnnualized = Math.abs(row("장부가 국내채권").applied - 0.015 * f) < 1e-12;
+  r.altAnnualized = Math.abs(row("대체투자").applied - 0.03 * f) < 1e-12;
+  const manual = (6000 * 0.015 * f + 2000 * 0.20 + 2000 * 0.03 * f) / 10000;
+  r.portfolioMatchesHandCalc = Math.abs(E.port - manual) < 1e-12;
+  r.totalAmt = E.totalAmt;
+  /* 기여도 합 = 포트폴리오 수익률 (항등식) */
+  const csum = E.rows.reduce((a, x) => a + (x.contrib || 0), 0);
+  r.contribSumsToPortfolio = Math.abs(csum - E.port) < 1e-12;
+  /* 미연환산 참고치는 계수를 빼고 계산된 다른 수여야 한다 */
+  const manualPeriod = (6000 * 0.015 + 2000 * 0.20 + 2000 * 0.03) / 10000;
+  r.periodReturnMatchesHandCalc = Math.abs(E.portPeriod - manualPeriod) < 1e-12;
+  r.periodDiffersFromAnnualized = Math.abs(E.portPeriod - E.port) > 1e-6;
+  r.bondDurationWeighted = E.durW === 5;
+
+  /* ④ 자동 vs 수기 — 수기값이 자동을 이기고, 지우면 자동으로 돌아간다 */
+  r.autoUsedWhenBlank = row("해외주식").source === "자동"
+    && Math.abs(row("해외주식").r - 0.20) < 1e-9;
+  const stKeyed = { ...st, ret: { ...st.ret, "해외주식": 5 } };
+  const keyed = P.estEngine(A, stKeyed).rows.find((x) => x.key === "해외주식");
+  r.keyedBeatsAuto = keyed.source === "수기" && Math.abs(keyed.r - 0.05) < 1e-12;
+  const stCleared = { ...st, ret: { ...st.ret, "해외주식": null } };
+  const cleared = P.estEngine(A, stCleared).rows.find((x) => x.key === "해외주식");
+  r.clearingRevertsToAuto = cleared.source === "자동";
+  /* 규모는 있는데 수익률이 비면 **0 으로 대체하지 않고** 미입력으로 센다 */
+  const stMiss = { asof: "2026-06-30", amt: { "대출금": 500 }, ret: {}, dur: {} };
+  const EM = P.estEngine(A, stMiss);
+  r.missingReturnFlagged = EM.missingRet.length === 1 && EM.missingRet[0].key === "대출금";
+  r.missingReturnNotZeroFilled = EM.rows.find((x) => x.key === "대출금").r === null;
+
+  /* ⑤ 화면 */
+  P.DATA.estimate = A;
+  shim.localStorage.setItem("iaw-estimate", JSON.stringify({ saved: true, ...st }));
+  P.renderSection("estimate");
+  const sec = DOC.getElementById("estimate");
+  r.renderErrors = sec.querySelectorAll(".render-error").length;
+  r.assetRowCount = DOC.querySelectorAll(".est-table tr").length - 1;   // 헤더 제외 → 11
+  r.inputCount = DOC.querySelectorAll(".est-table input").length;       // 규모11+수익11+듀레6
+  /* 자동 표식은 **자동값이 실제로 들어간 칸에만** — 빈 칸까지 칠하면 채워진 것처럼 읽힌다 */
+  r.autoMarkCount = DOC.querySelectorAll(".est-auto").length;           // 국내주식·해외주식 2
+  const secTxt = sec.textContent.replace(/\s+/g, " ");
+  r.screenStatesFactor = /연환산 계수 2\.0166/.test(secTxt);
+  r.screenStatesElapsed = /경과 181일/.test(secTxt);
+  r.screenSaysEquityExcluded = /주식\(국내·해외\)은 연환산하지 않습니다/.test(secTxt);
+  r.screenWarnsPrNotTr = /PR/.test(secTxt) && /⚠/.test(secTxt);
+  r.screenStatesUstUnavailable = /미국채 총수익 지수 부재/.test(secTxt);
+  r.screenSaysDurationUnused = /지금 수익률 계산에 쓰이지 않습니다/.test(secTxt);
+  /* 입력은 모형 입력이라 즉시 저장된다(자산배분 비중 시뮬레이션과 다른 축) */
+  const amtIn = DOC.querySelectorAll(".est-table input")[0];
+  amtIn.value = "7777";
+  amtIn.dispatchEvent({ type: "input" });
+  const savedNow = JSON.parse(shim.localStorage.getItem("iaw-estimate"));
+  r.inputsSaveImmediately = savedNow.amt["장부가 국내채권"] === 7777;
+
+  /* ⑥ 지수 없는 페이로드 — 화면이 살아 있고 사유를 적어야 한다 */
+  P.DATA.estimate = { active: false, reason: "지수 없음(테스트)", indices: [],
+                      unavailable: A.unavailable, annualize: A.annualize };
+  shim.localStorage.removeItem("iaw-estimate");
+  P.renderSection("estimate");
+  r.inactiveRenderErrors = DOC.getElementById("estimate").querySelectorAll(".render-error").length;
+  r.inactiveExplains = /지수 없음\(테스트\)/.test(DOC.getElementById("estimate").textContent);
+  r.inactiveStillHasInputs = DOC.querySelectorAll(".est-table input").length > 0;
+
+  P.DATA.estimate = A;
+  shim.localStorage.removeItem("iaw-estimate");
+  return r;
+});
+
 safe("cmaSampleCut", () => {
   const r = {};
   P.DATA.alloc = CMA_ALLOC;

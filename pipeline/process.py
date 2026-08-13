@@ -29,6 +29,7 @@ import pandas as pd
 import alloc
 import bm
 import breadth
+import estimate
 import hedge
 import panel
 import risk
@@ -805,6 +806,19 @@ def main() -> None:
             traceback.print_exc()
             warn("cma: 자본시장가정 계산 실패 — 최적화 카드 없이 배포됩니다")
             payloads["alloc.json"]["cma"] = {"active": False, "reason": "계산 실패 — 빌드 로그 확인"}
+
+    # 수익률 추정 화면의 자동 채움 지수(§7.8). 실패해도 화면은 **수기 입력으로 살아 있어야**
+    # 하므로 격리하되, 블록 자체는 active:false 로 반드시 게시한다 — 게이트가 부재를 막는다.
+    try:
+        payloads["estimate.json"] = estimate.build(SERIES, warn)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        warn("estimate: 자동 채움 지수 계산 실패 — 수익률 추정 화면은 수기 입력으로만 동작합니다")
+        payloads["estimate.json"] = {
+            "active": False, "reason": "계산 실패 — 빌드 로그 확인",
+            "indices": [], "unavailable": estimate.UNAVAILABLE,
+            "annualize": estimate.ANNUALIZE}
 
     payloads.update({
         "rates.json": build_rates(),
