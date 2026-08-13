@@ -168,7 +168,8 @@ def test_payload_is_json_serialisable_and_carries_no_raw_leak_beyond_indices():
     }), lambda m: None)
     blob = json.dumps(out, ensure_ascii=False)
     assert json.loads(blob) == out
-    assert set(out) == {"active", "asof", "indices", "unavailable", "annualize"}
+    assert set(out) == {"active", "asof", "asof_all", "indices",
+                        "unavailable", "annualize"}
     declared = {x["src"] for x in estimate.INDICES}
     assert {ix["src"] for ix in out["indices"]} <= declared
 
@@ -194,3 +195,21 @@ def test_index_asset_names_exist_in_the_dashboard_asset_list():
     for u in estimate.UNAVAILABLE:
         for a in u["assets"]:
             assert a in names, f"부재 선언의 {a} 이 EST_ASSETS 에 없습니다"
+
+
+def test_default_asof_is_where_every_index_reaches_not_the_furthest():
+    """기본 기준일(`asof_all`)은 **모든 지수가 도달한 날**이어야 한다(§7.8.1).
+
+    `asof`(가장 멀리 간 날)를 화면 기본값으로 쓰면, 늦게 끝나는 지수 하나 때문에 다른
+    지수의 자동값이 **처음부터 묵은 채로** 뜬다 — 실측: 기본 2026-08-06 에서 ACWI 는
+    2026-07-21 관측(16일 묵음)을 기준일 값처럼 보여주고 있었다. 첫 화면부터 어긋난
+    수를 보여줄 이유가 없다.
+    """
+    out = estimate.build(_store(**{
+        "bb:한국_KOSPI_TR": _daily("2024-01-01", 900),      # 더 멀리 간다
+        "idx:ACWI": _daily("2024-01-01", 800),              # 먼저 끝난다
+    }), lambda m: None)
+    lasts = [ix["last"] for ix in out["indices"]]
+    assert out["asof"] == max(lasts), "asof 는 가장 멀리 간 날이어야 한다(참고용)"
+    assert out["asof_all"] == min(lasts), "asof_all 이 모든 지수가 도달한 날이 아니다"
+    assert out["asof_all"] < out["asof"], "이 픽스처는 두 날짜가 갈려야 검사가 성립한다"

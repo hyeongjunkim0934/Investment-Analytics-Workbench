@@ -146,7 +146,13 @@ def build(series_store: dict, warn) -> dict:
 
     return {
         "active": True,
+        # 데이터가 가장 멀리 간 날 (참고용 — 화면 기본값으로 쓰면 안 된다)
         "asof": max(r["last"] for r in out),
+        # **모든 지수가 도달한 마지막 날.** 화면 기본 기준일은 이쪽이다 —
+        # max 를 기본값으로 두면 늦게 끝나는 지수 하나 때문에 다른 지수의 자동값이
+        # 처음부터 묵은 채로 뜬다(실측: 기본 2026-08-06 에서 ACWI 는 2026-07-21 값,
+        # 16일 묵음). 첫 화면부터 어긋난 값을 보여줄 이유가 없다.
+        "asof_all": min(r["last"] for r in out),
         "indices": out,
         "unavailable": UNAVAILABLE,
         "annualize": ANNUALIZE,
