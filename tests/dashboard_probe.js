@@ -177,7 +177,8 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
   "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256",
   "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil", "allocCharStats",
-  "allocRedistribute", "allocIsAlt", "allocLambdaForSigma", "allocJointOpt", "allocCcyHedgeRows"];
+  "allocRedistribute", "allocIsAlt", "allocLambdaForSigma", "allocJointOpt", "allocCcyHedgeRows",
+  "allocXeBinds", "allocXeBindNotes", "allocXeRange", "openAllocDetail"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -1191,7 +1192,11 @@ safe("hedgeLeverText", () => {
     saved: true, h_bands: { 해외채권: [70, 100], 해외주식: [0, 20] } }));
   P.renderSection("alloc");
   const txt2 = DOC.getElementById("alloc-levers").textContent;
-  r.warnsWhenBandBinds = /밴드가 물고 있습니다/.test(txt2);
+  /* §7.7.17 로 문구가 바뀌었다 — 「물고 있습니다」(원인만) → 「구간을 좁힙니다 + 풀면
+     얼마가 움직이는지」(조치의 크기까지). 옛 문구가 되살아나는 것도 함께 막는다. */
+  r.warnsWhenBandBinds = /헤지 밴드\(내규 키인\)가 구간을 좁힙니다/.test(txt2);
+  r.bandWarningStatesGain = /밴드를 중립\(0~100%\)까지 풀면 Xe [\d.]+% → [\d.]+%/.test(txt2);
+  r.noLegacyBandPhrase = !/밴드가 물고 있습니다/.test(txt2);
   shim.localStorage.removeItem("iaw-alloc");
   return r;
 });
@@ -2210,15 +2215,17 @@ safe("hedgeTracks", () => {
   P.renderSection("alloc");
   const whyTxt = DOC.getElementById("alloc-sim-panel").textContent;
   r.inertSleeveExplained = /해외채권 비중이 0이라 채권 헤지비율은 위험에 영향이 없습니다/.test(whyTxt);
-  /* 구속의 **출처**를 구분하는가 — 내규 밴드(band) vs 해외자산 비중 상한(cap).
+  /* 구속의 **출처**를 구분하는가 — 내규 밴드(band) vs 구조적 한계(cap).
      한 문장으로 뭉치면 중립 밴드 상태에서도 「밴드가 물고 있다」가 나가 사용자를
      밴드 완화라는 틀린 조치로 보낸다(재점검 발견). */
+  const BAND_RE = /헤지 밴드\(내규 키인\)가 구간을 좁힙니다/;
+  const CAP_RE = /환노출의 상한입니다/;
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
     h_bands: { 해외채권: [95, 100], 해외주식: [95, 100] } }));
   P.renderSection("alloc");
   const bandTxt = DOC.getElementById("alloc-sim-panel").textContent;
-  r.bandBindExplained = /헤지 밴드\(내규 키인\)가 물고 있습니다/.test(bandTxt);
-  r.bandCaseNotCalledCap = !/환노출의 상한이라 밴드 문제가 아닙니다/.test(bandTxt);
+  r.bandBindExplained = BAND_RE.test(bandTxt);
+  r.bandCaseNotCalledCap = !CAP_RE.test(bandTxt);
   const stBand = { ...P.allocDefaults(CMA_ALLOC),
     h_bands: { 해외채권: [95, 100], 해외주식: [95, 100] } };
   const joBand = P.allocJointOpt(P.allocEngine(CMA_ALLOC, stBand), stBand);
@@ -2233,9 +2240,98 @@ safe("hedgeTracks", () => {
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, bands: stCap.bands }));
   P.renderSection("alloc");
   const capTxt = DOC.getElementById("alloc-sim-panel").textContent;
-  r.capExplainedAsExposure = /환노출의 상한이라 밴드 문제가 아닙니다/.test(capTxt);
-  r.capCaseNotCalledBand = !/헤지 밴드\(내규 키인\)가 물고 있습니다/.test(capTxt);
+  r.capExplainedAsExposure = CAP_RE.test(capTxt);
+  r.capCaseNotCalledBand = !BAND_RE.test(capTxt);
+
+  /* ③-c **동시 구속**(§7.7.17 — 적대적 재검증이 잡은 결함).
+     예전 코드는 band/cap 을 if/else 로 갈라 하나만 켰다. 그래서 「내규 최소헤지가
+     있으면서 동시에 무제약 최적 Xe 가 해외자산 비중보다 큰」 상태에서 **밴드 문장만**
+     나가고, 사용자가 지시대로 밴드를 중립까지 풀어도 목표에 못 닿았다 —
+     §7.7.16 이 없애려던 오귀인이 그대로 되살아난 것이다(실데이터 λ×하한 28조합 중 6).
+     여기서는 해외 비중을 눌러 구조적 상한을 만들고 채권 헤지 하한을 얹어 그 상태를
+     재현한다. **두 문장이 모두** 나가야 한다.
+     해외채권 밴드는 `[2,2]` 로 **고정**해야 한다 — `[0,2]` 로 두면 최적화가 해외채권을
+     0 으로 보내 버려 채권 헤지 하한이 아무것도 좁히지 못하고(band=false) 시나리오가
+     성립하지 않는다(실측). */
+  const stBoth = { ...dflt2,
+    bands: { ...dflt2.bands, 해외채권: [2, 2], 해외주식: [0, 2] },
+    h_bands: { 해외채권: [50, 100], 해외주식: [0, 100] } };
+  const joBoth = P.allocJointOpt(P.allocEngine(CMA_ALLOC, stBoth), stBoth);
+  r.coBindFlagsBothSet = joBoth.bandBinds === true && joBoth.capBinds === true;
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
+    bands: stBoth.bands, h_bands: stBoth.h_bands }));
+  P.renderSection("alloc");
+  const bothTxt = DOC.getElementById("alloc-sim-panel").textContent;
+  r.coBindShowsBandSentence = BAND_RE.test(bothTxt);
+  r.coBindShowsCapSentence = CAP_RE.test(bothTxt);
+  /* 밴드 문장은 **완화하면 얼마가 움직이는지** 두 수를 적어야 한다(조치의 크기) */
+  r.bandSentenceStatesGain = /구간을 좁힙니다 — 밴드를 중립\(0~100%\)까지 풀면 Xe [\d.]+% → [\d.]+%/
+    .test(bothTxt);
   shim.localStorage.removeItem("iaw-alloc");
+
+  /* ③-d 옛 오귀인 문구가 **어디에도** 남아 있지 않은가 — 화면 네 자리가 같은
+     copy(`allocXeBindNotes`)를 쓰는지 확인하는 자리다. 예전에는 ① 카드만 고치고
+     요약표·레버 문단·헤지 곡면 오버레이가 분리 이전 단일 플래그를 그대로 썼다. */
+  r.legacyPhraseGone = !/헤지 밴드가 물고 있습니다|밴드가 물고 있습니다/
+    .test(DOC.getElementById("alloc").textContent);
+
+  /* ③-e 판정 함수 단위 — 네 상태 × 두 방향. 특히 **하한 물림**에 상한 문안을
+     붙이지 않는지(그때의 구속은 해외자산 비중이 아니라 「오버헤지 불가」다). */
+  const bNone = P.allocXeBinds(0.15, 0, 0.15, 0.08);
+  const bBand = P.allocXeBinds(0.15, 0, 0.10, 0.12);
+  const bCap = P.allocXeBinds(0.05, 0, 0.05, 0.11);
+  const bBoth = P.allocXeBinds(0.05, 0, 0.045, 0.11);
+  const bLo = P.allocXeBinds(0.15, 0, 0.15, -0.03);
+  r.unitNone = !bNone.bandBinds && !bNone.capBinds && bNone.side === null;
+  r.unitBandOnly = bBand.bandBinds && !bBand.capBinds && bBand.side === "hi";
+  r.unitCapOnly = !bCap.bandBinds && bCap.capBinds && bCap.side === "hi";
+  r.unitBoth = bBoth.bandBinds && bBoth.capBinds;
+  r.unitLowerIsCap = !bLo.bandBinds && bLo.capBinds && bLo.side === "lo";
+  const loNotes = P.allocXeBindNotes(bLo);
+  r.lowerBoundUsesOverhedgeWording =
+    loNotes.length === 1 && /오버헤지 불가/.test(loNotes[0]);
+  r.lowerBoundNotBlamedOnWeight = !/해외자산 비중/.test(loNotes.join(" "));
+  r.bothNotesAreTwoSentences = P.allocXeBindNotes(bBoth).length === 2;
+  r.noneNotesEmpty = P.allocXeBindNotes(bNone).length === 0;
+
+  /* ③-f 화면 **네 자리**가 실제로 같은 판정을 쓰는가.
+     ① 시뮬레이터 최적 카드는 위에서 봤고, 나머지 셋(요약표 `#alloc-summary` ·
+     레버 문단 · 헤지 곡면 오버레이)을 여기서 본다. 이 셋은 **현재 배분(w0)** 기준이라
+     ① 과 수가 다를 수 있다 — 다른 포트폴리오를 설명하는 자리이므로 정상이다.
+     따라서 「① 과 같은 문장이 나오는가」가 아니라 「자기 w0 판정과 일치하는가」를 본다.
+     해외 비중을 각 1% 로 두고 밴드는 중립 — 구조적 상한만 무는 상태다(각 2% 로 두면
+     이 픽스처에서는 xeFree 3.31% < wF 4.00% 라 아무것도 물지 않는다 — 실측). */
+  const mixLowFx = { ...dflt2.mix, 해외채권: 1, 해외주식: 1, 국내채권: dflt2.mix.국내채권 +
+    ((dflt2.mix.해외채권 - 1) + (dflt2.mix.해외주식 - 1)) };
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, mix: mixLowFx,
+    h_bands: { 해외채권: [0, 100], 해외주식: [0, 100] } }));
+  P.renderSection("alloc");
+  const stLow = P.allocState(CMA_ALLOC);
+  const ELow = P.allocEngine(CMA_ALLOC, stLow);
+  const qLow = ELow.xeQuad();
+  const [lLo, lHi] = P.allocXeRange(ELow, P.allocHBands(stLow));
+  const bLow = P.allocXeBinds(ELow.xeOf(0, 0), lLo, lHi, ELow.xeStar(null, null, qLow));
+  const sumTxt = DOC.getElementById("alloc-summary").textContent;
+  const wantCap = bLow.capBinds, wantBand = bLow.bandBinds;
+  r.summaryMatchesOwnBinds =
+    CAP_RE.test(sumTxt) === wantCap && BAND_RE.test(sumTxt) === wantBand;
+  r.summaryCapBindsHere = wantCap === true;   // 시나리오가 실제로 그 상태인지 고정
+  r.summaryNotCalledBand = !BAND_RE.test(sumTxt);
+  /* 레버 문단은 요약표와 `hq` 한 벌을 공유한다 — 따로 계산하면 두 「최적」이 갈린다 */
+  const leverTxt = DOC.getElementById("alloc").textContent;
+  r.leverMatchesSummary = CAP_RE.test(leverTxt) === wantCap;
+  /* 헤지 곡면 오버레이 — 방법론 설명 자리라 원인 진단의 근거로 읽힌다.
+     여는 것은 `handleHash()` 지만 프로브는 그 진입점을 갖고 있지 않으므로(해시만 바꿔서는
+     열리지 않는다 — 실측) 렌더 함수를 직접 부른다. */
+  P.openAllocDetail("hedge");
+  const ovTxt = DOC.getElementById("detail-overlay").textContent;
+  r.overlayRendered = /동률 능선/.test(ovTxt);
+  r.overlayMatchesOwnBinds =
+    CAP_RE.test(ovTxt) === wantCap && BAND_RE.test(ovTxt) === wantBand;
+  r.overlayLegacyPhraseGone = !/밴드가 물고 있습니다/.test(ovTxt);
+  P.hideDetail();
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
 
   /* ④ 환율 축 부재 — 무력 명시 + 배분만 최적화 */
   const NOFX2 = { ...CMA_ALLOC, cma: stripCmaCol(CMA_ALLOC.cma, "_fx") };

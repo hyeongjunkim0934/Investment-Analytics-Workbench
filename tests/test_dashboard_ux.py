@@ -1376,8 +1376,16 @@ def test_lever_text_states_the_one_axis_not_a_single_optimal_pair(probe):
 
 
 def test_lever_text_warns_when_the_band_is_what_picks_the_answer(probe):
-    """밴드가 물면 그 사실을 화면에 적어야 한다 — 그 숫자는 모형이 아니라 내규가 정한 값이다."""
-    assert probe["hedgeLeverText"]["warnsWhenBandBinds"] is True
+    """밴드가 물면 그 사실을 화면에 적어야 한다 — 그 숫자는 모형이 아니라 내규가 정한 값이다.
+
+    §7.7.17 에서 문구가 「물고 있습니다」에서 「구간을 좁힙니다 + 풀면 Xe 가 얼마나
+    움직이는지」로 바뀌었다 — 원인만 말하고 조치의 크기를 숨기면, 내규 완화라는 비싼
+    행동을 하고도 얼마 못 움직이는 경우를 사용자가 미리 알 수 없다.
+    """
+    c = probe["hedgeLeverText"]
+    assert c["warnsWhenBandBinds"] is True
+    assert c["bandWarningStatesGain"] is True, "밴드 완화로 Xe 가 얼마나 움직이는지 적지 않는다"
+    assert c["noLegacyBandPhrase"] is True, "옛 문구가 되살아났다"
 
 
 # ---- ALM 듀레이션 갭 (실행해서 확인) ----------------------------------------
@@ -1935,6 +1943,57 @@ def test_hedge_optimum_markers_and_inert_reasons(probe):
     assert c["capCaseNotCalledBand"] is True
     assert c["noopButtonAbsentWhenMovable"] is True
     assert c["noopButtonAppearsAfterApply"] is True, "이미 최적인데 버튼이 계속 눌린다"
+
+
+def test_xe_binding_attribution_is_not_exclusive(probe):
+    """환노출 구속의 귀속(§7.7.17) — 밴드와 구조적 한계는 **동시에** 성립할 수 있다.
+
+    §7.7.16 은 둘을 갈랐지만 if/else 로 갈라서 하나만 켰다. 그 결과 「내규 최소헤지가
+    있으면서 동시에 무제약 최적 Xe 가 해외자산 비중보다 큰」 상태에서 밴드 문장만 나가고,
+    사용자가 지시대로 밴드를 중립까지 풀어도 목표에 못 닿았다 — 없애려던 오귀인이 그대로
+    되살아난 것이다(실제 게시 페이로드에서 λ×헤지하한 28조합 중 6조합이 이 상태였다).
+
+    또한 **하한 물림**(xeFree < 0)에 상한 문안을 붙이면 안 된다 — 그때의 구속은 해외자산
+    비중이 아니라 「오버헤지 불가(Xe ≥ 0)」이고, 비중을 원인으로 지목하면 성립하지 않는
+    설명이 된다.
+    """
+    c = probe["hedgeTracks"]
+    # 판정 함수 단위 — 네 상태 × 두 방향
+    assert c["unitNone"] is True
+    assert c["unitBandOnly"] is True
+    assert c["unitCapOnly"] is True
+    assert c["unitBoth"] is True, "밴드와 구조적 한계가 동시에 무는데 하나만 켜졌다"
+    assert c["unitLowerIsCap"] is True
+    assert c["noneNotesEmpty"] is True, "아무것도 안 무는데 문장을 만든다"
+    assert c["bothNotesAreTwoSentences"] is True
+    assert c["lowerBoundUsesOverhedgeWording"] is True, "하한 물림에 상한 문안을 붙였다"
+    assert c["lowerBoundNotBlamedOnWeight"] is True, "하한 구속의 원인을 해외자산 비중이라 적는다"
+    # 화면 — 동시 구속에서 두 문장이 모두 나가고, 밴드 문장은 완화 이득을 수치로 적는다
+    assert c["coBindFlagsBothSet"] is True
+    assert c["coBindShowsBandSentence"] is True
+    assert c["coBindShowsCapSentence"] is True, "밴드를 풀어도 못 간다는 사실이 화면에서 사라진다"
+    assert c["bandSentenceStatesGain"] is True, "밴드 완화로 Xe 가 얼마나 움직이는지 적지 않는다"
+
+
+def test_xe_binding_copy_is_shared_by_all_screens(probe):
+    """네 자리가 같은 판정·같은 문장을 쓰는가(§7.7.17).
+
+    ① 시뮬레이터 최적 카드 · ② 요약표 `#alloc-summary` · ③ 레버 문단 · ④ 헤지 곡면
+    오버레이. §7.7.16 은 ① 만 고쳤고 나머지 셋은 분리 이전의 단일 플래그
+    `|xeBand − xeFree| > 1e-9` 를 그대로 써서, 밴드가 중립인데도 「헤지 밴드가 물고
+    있습니다」를 단언했다(실제 게시 페이로드로 재현). ②③④ 는 **현재 배분** 기준이라
+    ① 과 문장 수가 다를 수 있다 — 그래서 「① 과 같은가」가 아니라 「자기 판정과
+    일치하는가」를 본다.
+    """
+    c = probe["hedgeTracks"]
+    assert c["summaryCapBindsHere"] is True, "시나리오가 의도한 구속 상태를 만들지 못했다"
+    assert c["summaryMatchesOwnBinds"] is True, "요약표가 자기 배분의 판정과 다른 문장을 적는다"
+    assert c["summaryNotCalledBand"] is True, "중립 밴드인데 요약표가 밴드를 원인이라 적는다"
+    assert c["leverMatchesSummary"] is True, "레버 문단과 요약표가 서로 다른 원인을 적는다"
+    assert c["overlayRendered"] is True
+    assert c["overlayMatchesOwnBinds"] is True, "헤지 곡면 오버레이가 다른 판정을 쓴다"
+    assert c["overlayLegacyPhraseGone"] is True
+    assert c["legacyPhraseGone"] is True, "옛 오귀인 문구가 화면 어딘가에 남아 있다"
 
 
 def test_hedge_two_tracks_joint_and_sim(probe):

@@ -4182,6 +4182,70 @@ function allocXeRange(E, bands) {
   return [E.xeOf(bhi, ehi), E.xeOf(blo, elo)];
 }
 
+/* **환노출 구속의 출처를 한 곳에서 판정한다** (§7.7.17 — 재점검 발견).
+   화면에서 이 판정을 쓰는 자리가 셋이다: ① 시뮬레이터 최적 카드 · ② 요약표
+   `#alloc-summary` · ③ 헤지 곡면 오버레이. §7.7.16 에서 ① 만 고쳤더니 같은 화면
+   안에서 같은 사실에 두 가지 원인 설명이 공존했다(②③ 은 분리 이전의 단일 플래그
+   `|xeBand − xeFree| > 1e-9` 를 그대로 쓰고 있었다 — 중립 밴드에서도 「밴드가 물고
+   있습니다」가 나갔다. 실데이터 페이로드로 재현함). 세 자리가 이 함수 하나를 부른다.
+
+   Xe 의 실행 가능 구간은 **두 겹**이다:
+     ① 구조적 한계 [0, wF] — wF = 해외자산 비중 합. 헤지 100% 를 걸어도 Xe ≥ 0
+        (오버헤지 불가), 0% 로 풀어도 Xe ≤ wF. **밴드를 중립까지 풀어도 이 밖은 못 간다.**
+     ② 내규 밴드 [xeLo, xeHi] ⊆ ①
+   두 구속은 **동시에 성립할 수 있다.** if/else 로 하나만 고르면 그 경우 밴드 문장만
+   나가고, 사용자는 지시대로 밴드를 중립까지 풀어도 목표에 못 닿는다 — §7.7.16 이
+   없애려던 「틀린 조치로 보낸다」가 그대로 재현된다(실측: 실제 게시 페이로드에서
+   λ×헤지하한 28조합 중 **6조합**이 이 상태. 예 λ=30·채권하한 10% → 해외비중 5.00%,
+   xeHi 4.50%, xeFree 11.08% 인데 밴드 문장만 출력). 그래서 **집합으로** 돌려주고
+   화면이 해당하는 문장을 모두 적는다.
+
+   판정은 xe(수렴 잔차가 섞인 값)가 아니라 **xeFree** 로 하고 허용오차는 상대값이다 —
+   비수렴 잔차가 제약 판정으로 새면 아무것도 안 무는 상태에서 경고가 뜬다(실측 λ=100). */
+function allocXeBinds(wF, xeLo, xeHi, xeFree) {
+  /* `xeNeutral` 은 **밴드를 중립까지 풀었을 때 도달 가능한 최선**이다 — 엔진의
+     `E.xeOpen()`(= wF, 헤지 0% 일 때의 노출 그 자체)과 다른 수이므로 이름을 나눈다. */
+  const out = { bandBinds: false, capBinds: false, side: null,
+                wF, xeFree, xeNeutral: null, xeBand: null };
+  if (xeFree == null || wF == null) return out;
+  const clamp = (x, lo, hi) => Math.min(Math.max(x, lo), hi);
+  const tol = 1e-6 * Math.max(1, Math.abs(xeFree));
+  const xeNeutral = clamp(xeFree, 0, wF);        // 밴드를 중립까지 풀면 갈 수 있는 곳
+  const xeBand = clamp(xeFree, xeLo, xeHi);      // 실제 밴드에서 갈 수 있는 곳
+  out.xeNeutral = xeNeutral;
+  out.xeBand = xeBand;
+  out.capBinds = Math.abs(xeNeutral - xeFree) > tol;   // 구조적 — 밴드를 풀어도 못 간다
+  out.bandBinds = Math.abs(xeBand - xeNeutral) > tol;  // 밴드가 그 위에 더 얹은 몫
+  if (xeFree > xeBand + tol) out.side = "hi";
+  else if (xeFree < xeBand - tol) out.side = "lo";
+  return out;
+}
+
+/* 위 판정을 **화면 문장**으로 — 세 자리가 같은 copy 를 쓰게 하는 자리다.
+   두 문장은 서로 배타가 아니며, 각자 **다른 조치**를 가리킨다:
+     · 밴드 → 내규 완화로 얼마가 움직이는지(정확한 두 수를 적는다)
+     · 구조 → 밴드로는 해결되지 않는다는 사실 + 진짜 한계가 무엇인지
+   하한 물림(side "lo")에 상한 문안을 쓰지 않는다 — 그때의 구속은 해외자산 비중이
+   아니라 「오버헤지 불가(Xe ≥ 0)」이고, 비중을 원인으로 지목하면 성립하지 않는
+   설명이 된다(재점검 발견). */
+function allocXeBindNotes(b) {
+  const out = [];
+  if (!b) return out;
+  const pc = (x, d) => fmtNum(x * 100, d == null ? 2 : d);
+  if (b.bandBinds) {
+    out.push(`헤지 밴드(내규 키인)가 구간을 좁힙니다 — 밴드를 중립(0~100%)까지 풀면 `
+      + `Xe ${pc(b.xeBand)}% → ${pc(b.xeNeutral)}%`);
+  }
+  if (b.capBinds) {
+    out.push(b.side === "lo"
+      ? `환노출은 음수가 될 수 없습니다(오버헤지 불가) — 헤지를 100%까지 걸어도 Xe 하한은 `
+        + `0%라 무제약 위험최소 Xe ${pc(b.xeFree)}% 에는 닿지 않습니다`
+      : `해외자산 비중(${pc(b.wF, 1)}%)이 환노출의 상한입니다 — 헤지를 0%까지 풀어도 `
+        + `무제약 위험최소 Xe ${pc(b.xeFree)}% 에는 닿지 않습니다(밴드 문제가 아닙니다)`);
+  }
+  return out;
+}
+
 /* 실행 불가능한 제약 입력을 침묵 속에 흡수하지 않는다 — pipeline/alloc.py
    check_feasible 와 같은 규칙 + 그룹 상한의 두 가지 모순까지 검사. */
 function allocFeasibility(E) {
@@ -4513,31 +4577,14 @@ function allocJointOpt(E, st) {
   const q = E.fxLive ? E.xeQuadW(w) : null;
   const xeFree = q ? E.xeStar(null, null, q) : null;
   const xe = E.fxLive ? E.xeOfW(w, hb, he) : null;
-  /* **구속의 출처를 구분한다**(재점검 발견 — 한 플래그로 뭉치면 거짓 안내가 된다).
-     Xe 의 실행 가능 구간 [xeLo, xeHi] 는 두 가지가 함께 만든다:
-       ① 헤지 밴드(내규 키인) — 밴드를 좁히면 구간이 좁아진다
-       ② **해외자산 비중 자체** — 헤지를 0% 로 놔도 Xe ≤ w채+w주 이고, 100% 로 걸어도
-          Xe ≥ 0 이다. 즉 밴드가 중립(0~100)이어도 노출 상한은 존재한다.
-     실측: 중립 밴드인데 λ=20 에서 xeFree 8.65% > xeHi 5.0%(= 총 해외비중)라 잘렸다 —
-     이때 「헤지 밴드가 물고 있습니다」라고 적으면 사용자를 밴드 완화라는 **틀린 조치**로
-     보낸다(밴드는 이미 중립이다). 그래서 둘을 나눠 각자 다른 문장을 쓴다.
-     판정은 xe(수렴 잔차가 섞인 값) 대신 **xeFree 가 구간 밖인지**로 한다 — 비수렴
-     잔차가 제약 판정으로 새지 않게(실측: λ=100 에서 잔차 8.1e-5 가 절대 오차 1e-9 를
-     넘어 밴드 경고가 잘못 떴다). 허용오차도 상대값으로 둔다. */
-  let bandBinds = false, capBinds = false, xeLo = null, xeHi = null;
+  /* 구속의 출처는 `allocXeBinds` 한 곳이 정한다(§7.7.17) — 요약표·오버레이와 같은 답을
+     쓰기 위해서다. 두 구속은 배타가 아니며 동시에 성립할 수 있다(그 함수의 주석 참조). */
+  let binds = null, xeLo = null, xeHi = null;
   if (E.fxLive && xeFree != null) {
     const [[blo2, bhi2], [elo2, ehi2]] = hbnds;
     xeLo = w[1] * (1 - bhi2) + w[3] * (1 - ehi2);
     xeHi = w[1] * (1 - blo2) + w[3] * (1 - elo2);
-    const openMax = w[1] + w[3];                    // 헤지 0% 일 때의 노출 = 구조적 상한
-    const tol = 1e-6 * Math.max(1, Math.abs(xeFree));
-    if (xeFree > xeHi + tol) {
-      // 위쪽으로 잘림 — 상한이 노출 자체(밴드 중립)면 cap, 밴드가 더 좁히면 band
-      if (xeHi < openMax - tol) bandBinds = true; else capBinds = true;
-    } else if (xeFree < xeLo - tol) {
-      // 아래쪽으로 잘림 — 하한이 0(완전헤지 가능)이면 구조적, 밴드가 올렸으면 band
-      if (xeLo > tol) bandBinds = true; else capBinds = true;
-    }
+    binds = allocXeBinds(w[1] + w[3], xeLo, xeHi, xeFree);
   }
   return {
     w, hb, he, xe,
@@ -4546,9 +4593,9 @@ function allocJointOpt(E, st) {
     /* 슬리브 비중이 사실상 0이면 그 헤지비율은 위험에 무영향 */
     inertBond: E.fxLive && w[1] < 1e-9,
     inertEq: E.fxLive && w[3] < 1e-9,
-    xeFree, xeLo, xeHi,
-    bandBinds,      // 내규 밴드가 구간을 좁혀 잘림
-    capBinds,       // 해외자산 비중 자체가 상한 — 밴드를 풀어도 못 간다
+    xeFree, xeLo, xeHi, binds,
+    bandBinds: !!(binds && binds.bandBinds),   // 내규 밴드가 구간을 좁혀 잘림
+    capBinds: !!(binds && binds.capBinds),     // 구조적 한계 — 밴드를 풀어도 못 간다
   };
 }
 
@@ -5252,15 +5299,9 @@ function renderAlloc() {
         if (opt.inertEq) {
           why.push("이 최적 배분은 해외주식 비중이 0이라 주식 헤지비율은 위험에 영향이 없습니다(어떤 값이든 동일)");
         }
-        if (opt.bandBinds && opt.xeFree != null) {
-          why.push(`헤지 밴드(내규 키인)가 물고 있습니다 — 무제약 위험최소 Xe ${fmtNum(opt.xeFree * 100, 2)}%`);
-        }
-        if (opt.capBinds && opt.xeFree != null) {
-          /* 밴드가 아니라 **해외자산 비중 자체**가 상한인 경우 — 밴드를 풀어도 못 간다.
-             원인을 밴드로 적으면 사용자를 틀린 조치로 보낸다(재점검 발견). */
-          why.push(`헤지를 끝까지 움직여도 위험최소 Xe ${fmtNum(opt.xeFree * 100, 2)}% 에 닿지 않습니다 — `
-            + `해외자산 비중(${fmtNum((opt.w[1] + opt.w[3]) * 100, 1)}%)이 환노출의 상한이라 밴드 문제가 아닙니다`);
-        }
+        /* 구속 문장은 `allocXeBindNotes` 한 곳이 만든다(§7.7.17) — 요약표·오버레이와
+           **같은 copy**. 둘 다 무는 경우 두 문장이 함께 나간다(배타가 아니다). */
+        allocXeBindNotes(opt.binds).forEach((s) => why.push(s));
         if (opt.converged === false) {
           why.push("교대 최적화가 반복 상한에서 멈췄습니다 — 표시값은 근사입니다");
         }
@@ -5581,7 +5622,12 @@ function renderAlloc() {
         xeCur: E.xeOf(st.h_bond / 100, st.h_eq / 100),
         sBand: E.sigmaXe(xeBand, q),
         pair: E.hedgePairForXe(xeBand, [st.h_bond / 100, st.h_eq / 100], hbnds),
-        bound: Math.abs(xeBand - xeFree) > 1e-9,
+        /* §7.7.17 — 여기도 ① 최적 카드와 **같은 판정·같은 문장**을 쓴다. 예전에는
+           `|xeBand − xeFree| > 1e-9` 라는 분리 이전의 단일 플래그였고, 그래서 밴드가
+           중립이어도 「헤지 밴드가 물고 있습니다」가 이 표에 나갔다(실제 게시 페이로드로
+           재현). 요약표는 「그래서 얼마인데?」의 답 자리라 여기의 오귀인이 가장 비싸다.
+           해외자산 비중 합은 `E.xeOf(0, 0)` = w채 + w주 (헤지 0% 일 때의 노출). */
+        binds: allocXeBinds(E.xeOf(0, 0), xeLo, xeHi, xeFree),
       };
     }
 
@@ -5656,7 +5702,7 @@ function renderAlloc() {
             "배분 참고치는 헤지 고정(수익 유지 ②), 헤지 참고치는 배분 고정(위험 최소 Xe의 현재값 최근접 대표점) — ",
             el("b", {}, "두 부분해이며 동시 최적해가 아닙니다"),
             "(동시해는 통화축 확장 후 제공). ",
-            hq.bound ? el("b", {}, `헤지 밴드가 물고 있습니다(무제약 Xe ${fmtNum(hq.xeFree * 100, 2)}%). `) : "",
+            ...allocXeBindNotes(hq.binds).map((s) => el("b", {}, `${s}. `)),
             "같은 Xe를 만드는 헤지 조합은 위험이 정확히 같습니다 — ",
             el("a", { href: "#alloc-hedge" }, "왜? ›"),
           ] : [
@@ -5759,7 +5805,9 @@ function renderAlloc() {
               el("b", {}, "위험이 정확히 같습니다"),
               ` — 현재값에 가장 가까운 대표점은 (채권 ${fmtNum(hq.pair[0] * 100, 0)}%, 주식 ${fmtNum(hq.pair[1] * 100, 0)}%)입니다.`)
           : el("b", {}, "다만 이 Xe 는 지금 밴드 안에서 만들 수 없습니다 — 밴드를 확인하십시오."),
-        hq.bound ? el("b", {}, ` ⚠ 밴드가 물고 있습니다(무제약 최소 Xe ${fmtNum(hq.xeFree * 100, 2)}%).`) : "",
+        /* §7.7.17 — 레버 문단도 같은 판정·같은 문장(요약표와 `hq` 한 벌을 공유한다).
+           네 자리(① 카드·요약표·이 문단·헤지 곡면 오버레이)가 전부 `allocXeBindNotes` 다. */
+        ...allocXeBindNotes(hq.binds).map((s) => el("b", {}, ` ⚠ ${s}.`)),
         el("a", { href: "#alloc-hedge", style: "margin-left:6px" }, "헤지 곡면 상세 ›"), el("br"),
         "· ", el("b", {}, "레버 2 (헤지 고정, 배분만 이동)"),
         ` — 같은 기대수익 ${fmtNum(target, 2)}%를 유지하며 위험 ${fmtNum(sigCur, 2)}→${fmtNum(sigKeep, 2)}% (±표본오차 ${fmtNum(se, 2)}%p 병기 · 매매회전 ${fmtNum(turnover, 1)}%p).`,
@@ -6383,8 +6431,10 @@ function openAllocDetail(topic) {
     inner.append(el("div", { class: "howto", style: "margin-top:12px" },
       el("b", {}, "왜 자산별 참고치와 다른가"),
       ` — 채권만 떼어 본 최소분산 헤지(MVH)는 ${fmtNum(mvhBond, 0)}%지만, 포트폴리오 전체의 위험 최소 Xe 는 ${fmtNum(xeBand * 100, 2)}%입니다(현재 ${fmtNum(xeCur * 100, 2)}%). 총위험에는 국내주식·환율의 상쇄까지 들어오기 때문입니다. `,
-      Math.abs(xeBand - xeFree) > 1e-9
-        ? el("b", {}, `밴드가 물고 있습니다 — 무제약 최소 Xe 는 ${fmtNum(xeFree * 100, 2)}%입니다. `) : "",
+      /* §7.7.17 — 여기도 요약표·① 카드와 같은 판정·같은 문장. 예전에는 분리 이전의
+         단일 플래그라 밴드가 중립이어도 「밴드가 물고 있습니다」가 나갔다. 이 문단은
+         방법론 설명 자리라 사용자가 원인 진단의 근거로 읽는 지점이다. */
+      ...allocXeBindNotes(allocXeBinds(xeOpen, xeLo, xeHi, xeFree)).map((s) => el("b", {}, `${s}. `)),
       "회계(손익) 관점은 방향이 정반대 — 장부가 해외채권은 상쇄해줄 가격변동이 손익에 없어 헤지 100%가 언제나 손익변동 최소입니다(판단 변수는 비용). ",
       el("b", {}, "회계 관점에서는 이 Xe 붕괴가 성립하지 않습니다"), " — 스왑 MTM(−h·만기/2)이 채권 축을 따로 남기기 때문입니다."));
     $("#detail-overlay").scrollTop = 0;
