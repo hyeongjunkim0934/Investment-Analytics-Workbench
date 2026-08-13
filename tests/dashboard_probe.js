@@ -2001,7 +2001,9 @@ const EST_FIXTURE = (() => {
     key, asset, label, src: `test:${key}`,
     basis: ok ? "총수익 지수(배당 포함)" : "가격지수(배당 미포함, PR)",
     basis_matches_request: ok, caveat: ok ? "" : "TR 이 아니라 PR 입니다",
-    t, v, year_end: { 2024: { v: 900, d: "2024-12-31" }, 2025: { v: 1000, d: "2025-12-31" } },
+    t, v, year_end: { 2024: { v: 900, d: "2024-12-31" }, 2025: { v: 1000, d: "2025-12-31" },
+                     /* 2026 앵커가 있어야 "기준일이 데이터 밖" 케이스를 만들 수 있다 */
+                     2026: { v: 1260, d: "2026-12-31" } },
     first: "2025-01-01", last: "2026-12-31",
   });
   return {
@@ -2182,8 +2184,69 @@ safe("estimateCalc", () => {
   r.inactiveExplains = /지수 없음\(테스트\)/.test(DOC.getElementById("estimate").textContent);
   r.inactiveStillHasInputs = DOC.querySelectorAll(".est-table input").length > 0;
 
+  /* ⑦ 재점검(§7.8.1)에서 나온 결함 셋 — 전부 실데이터로 재현했던 것들 */
+
+  // (a) 존재하지 않는 날짜는 Date 가 조용히 다음 달로 굴린다(2026-02-30 → 3/2, 경과 61일)
+  r.rejectsRolledOverDate = P.estDayCount("2026-02-30") === null;
+  r.acceptsRealLeapDay = !!P.estDayCount("2024-02-29");
+  r.rejectsFakeLeapDay = P.estDayCount("2025-02-29") === null;
+
+  /* (b) 기준일이 지수의 마지막 관측보다 뒤면 **그 사실이 값에 실려야** 한다.
+     전용 지수를 만든다 — 공용 픽스처는 2026-12-31 까지 있어서 그 뒤 기준일이
+     「그 해 관측 없음」 분기로 빠진다(그건 (b2) 에서 따로 본다). */
+  const stop = { ...A.indices[0], last: "2026-06-30",
+    t: A.indices[0].t.filter((x) => x <= Math.floor(Date.UTC(2026, 5, 30) / 1000)) };
+  stop.v = A.indices[0].v.slice(0, stop.t.length);
+  const far = P.estIndexYtd(stop, "2026-11-30");
+  r.beyondDataFlagged = far.beyondData === true && far.gapDays > 100;
+  r.beyondDataStillReturnsValue = Math.abs(far.ytd - 0.20) < 1e-9;   // 값은 내되 표를 단다
+  const inRange = P.estIndexYtd(stop, "2026-06-30");
+  r.inRangeNotFlagged = inRange.beyondData === false && inRange.gapDays === 0;
+  /* (b2) 기준일 연도에 관측이 **하나도 없으면** 「전년 연말보다 앞섭니다」가 아니라
+     그 사실을 적어야 한다(예전 문구는 사실과 달라 사용자를 엉뚱한 데로 보냈다). */
+  const noYear = P.estIndexYtd(A.indices[0], "2027-06-30");
+  r.emptyYearSaysSo = /2027년 관측이 없습니다/.test(noYear.error || "");
+  r.emptyYearNotMislabelled = !/전년 연말보다 앞섭니다/.test(noYear.error || "");
+
+  // (c) 화면 — 쓴 관측일이 **눈에 보여야** 한다(예전에는 title 툴팁에만 있었다)
+  P.DATA.estimate = { ...A, indices: [stop, A.indices[1]] };
+  shim.localStorage.setItem("iaw-estimate", JSON.stringify({ saved: true,
+    asof: "2026-11-30", amt: { "국내주식": 1000 }, ret: {}, dur: {} }));
+  P.renderSection("estimate");
+  const staleTxt = DOC.getElementById("estimate").textContent.replace(/\s+/g, " ");
+  r.rowShowsUsedObservationDate = /2026-06-30 까지만 있음/.test(staleTxt);
+  r.summaryWarnsStale = /자동 채움 지수가 기준일까지 오지 않았습니다/.test(staleTxt);
+  /* 표식이 **실제 노드**로 있어야 한다 — title 속성에만 있으면 터치 기기에서 아예
+     보이지 않는다(셰이드에 innerHTML 이 없으므로 노드로 확인한다). */
+  r.staleMarkIsVisibleNotTooltipOnly = Array.from(
+    DOC.getElementById("est-table-card").querySelectorAll("span"))
+    .some((n) => /까지만 있음/.test(n.textContent || ""));
+
+  // (d) 음수 규모 / 규모 합 0 — 왜 결과가 비는지 화면이 적는다
+  shim.localStorage.setItem("iaw-estimate", JSON.stringify({ saved: true,
+    asof: "2026-06-30", amt: { "대출금": -500 }, ret: { "대출금": 3 }, dur: {} }));
+  P.renderSection("estimate");
+  const negTxt = DOC.getElementById("est-summary").textContent.replace(/\s+/g, " ");
+  r.negativeAmountWarned = /규모가 음수인 자산군 1개/.test(negTxt);
+  r.zeroTotalExplained = /규모 합이 0 이하라 포트폴리오 수익률을 낼 수 없습니다/.test(negTxt);
+  r.amountInputHasMinZero = Array.from(DOC.querySelectorAll(".est-table input"))
+    .filter((n) => /규모$/.test(n.getAttribute("aria-label") || ""))
+    .every((n) => n.getAttribute("min") === "0");
+
+  // (e) 기본 기준일은 **모든 지수가 도달한 날**이어야 한다 — 늦게 끝나는 지수 하나 때문에
+  //     다른 지수가 처음부터 묵은 값으로 뜨면 안 된다(실측 16일)
+  const mixed = { ...A, asof: "2026-12-31", asof_all: "2026-06-30" };
+  P.DATA.estimate = mixed;
+  shim.localStorage.removeItem("iaw-estimate");
+  P.renderSection("estimate");
+  /* 셰이드는 `.type` 프로퍼티를 노출하지 않는다 — 속성으로 집는다 */
+  const dateIn = Array.from(DOC.querySelectorAll("#est-controls input"))
+    .find((n) => n.getAttribute("type") === "date");
+  r.defaultAsofUsesAllIndexReach = dateIn && dateIn.value === "2026-06-30";
+
   P.DATA.estimate = A;
   shim.localStorage.removeItem("iaw-estimate");
+  P.renderSection("estimate");
   return r;
 });
 

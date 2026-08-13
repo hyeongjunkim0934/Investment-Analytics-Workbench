@@ -1968,6 +1968,52 @@ def test_estimate_autofill_yields_to_manual_and_never_invents_zero(probe):
     assert c["missingReturnNotZeroFilled"] is True, "빈 수익률을 0 으로 대체했다"
 
 
+def test_estimate_never_passes_off_a_stale_index_value_as_the_asof_value(probe):
+    """§7.8.1 재점검 — 자동값이 기준일까지 오지 않았으면 **화면이 말해야** 한다.
+
+    실측 사고: 기본 기준일(2026-08-06)에서 ACWI 자동값은 **2026-07-21 관측**을 쓰고
+    있었고 화면 어디에도 그 사실이 없었다(관측일이 `title` 툴팁에만 있었는데, 툴팁은
+    터치 기기에서 아예 안 뜨고 발견되지도 않는다). 미래 기준일이면 간극이 150일을 넘는다.
+    16일 묵은 수가 기준일 수익률로 보고서에 들어가는 경로다.
+
+    고친 방식 셋:
+      ① 기본 기준일을 `asof_all`(**모든 지수가 도달한 날**)로 — 첫 화면부터 어긋나지 않게
+      ② 쓴 관측일을 표에 **눈에 보이게**, 데이터 밖이면 경고색으로
+      ③ 요약에도 한 줄 — 표의 작은 글씨는 스크롤해야 보인다
+    휴장일(며칠 앞선 관측)과 **데이터가 거기까지 오지 않은 것**은 다른 사건이므로,
+    임의 임계값 대신 `기준일 > 지수 마지막 관측` 이라는 조건으로 가른다.
+    """
+    c = probe["estimateCalc"]
+    assert c["beyondDataFlagged"] is True, "기준일이 데이터 밖인데 표시가 없다"
+    assert c["beyondDataStillReturnsValue"] is True, "값을 없애버렸다 — 표를 달되 값은 내야 한다"
+    assert c["inRangeNotFlagged"] is True, "정상 범위인데 경고가 뜬다"
+    assert c["rowShowsUsedObservationDate"] is True, "실제로 쓴 관측일이 표에 안 보인다"
+    assert c["staleMarkIsVisibleNotTooltipOnly"] is True, "표식이 툴팁에만 있다"
+    assert c["summaryWarnsStale"] is True, "요약이 묵은 자동값을 알리지 않는다"
+    assert c["defaultAsofUsesAllIndexReach"] is True, (
+        "기본 기준일이 모든 지수가 도달한 날이 아니다 — 첫 화면부터 자동값이 묵는다")
+    # 기준일 연도에 관측이 아예 없는 경우의 문구가 사실과 맞는가
+    assert c["emptyYearSaysSo"] is True
+    assert c["emptyYearNotMislabelled"] is True, "사실과 다른 사유를 적는다"
+
+
+def test_estimate_rejects_impossible_dates_and_negative_sizes(probe):
+    """§7.8.1 재점검 — 입력 위생.
+
+    · 존재하지 않는 날짜는 `Date` 가 **조용히 다음 달로 굴린다**(실측: 2026-02-30 이
+      3/2 로 굴러가 경과 61일이 됐다). 정규식만으로는 못 잡아 되돌려 찍어 확인한다.
+      윤년은 진짜와 가짜를 갈라야 한다(2024-02-29 통과 / 2025-02-29 거부).
+    · 규모 음수·합 0 은 결과를 비게 만드는데, 이유를 안 적으면 고장으로 읽힌다.
+    """
+    c = probe["estimateCalc"]
+    assert c["rejectsRolledOverDate"] is True, "존재하지 않는 날짜가 통과한다"
+    assert c["acceptsRealLeapDay"] is True, "진짜 윤일을 거부한다"
+    assert c["rejectsFakeLeapDay"] is True, "가짜 윤일이 통과한다"
+    assert c["amountInputHasMinZero"] is True
+    assert c["negativeAmountWarned"] is True, "음수 규모를 조용히 받는다"
+    assert c["zeroTotalExplained"] is True, "결과가 왜 비었는지 적지 않는다"
+
+
 def test_estimate_screen_states_its_conventions_and_data_gaps(probe):
     """화면이 규약과 **데이터 부재**를 밝히는가.
 

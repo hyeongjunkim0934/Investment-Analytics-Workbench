@@ -6727,6 +6727,11 @@ function estDayCount(asofStr) {
   if (!asofStr || !/^\d{4}-\d{2}-\d{2}$/.test(asofStr)) return null;
   const asof = Date.parse(asofStr + "T00:00:00Z");
   if (!isFinite(asof)) return null;
+  /* 존재하지 않는 날짜(2026-02-30 등)는 Date 가 **조용히 다음 달로 넘긴다** —
+     정규식만으로는 못 잡는다(실측: 2026-02-30 이 3/2 로 굴러가 경과 61일이 됐다).
+     되돌려 찍어 같은 문자열이 나오는지 확인한다. `<input type=date>` 로는 만들 수
+     없지만 저장분이 손상되면 들어온다. */
+  if (new Date(asof).toISOString().slice(0, 10) !== asofStr) return null;
   const year = +asofStr.slice(0, 4);
   const base = Date.parse(`${year - 1}-12-31T00:00:00Z`);
   const days = Math.round((asof - base) / EST_DAY_MS);
@@ -6754,11 +6759,25 @@ function estIndexYtd(idx, asofStr) {
   }
   if (at < 0) return { error: "기준일 이전 관측이 없습니다" };
   const obsDate = tsToDate(t[at]);
-  if (obsDate <= anchor.d) return { error: "기준일이 전년 연말보다 앞섭니다" };
+  /* 두 경우를 갈라서 적는다(재점검 발견 — 예전에는 둘 다 "기준일이 전년 연말보다
+     앞섭니다"였는데, 아래쪽 경우엔 그게 사실이 아니라 사용자를 엉뚱한 데로 보낸다).
+       · obsDate < anchor.d : 정말로 기준일이 전년 연말보다 앞이다
+       · obsDate == anchor.d: 기준일은 뒤인데 **그 해 관측이 하나도 없다**
+         (지수가 전년 말에서 멈춤 — 기준일 연도로 넘어온 데이터가 없다) */
+  if (obsDate < anchor.d) return { error: "기준일이 전년 연말보다 앞섭니다" };
+  if (obsDate === anchor.d) {
+    return { error: `${dc.year}년 관측이 없습니다 — 지수가 ${anchor.d} 에서 멈춰 있습니다` };
+  }
   const gap = Math.round((Date.parse(asofStr + "T00:00:00Z") - t[at] * 1000) / EST_DAY_MS);
   return {
     ytd: v[at] / anchor.v - 1,
     base: anchor, obs: { v: v[at], d: obsDate }, gapDays: gap,
+    /* **기준일이 이 지수의 마지막 관측보다 뒤인가.** 그렇다면 자동값은 기준일의 값이
+       아니라 지수가 멈춘 날의 값이다 — 실측: 기본 기준일(2026-08-06)에서 ACWI 는
+       2026-07-21 관측을 쓰고 있었고 화면 어디에도 그 사실이 없었다. 미래 기준일이면
+       간극이 150일을 넘는다. 휴장일(며칠)과 **데이터가 거기까지 오지 않은 것**은
+       전혀 다른 사건이라 임의 임계값 대신 이 조건으로 가른다. */
+    beyondData: !!(idx.last && asofStr > idx.last),
   };
 }
 
@@ -6822,9 +6841,11 @@ function estEngine(A, st) {
 function renderEstimate() {
   const A = DATA.estimate || {};
   const st = estState();
-  /* 기준일 기본값 — 지수의 최종 관측일. 없으면 비워 두고 사용자가 넣게 한다
-     (오늘 날짜를 넣으면 지수가 아직 없는 날을 기준일로 잡아 자동 채움이 조용히 빈다). */
-  if (!st.asof && A.asof) st.asof = A.asof;
+  /* 기준일 기본값 — **모든 지수가 도달한 마지막 날**(`asof_all`). 가장 멀리 간 지수의
+     날짜(`asof`)를 쓰면 다른 지수의 자동값이 처음부터 묵은 채로 뜬다(실측 16일).
+     둘 다 없으면 비워 두고 사용자가 넣게 한다 — 오늘 날짜를 지어 넣으면 지수가 아직
+     없는 날을 기준일로 잡아 자동 채움이 조용히 어긋난다. */
+  if (!st.asof) st.asof = A.asof_all || A.asof || null;
 
   const cells = {};        // 자산군 → 계산 결과를 쓰는 노드들(입력을 다시 만들지 않는다)
   const retInputs = {};
@@ -6866,6 +6887,7 @@ function renderEstimate() {
     const tr = el("tr", {});
     const amtIn = numInput(st.amt, spec.key, "any", 108);
     amtIn.setAttribute("aria-label", `${spec.key} 규모`);
+    amtIn.setAttribute("min", "0");        // 음수 규모는 뜻이 없다(요약이 한 번 더 잡는다)
     const retIn = numInput(st.ret, spec.key, "0.01", 88);
     retIn.setAttribute("aria-label", `${spec.key} 기준일 수익률`);
     retInputs[spec.key] = retIn;
@@ -6931,6 +6953,18 @@ function renderEstimate() {
         const bad = r.ix && r.ix.basis_matches_request === false;
         c.src.append(el("span", { class: bad ? "d-up" : "" },
           `자동 · ${r.ix.label}${bad ? " ⚠" : ""}`));
+        /* **실제로 쓴 관측일을 눈에 보이게 적는다.** 예전에는 title(툴팁)에만 있었는데
+           툴팁은 터치 기기에서 아예 안 뜨고 발견되지도 않는다 — 그 사이 16일 묵은 값이
+           기준일 값인 것처럼 읽혔다(실측). 기준일과 다르면 날짜를, 데이터가 기준일까지
+           오지 않았으면 경고색으로 그 사실까지 적는다. */
+        if (r.auto.gapDays > 0) {
+          c.src.append(el("span", {
+            class: r.auto.beyondData ? "d-up" : "",
+            style: "display:block;font-size:10.5px" + (r.auto.beyondData ? "" : ";color:var(--ink-3)"),
+          }, r.auto.beyondData
+            ? `⚠ ${r.auto.obs.d} 까지만 있음 (${r.auto.gapDays}일 전)`
+            : `${r.auto.obs.d} 관측`));
+        }
         c.src.title = `${r.ix.basis} · 분모 ${r.auto.base.d} · 분자 ${r.auto.obs.d}`
           + (bad ? `\n${r.ix.caveat}` : "");
       } else if (r.source === "자동 실패") {
@@ -6964,6 +6998,26 @@ function renderEstimate() {
       big("총 운용수익 (연환산 반영)", E.totalProfit || null, "", 15),
       big("채권 가중평균 듀레이션", E.durW, "", 15)));
     const notes = [];
+    /* 자동값이 기준일까지 오지 않은 지수 — 요약에서도 한 번 말한다. 표의 작은 글씨만
+       두면 스크롤해야 보이는데, 이건 포트폴리오 수익률 자체를 흔드는 사실이다. */
+    const stale = E.rows.filter((x) => x.auto && x.auto.beyondData && !x.isKeyed && x.amt);
+    if (stale.length) {
+      notes.push(el("div", { class: "d-up", style: "margin-top:6px;font-size:12px" },
+        `⚠ 자동 채움 지수가 기준일까지 오지 않았습니다 — `
+        + stale.map((x) => `${x.key}(${x.ix.label} ${x.auto.obs.d}, ${x.auto.gapDays}일 전)`).join(", ")
+        + " · 그 날의 값이 기준일 값으로 쓰이고 있습니다"));
+    }
+    /* 규모 합이 0 이하면 포트폴리오 수익률이 나오지 않는다 — 왜 비었는지 적는다
+       (음수 규모를 조용히 받고 「–」만 보이면 고장으로 읽힌다). */
+    const negAmt = E.rows.filter((x) => x.amt != null && x.amt < 0);
+    if (negAmt.length) {
+      notes.push(el("div", { class: "d-up", style: "margin-top:6px;font-size:12px" },
+        `규모가 음수인 자산군 ${negAmt.length}개 — ${negAmt.map((x) => x.key).join(", ")}`));
+    }
+    if (E.totalAmt <= 0 && E.rows.some((x) => x.amt != null)) {
+      notes.push(el("div", { class: "d-up", style: "margin-top:6px;font-size:12px" },
+        "규모 합이 0 이하라 포트폴리오 수익률을 낼 수 없습니다 — 규모를 확인하십시오"));
+    }
     if (E.missingRet.length) {
       notes.push(el("div", { class: "d-up", style: "margin-top:6px;font-size:12px" },
         `규모는 있는데 수익률이 빈 자산군 ${E.missingRet.length}개 — `
