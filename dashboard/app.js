@@ -3968,21 +3968,25 @@ function allocEngine(A, st) {
        따라서 같은 Xe 를 만드는 (hb,he) 는 위험이 **정확히** 같다(근사가 아니다).
        한 점을 최적이라 적으면 무한한 동점 중 하나를 임의로 고른 것이 된다. */
     xeOf(hbX, heX) { return w0[1] * (1 - hbX) + w0[3] * (1 - heX); },
+    xeOfW(w, hbX, heX) { return w[1] * (1 - hbX) + w[3] * (1 - heX); },
     xeOpen() { return w0[1] + w0[3]; },
     /* σ²(Xe) = a0 + 2·a1·Xe + a2·Xe². 정확히 2차식이므로 **세 점이면 계수가 확정**된다
-       — 로딩 산식을 여기서 다시 쓰지 않고 sigmaHedge 를 세 번 부르는 편이 어긋날 여지가 없다.
+       — 로딩 산식을 여기서 다시 쓰지 않고 σ 를 세 번 재는 편이 어긋날 여지가 없다.
        (hb,he) = (1−t, 1−t) 로 잡으면 Xe = (w채+w주)·t 라 t = 0 / ½ / 1 을 쓴다.
        (구 회계 관점은 d_swap 의 −h·τ 때문에 이 붕괴가 성립하지 않아 가드로 막았었다 —
-       장부가 축 폐지로 그 관점 자체가 없어져 가드도 함께 내렸다 §7.7.11.) */
-    xeQuad() {
-      const X = w0[1] + w0[3];
-      if (!(X > 0)) return { a0: sigmaW(w0, build(1, 1).C) ** 2, a1: 0, a2: 0, span: 0 };
-      const sq = (t) => this.sigmaHedge(1 - t, 1 - t) ** 2;
+       장부가 축 폐지로 그 관점 자체가 없어져 가드도 함께 내렸다 §7.7.11.)
+       `xeQuadW(w)` 는 임의 배분용 — 시뮬레이터 헤지 2트랙(§7.7.13)이 최적 배분에
+       대해 같은 붕괴식을 쓴다(현재 배분 전용이던 것을 w 인자로 일반화). */
+    xeQuadW(w) {
+      const X = w[1] + w[3];
+      if (!(X > 0)) return { a0: sigmaW(w, build(1, 1).C) ** 2, a1: 0, a2: 0, span: 0 };
+      const sq = (t) => sigmaW(w, build(1 - t, 1 - t).C) ** 2;
       const s0 = sq(0), s1 = sq(0.5), s2 = sq(1);
       const a2 = 2 * (s2 - 2 * s1 + s0) / (X * X);
       const a1 = (s2 - s0 - a2 * X * X) / (2 * X);
       return { a0: s0, a1, a2, span: X };
     },
+    xeQuad() { return this.xeQuadW(w0); },
     sigmaXe(xe, q) {
       const { a0, a1, a2 } = q || this.xeQuad();
       return Math.sqrt(Math.max(a0 + 2 * a1 * xe + a2 * xe * xe, 0));
@@ -3998,8 +4002,9 @@ function allocEngine(A, st) {
     /* 목표 Xe 를 만드는 (hb,he) 중 **현재값에 가장 가까운** 한 점 — 유클리드 정사영.
        임의 계수 0개이고 해가 폐형이다. 밴드 안에서 불가능하면 null.
        pipeline/alloc.py 의 hedge_pair_for_xe 와 같은 규칙. */
-    hedgePairForXe(xe, cur, bands) {
-      const wb = w0[1], we = w0[3];
+    hedgePairForXe(xe, cur, bands) { return this.hedgePairForXeW(w0, xe, cur, bands); },
+    hedgePairForXeW(w, xe, cur, bands) {
+      const wb = w[1], we = w[3];
       const [hb0, he0] = cur;
       const [[blo, bhi], [elo, ehi]] = bands;
       const c = wb + we - xe;
@@ -4364,6 +4369,81 @@ function allocLambdaForSigma(E, sigTarget, opts) {
   }
   const lam = Math.sqrt(lo * hi);
   return { lam, sig: sigAt(lam), bounded: null };
+}
+
+/* ---- 배분+헤지 동시 최적(§7.7.13) — 교대(블록 좌표) 최적화 ------------------
+   시뮬레이터의 ① 최적 트랙: "최적 배분"과 "그에 맞는 최적 헤지"를 한 쌍으로 낸다
+   (2026-08-12 사용자 지시 — 배분 2트랙과 매칭되는 헤지 2트랙).
+
+   왜 교대가 정당한가: 헤지비율은 위험에 **총 미헤지 환노출 Xe 를 통해서만** 들어가고
+   (Xe 붕괴 — 같은 Xe 는 위험이 정확히 같다), μ 키인은 최종치라 헤지와 무관하다
+   (§7.7.10 — 캐리 미가산). 좌표를 (w, Xe) 로 잡으면 노출 벡터가 그 둘에 **선형**이라
+   목적함수가 결합 볼록(convex)이고, w-스텝(λ-효용 QP)과 Xe-스텝(폐형 2차식 최소)을
+   번갈아 돌리면 전역해로 수렴한다 — 임의 초기값·격자 없음, 시작점은 현재 슬라이더.
+
+   반환하는 (hb,he) 는 그 Xe\* 의 **현재값 최근접 대표점**이다(동점 무한 — Xe 가 정본,
+   한 쌍을 「최적」이라 적으면 임의 선택이 된다는 §5.3 규약 그대로).
+   환율 축이 없으면(fxLive=false) 헤지가 무력(모든 조합 동점)이라 배분만 최적화한다. */
+function allocJointOpt(E, st) {
+  if (E.layer !== "cma") return null;              // ① 최적은 벤치마크 층 전용(기존 게이트)
+  const lam = +st.mvo_lambda || 1;
+  const hbnds = allocHBands(st);
+  let hb = Math.min(Math.max(st.h_bond / 100, hbnds[0][0]), hbnds[0][1]);
+  let he = Math.min(Math.max(st.h_eq / 100, hbnds[1][0]), hbnds[1][1]);
+  let w = null, xePrev = null, converged = !E.fxLive, iters = 0;
+  for (let it = 0; it < 6; it++) {
+    iters = it + 1;
+    const B = E.build(hb, he);
+    w = E.optimizeUtilAt(B.mu, B.C, lam, 1);
+    if (!E.fxLive) break;                          // 헤지 무력 — w 한 번이면 끝
+    const q = E.xeQuadW(w);
+    const [[blo, bhi], [elo, ehi]] = hbnds;
+    const xeLo = w[1] * (1 - bhi) + w[3] * (1 - ehi);
+    const xeHi = w[1] * (1 - blo) + w[3] * (1 - elo);
+    const xe = E.xeStar(xeLo, xeHi, q);
+    const pair = E.hedgePairForXeW(w, xe, [hb, he], hbnds);
+    if (pair) { hb = pair[0]; he = pair[1]; }
+    if (xePrev != null && Math.abs(xe - xePrev) < 1e-7) { converged = true; break; }
+    xePrev = xe;
+  }
+  const B = E.build(hb, he);
+  w = E.optimizeUtilAt(B.mu, B.C, lam, 1);         // 최종 헤지에서 배분 한 번 더 — 보고값 정합
+  return {
+    w, hb, he,
+    xe: E.fxLive ? E.xeOfW(w, hb, he) : null,
+    sig: E.sigmaW(w, B.C), mu: amDot(B.mu, w),
+    fxLive: E.fxLive, converged, iters,
+  };
+}
+
+/* 통화별 환헤지 분해(§7.7.13) — 슬리브 헤지비율(채권 hb·주식 he)을 통화 구성으로
+   펼친 **표시용 분해**다. 통화 구성은 수기 입력이 있으면 그것(출처 "입력"), 없으면
+   공개 벤치마크(출처 "벤치마크"). 반환 값은 총자산 대비 %.
+   **통화별 「최적」 헤지비율이 아니다** — 이 모형의 환축은 달러원 하나라(통화축 확장
+   전) 통화별 최적을 말할 근거가 없고, 여기서는 두 슬리브의 비율이 그 슬리브의 모든
+   통화에 균일하게 걸린다는 사실을 그대로 보여 준다. 통화별 판단은 환헤지 화면. */
+function allocCcyHedgeRows(A, st, wBond, wEq, hb, he) {
+  const src = {};
+  ["해외채권", "해외주식"].forEach((sl) => {
+    const keyed = allocCcySum(st, sl).entered;
+    const bench = (A.ccy_bench && A.ccy_bench[sl]) || null;
+    src[sl] = keyed ? { w: st.ccy[sl], tag: "입력" }
+      : bench ? { w: bench.w || {}, tag: "벤치마크" } : null;
+  });
+  if (!src["해외채권"] && !src["해외주식"]) return null;
+  const rows = ALLOC_CCY.map((c) => {
+    const eb = wBond * ((src["해외채권"] && +src["해외채권"].w[c]) || 0) / 100;
+    const ee = wEq * ((src["해외주식"] && +src["해외주식"].w[c]) || 0) / 100;
+    const open = eb * (1 - hb) + ee * (1 - he);
+    return { c, exp: eb + ee, hedged: eb * hb + ee * he, open };
+  }).filter((r) => r.exp > 1e-6);
+  const covB = src["해외채권"]
+    ? ALLOC_CCY.reduce((a, c) => a + (+src["해외채권"].w[c] || 0), 0) : null;
+  const covE = src["해외주식"]
+    ? ALLOC_CCY.reduce((a, c) => a + (+src["해외주식"].w[c] || 0), 0) : null;
+  return { rows, src: { 해외채권: src["해외채권"] && src["해외채권"].tag,
+                        해외주식: src["해외주식"] && src["해외주식"].tag },
+           coverage: { 해외채권: covB, 해외주식: covE } };
 }
 
 /* 도넛 — 비중 시각화 전용(값 왜곡 없음: 각도 = 비중/합). 합이 0이면 빈 링. */
@@ -4863,6 +4943,43 @@ function renderAlloc() {
     });
     simBox.append(rows);
 
+    /* ---- ② 트랙의 헤지 슬라이더(§7.7.13) — 설정 구역에서 시뮬레이터로 이사 ----
+       배분 2트랙(최적/시뮬)과 매칭되는 헤지 2트랙(2026-08-12 사용자 지시): ① 최적
+       카드가 배분+헤지 한 쌍을 내고, 이 슬라이더가 ② 시뮬 트랙의 헤지다. 규약은
+       비중 막대와 동일 — 즉시 반영·저장 안 함(저장은 「기본값으로 저장」 버튼만). */
+    const hedgeRefs = {};
+    const mkHedge = (label, key) => {
+      const lbl = el("span", { class: "hlbl" }, `${st[key]}%`);
+      const inp = el("input", { type: "range", min: "0", max: "100", step: "1",
+        value: String(st[key]), "aria-label": label });
+      inp.addEventListener("input", () => {
+        st[key] = +inp.value;
+        lbl.textContent = `${st[key]}%`;
+        markDirty();
+        recalc(false);
+      });
+      inp.addEventListener("change", () => recalc(true));
+      hedgeRefs[key] = { inp, lbl };
+      return el("div", {},
+        el("div", { style: "font-size:12.5px" }, el("b", {}, label)),
+        el("div", {}, inp, " ", lbl));
+    };
+    const syncHedgeUi = () => {
+      ["h_bond", "h_eq"].forEach((k) => {
+        const r = hedgeRefs[k];
+        if (!r) return;
+        r.inp.value = String(st[k]);
+        r.lbl.textContent = `${st[k]}%`;
+      });
+    };
+    simBox.append(el("div", { class: "sim-hedge-row",
+      style: "display:flex;gap:26px;flex-wrap:wrap;align-items:center;margin-top:8px" },
+      el("b", { style: "font-size:12.5px" }, "② 시뮬레이션 헤지비율"),
+      mkHedge("해외채권 헤지비율", "h_bond"), mkHedge("해외주식 헤지비율", "h_eq"),
+      el("span", { style: "color:var(--ink-3);font-size:12px" },
+        "즉시 반영·저장 안 함 — 위험은 총 미헤지 환노출(Xe)로만 움직이므로, 같은 Xe 를 만드는 " +
+        "조합은 위험이 정확히 같습니다. ① 최적 카드의 헤지쌍은 그 동점 중 현재값 최근접 대표점입니다.")));
+
     const fillCash = el("button", { type: "button", class: "btn-ghost", onclick: () => {
       /* 합계를 몰래 맞추지 않는다 — 사용자가 눌렀을 때만 잔여를 단기자금으로 채운다 */
       const others = ALLOC_ECON.filter((x) => x !== "단기자금")
@@ -4893,16 +5010,27 @@ function renderAlloc() {
     simDyn = (Es, withCharts) => {
       const w = ALLOC_ECON.map((k) => (st.mix[k] || 0) / 100);
       const V8 = Es.V;
-      const sim = { mu: amDot(V8.mu, w), sig: Es.sigmaW(w, V8.C) };
+      const hbS = st.h_bond / 100, heS = st.h_eq / 100;
+      const sim = { mu: amDot(V8.mu, w), sig: Es.sigmaW(w, V8.C),
+                    xe: Es.fxLive ? Es.xeOfW(w, hbS, heS) : null };
+      /* ② 트랙의 헤지 참고 — 이 배분 기준 위험최소 Xe·대표쌍(요약 hq 와 같은 계산) */
+      let simRef = null;
+      if (Es.fxLive && Es.layer === "cma") {
+        const q = Es.xeQuadW(w);
+        const hbnds = allocHBands(st);
+        const [[blo, bhi], [elo, ehi]] = hbnds;
+        const xeB = Es.xeStar(w[1] * (1 - bhi) + w[3] * (1 - ehi),
+                              w[1] * (1 - blo) + w[3] * (1 - elo), q);
+        simRef = { xe: xeB, sig: Es.sigmaXe(xeB, q),
+                   pair: Es.hedgePairForXeW(w, xeB, [hbS, heS], hbnds) };
+      }
       /* 실행 가능성도 목표 100% 기준으로 검사한다 — 현재 합계 기준이면 표류가
          최적 카드를 껐다 켰다 한다 */
       const canOpt = Es.layer === "cma"
         && allocFeasibility({ lo: Es.lo, hi: Es.hi, total: 1, groups: Es.groups }).length === 0;
       if (withCharts || optCache == null) {
-        optCache = canOpt ? (() => {
-          const wo = Es.optimizeUtilAt(V8.mu, V8.C, +st.mvo_lambda || 1, 1);
-          return { w: wo, mu: amDot(V8.mu, wo), sig: Es.sigmaW(wo, V8.C) };
-        })() : null;
+        /* ① 최적 = 배분+헤지 동시(교대) 최적 — §7.7.13. 드래그 중에는 캐시. */
+        optCache = canOpt ? allocJointOpt(Es, st) : null;
       }
       const opt = optCache;
       ALLOC_ECON.forEach((k, i) => {
@@ -4930,16 +5058,30 @@ function renderAlloc() {
         if (donut) c.append(donut);
         return c;
       };
+      /* 헤지 문장 — 두 카드가 같은 서식을 쓴다. 쌍은 대표점(동점 무한 — Xe 가 정본) */
+      const hedgeLine = (hb, he, xe, tag) => el("div",
+        { class: "sim-hedge-line", style: "font-size:12px;margin-top:4px" },
+        el("b", {}, "헤지 "),
+        `채권 ${fmtNum(hb * 100, 0)}% / 주식 ${fmtNum(he * 100, 0)}%`,
+        xe != null ? ` · 미헤지 환노출 Xe ${fmtNum(xe * 100, 2)}%` : "",
+        tag ? el("span", { style: "color:var(--ink-3)" }, ` (${tag})`) : "");
       let optCol;
       if (opt) {
-        const optCard = card8("① 최적 포트폴리오 (λ-MVO)", opt.mu, opt.sig,
-          "키인 μ·σ + 실측 상관 · 밴드·합산 상한 반영 · 합계 100% 기준(비중 조정과 무관) · 막대 위 ▼ = 최적 위치", true);
+        const optCard = card8("① 최적 포트폴리오 (λ-MVO · 배분+헤지)", opt.mu, opt.sig,
+          "키인 μ·σ + 실측 상관 · 밴드·합산 상한 반영 · 합계 100% 기준(비중 조정과 무관) · " +
+          "막대 위 ▼ = 최적 위치 · 배분과 헤지를 교대로 최적화한 한 쌍입니다" +
+          (opt.fxLive ? "" : " · 환율 축 없음 — 헤지는 무력(모든 조합 동점)이라 배분만 최적화"), true);
+        if (opt.fxLive) {
+          optCard.append(hedgeLine(opt.hb, opt.he, opt.xe,
+            "대표점 — 같은 Xe 조합은 위험이 정확히 같음"));
+        }
         /* 「막대를 최적 비중으로」(2026-08-12 사용자 요청) — 최적 해를 막대·숫자에
            얹는다. 반올림 잔차는 최대 비중 자산에 흡수해 합계 100 을 정확히 유지.
            시뮬레이션 조정이므로 저장하지 않는다(조정/저장 분리 승계 — 저장은
-           「기본값으로 저장」 버튼만). */
-        optCard.append(el("button", { type: "button", class: "btn-ghost",
-          style: "margin-top:7px", onclick: () => {
+           「기본값으로 저장」 버튼만). 「헤지도」 버튼은 최적 헤지쌍을 ② 슬라이더에
+           얹는다 — ①을 그대로 따라가 보는 선택지(§7.7.13, 같은 조정/저장 분리). */
+        const btnRow8 = el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-top:7px" });
+        btnRow8.append(el("button", { type: "button", class: "btn-ghost", onclick: () => {
             /* 0.1%p 단위(2026-08-12) — 각 값을 1자리로 반올림한 뒤 잔차(0.1 의 배수)를
                최대 비중 자산에 흡수해 합계 100.0 을 정확히 유지한다. */
             const vals = opt.w.map((x) => +(x * 100).toFixed(1));
@@ -4952,6 +5094,16 @@ function renderAlloc() {
             markDirty();
             recalc(true);
           } }, "막대를 최적 비중으로"));
+        if (opt.fxLive) {
+          btnRow8.append(el("button", { type: "button", class: "btn-ghost", onclick: () => {
+              st.h_bond = Math.round(opt.hb * 100);
+              st.h_eq = Math.round(opt.he * 100);
+              syncHedgeUi();
+              markDirty();
+              recalc(true);
+            } }, "헤지 슬라이더를 최적으로"));
+        }
+        optCard.append(btnRow8);
         optCol = col(optCard, dwrap("최적 포트폴리오 비중", opt.w));
       } else {
         optCol = col(el("div", { class: "card sim8-card" },
@@ -4961,16 +5113,57 @@ function renderAlloc() {
               ? "위험 원천을 기관 벤치마크(CMA)로 두면 계산됩니다."
               : "제약이 서로 모순입니다 — 수기 입력에서 밴드·상한을 확인하세요.")));
       }
-      const simCol = col(card8("② 지금 시뮬레이션 (조정값)", sim.mu, sim.sig,
+      const simCard = card8("② 지금 시뮬레이션 (조정값)", sim.mu, sim.sig,
           opt ? `최적 대비 수익 ${sim.mu - opt.mu >= 0 ? "+" : ""}${fmtNum(sim.mu - opt.mu, 2)}%p · ` +
                 `위험 ${sim.sig - opt.sig >= 0 ? "+" : ""}${fmtNum(sim.sig - opt.sig, 2)}%p`
-              : "막대를 끌면 즉시 다시 계산됩니다"),
-        dwrap("시뮬레이션 비중", w));
+              : "막대를 끌면 즉시 다시 계산됩니다");
+      simCard.append(hedgeLine(hbS, heS, sim.xe, "아래 슬라이더 = 이 트랙의 헤지"));
+      if (simRef && simRef.pair) {
+        simCard.append(el("div", { style: "color:var(--ink-3);font-size:11px;margin-top:2px" },
+          `이 배분의 위험최소 Xe ${fmtNum(simRef.xe * 100, 2)}% ` +
+          `(대표점 채권 ${fmtNum(simRef.pair[0] * 100, 0)}%/주식 ${fmtNum(simRef.pair[1] * 100, 0)}% → 위험 ${fmtNum(simRef.sig, 2)}%)`));
+      }
+      const simCol = col(simCard, dwrap("시뮬레이션 비중", w));
       const cols = el("div", { class: "sim8-cols" }, optCol, simCol);
       const legend = el("div", { class: "sim8-legend" },
         ...ALLOC_ECON.map((k, i) => el("span", {},
           el("i", { class: "sim-dot", style: `background:${pal.series[i % pal.series.length]}` }), ` ${k}`)));
       dynBox.append(cols, legend);
+
+      /* ---- 통화별 환헤지 분해(§7.7.13) — 두 트랙 나란히. 표시용 분해이며
+         통화별 최적이 아니다(모형 환축이 달러원 하나 — 통화축 확장 §안2 전). ---- */
+      const ccyBox = el("details", { class: "sim-ccy", style: "margin-top:8px" },
+        el("summary", {}, "통화별 환헤지 분해 (총자산 대비 %)"));
+      const mk = (label, wv, hb, he) => {
+        const d = allocCcyHedgeRows(A, st, wv[1] * 100, wv[3] * 100, hb, he);
+        if (!d) return null;
+        const t = el("table", { class: "mini-table" },
+          el("tr", {}, ...["통화", "노출", "헤지", "미헤지"].map((h) => el("th", {}, h))));
+        d.rows.forEach((r) => t.append(el("tr", {},
+          el("td", { style: "text-align:left" }, `${r.c} ${ALLOC_CCY_NAME[r.c] || ""}`),
+          el("td", { class: "num" }, fmtNum(r.exp, 2)),
+          el("td", { class: "num" }, fmtNum(r.hedged, 2)),
+          el("td", { class: "num" }, fmtNum(r.open, 2)))));
+        return el("div", { style: "min-width:250px" },
+          el("div", { class: "card-title", style: "font-size:12px" }, label),
+          el("div", { class: "table-wrap", style: "max-height:none;border:0" }, t),
+          el("div", { style: "color:var(--ink-3);font-size:11px" },
+            `통화 구성 출처 — 채권 [${d.src.해외채권 || "없음"}]` +
+            (d.coverage.해외채권 != null ? ` 커버리지 ${fmtNum(d.coverage.해외채권, 1)}%` : "") +
+            ` · 주식 [${d.src.해외주식 || "없음"}]` +
+            (d.coverage.해외주식 != null ? ` 커버리지 ${fmtNum(d.coverage.해외주식, 1)}%` : "")));
+      };
+      const g1 = opt && opt.fxLive ? mk("① 최적 (배분+헤지)", opt.w, opt.hb, opt.he) : null;
+      const g2 = mk("② 시뮬레이션 (조정값)", w, hbS, heS);
+      if (g1 || g2) {
+        ccyBox.append(el("div", { style: "display:flex;gap:18px;flex-wrap:wrap" },
+          ...(g1 ? [g1] : []), ...(g2 ? [g2] : [])),
+          el("div", { class: "card-sub", style: "margin-top:4px" },
+            "슬리브 헤지비율(해외채권/해외주식)을 통화 구성으로 펼친 표시입니다 — 같은 슬리브의 모든 통화에 " +
+            "같은 비율이 걸립니다. 통화별로 다른 헤지비율의 위험 계산·최적화는 통화축 확장(백로그) 후이며, " +
+            "통화별 분산최소 참고치는 환헤지 화면에 있습니다."));
+        dynBox.append(ccyBox);
+      }
     };
   }
 
@@ -5096,26 +5289,11 @@ function renderAlloc() {
     "조정 중 — 저장 전 (새로고침하면 사라집니다)");
   const markDirty = () => { dirty = true; dirtyBadge.hidden = false; };
 
-  const sliders = el("div", { style: "display:flex;gap:26px;flex-wrap:wrap;margin-top:10px" });
-  const mkSlider = (label, key) => {
-    const wrap = el("div", {});
-    const lbl = el("span", { class: "hlbl" }, `${st[key]}%`);
-    const inp = el("input", { type: "range", min: "0", max: "100", step: "5",
-      value: String(st[key]), "aria-label": label });
-    inp.addEventListener("input", () => {
-      st[key] = +inp.value;
-      lbl.textContent = `${st[key]}%`;
-      markDirty();
-      recalc(false);
-    });
-    inp.addEventListener("change", () => recalc(true));
-    wrap.append(el("div", { style: "font-size:12.5px" }, el("b", {}, label),
-      el("span", { style: "color:var(--ink-3)" }, " — 조정해 보십시오. 저장 전에는 이 화면에만 적용됩니다")),
-      el("div", {}, inp, " ", lbl));
-    return wrap;
-  };
-  sliders.append(mkSlider("해외채권 헤지비율", "h_bond"), mkSlider("해외주식 헤지비율", "h_eq"));
-  ctl.append(sliders);
+  /* 헤지 슬라이더 2개는 §7.7.13 에서 시뮬레이터 패널(② 트랙)로 이사했다 —
+     배분·헤지를 한 자리에서 함께 조정하는 동선. 같은 상태(h_bond/h_eq)·같은
+     조정/저장 분리를 그대로 승계한다. */
+  ctl.append(el("div", { style: "color:var(--ink-3);font-size:12px;margin-top:8px" },
+    "헤지비율 슬라이더는 위 시뮬레이터(② 트랙)에 있습니다 — 배분과 헤지를 한 자리에서 조정합니다."));
 
   /* 배분 8칸·잔여 버튼은 §7.7.8 시뮬레이터 패널(화면 최상단)로 이사했다 — 같은
      id(sim-mix-*)·같은 계약(즉시 반영·저장 안 함·합계 배지·명시적 잔여 버튼) 승계. */

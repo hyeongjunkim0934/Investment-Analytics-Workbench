@@ -1864,6 +1864,41 @@ def test_lambda_reverse_optimization_reproduces_risk(probe):
     assert c["fitButtonReproducesCurrentRisk"] is True, "버튼이 저장한 λ 가 현재 위험을 재현하지 못한다"
 
 
+def test_hedge_two_tracks_joint_and_sim(probe):
+    """헤지 2트랙(§7.7.13) — ① 최적 = 배분+헤지 교대(블록 좌표) 최적화 한 쌍,
+    ② 시뮬 = 사용자 배분+슬라이더. 카드 둘 다 헤지 문장을 달고, ①의 쌍은
+    대표점임을 밝히며(동점 무한 — Xe 가 정본), 「헤지 슬라이더를 최적으로」는
+    슬라이더만 움직이고 저장하지 않는다(조정/저장 분리)."""
+    c = probe["hedgeTracks"]
+    assert c["converged"] is True, "교대 최적화가 수렴하지 않는다"
+    assert c["pairReproducesXe"] is True, "① 헤지쌍이 자기 Xe 를 재현하지 못한다 — 대표점 계약 위반"
+    assert c["jointBeatsFixedHedge"] is True, "동시해가 부분해(현재 헤지 고정)보다 나쁘다"
+    assert c["pairRespectsBands"] is True, "헤지 밴드를 어긴 쌍이 나갔다"
+    assert c["renderErrors"] == 0
+    assert c["bothCardsShowHedge"] is True
+    assert c["optCardSaysRepresentative"] is True
+    assert c["slidersLiveInPanel"] is True, "헤지 슬라이더가 시뮬레이터 패널에 없다"
+    assert c["applyHedgeButtonExists"] is True
+    assert c["applyHedgeMovesSliders"] is True
+    assert c["applyHedgeDoesNotSave"] is True, "헤지 적용 버튼이 몰래 저장한다"
+
+
+def test_hedge_ccy_breakdown_is_honest(probe):
+    """통화별 환헤지 분해(§7.7.13) — 표시용 분해이지 통화별 최적이 아니다.
+    출처(입력/벤치마크)·커버리지를 밝히고, 노출 합 = 슬리브 비중 × 커버리지이며,
+    같은 슬리브 안에서는 모든 통화의 헤지 비율이 균일하다는 사실을 화면이 밝힌다.
+    환율 축이 없으면 헤지 무력을 카드에 적고 배분만 최적화한다."""
+    c = probe["hedgeTracks"]
+    assert c["ccyRowsExist"] is True
+    assert c["ccySrcIsBench"] is True, "통화 구성 출처 표기가 없다"
+    assert c["ccyExposureSumMatchesCoverage"] is True, "통화별 노출 합이 슬리브 노출×커버리지와 다르다"
+    assert c["ccyUniformWithinSleeve"] is True
+    assert c["ccyTableRendered"] is True
+    assert c["ccyHonestAboutUniform"] is True, "슬리브 균일 비율이라는 사실을 화면이 숨긴다"
+    assert c["noFxJointStillOptimizesWeights"] is True
+    assert c["noFxCardSaysInert"] is True, "환율 축 부재에서 헤지 무력을 밝히지 않는다"
+
+
 def test_sim_panel_proxy_layer_degrades_loudly(probe):
     """프록시층 — σ 키인 7칸 전부 비활성 + 최적 「보류」 안내(조용한 강등 금지)."""
     c = probe["simPanel"]
