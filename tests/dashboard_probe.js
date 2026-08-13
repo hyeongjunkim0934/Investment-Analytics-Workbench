@@ -177,7 +177,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
   "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256",
   "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil", "allocCharStats",
-  "allocRedistribute", "allocIsAlt", "allocLambdaForSigma"];
+  "allocRedistribute", "allocIsAlt", "allocLambdaForSigma", "allocJointOpt", "allocCcyHedgeRows"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -1817,7 +1817,7 @@ safe("simPanel", () => {
     .filter((n) => !n.disabled)
     .every((n) => /실측 [\d.]+ 적용 중/.test(n.getAttribute("placeholder") || ""));
   const Ea = P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC));
-  const wOpt = Ea.optimizeUtilAt(Ea.V.mu, Ea.V.C, 1, 1);
+  const wOpt = P.allocJointOpt(Ea, P.allocDefaults(CMA_ALLOC)).w;   // ① = 배분+헤지 동시(§7.7.13)
   const mark0 = panel.querySelectorAll(".sim-opt-mark")[0];
   r.markerMatchesOptimum = Math.abs(parseFloat(mark0.style.left) - wOpt[0] * 100) < 0.6;
 
@@ -1828,7 +1828,7 @@ safe("simPanel", () => {
   const stDrift = P.allocDefaults(CMA_ALLOC);
   stDrift.mix = { ...stDrift.mix, 해외주식: 26 };                      // 합 120 으로 표류
   const Edrift = P.allocEngine(CMA_ALLOC, stDrift);
-  const wOptDrift = Edrift.optimizeUtilAt(Edrift.V.mu, Edrift.V.C, 1, 1);
+  const wOptDrift = P.allocJointOpt(Edrift, stDrift).w;
   r.optimumIgnoresMixDrift = wOpt.every((x, i) => Math.abs(x - wOptDrift[i]) < 1e-12);
   const markPos = () => Array.from(panel.querySelectorAll(".sim-opt-mark")).map((n) => n.style.left);
   const marksBefore = JSON.stringify(markPos());
@@ -1960,6 +1960,91 @@ safe("lambdaControl", () => {
   return r;
 });
 
+/* ====== P20-h. 헤지 2트랙(§7.7.13) — 최적(배분+헤지 교대) vs 시뮬 ============
+   ① 교대 최적화가 수렴하고, 헤지쌍이 Xe 를 정확히 재현하며(대표점 계약),
+      효용이 "현재 헤지 고정 배분 최적"보다 나쁘지 않은가(동시해 ≥ 부분해)
+   ② 화면 — 두 카드 모두 헤지 문장, ① 대표점 표기, 「헤지 슬라이더를 최적으로」가
+      슬라이더를 실제로 움직이고 저장하지 않는가(조정/저장 분리)
+   ③ 통화별 분해 — 벤치마크 출처 표기·행 합 = 슬리브 노출·비율 균일 사실 명시
+   ④ 환율 축 부재 — 헤지 무력을 밝히고 배분만 최적화하는가 */
+safe("hedgeTracks", () => {
+  const r = {};
+  shim.localStorage.removeItem("iaw-alloc");
+  const st = P.allocDefaults(CMA_ALLOC);
+  const E = P.allocEngine(CMA_ALLOC, st);
+  const jo = P.allocJointOpt(E, st);
+
+  /* ① 수렴·대표점 정합·동시해 우월성 */
+  r.converged = !!jo && jo.converged === true;
+  r.pairReproducesXe = !!jo && Math.abs(E.xeOfW(jo.w, jo.hb, jo.he) - jo.xe) < 1e-9;
+  const util = (mu, C, w, lam) => {
+    const m = w.reduce((a, wi, i) => a + wi * mu[i], 0) / 100;
+    const v = w.reduce((a, wi, i) => a + wi * C[i].reduce((t, c, j) => t + c * w[j], 0), 0) / 1e4;
+    return m - lam / 2 * v;
+  };
+  const B0 = E.build(st.h_bond / 100, st.h_eq / 100);
+  const wFixed = E.optimizeUtilAt(B0.mu, B0.C, 1, 1);
+  const Bj = E.build(jo.hb, jo.he);
+  r.jointBeatsFixedHedge = util(Bj.mu, Bj.C, jo.w, 1) >= util(B0.mu, B0.C, wFixed, 1) - 1e-9;
+  /* 헤지 밴드가 물면 쌍이 밴드 안에 있어야 한다 */
+  const stB = { ...st, h_bands: { 해외채권: [70, 100], 해외주식: [0, 20] } };
+  const joB = P.allocJointOpt(P.allocEngine(CMA_ALLOC, stB), stB);
+  r.pairRespectsBands = !!joB && joB.hb >= 0.7 - 1e-9 && joB.he <= 0.2 + 1e-9;
+
+  /* ② 화면 */
+  P.DATA.alloc = CMA_ALLOC;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const panel = DOC.getElementById("alloc-sim-panel");
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  const hedgeLines = panel.querySelectorAll(".sim-hedge-line");
+  r.bothCardsShowHedge = hedgeLines.length === 2;
+  r.optCardSaysRepresentative = /대표점/.test(panel.textContent)
+    && /배분\+헤지/.test(panel.textContent);
+  const sliders = Array.from(panel.querySelectorAll("input"))
+    .filter((n) => /헤지비율$/.test(n.getAttribute("aria-label") || ""));
+  r.slidersLiveInPanel = sliders.length === 2;
+  const applyH = Array.from(panel.querySelectorAll("button"))
+    .find((n) => /헤지 슬라이더를 최적으로/.test(n.textContent));
+  r.applyHedgeButtonExists = !!applyH;
+  if (applyH) applyH.click();
+  const st2 = P.allocState(CMA_ALLOC);   // 저장 안 됨 — 디폴트 그대로여야 한다
+  r.applyHedgeDoesNotSave = shim.localStorage.getItem("iaw-alloc") == null;
+  const sliderVals = sliders.map((n) => +n.value);
+  r.applyHedgeMovesSliders = !!jo
+    && Math.abs(sliderVals[0] - Math.round(jo.hb * 100)) < 1.5
+    && Math.abs(sliderVals[1] - Math.round(jo.he * 100)) < 1.5;
+
+  /* ③ 통화별 분해 — 벤치마크 출처·행 합 = 슬리브 노출 */
+  const d = P.allocCcyHedgeRows(CMA_ALLOC, st, 21, 6, 0.9, 0.3);
+  r.ccyRowsExist = !!d && d.rows.length >= 5;
+  r.ccySrcIsBench = !!d && d.src.해외채권 === "벤치마크" && d.src.해외주식 === "벤치마크";
+  if (d) {
+    const expSum = d.rows.reduce((a, x) => a + x.exp, 0);
+    const covered = 21 * d.coverage.해외채권 / 100 + 6 * d.coverage.해외주식 / 100;
+    r.ccyExposureSumMatchesCoverage = Math.abs(expSum - covered) < 1e-6;
+    /* 슬리브 균일 비율 — 채권만 담으면 모든 통화의 헤지/노출 비가 hb 와 같다 */
+    const db = P.allocCcyHedgeRows(CMA_ALLOC, st, 30, 0, 0.8, 0);
+    r.ccyUniformWithinSleeve = db.rows.every((x) => Math.abs(x.hedged / x.exp - 0.8) < 1e-9);
+  }
+  const det = panel.querySelector(".sim-ccy");
+  r.ccyTableRendered = !!det && /통화별 환헤지 분해/.test(det.textContent);
+  r.ccyHonestAboutUniform = !!det && /같은 비율이 걸립니다/.test(det.textContent);
+
+  /* ④ 환율 축 부재 — 무력 명시 + 배분만 최적화 */
+  const NOFX2 = { ...CMA_ALLOC, cma: stripCmaCol(CMA_ALLOC.cma, "_fx") };
+  const Ef = P.allocEngine(NOFX2, P.allocDefaults(NOFX2));
+  const jf = P.allocJointOpt(Ef, P.allocDefaults(NOFX2));
+  r.noFxJointStillOptimizesWeights = !!jf && jf.xe === null && Array.isArray(jf.w);
+  P.DATA.alloc = NOFX2;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  r.noFxCardSaysInert = /헤지는 무력/.test(DOC.getElementById("alloc-sim-panel").textContent);
+  P.DATA.alloc = CMA_ALLOC;
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
 /* ====== P21. 통화 구성 — 벤치마크 디폴트와 커버리지 =========================
    기관 실제 비중은 수기입력이고 저장소에 없다. 화면이 채워 주는 것은 **공개 벤치마크**
    뿐이며, 두 자산군의 근거 품질이 달라(채권=표시통화 직접 집계 / 주식=국가→통화 근사)
@@ -2041,8 +2126,10 @@ safe("simConsole", () => {
   r.notSavedOnChange = store.getItem("iaw-alloc") == null;
 
   /* 헤지 슬라이더도 같은 계약 — range input 을 움직여도 저장 안 됨 */
-  const range = Array.from(DOC.getElementById("alloc-controls").querySelectorAll("input"))
-    .find((n) => n.getAttribute("type") === "range");
+  /* 헤지 슬라이더는 §7.7.13 에서 시뮬레이터 패널로 이사 — aria-label 로 집는다
+     (패널에는 비중 막대 range 7개도 있다) */
+  const range = Array.from(DOC.getElementById("alloc-sim-panel").querySelectorAll("input"))
+    .find((n) => (n.getAttribute("aria-label") || "") === "해외채권 헤지비율");
   r.sliderExists = !!range;
   if (range) {
     range.value = "40";
