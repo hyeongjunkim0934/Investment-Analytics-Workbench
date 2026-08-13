@@ -4513,6 +4513,32 @@ function allocJointOpt(E, st) {
   const q = E.fxLive ? E.xeQuadW(w) : null;
   const xeFree = q ? E.xeStar(null, null, q) : null;
   const xe = E.fxLive ? E.xeOfW(w, hb, he) : null;
+  /* **구속의 출처를 구분한다**(재점검 발견 — 한 플래그로 뭉치면 거짓 안내가 된다).
+     Xe 의 실행 가능 구간 [xeLo, xeHi] 는 두 가지가 함께 만든다:
+       ① 헤지 밴드(내규 키인) — 밴드를 좁히면 구간이 좁아진다
+       ② **해외자산 비중 자체** — 헤지를 0% 로 놔도 Xe ≤ w채+w주 이고, 100% 로 걸어도
+          Xe ≥ 0 이다. 즉 밴드가 중립(0~100)이어도 노출 상한은 존재한다.
+     실측: 중립 밴드인데 λ=20 에서 xeFree 8.65% > xeHi 5.0%(= 총 해외비중)라 잘렸다 —
+     이때 「헤지 밴드가 물고 있습니다」라고 적으면 사용자를 밴드 완화라는 **틀린 조치**로
+     보낸다(밴드는 이미 중립이다). 그래서 둘을 나눠 각자 다른 문장을 쓴다.
+     판정은 xe(수렴 잔차가 섞인 값) 대신 **xeFree 가 구간 밖인지**로 한다 — 비수렴
+     잔차가 제약 판정으로 새지 않게(실측: λ=100 에서 잔차 8.1e-5 가 절대 오차 1e-9 를
+     넘어 밴드 경고가 잘못 떴다). 허용오차도 상대값으로 둔다. */
+  let bandBinds = false, capBinds = false, xeLo = null, xeHi = null;
+  if (E.fxLive && xeFree != null) {
+    const [[blo2, bhi2], [elo2, ehi2]] = hbnds;
+    xeLo = w[1] * (1 - bhi2) + w[3] * (1 - ehi2);
+    xeHi = w[1] * (1 - blo2) + w[3] * (1 - elo2);
+    const openMax = w[1] + w[3];                    // 헤지 0% 일 때의 노출 = 구조적 상한
+    const tol = 1e-6 * Math.max(1, Math.abs(xeFree));
+    if (xeFree > xeHi + tol) {
+      // 위쪽으로 잘림 — 상한이 노출 자체(밴드 중립)면 cap, 밴드가 더 좁히면 band
+      if (xeHi < openMax - tol) bandBinds = true; else capBinds = true;
+    } else if (xeFree < xeLo - tol) {
+      // 아래쪽으로 잘림 — 하한이 0(완전헤지 가능)이면 구조적, 밴드가 올렸으면 band
+      if (xeLo > tol) bandBinds = true; else capBinds = true;
+    }
+  }
   return {
     w, hb, he, xe,
     sig: E.sigmaW(w, B.C), mu: amDot(B.mu, w),
@@ -4520,8 +4546,9 @@ function allocJointOpt(E, st) {
     /* 슬리브 비중이 사실상 0이면 그 헤지비율은 위험에 무영향 */
     inertBond: E.fxLive && w[1] < 1e-9,
     inertEq: E.fxLive && w[3] < 1e-9,
-    xeFree,
-    bandBinds: xeFree != null && xe != null && Math.abs(xe - xeFree) > 1e-9,
+    xeFree, xeLo, xeHi,
+    bandBinds,      // 내규 밴드가 구간을 좁혀 잘림
+    capBinds,       // 해외자산 비중 자체가 상한 — 밴드를 풀어도 못 간다
   };
 }
 
@@ -5193,12 +5220,18 @@ function renderAlloc() {
         return c;
       };
       /* 헤지 문장 — 두 카드가 같은 서식을 쓴다. 쌍은 대표점(동점 무한 — Xe 가 정본) */
-      const hedgeLine = (hb, he, xe, tag) => el("div",
+      /* inertB/inertE = 그 슬리브 비중이 0 이라 헤지비율이 위험에 무영향인 경우.
+         그때 적히는 숫자는 **최적값이 아니라 현재 슬라이더값의 반사**다(엔진의
+         hedgePairForXeW 가 현재값을 그대로 돌려준다) — 큰 숫자만 보면 최적으로
+         읽히므로 숫자 자리에 * 를 달아 각주와 연결한다(재점검 발견). */
+      const hedgeLine = (hb, he, xe, tag, inertB, inertE) => el("div",
         { class: "sim-hedge-line", style: "font-size:12px;margin-top:4px" },
         el("b", {}, "헤지 "),
-        `채권 ${fmtNum(hb * 100, 0)}% / 주식 ${fmtNum(he * 100, 0)}%`,
+        `채권 ${fmtNum(hb * 100, 0)}%${inertB ? "*" : ""} / 주식 ${fmtNum(he * 100, 0)}%${inertE ? "*" : ""}`,
         xe != null ? ` · 미헤지 환노출 Xe ${fmtNum(xe * 100, 2)}%` : "",
-        tag ? el("span", { style: "color:var(--ink-3)" }, ` (${tag})`) : "");
+        tag ? el("span", { style: "color:var(--ink-3)" }, ` (${tag})`) : "",
+        (inertB || inertE)
+          ? el("span", { style: "color:var(--ink-3)" }, " · * = 위험에 무영향(현재값 표시)") : "");
       let optCol;
       if (opt) {
         const optCard = card8("① 최적 포트폴리오 (λ-MVO · 배분+헤지)", opt.mu, opt.sig,
@@ -5207,7 +5240,7 @@ function renderAlloc() {
           (opt.fxLive ? "" : " · 환율 축 없음 — 헤지는 무력(모든 조합 동점)이라 배분만 최적화"), true);
         if (opt.fxLive) {
           optCard.append(hedgeLine(opt.hb, opt.he, opt.xe,
-            "대표점 — 같은 Xe 조합은 위험이 정확히 같음"));
+            "대표점 — 같은 Xe 조합은 위험이 정확히 같음", opt.inertBond, opt.inertEq));
           /* 「최적으로」를 눌러도 슬라이더가 안 움직이는 경우의 **이유**를 적는다
              (2026-08-12 사용자 보고 — 무반응을 고장으로 읽지 않게).
              ① 최적 배분에서 그 슬리브 비중이 0 → 그 헤지비율은 위험과 무관
@@ -5220,7 +5253,16 @@ function renderAlloc() {
           why.push("이 최적 배분은 해외주식 비중이 0이라 주식 헤지비율은 위험에 영향이 없습니다(어떤 값이든 동일)");
         }
         if (opt.bandBinds && opt.xeFree != null) {
-          why.push(`헤지 밴드가 물고 있습니다 — 무제약 위험최소 Xe ${fmtNum(opt.xeFree * 100, 2)}%`);
+          why.push(`헤지 밴드(내규 키인)가 물고 있습니다 — 무제약 위험최소 Xe ${fmtNum(opt.xeFree * 100, 2)}%`);
+        }
+        if (opt.capBinds && opt.xeFree != null) {
+          /* 밴드가 아니라 **해외자산 비중 자체**가 상한인 경우 — 밴드를 풀어도 못 간다.
+             원인을 밴드로 적으면 사용자를 틀린 조치로 보낸다(재점검 발견). */
+          why.push(`헤지를 끝까지 움직여도 위험최소 Xe ${fmtNum(opt.xeFree * 100, 2)}% 에 닿지 않습니다 — `
+            + `해외자산 비중(${fmtNum((opt.w[1] + opt.w[3]) * 100, 1)}%)이 환노출의 상한이라 밴드 문제가 아닙니다`);
+        }
+        if (opt.converged === false) {
+          why.push("교대 최적화가 반복 상한에서 멈췄습니다 — 표시값은 근사입니다");
         }
         const same = Math.round(opt.hb * 100) === st.h_bond && Math.round(opt.he * 100) === st.h_eq;
         if (same) why.push("현재 슬라이더가 이미 이 대표점이라 「최적으로」를 눌러도 값이 그대로입니다");
@@ -5250,13 +5292,22 @@ function renderAlloc() {
             recalc(true);
           } }, "막대를 최적 비중으로"));
         if (opt.fxLive) {
-          btnRow8.append(el("button", { type: "button", class: "btn-ghost", onclick: () => {
-              st.h_bond = Math.round(opt.hb * 100);
-              st.h_eq = Math.round(opt.he * 100);
+          /* 무동작이 확정된 경우(이미 대표점) 버튼이 스스로 그 사실을 말한다 —
+             눌리는데 아무 일도 안 하는 것이 「고장」으로 읽힌 1차 신호였다. */
+          const hb0 = Math.round(opt.hb * 100), he0 = Math.round(opt.he * 100);
+          const noop = hb0 === st.h_bond && he0 === st.h_eq;
+          const hBtn = el("button", { type: "button", class: "btn-ghost", onclick: () => {
+              st.h_bond = hb0;
+              st.h_eq = he0;
               syncHedgeUi();
               markDirty();
               recalc(true);
-            } }, "헤지 슬라이더를 최적으로"));
+            } }, noop ? "헤지 슬라이더 — 이미 최적" : "헤지 슬라이더를 최적으로");
+          if (noop) {
+            hBtn.disabled = true;
+            hBtn.title = "현재 슬라이더가 이미 이 대표점입니다 — 눌러도 값이 바뀌지 않습니다";
+          }
+          btnRow8.append(hBtn);
         }
         optCard.append(btnRow8);
         optCol = col(optCard, dwrap("최적 포트폴리오 비중", opt.w));
@@ -5371,6 +5422,18 @@ function renderAlloc() {
     srcRow.append(el("span", { style: "font-size:12.5px" }, "창"), winSeg,
       el("span", { style: "color:var(--ink-3);font-size:12px" },
         "귀 기관 전략 벤치마크의 월간 수익률에서 직접 계산한 σ·상관입니다 — 프록시 근사가 없습니다"));
+    /* μ 기준일 컷(§7.7.16) — 데이터가 더 있는데 잘랐다는 사실을 화면이 말한다.
+       조용히 자르면 사용자는 σ 가 최신인 줄 안다(μ·σ 시점 불일치의 반대 사고). */
+    const cmaCut = E0.cmaAll && E0.cmaAll.sample_end;
+    const cmaDataLast = E0.cmaAll && E0.cmaAll.data_last;
+    if (cmaCut) {
+      const later = cmaDataLast && cmaDataLast > cmaCut;
+      srcRow.append(el("span", { class: "cma-cut-note", style: "font-size:12px" },
+        el("b", {}, `표본 종료 ${String(cmaCut).slice(0, 7)}`),
+        " — 기대수익(μ) 키인 기준일에 맞춰 잘랐습니다",
+        later ? el("span", { style: "color:var(--ink-3)" },
+          ` (데이터는 ${String(cmaDataLast).slice(0, 7)} 까지 있습니다 — μ 를 새 기준일로 갱신하면 이 컷도 함께 옮깁니다)`) : ""));
+    }
   } else if (E0.layerNote) {
     srcRow.append(el("span", { class: "d-up", style: "font-size:12px" }, E0.layerNote));
   }

@@ -96,6 +96,32 @@ def test_risk_and_hedge_actually_ran(built):
     assert risk, "risk.json 이 비어 있습니다"
 
 
+def test_cma_sample_is_cut_at_mu_asof(built):
+    """CMA 표본 종료일(§7.7.16) — μ 키인 기준일에 맞춰 잘렸는가.
+
+    2026-08-12 사용자 지시: "자산군별 디폴트 위험값을 25년 12월까지만 — 기대수익률이
+    25년 12월 말 기준이거든". σ 와 μ 가 다른 시점이면 같은 표의 두 수가 다른 세계의
+    값이 되고 최적화가 그 불일치를 조용히 삼킨다. 창·롤링 **전부**가 컷을 넘지 않아야
+    하고, 데이터가 더 있다는 사실은 `data_last` 로 함께 게시돼야 한다(숨기지 않는다).
+    """
+    out, _ = built
+    A = json.loads((out / "alloc.json").read_text(encoding="utf-8"))
+    cma = A["cma"]
+    if not cma.get("active"):
+        pytest.skip(f"CMA 비활성: {cma.get('reason')}")
+    from bm import CMA_SAMPLE_END
+    assert cma["sample_end"] == CMA_SAMPLE_END, "게시된 표본 종료일이 상수와 다르다"
+    if CMA_SAMPLE_END is None:
+        return
+    assert cma["asof"] <= CMA_SAMPLE_END
+    for w in cma["windows"]:
+        assert w["end"] <= CMA_SAMPLE_END, f"창 {w['key']} 이 컷({CMA_SAMPLE_END}) 이후로 나간다"
+    for blk in cma.get("tv", []):
+        assert max(blk["dates"]) <= CMA_SAMPLE_END, f"롤링 {blk['key']} 이 컷 이후로 나간다"
+    # 데이터가 컷보다 뒤까지 있으면 그 사실이 게시돼야 한다(화면이 말할 근거)
+    assert "data_last" in cma
+
+
 def test_hedge_ust_merit_identity(built):
     """미국채 메리트 블록(§7.7.14) — 항등식과 백분위 범위를 합성 데이터로 검증.
 

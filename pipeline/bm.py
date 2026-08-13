@@ -44,6 +44,18 @@ FX_KEY = "bb:달러원"
 # 2021-12~)이 늘어나면 긴 창이 자동으로 열린다. "all" = 전체 공통 표본.
 WINDOW_YEARS = [1, 2, 3, 5, 7, 10]
 
+# CMA 표본 종료일 — **μ 키인의 기준일과 맞춘다** (2026-08-12 사용자 지시:
+# "자산군별 디폴트 위험값을 25년 12월까지만 계산해줘. 기대수익률이 25년 12월 말
+# 기준이거든"). σ 와 μ 가 다른 시점이면 같은 표에 실린 두 수가 서로 다른 세계의
+# 값이 되고, 최적화는 그 불일치를 조용히 삼킨다.
+#
+# **이 날짜는 `alloc.DEFAULTS["mu_over"]` 의 빈티지와 한 몸이다** — μ 를 새 기준일로
+# 갱신하면 이 상수도 함께 옮길 것. 임의 상수가 아니라 사용자가 준 기준일이며,
+# 화면·게시물이 이 값을 그대로 표시한다(데이터가 더 있는데 잘랐다는 사실을 숨기지
+# 않는다 — `sample_end`/`data_last` 두 필드를 함께 싣는 이유).
+# None 으로 두면 컷 없이 최신까지 쓴다.
+CMA_SAMPLE_END = "2025-12-31"
+
 # 배분 대상에서 제외하는 자산군 (2026-08-11 사용자 지시). 배분 레버가 아니므로
 # 공분산 행렬에 자리를 차지할 이유가 없다. **파싱은 계속 한다** — 키·카탈로그·
 # coverage 에는 남고 CMA 행렬에서만 빠진다(자산이 사라진 게 아니라 최적화
@@ -152,10 +164,25 @@ def build_cma(series_store: dict, warn) -> dict:
 
     labels = [k[3:] for k in bm_keys]                       # "장부가 국내채권" …
     groups = [lb.split()[0] for lb in labels]
-    rets = {k: _month_end_returns(S[k]) for k in bm_keys}
+    rets_full = {k: _month_end_returns(S[k]) for k in bm_keys}
+    # 데이터가 실제로 어디까지 있는지 — 컷과 별개로 게시한다(잘랐다는 사실을 화면이
+    # 말하려면 "어디까지 있는데 어디까지 썼다" 두 수가 다 필요하다).
+    _lasts = [r.index.max() for r in rets_full.values() if len(r)]
+    data_last = max(_lasts) if _lasts else None
+
+    # μ 기준일 컷(CMA_SAMPLE_END) — 이 아래 전부(α 적합·공통 표본·창·롤링)가
+    # 컷 이후 데이터를 **보지 않는다**. rets 단계에서 자르는 이유: 디스무딩 α 가
+    # 전 이력 ρ1 이라, 여기서 자르지 않으면 보조축이 미래를 훔쳐본다(look-ahead).
+    cut = pd.Timestamp(CMA_SAMPLE_END) if CMA_SAMPLE_END else None
+    if cut is not None:
+        rets = {k: r[r.index <= cut] for k, r in rets_full.items()}
+    else:
+        rets = rets_full
 
     fx = S.get(FX_KEY)
     fx_ret = _month_end_returns(fx) if fx is not None else None
+    if fx_ret is not None and cut is not None:
+        fx_ret = fx_ret[fx_ret.index <= cut]
     if fx_ret is None:
         warn(f"cma: 환율 시리즈({FX_KEY}) 없음 — 헤지 반영 축 없이 게시")
 
@@ -192,6 +219,8 @@ def build_cma(series_store: dict, warn) -> dict:
     # 자산별 가용 구간 (표본 정직성 — 화면 표에 그대로 나간다). 제외 자산군도
     # `included:false` 로 함께 싣는다 — 파일에는 있는데 배분에 없다는 사실이
     # 화면에서 보여야 "왜 8개인가"에 답이 된다.
+    # (컷 전 **실제 가용 구간**이다 — 컷은 windows/tv 에만 걸린다. 두 수가 다른 것이
+    #  정상이고, 화면이 "데이터는 여기까지 있는데 μ 기준일에 맞춰 잘랐다"를 말할 근거다.)
     coverage = []
     for k in all_bm:
         lb = k[3:]
@@ -210,9 +239,10 @@ def build_cma(series_store: dict, warn) -> dict:
         frames["_fx"] = fx_ret
     df = pd.DataFrame(frames).dropna()
     if len(df) < 12:
-        warn(f"cma: 공통 월간 표본이 {len(df)}개월뿐 — CMA 비활성 게시")
+        cutmsg = f" (μ 기준일 컷 {CMA_SAMPLE_END} 적용 후)" if cut is not None else ""
+        warn(f"cma: 공통 월간 표본이 {len(df)}개월뿐{cutmsg} — CMA 비활성 게시")
         return {"active": False,
-                "reason": f"공통 표본 {len(df)}개월 — 최소 12개월 필요"}
+                "reason": f"공통 표본 {len(df)}개월{cutmsg} — 최소 12개월 필요"}
 
     asof = df.index.max()
     windows = []
@@ -281,6 +311,10 @@ def build_cma(series_store: dict, warn) -> dict:
     return {
         "active": True,
         "asof": str(asof.date()),
+        # μ 기준일 컷(§7.7.16) — 표본을 어디서 끊었고 데이터는 어디까지 있는지.
+        # 둘이 다르면 화면이 그 사실을 적는다(조용히 자르지 않는다).
+        "sample_end": CMA_SAMPLE_END,
+        "data_last": str(data_last.date()) if data_last is not None else None,
         "labels": labels,
         "groups": groups,
         "fx_col": "_fx" if fx_ret is not None else None,
@@ -295,7 +329,9 @@ def build_cma(series_store: dict, warn) -> dict:
         "excluded": [lb for lb in (k[3:] for k in all_bm) if lb in EXCLUDED],
         "windows": out_windows,
         "tv": tv,
-        "method": ("월말 수준 → 월간 수익률 → 연환산(σ ×√12, 평균 ×12, 공분산 ×12). "
+        "method": ((f"표본 종료 {CMA_SAMPLE_END} — 기대수익(μ) 키인 기준일에 맞춰 잘랐습니다. "
+                    if CMA_SAMPLE_END else "")
+                   + "월말 수준 → 월간 수익률 → 연환산(σ ×√12, 평균 ×12, 공분산 ×12). "
                    "일별을 쓰지 않는 이유: 주말 캐리포워드로 σ 과소평가. "
                    "0 값은 벤치마크 미개시 결측으로 제외. "
                    "금융상품·대출금은 배분 대상이 아니라 행렬에서 제외(coverage 에는 남음). "
