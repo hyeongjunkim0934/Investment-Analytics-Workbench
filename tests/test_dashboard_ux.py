@@ -1905,6 +1905,31 @@ def test_screen_states_cma_sample_cut(probe):
     assert c["absentWhenNoCut"] is True
 
 
+def test_cut_note_states_the_reached_sample_end_not_the_constant(probe):
+    """§7.7.18 — 화면이 적는 「표본 종료」는 **요청한 컷(상수)이 아니라 실제로 도달한 끝**.
+
+    둘은 갈릴 수 있다: BM 파일이 짧거나, μ 를 새 기준일로 옮겼는데 새 BM 데이터가 아직
+    안 온 경우다 — 후자는 `CLAUDE.md` 가 지시하는 정상 유지보수 순서라 실제로 일어난다.
+    상수를 그대로 적으면 표본이 닿지도 않은 달을 「표본 종료」라 쓰고, 하지도 않은 절단을
+    했다고 단언하며, **μ·σ 시점이 어긋난 사실을 숨긴다** — §7.7.16 이 막으려던 그 상태다.
+    """
+    c = probe["cmaSampleCut"]
+    assert c["threeCaseRenderErrors"] == 0
+    # ① 데이터가 컷에 못 미침
+    assert c["shortStatesReachedEnd"] is True, "도달한 표본 끝이 아니라 다른 달을 적는다"
+    assert c["shortDoesNotClaimConstant"] is True, "표본이 닿지도 않은 달을 「표본 종료」라 적는다"
+    assert c["shortDoesNotClaimCut"] is True, "하지도 않은 절단을 했다고 적는다"
+    assert c["shortWarnsMismatch"] is True, "σ·μ 시점 어긋남을 숨긴다 — §7.7.16 의 목적이 무너진다"
+    assert c["shortIsFlagged"] is True, "어긋남인데 평상시와 같은 색으로 적는다"
+    # ② 컷이 실제로 잘라냄 (기존 동작 유지)
+    assert c["cutStatesReachedEnd"] is True
+    assert c["cutSaysDataLast"] is True
+    assert c["cutNotFlagged"] is True, "정상 컷인데 경고색을 쓴다"
+    # ③ 자를 것이 없었음
+    assert c["exactSaysNothingToCut"] is True, "자를 데이터가 없었는데 잘랐다고만 적는다"
+    assert c["noNullClass"] is True, 'class 가 문자열 "null" 로 샜다'
+
+
 def test_cards_lead_with_return_not_risk(probe):
     """카드 위계(§7.7.15, 2026-08-12 사용자 지시) — 기대수익이 **위·크게**, 위험이 아래·작게.
 

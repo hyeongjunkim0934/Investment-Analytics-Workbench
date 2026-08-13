@@ -392,3 +392,38 @@ def test_cma_block_publishes_no_timeseries(parsed):
 
     walk(out)
     json.dumps(out)    # 직렬화 가능 = 넘파이 스칼라 누수 없음
+
+
+def test_build_cma_warns_when_sample_falls_short_of_mu_asof():
+    """μ 기준일에 **못 미치는** 표본은 조용히 넘기지 않는다(§7.7.18).
+
+    실제로 일어나는 경로: BM 파일이 짧거나, μ 를 새 기준일로 옮겼는데 새 BM 데이터가
+    아직 안 온 경우다 — 후자는 `CLAUDE.md` 가 지시하는 **정상 유지보수 순서**다.
+    이때 σ 와 μ 의 시점이 어긋나고, 그 사실이 `meta.json` 경고에 남아야 한다.
+    화면 쪽(도달한 표본 끝을 적고 경고색을 다는 것)은 `test_dashboard_ux` 가 본다.
+    """
+    me = pd.date_range("2020-01-31", periods=25, freq="ME")   # 2022-01 종료
+    a = pd.Series(np.linspace(100.0, 130.0, 25), index=me)
+    b = pd.Series(np.linspace(100.0, 118.0, 25), index=me)
+    warns: list[str] = []
+    out = bm.build_cma(
+        _store(**{"bm:장부가 국내채권": a, "bm:시가 국내채권": b}), warns.append)
+    assert out["active"] is True
+    # 표본은 컷에 못 미쳤고, 게시물은 그 사실을 나를 수 있어야 한다
+    assert out["asof"] < out["sample_end"]
+    hit = [w for w in warns if "μ 기준일" in w and "어긋납니다" in w]
+    assert hit, f"시점 어긋남 경고가 없다 — warns={warns}"
+    assert out["asof"][:7] in hit[0], "경고가 실제로 도달한 표본 끝을 적지 않는다"
+
+
+def test_build_cma_does_not_warn_when_sample_reaches_the_cut():
+    """반대 방향 — 표본이 컷에 닿으면 경고를 만들지 않는다(없는 사실을 적지 않는다)."""
+    me = pd.date_range("2020-01-31", periods=90, freq="ME")   # 2027-06 종료 > 컷
+    a = pd.Series(np.linspace(100.0, 190.0, 90), index=me)
+    b = pd.Series(np.linspace(100.0, 160.0, 90), index=me)
+    warns: list[str] = []
+    out = bm.build_cma(
+        _store(**{"bm:장부가 국내채권": a, "bm:시가 국내채권": b}), warns.append)
+    assert out["active"] is True
+    assert out["asof"] == bm.CMA_SAMPLE_END
+    assert not [w for w in warns if "어긋납니다" in w], f"없는 어긋남을 적는다 — {warns}"

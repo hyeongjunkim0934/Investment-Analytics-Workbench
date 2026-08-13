@@ -1984,6 +1984,40 @@ safe("cmaSampleCut", () => {
   P.renderSection("alloc");
   r.absentWhenNoCut = !DOC.getElementById("alloc-controls").querySelector(".cma-cut-note");
   r.absentRenderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+
+  /* §7.7.18 — 표시하는 날짜는 **요청한 컷(상수)이 아니라 실제로 도달한 표본 끝(asof)**.
+     둘은 갈릴 수 있다: BM 파일이 짧거나, μ 를 새 기준일로 옮겼는데 새 BM 데이터가 아직
+     안 온 경우다(후자는 문서가 지시하는 정상 유지보수 순서라 실제로 일어난다).
+     상수를 그대로 적으면 ① 표본이 닿지도 않은 달을 「표본 종료」라 쓰고 ② 하지도 않은
+     절단을 했다고 단언하며 ③ **μ·σ 시점이 어긋난 사실을 숨긴다** — §7.7.16 이 막으려던
+     바로 그 상태다. 세 갈래를 전부 렌더시켜 확인한다. */
+  const withCma = (over) => ({ ...CMA_ALLOC, cma: { ...CMA_ALLOC.cma, ...over } });
+  const noteText = (over) => {
+    P.DATA.alloc = withCma(over);
+    shim.localStorage.removeItem("iaw-alloc");
+    P.renderSection("alloc");
+    const n = DOC.querySelector(".cma-cut-note");
+    return n ? n.textContent.replace(/\s+/g, " ") : "";
+  };
+  // ① 데이터가 컷에 못 미침 — 도달한 끝을 적고 시점 어긋남을 경고해야 한다
+  const tShort = noteText({ asof: "2030-03-31", sample_end: "2030-06-30", data_last: "2030-03-31" });
+  r.shortStatesReachedEnd = /표본 종료 2030-03/.test(tShort);
+  r.shortDoesNotClaimConstant = !/표본 종료 2030-06/.test(tShort);
+  r.shortDoesNotClaimCut = !/맞춰 잘랐습니다/.test(tShort);
+  r.shortWarnsMismatch = /σ 와 μ 의 시점이 어긋납니다/.test(tShort);
+  r.shortIsFlagged = !!DOC.querySelector(".cma-cut-note .d-up");
+  // ② 컷이 실제로 잘라냄 — 기존 문장 유지
+  const tCut = noteText({ asof: "2030-06-30", sample_end: "2030-06-30", data_last: "2030-08-31" });
+  r.cutStatesReachedEnd = /표본 종료 2030-06/.test(tCut);
+  r.cutSaysDataLast = /데이터는 2030-08 까지 있습니다/.test(tCut);
+  r.cutNotFlagged = !DOC.querySelector(".cma-cut-note .d-up");
+  // ③ 자를 것이 없었음 — 절단했다고만 적고 끝내지 않는다
+  const tExact = noteText({ asof: "2030-06-30", sample_end: "2030-06-30", data_last: "2030-06-30" });
+  r.exactSaysNothingToCut = /자를 데이터가 없었습니다/.test(tExact);
+  // className 이 문자열 "null" 로 새지 않는가(el 의 attrs 는 그대로 반영된다)
+  r.noNullClass = !/\bnull\b/.test(DOC.querySelector(".cma-cut-note").innerHTML || "");
+  r.threeCaseRenderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+
   P.DATA.alloc = CMA_ALLOC;
   shim.localStorage.removeItem("iaw-alloc");
   return r;
