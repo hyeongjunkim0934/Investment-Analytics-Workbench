@@ -2420,3 +2420,124 @@ def test_save_and_revert_are_explicit_buttons(probe):
     assert s["saveSchemaHasNoLegacyKeys"] is True, "저장 스키마에 구 회계 축 키가 남는다"
     assert s["baselineResetAfterSave"] is True
     assert s["revertRestoresSaved"] is True
+
+
+def test_estimate_scenario_signs_are_correct(probe):
+    """추정일 시나리오의 **부호**(§7.10) — 이 화면의 심장이다.
+
+    2026-08-13 사용자 지시는 "금리 변화를 듀레이션과 곱해서"였는데 **부호가 빠져 있었다**.
+    금리가 오르면 채권 가격은 떨어지므로 가격효과 = **−D × Δy** 다. 뒤집히면 금리
+    상승기에 채권이 이익 나는 것으로 나오고, 숫자는 여전히 "수익률처럼" 보여 눈으로는
+    못 잡는다. 스왑도 같다 — 스왑레이트가 **오르면** MTM 은 **손실**이며, 이는
+    `hedge.py` 회계모형 ⑤ 와 같은 부호다(새 모형을 만들지 않고 그것을 쓴다).
+
+    사용자가 든 예(−2% 로 체결했는데 추정일 −3% 로 하락 → 계약 가치 상승)가
+    `swapDownMeansGain` 으로 그대로 고정돼 있다.
+    """
+    c = probe["estimateScenario"]
+    assert c["ready"] is True and c["renderErrors"] == 0
+    assert c["days"] == 184
+    assert c["rateUpMeansPriceDown"] is True, "금리 상승인데 채권 가격이 오른다 — 부호가 뒤집혔다"
+    assert c["priceIsMinusDurationTimesDy"] is True, "가격효과가 −D×Δy 가 아니다"
+    assert c["swapDownMeansGain"] is True, "스왑레이트 하락인데 MTM 이 손실이다"
+    assert c["swapUpMeansLoss"] is True
+    assert c["swapMtmMatchesAcctModel"] is True, "스왑 MTM 이 hedge.py 회계모형 ⑤ 와 다르다"
+
+
+def test_estimate_scenario_respects_book_value_and_hedge(probe):
+    """장부가·헤지 규약(§7.10, 2026-08-13 사용자 지시).
+
+    · 장부가 자산은 원가법이라 **가격효과가 0** — 듀레이션을 넣어도 금리에 안 움직인다
+      (이 저장소 실측: 장부가 BM 손익변동 σ 0.18%/0.17%).
+    · 다만 **장부가 해외채권은 환·스왑으로 움직인다** — 채권은 원가법이어도 환헤지
+      스왑은 파생상품이라 스왑레이트가 변하면 평가손익이 난다(사용자 설명).
+    · 환효과는 **미헤지분에만** — 헤지 100%면 정확히 0.
+    """
+    c = probe["estimateScenario"]
+    assert c["bookValueDurationWasEntered"] is True, "듀레이션을 안 넣고 검사해 헛돌고 있다"
+    assert c["bookValueHasNoPriceEffect"] is True, "장부가에 금리 가격효과가 붙었다"
+    assert c["bookDomesticMovesOnlyByCarry"] is True, "장부가 국내채권이 캐리 외로 움직인다"
+    assert c["bookForeignMovesByFxAndSwap"] is True, "장부가 해외채권이 환·스왑에 안 움직인다"
+    assert c["fxIsUnhedgedShareOnly"] is True, "환효과가 (1−헤지비율) 비례가 아니다"
+    assert c["fullHedgeZeroesFx"] is True, "헤지 100%인데 환효과가 남는다"
+    assert c["domesticHasNoFx"] is True, "국내자산에 환효과가 붙었다"
+
+
+def test_estimate_scenario_terms_and_blocking(probe):
+    """항 분해·합산·미입력 처리(§7.10).
+
+    캐리는 기준일 연환산 수익률의 구간 비례분이고 **주식은 캐리가 없다**(가격이 곧 수익).
+    합계는 네 항의 합과 정확히 같아야 하며, 입력이 모자라면 **0 으로 대체하지 않고**
+    막고 사유를 남긴다 — 0 으로 채우면 그 자산이 수익 0 인 것처럼 합계에 섞인다.
+    """
+    c = probe["estimateScenario"]
+    assert c["carryIsProRated"] is True
+    assert c["equityHasNoCarry"] is True, "주식에 캐리를 붙였다 — 이중계상이다"
+    assert c["equityPriceIsIndexMove"] is True
+    assert c["totalIsSumOfTerms"] is True, "합계가 네 항의 합과 다르다"
+    assert c["portfolioMatchesHandCalc"] is True
+    assert c["missingDurationBlocks"] is True, "듀레이션이 없는데 값을 만들어냈다"
+    assert c["blockedListed"] is True, "막힌 자산군을 화면이 세지 않는다"
+    assert c["rejectsBackwardEstDate"] is True, "추정일이 기준일보다 앞인데 받아들인다"
+    assert c["axisAutoFilled"] is True, "과거 추정일인데 시장 변화를 조회하지 않는다"
+    assert c["keyedAxisBeatsAuto"] is True, "수기 시나리오가 자동 조회에 밀린다"
+    assert c["axisRowCount"] == 6 and c["resultRowCount"] == 11
+    assert c["screenShowsFourTerms"] is True, "네 항 분해가 화면에 없다"
+    assert c["screenStatesSignRule"] is True and c["screenStatesSwapSign"] is True
+    assert c["screenStatesBookValue"] is True, "장부가 규약을 화면이 밝히지 않는다"
+    assert c["screenStatesLimits"] is True, "1차 근사·평행이동 한계를 밝히지 않는다"
+    assert c["scenarioInputsSave"] is True
+
+
+def test_linked_overview_card_keeps_the_card_layout(probe):
+    """개요의 링크 카드가 `.kpi` 의 flex 레이아웃을 유지하는가(§7.10.1 재점검).
+
+    `a.kpi-link` 에 `display:block` 을 주면 `.kpi` 의 `display:flex; gap:4px` 를 덮어
+    **카드 내부 간격 넷이 통째로 사라진다** — `gap` 은 block 레이아웃에서 무효라 오류도
+    경고도 없이 스파크라인이 16px 위로 올라간다. 링크 카드 9장과 비링크 카드 3장이 같은
+    줄에 나란히 서므로 사용자가 찾지 않아도 어긋남이 보인다(실측). 규칙의 주석은
+    「카드 모양을 유지」라고 적혀 있었는데 사실이 아니었다.
+    """
+    css = (ROOT / "dashboard" / "style.css").read_text(encoding="utf-8")
+    block = re.search(r"a\.kpi-link\s*\{([^}]*)\}", css)
+    assert block, "a.kpi-link 규칙을 찾지 못했습니다"
+    assert "display" not in block.group(1), (
+        "a.kpi-link 이 display 를 덮고 있습니다 — .kpi 의 flex/gap 이 죽습니다")
+    kpi = re.search(r"^\.kpi\s*\{([^}]*)\}", css, re.M)
+    assert kpi and "flex" in kpi.group(1) and "gap" in kpi.group(1), (
+        ".kpi 가 flex+gap 이 아니면 이 검사가 지키려는 것이 없습니다")
+
+
+def test_estimate_typing_is_never_destroyed_by_autofill(probe):
+    """수기 입력이 자동값 되쓰기에 파괴되지 않는가(§7.10.1 — 재점검이 잡은 CRITICAL).
+
+    `<input type=number>` 는 사용자가 `-` 하나만 쳤거나 지운 순간 value 가 "" 다. 그러면
+    수기 판정이 풀리고, 되쓰기가 자동값을 도로 넣어 방금 친 문자를 지우며 캐럿을 끝으로
+    보낸다 — 이어 치는 숫자가 그 뒤에 붙는다. **실측: 자동 20.00% 칸에 `-3.5` 를 치면
+    20.0035 가 되고 그대로 저장까지 됐다.** 연초 이후 마이너스 수익률은 흔한 입력이라
+    상시 재현되는 경로였다. 포커스가 있는 칸은 되쓰지 않고, blur 에서 다시 맞춘다.
+    """
+    c = probe["estimateCalc"]
+    assert c["autoFillPresentBeforeTyping"] is True, "자동값이 없으면 이 검사가 헛돈다"
+    assert c["focusedFieldNotOverwritten"] is True, "입력 중인 칸을 되쓴다"
+    assert c["typedNegativeSurvives"] is True, "친 음수가 자동값 뒤에 붙는다"
+    assert c["blurRestoresAutoFill"] is True, "포커스를 뺐는데 자동값으로 안 돌아온다"
+
+
+def test_estimate_headline_is_blank_without_a_reference_date(probe):
+    """기준일이 없으면 연환산 헤드라인을 **만들지 않는다**(§7.10.1 — CRITICAL).
+
+    계수가 없으면 주식을 뺀 자산군이 전부 계산되지 않는데, 분모는 전체 규모를 그대로
+    쓴다. 예전에는 그 결과인 「주식 수익 ÷ 전체 규모」가 26px 헤드라인으로 나갔고,
+    참고치(미연환산)가 본치보다 **커지는** 상태였다. 이제 비우고 사유를 적는다.
+    """
+    c = probe["estimateCalc"]
+    assert c["noAsofPortIsNull"] is True, "계수가 없는데 포트폴리오 수익률을 만들어냈다"
+    assert c["noAsofFlagged"] is True
+    assert c["noAsofStillHasPeriodRef"] is True, "계수가 필요 없는 참고치까지 없앴다"
+    assert c["noAsofHeadlineBlank"] is True, "헤드라인에 뜻 없는 수가 남아 있다"
+    assert c["noAsofProfitBlank"] is True, "총 운용수익이 주식만 담은 채 표시된다"
+    assert c["noAsofExplainedOnScreen"] is True, "왜 비었는지 화면이 적지 않는다"
+    assert c["rejectsNaNElapsed"] is True, "경과일수 NaN 이 통과한다"
+    assert c["compactionGapSaysTruth"] is True, "축약 구간 오류의 사유가 사실과 다르다"
+    assert c["compactionGapNotMislabelled"] is True

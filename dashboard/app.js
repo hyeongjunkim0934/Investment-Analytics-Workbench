@@ -6701,19 +6701,169 @@ const EST_ASSETS = [
 
 const EST_DAY_MS = 86400000;
 
+/* 자산군 → 시나리오 축 매핑(§7.10). **어느 축이 어느 자산을 움직이는가**의 정본이다.
+     rate : 이 자산의 Δy 를 주는 축(시가 채권만 — 장부가는 원가법이라 가격효과 0)
+     px   : 지수 변화가 곧 수익률인 축(주식)
+     fx   : 해외자산인가 — 환효과 (1−h)·Δ환율 과 스왑 MTM h·τ·(−Δ스왑)이 붙는다
+   **장부가 해외채권이 `rate:null` + `fx:true` 인 것이 이 표의 핵심이다**(2026-08-13
+   사용자 설명): 채권 자체는 원가법이라 금리에 안 움직이지만, 환헤지 스왑은 파생상품이라
+   스왑레이트가 변하면 평가손익이 난다("−2% 로 체결했는데 −3% 로 떨어지면 계약 가치가
+   올라 수익률이 소폭 상승"). `hedge.py` 회계모형 ②③⑤ 가 그대로 이 두 항이다. */
+const EST_SCEN = {
+  "장부가 국내채권":    { fx: false },
+  "장부가 해외채권":    { fx: true },
+  "단기자금":           { fx: false },
+  "대출금":             { fx: false },
+  "국내주식":           { px: "kospi", fx: false },
+  "해외주식":           { px: "acwi", fx: true },
+  "시가 국내채권 직접": { rate: "kr_rate", fx: false },
+  "시가 국내채권 간접": { rate: "kr_rate", fx: false },
+  "시가 해외채권 직접": { rate: "us_rate", fx: true },
+  "시가 해외채권 간접": { rate: "us_rate", fx: true },
+  "대체투자":           { fx: false },
+};
+
 function estDefaults() {
-  return { asof: null, amt: {}, ret: {}, dur: {}, saved: false };
+  return { asof: null, amt: {}, ret: {}, dur: {}, saved: false,
+           /* 시나리오(§7.10): 추정일 · 축별 Δ 수기값 · 슬리브 헤지비율 · 스왑 잔존만기 */
+           est_date: null, dlt: {}, hedge: {}, swap_tau: null };
 }
 
 function estState() {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(EST_LS_KEY)) || {}; } catch { saved = {}; }
   const st = { ...estDefaults(), ...saved };
-  /* 옛 저장분·손상 저장분 방어 — 없으면 저장 핸들러가 undefined 에 인덱싱하며 죽는다 */
-  ["amt", "ret", "dur"].forEach((k) => {
+  /* 옛 저장분·손상 저장분 방어 — 없으면 저장 핸들러가 undefined 에 인덱싱하며 죽는다.
+     `dlt`/`hedge` 는 §7.10 에서 새로 생긴 칸이라 그 이전 저장분에는 아예 없다. */
+  ["amt", "ret", "dur", "dlt", "hedge"].forEach((k) => {
     if (!st[k] || typeof st[k] !== "object") st[k] = {};
   });
   return st;
+}
+
+/* 축 하나의 기준일→추정일 변화. **kind 가 뜻을 정한다** — 금리는 차이(%p), 지수·환율은
+   변화율. 이 구분을 화면이 스스로 정하게 두면 금리를 비율로 나누는 사고가 조용히 난다.
+   돌려주는 `delta` 는 **소수**(bp 도 %도 아닌 decimal)이며 표시 단위 변환은 화면이 한다.
+   실제로 쓴 두 관측일을 함께 돌려준다 — 자동 채움 규약과 같다(조용한 대체 금지). */
+function estAxisSeries(A, axis) {
+  if (!axis) return null;
+  if (axis.index) {
+    const ix = ((A && A.indices) || []).find((x) => x.key === axis.index);
+    return ix ? { t: ix.t, v: ix.v, last: ix.last, label: ix.label } : null;
+  }
+  return axis.t ? { t: axis.t, v: axis.v, last: axis.last, label: axis.label } : null;
+}
+
+function estAxisDelta(A, axis, fromStr, toStr) {
+  const s = estAxisSeries(A, axis);
+  if (!s || !fromStr || !toStr) return null;
+  const at = (dstr) => {
+    const target = Math.floor(Date.parse(dstr + "T23:59:59Z") / 1000);
+    let lo = 0, hi = s.t.length - 1, k = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (s.t[mid] <= target) { k = mid; lo = mid + 1; } else { hi = mid - 1; }
+    }
+    return k < 0 ? null : { v: s.v[k], d: tsToDate(s.t[k]) };
+  };
+  const a = at(fromStr), b = at(toStr);
+  if (!a || !b) return { error: "구간 안에 관측이 없습니다" };
+  if (a.d === b.d) return { error: "기준일과 추정일이 같은 관측을 가리킵니다" };
+  const delta = axis.kind === "rate"
+    ? (b.v - a.v) / 100                 // 게시값이 % 단위 금리 → 소수로
+    : (a.v === 0 ? null : b.v / a.v - 1);
+  if (delta == null) return { error: "기준일 값이 0 입니다" };
+  return { delta, from: a, to: b, beyondData: !!(s.last && toStr > s.last) };
+}
+
+/* 추정 산식 — `estimate.json.scenario` 가 적은 그대로.
+     추정 기간수익률 = 캐리 + 가격효과 + 환효과 + 스왑 MTM
+   부호 둘이 심장이다: 가격효과 = **−**D·Δy, 스왑 MTM = h·τ·(**−**Δ스왑).
+   기준(base)은 `estEngine` 결과다 — 캐리를 기준일 수익률에서 환산하기 때문(사용자 선택). */
+function estScenario(A, st) {
+  /* base 를 **여기서 만든다** — 예전에는 인자로 받았는데, 호출부가 다른 `st` 로 만든 base 를
+     넘기면 듀레이션·수익률이 어긋난 채 조용히 계산된다(프로브가 잡은 함정). 인자를 없애면
+     그 상태가 아예 만들어지지 않는다. */
+  const base = estEngine(A, st);
+  const from = st.asof, to = st.est_date;
+  if (!from || !to) return { ready: false, reason: "기준일과 추정일을 모두 넣으십시오" };
+  const dcFrom = estDayCount(from), dcTo = estDayCount(to);
+  if (!dcFrom || !dcTo) return { ready: false, reason: "날짜 형식이 올바르지 않습니다" };
+  const days = Math.round((Date.parse(to + "T00:00:00Z") - Date.parse(from + "T00:00:00Z")) / EST_DAY_MS);
+  if (days <= 0) return { ready: false, reason: "추정일은 기준일보다 뒤여야 합니다" };
+
+  /* 축별 Δ — 수기값이 있으면 그것이 정본, 없으면 데이터에서 조회(자동 채움과 같은 규약) */
+  const axes = ((A && A.axes) || []).map((ax) => {
+    const keyed = st.dlt[ax.key];
+    const isKeyed = keyed != null && keyed !== "" && isFinite(+keyed);
+    const auto = estAxisDelta(A, ax, from, to);
+    /* 표시 단위(bp/%)를 소수로: rate 는 bp/10000, price 는 %/100 */
+    const scale = ax.unit === "bp" ? 1e-4 : 1e-2;
+    const delta = isKeyed ? +keyed * scale
+      : (auto && auto.delta != null ? auto.delta : null);
+    return { ...ax, auto, isKeyed, delta, scale,
+             source: isKeyed ? "수기" : (auto && auto.delta != null ? "자동" : "미입력") };
+  });
+  const byKey = {};
+  axes.forEach((a) => { byKey[a.key] = a; });
+  const d = (k) => (byKey[k] && byKey[k].delta != null ? byKey[k].delta : null);
+  const dFx = d("usdkrw"), dSwap = d("swap");
+  const tau = isFinite(+st.swap_tau) && st.swap_tau !== "" && st.swap_tau != null
+    ? +st.swap_tau : null;
+
+  const yearDays = dcTo.days;                  // 연초 → 추정일 (연환산 계수용)
+  const rows = base.rows.map((b) => {
+    const spec = EST_SCEN[b.key] || {};
+    /* 캐리 — 기준일 연환산 수익률을 구간 길이로 비례 배분(사용자 선택).
+       주식은 기준일 수익률이 연환산이 아니라 가격 그 자체이므로 캐리가 없다. */
+    const carry = (b.equity || b.r == null) ? 0 : b.r * (days / 365);
+    let price = null, priceNote = "";
+    if (spec.px) {
+      price = d(spec.px);
+      if (price == null) priceNote = "지수 변화 미입력";
+    } else if (spec.rate) {
+      const dy = d(spec.rate);
+      if (dy == null) priceNote = "금리 변화 미입력";
+      else if (b.dur == null) { priceNote = "듀레이션 미입력"; }
+      else price = -b.dur * dy;                 // ★ 부호: 금리 상승 → 가격 하락
+    } else {
+      price = 0;
+      priceNote = b.bond ? "장부가 — 원가법이라 가격효과 없음" : "가격 축 없음";
+    }
+    const hRaw = st.hedge[b.key];
+    const h = isFinite(+hRaw) && hRaw !== "" && hRaw != null ? +hRaw / 100 : null;
+    let fx = null, swap = null, fxNote = "";
+    if (spec.fx) {
+      if (h == null) { fxNote = "헤지비율 미입력"; }
+      else {
+        if (dFx != null) fx = (1 - h) * dFx;
+        if (dSwap != null && tau != null) swap = h * tau * (-dSwap);   // ★ 회계모형 ⑤
+        if (dFx == null) fxNote = "환율 변화 미입력";
+        else if (dSwap == null) fxNote = "스왑레이트 변화 미입력";
+        else if (tau == null) fxNote = "스왑 잔존만기 미입력";
+      }
+    } else { fx = 0; swap = 0; }
+    const parts = [carry, price, fx, swap];
+    const total = parts.some((x) => x == null) ? null : parts.reduce((a, x) => a + x, 0);
+    /* 연초 → 추정일 누적: 기준일까지의 **미연환산** 기간수익 + 추정 구간, 그 뒤 같은
+       규약으로 연환산(주식 제외). 담당자가 추정일에 보고할 수는 이것이다. */
+    const cumPeriod = (b.r == null || total == null) ? null : b.r + total;
+    const cumAnnual = cumPeriod == null ? null
+      : (b.equity ? cumPeriod : cumPeriod * (365 / yearDays));
+    return { ...b, carry, price, priceNote, h, fx, swap, fxNote, total, cumPeriod, cumAnnual };
+  });
+
+  const tot = rows.reduce((a, x) => a + (x.amt || 0), 0);
+  const sum = (f) => (tot > 0
+    ? rows.reduce((a, x) => a + ((x.amt != null && f(x) != null) ? x.amt * f(x) : 0), 0) / tot
+    : null);
+  return {
+    ready: true, days, yearDays, axes, tau, rows, totalAmt: tot,
+    portPeriod: sum((x) => x.total),
+    portCumPeriod: sum((x) => x.cumPeriod),
+    portCumAnnual: sum((x) => x.cumAnnual),
+    blocked: rows.filter((x) => x.amt && x.total == null),
+  };
 }
 
 function estSaveState(st) {
@@ -6735,7 +6885,9 @@ function estDayCount(asofStr) {
   const year = +asofStr.slice(0, 4);
   const base = Date.parse(`${year - 1}-12-31T00:00:00Z`);
   const days = Math.round((asof - base) / EST_DAY_MS);
-  if (days <= 0) return null;
+  /* NaN 은 `<= 0` 을 통과한다 — 예: 연도 0000 이면 전년이 `-1-12-31` 이라 Date.parse 가
+     NaN 을 주고, 그대로 두면 계수가 NaN 이 되어 비주식 자산이 전부 조용히 사라진다. */
+  if (!isFinite(days) || days <= 0) return null;
   return { year, base: `${year - 1}-12-31`, days, factor: 365 / days };
 }
 
@@ -6764,7 +6916,16 @@ function estIndexYtd(idx, asofStr) {
        · obsDate < anchor.d : 정말로 기준일이 전년 연말보다 앞이다
        · obsDate == anchor.d: 기준일은 뒤인데 **그 해 관측이 하나도 없다**
          (지수가 전년 말에서 멈춤 — 기준일 연도로 넘어온 데이터가 없다) */
-  if (obsDate < anchor.d) return { error: "기준일이 전년 연말보다 앞섭니다" };
+  /* **여기서 "기준일이 전년 연말보다 앞섭니다"라고 적으면 안 된다** — `estDayCount` 가
+     이미 기준일 > 전년 12/31 을 보장하므로 그 문장은 참이 될 수 없다(재점검 발견).
+     실제 원인은 하나뿐이다: 게시 계열이 5년보다 오래된 구간을 주별로 축약해서, 연말
+     앵커(원본에서 뽑음)와 기준일 사이에 **축약된 관측이 하나도 없는** 것이다.
+     실측: KOSPI TR 로 기준일 2019-01-02 를 물으면 앵커 2018-12-31 보다 앞선 금요일
+     관측이 잡혀 이 가지로 빠졌다. */
+  if (obsDate < anchor.d) {
+    return { error: `${dc.year - 1}년 연말과 기준일 사이에 축약되지 않은 관측이 없습니다`
+                    + ` (앵커 ${anchor.d} · 가장 가까운 관측 ${obsDate})` };
+  }
   if (obsDate === anchor.d) {
     return { error: `${dc.year}년 관측이 없습니다 — 지수가 ${anchor.d} 에서 멈춰 있습니다` };
   }
@@ -6828,14 +6989,77 @@ function estEngine(A, st) {
   /* 미입력 진단 — 규모는 넣었는데 수익률이 비었으면 그 자산은 수익 0 으로 잡힌다.
      조용히 넘기면 포트폴리오 수익률이 이유 없이 낮아 보인다. */
   const missingRet = rows.filter((x) => x.amt != null && x.amt !== 0 && x.r == null);
+  /* 기준일이 없으면 연환산 계수가 없어 **비주식 행 전부**가 계산되지 않는다. 그때
+     `Σ주식수익 / Σ전체규모` 를 헤드라인으로 내면 아무 뜻도 없는 수가 「연환산 반영」이라는
+     이름으로 나간다(재점검이 잡은 CRITICAL — 참고치가 본치보다 커지는 상태였다).
+     계수가 없으면 그 수는 만들지 않는다. */
   return {
     dc, rows, totalAmt, totalProfit,
-    port: totalAmt > 0 ? totalProfit / totalAmt : null,
+    port: (dc && totalAmt > 0) ? totalProfit / totalAmt : null,
+    portBlockedByAsof: !dc && rows.some((x) => x.amt && !x.equity),
     portPeriod: totalAmt > 0 ? totalPeriod / totalAmt : null,
     durW, bondAmt, missingRet,
     unavailable: (A && A.unavailable) || [],
     active: !!(A && A.active),
   };
+}
+
+/* 추정 결과 — 자산군별로 **네 항을 따로 보여준다**. 합계 한 수만 내면 어느 항이
+   결과를 끌고 가는지 알 수 없고, 부호가 뒤집혀도 눈에 띄지 않는다. */
+function renderEstScenarioResult(A, S) {
+  const box = $("#est-scenario-result");
+  if (!box) return;
+  box.textContent = "";
+  if (!S.ready) {
+    box.append(el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, "추정 결과")),
+      el("div", { class: "card-sub", style: "margin-top:6px" }, S.reason || "입력이 필요합니다"));
+    return;
+  }
+  const pc = (x, d) => (x == null ? "–" : fmtNum(x * 100, d == null ? 2 : d));
+  box.append(el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, "추정 결과"),
+    el("span", { class: "card-sub" }, "캐리 + 가격효과 + 환효과 + 스왑 MTM")));
+
+  const big = (label, v, size, sub) => el("div", { style: "min-width:210px" },
+    el("div", { style: "color:var(--ink-3);font-size:12px" }, label),
+    el("div", { style: `font-size:${size}px;font-weight:700;line-height:1.25` },
+      v == null ? "–" : pc(v) + "%"),
+    sub ? el("div", { style: "color:var(--ink-3);font-size:11px" }, sub) : "");
+  box.append(el("div", { style: "display:flex;gap:26px;flex-wrap:wrap;margin:6px 0 10px" },
+    big("연초 → 추정일 (연환산 반영)", S.portCumAnnual, 26, "주식 제외 연환산 · 보고용"),
+    big("추정 구간만", S.portPeriod, 15, `기준일 → 추정일 ${S.days}일`),
+    big("연초 → 추정일 (미연환산)", S.portCumPeriod, 15, "참고")));
+
+  if (S.blocked.length) {
+    box.append(el("div", { class: "d-up", style: "font-size:12px;margin-bottom:6px" },
+      `입력이 모자라 추정하지 못한 자산군 ${S.blocked.length}개 — `
+      + S.blocked.map((x) => `${x.key}(${x.priceNote || x.fxNote || "입력 부족"})`).join(", ")
+      + " · 이 자산군은 합계에서 0 으로 잡힙니다"));
+  }
+
+  const heads = ["자산군", "캐리", "가격효과", "환효과", "스왑 MTM", "추정 구간(%)",
+                 "연초→추정일(%)", "메모"];
+  const t = el("table", { class: "mini-table est-table" },
+    el("tr", {}, ...heads.map((h, i) =>
+      el("th", { style: i === 0 || i === 7 ? "text-align:left" : "" }, h))));
+  S.rows.forEach((r) => {
+    const cell = (v) => el("td", { class: "num" + (v == null ? "" : v >= 0 ? " d-up" : " d-down") },
+      v == null ? "–" : pc(v));
+    t.append(el("tr", {},
+      el("td", {}, r.key),
+      cell(r.carry), cell(r.price), cell(r.fx), cell(r.swap),
+      el("td", { class: "num" + (r.total == null ? "" : r.total >= 0 ? " d-up" : " d-down") },
+        r.total == null ? "–" : el("b", {}, pc(r.total))),
+      cell(r.cumAnnual),
+      el("td", { style: "font-size:11px;color:var(--ink-3)" },
+        [r.priceNote, r.fxNote].filter(Boolean).join(" · "))));
+  });
+  box.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, t));
+
+  const sc = A.scenario || {};
+  box.append(el("div", { style: "margin-top:8px;font-size:12px;color:var(--ink-3)" },
+    sc.book_value || "", el("br"), el("b", { class: "d-up" }, "한계 "), sc.limits || ""));
 }
 
 function renderEstimate() {
@@ -6906,6 +7130,7 @@ function renderEstimate() {
       st.amt[spec.key] = amtIn.value === "" ? null : +amtIn.value;
       estSaveState(st); estRecalc();
     });
+    retIn.addEventListener("blur", () => { estRecalc(); });
     retIn.addEventListener("input", () => {
       /* 빈칸으로 지우면 **자동값으로 되돌아간다** — 되돌리기 버튼을 따로 두지 않아도
          되고, "지웠는데 0% 가 되는" 놀람도 없다. */
@@ -6942,7 +7167,15 @@ function renderEstimate() {
       /* 자동값은 입력칸에 **표시만** 하고 상태에는 안 넣는다 — 넣는 순간 "수기"가 되어
          기준일을 바꿔도 옛 자동값이 눌러앉는다(자산배분 μ 디폴트에서 겪은 사고). */
       const hasAuto = !r.isKeyed && r.auto && r.auto.ytd != null;
-      if (!r.isKeyed) retInputs[r.key].value = hasAuto ? (r.auto.ytd * 100).toFixed(2) : "";
+      /* **입력 중인 칸은 절대 되쓰지 않는다**(재점검이 잡은 CRITICAL).
+         `<input type=number>` 는 사용자가 "-" 하나만 쳤거나 지운 순간 value 가 "" 다.
+         그러면 isKeyed 가 false 로 떨어지고, 되쓰기가 자동값을 도로 넣어 방금 친 문자를
+         지우며 캐럿을 끝으로 보낸다 — 이어 치는 숫자가 그 뒤에 붙는다.
+         실측: 자동 20.00% 칸에 `-3.5` 를 치면 **20.0035** 가 되고 그대로 저장됐다.
+         음수 수익률은 흔한 입력이라 상시 재현된다. blur 에서 다시 맞춘다. */
+      if (!r.isKeyed && document.activeElement !== retInputs[r.key]) {
+        retInputs[r.key].value = hasAuto ? (r.auto.ytd * 100).toFixed(2) : "";
+      }
       /* 「자동」 표식은 **자동값이 실제로 들어간 칸에만** 붙인다 — 그냥 빈 칸까지
          기울임·회색으로 칠하면 채워지지 않은 자리가 채워진 것처럼 읽힌다. */
       retInputs[r.key].classList.toggle("est-auto", !!hasAuto);
@@ -6995,9 +7228,18 @@ function renderEstimate() {
       big("연환산 반영 (주식 제외)", E.port == null ? null : E.port * 100, "%", 26),
       big("미연환산 기준 (참고)", E.portPeriod == null ? null : E.portPeriod * 100, "%", 15),
       big("총 규모", E.totalAmt || null, "", 15),
-      big("총 운용수익 (연환산 반영)", E.totalProfit || null, "", 15),
+      /* 기준일이 없으면 이 합도 주식 행만 담는다 — 포트폴리오 수익률과 같이 비운다 */
+      big("총 운용수익 (연환산 반영)", E.portBlockedByAsof ? null : (E.totalProfit || null), "", 15),
       big("채권 가중평균 듀레이션", E.durW, "", 15)));
     const notes = [];
+    /* 기준일이 없으면 연환산 계수가 없어 비주식 자산이 통째로 계산되지 않는다.
+       예전에는 그 상태에서 「주식 수익 ÷ 전체 규모」가 헤드라인으로 나갔다(재점검 CRITICAL).
+       이제 헤드라인을 비우고 **왜 비었는지**를 적는다. */
+    if (E.portBlockedByAsof) {
+      notes.push(el("div", { class: "d-up", style: "margin-top:6px;font-size:12px" },
+        "기준일이 없어 연환산 계수를 만들 수 없습니다 — 주식을 뺀 자산군이 전부 계산되지 "
+        + "않으므로 포트폴리오 수익률을 내지 않았습니다. 기준일을 넣으십시오."));
+    }
     /* 자동값이 기준일까지 오지 않은 지수 — 요약에서도 한 번 말한다. 표의 작은 글씨만
        두면 스크롤해야 보이는데, 이건 포트폴리오 수익률 자체를 흔드는 사실이다. */
     const stale = E.rows.filter((x) => x.auto && x.auto.beyondData && !x.isKeyed && x.amt);
@@ -7058,12 +7300,130 @@ function renderEstimate() {
     }
   }
 
+  /* ---- 추정일 시나리오 (§7.10) ----
+     입력 노드는 한 번만 만들고 계산 칸만 갱신한다(기준일 표와 같은 규약 — 포커스 유지). */
+  const scCard = $("#est-scenario-card");
+  const axisCells = {};
+  const axisInputs = {};
+  let scRecalc = () => {};
+  let estDateInput = null;      // 재조회하지 않는다 — 셰이드가 속성 셀렉터를 지원하지 않는다
+  if (scCard) {
+    scCard.textContent = "";
+    scCard.append(el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, "추정일 시나리오"),
+      el("span", { class: "card-sub" },
+        "추정일이 데이터 안이면 실제 변화를 채우고, 미래면 예상값을 넣으십시오")));
+    const estIn = el("input", { type: "date", value: st.est_date || "",
+      "aria-label": "추정일", style: "width:150px" });
+    estDateInput = estIn;
+    const spanLine = el("span", { style: "color:var(--ink-3);font-size:12px;margin-left:10px" });
+    scCard.append(el("div", { style: "margin:6px 0 10px" },
+      el("b", {}, "추정일"), " ", estIn, spanLine));
+
+    const axes = (A.axes || []);
+    const at = el("table", { class: "mini-table est-table" },
+      el("tr", {}, ...["시장 축", "기준일 → 추정일 변화", "단위", "출처", "쓰는 곳"]
+        .map((h, i) => el("th", { style: i === 0 || i === 3 || i === 4 ? "text-align:left" : "" }, h))));
+    axes.forEach((ax) => {
+      const inp = el("input", { type: "number", step: "any", inputmode: "decimal",
+        value: st.dlt[ax.key] == null ? "" : String(st.dlt[ax.key]),
+        style: "width:96px;text-align:right", "aria-label": `${ax.label} 변화` });
+      axisInputs[ax.key] = inp;
+      inp.addEventListener("input", () => {
+        st.dlt[ax.key] = inp.value === "" ? null : +inp.value;
+        estSaveState(st); scRecalc();
+      });
+      const src = el("td", { style: "font-size:11.5px" });
+      axisCells[ax.key] = src;
+      at.append(el("tr", {},
+        el("td", {}, ax.label),
+        el("td", { class: "num" }, inp),
+        el("td", { class: "num", style: "font-size:11.5px" }, ax.unit),
+        src,
+        el("td", { style: "font-size:11.5px;color:var(--ink-3)" }, ax.note || "")));
+    });
+    scCard.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, at));
+
+    /* 헤지비율(해외 4슬리브) + 스왑 잔존만기 — 환효과·스왑 MTM 에 필요한 값들 */
+    const hRow = el("div", { style: "display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;align-items:flex-end" });
+    EST_ASSETS.filter((s) => (EST_SCEN[s.key] || {}).fx).forEach((s) => {
+      const hi = el("input", { type: "number", step: "1", min: "0", max: "100",
+        inputmode: "decimal", value: st.hedge[s.key] == null ? "" : String(st.hedge[s.key]),
+        style: "width:74px;text-align:right", "aria-label": `${s.key} 헤지비율` });
+      hi.addEventListener("input", () => {
+        st.hedge[s.key] = hi.value === "" ? null : +hi.value;
+        estSaveState(st); scRecalc();
+      });
+      hRow.append(el("label", { style: "font-size:12px" },
+        el("div", { style: "color:var(--ink-3)" }, `${s.key} 헤지비율(%)`), hi));
+    });
+    const tauIn = el("input", { type: "number", step: "0.05", min: "0", inputmode: "decimal",
+      value: st.swap_tau == null ? "" : String(st.swap_tau),
+      style: "width:74px;text-align:right", "aria-label": "스왑 잔존만기(년)" });
+    tauIn.addEventListener("input", () => {
+      st.swap_tau = tauIn.value === "" ? null : +tauIn.value;
+      estSaveState(st); scRecalc();
+    });
+    hRow.append(el("label", { style: "font-size:12px" },
+      el("div", { style: "color:var(--ink-3)" }, "스왑 잔존만기(년)"), tauIn));
+    scCard.append(hRow);
+    scCard.append(el("div", { style: "margin-top:8px;color:var(--ink-3);font-size:12px" },
+      (A.scenario && A.scenario.formula) || "추정 기간수익률 = 캐리 + 가격효과 + 환효과 + 스왑 MTM",
+      " · ", el("b", {}, "금리 상승 = 채권 가격 하락"), "(−듀레이션×Δ금리), ",
+      el("b", {}, "스왑레이트 상승 = 스왑 MTM 손실"), "."));
+
+    scRecalc = () => {
+      const S = estScenario(A, st);
+      spanLine.textContent = S.ready
+        ? `구간 ${S.days}일 · 연초→추정일 ${S.yearDays}일 (연환산 계수 ${fmtNum(365 / S.yearDays, 4)})`
+        : (S.reason || "");
+      /* 축별 출처·실제 변화 */
+      (S.axes || []).forEach((ax) => {
+        const c = axisCells[ax.key];
+        if (!c) return;
+        c.textContent = "";
+        const disp = ax.delta == null ? null : ax.delta / ax.scale;
+        if (!ax.isKeyed) {
+          /* 기준일 표와 같은 이유로 포커스가 있는 칸은 되쓰지 않는다 */
+          if (document.activeElement !== axisInputs[ax.key]) {
+            axisInputs[ax.key].value = disp == null ? "" : disp.toFixed(ax.unit === "bp" ? 1 : 2);
+          }
+          axisInputs[ax.key].classList.toggle("est-auto", disp != null);
+        } else {
+          axisInputs[ax.key].classList.remove("est-auto");
+        }
+        if (ax.source === "자동") {
+          c.append(el("span", { class: ax.auto.beyondData ? "d-up" : "" },
+            ax.auto.beyondData ? "⚠ 자동(데이터 밖)" : "자동"));
+          c.append(el("span", { style: "display:block;font-size:10.5px;color:var(--ink-3)" },
+            `${ax.auto.from.d} → ${ax.auto.to.d}`));
+        } else if (ax.source === "수기") {
+          c.textContent = "수기";
+        } else {
+          c.append(el("span", { class: "d-up" }, "미입력"));
+          if (ax.auto && ax.auto.error) {
+            c.append(el("span", { style: "display:block;font-size:10.5px;color:var(--ink-3)" },
+              ax.auto.error));
+          }
+        }
+      });
+      renderEstScenarioResult(A, S);
+    };
+  }
+
   asofInput.addEventListener("input", () => {
     st.asof = asofInput.value || null;
-    estSaveState(st); estRecalc();
+    estSaveState(st); estRecalc(); scRecalc();
   });
+  if (estDateInput) {
+    estDateInput.addEventListener("input", () => {
+      st.est_date = estDateInput.value || null;
+      estSaveState(st); scRecalc();
+    });
+  }
 
   estRecalc();
+  scRecalc();
 
   /* ---- 출처·부재 ---- */
   const srcBox = $("#est-sources");

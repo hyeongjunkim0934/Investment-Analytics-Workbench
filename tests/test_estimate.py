@@ -137,7 +137,8 @@ def test_build_publishes_indices_with_anchors():
         assert ix["year_end"], "연말 앵커가 비어 있다"
         assert all(set(a) == {"v", "d"} for a in ix["year_end"].values())
     assert out["asof"] == max(ix["last"] for ix in out["indices"])
-    assert not warns
+    # 지수 자체에 대한 경고는 없어야 한다(시나리오 축 부재 경고는 이 픽스처에서 정상)
+    assert not [w for w in warns if "자동 채움 시리즈 없음" in w]
 
 
 def test_build_stays_publishable_when_a_series_is_missing():
@@ -157,7 +158,9 @@ def test_build_publishes_block_even_with_no_series_at_all():
     assert out["reason"]
     assert out["unavailable"] == estimate.UNAVAILABLE
     assert out["annualize"] == estimate.ANNUALIZE
-    assert len(warns) == len(estimate.INDICES)
+    assert out["axes"] == [] and out["scenario"] == estimate.SCENARIO_MODEL
+    # 지수 2개 + 시나리오 축(지수 참조 2개 제외한 4개) 전부가 경고로 남는다
+    assert len(warns) == len(estimate.INDICES) + len(estimate.SCENARIO_AXES)
 
 
 def test_payload_is_json_serialisable_and_carries_no_raw_leak_beyond_indices():
@@ -168,8 +171,8 @@ def test_payload_is_json_serialisable_and_carries_no_raw_leak_beyond_indices():
     }), lambda m: None)
     blob = json.dumps(out, ensure_ascii=False)
     assert json.loads(blob) == out
-    assert set(out) == {"active", "asof", "asof_all", "indices",
-                        "unavailable", "annualize"}
+    assert set(out) == {"active", "asof", "asof_all", "indices", "axes",
+                        "unavailable", "annualize", "scenario"}
     declared = {x["src"] for x in estimate.INDICES}
     assert {ix["src"] for ix in out["indices"]} <= declared
 
@@ -213,3 +216,57 @@ def test_default_asof_is_where_every_index_reaches_not_the_furthest():
     assert out["asof"] == max(lasts), "asof 는 가장 멀리 간 날이어야 한다(참고용)"
     assert out["asof_all"] == min(lasts), "asof_all 이 모든 지수가 도달한 날이 아니다"
     assert out["asof_all"] < out["asof"], "이 픽스처는 두 날짜가 갈려야 검사가 성립한다"
+
+
+def test_scenario_axes_are_published_with_kind_and_no_duplication():
+    """시나리오 축(§7.10) — `kind` 가 변화량의 뜻을 정하고, 지수 축은 중복 게시하지 않는다.
+
+    rate(금리·스왑)는 **차이**, price(지수·환율)는 **변화율**이다. 이 구분을 화면이 스스로
+    정하게 두면 금리를 비율로 나누는 사고가 조용히 난다. KOSPI TR·ACWI 는 이미 `indices`
+    에 연말 앵커까지 실려 있으므로 축은 `index` 참조만 하고 값을 다시 싣지 않는다.
+    """
+    out = estimate.build(_store(**{
+        "bb:한국_KOSPI_TR": _daily("2024-01-01", 900),
+        "idx:ACWI": _daily("2024-01-01", 900),
+        "info:한국_10y": _daily("2024-01-01", 900, 3.0, 4.0),
+        "info:UST10y": _daily("2024-01-01", 900, 4.0, 5.0),
+        "bb:달러원": _daily("2024-01-01", 900, 1300.0, 1400.0),
+        "info:SMB_USDKRW_3M": _daily("2024-01-01", 900, -2.0, -1.0),
+    }), lambda m: None)
+    axes = {a["key"]: a for a in out["axes"]}
+    assert set(axes) == {a["key"] for a in estimate.SCENARIO_AXES}
+    assert {k for k, a in axes.items() if a["kind"] == "rate"} == {"kr_rate", "us_rate", "swap"}
+    assert {k for k, a in axes.items() if a["kind"] == "price"} == {"usdkrw", "kospi", "acwi"}
+    for k in ("kospi", "acwi"):
+        assert "t" not in axes[k] and axes[k]["index"], f"{k} 축이 값을 중복 게시한다"
+    for k in ("kr_rate", "us_rate", "usdkrw", "swap"):
+        assert len(axes[k]["t"]) == len(axes[k]["v"]) > 0
+        assert axes[k]["unit"] in ("bp", "%")
+
+
+def test_scenario_model_states_the_signs_the_screen_must_use():
+    """산식·부호·한계는 페이로드가 정본이고 **화면이 그대로 적는다**.
+
+    방법론을 코드 주석에만 두면 화면과 어긋나도 아무도 모른다. 특히 장부가 규약과
+    1차 근사(볼록성 미반영)·평행이동 가정은 결과 해석을 바꾸는 문장이라 반드시 나가야 한다.
+    """
+    m = estimate.SCENARIO_MODEL
+    assert "캐리" in m["formula"] and "스왑 MTM" in m["formula"]
+    joined = " ".join(m["terms"])
+    assert "−듀레이션" in joined, "가격효과의 음부호가 산식에 없다"
+    assert "1 − 헤지비율" in joined, "환효과가 미헤지분 비례임을 밝히지 않는다"
+    assert "원가법" in m["book_value"] and "0" in m["book_value"]
+    assert "볼록성" in m["limits"] and "평행이동" in m["limits"]
+
+
+def test_scenario_axes_survive_missing_series():
+    """축 시리즈가 빠져도 나머지는 나가고 빠진 것은 경고로 남는다(수기 입력으로 살아 있어야)."""
+    warns: list[str] = []
+    out = estimate.build(_store(**{
+        "bb:한국_KOSPI_TR": _daily("2024-01-01", 400),
+        "idx:ACWI": _daily("2024-01-01", 400),
+    }), warns.append)
+    assert out["active"] is True
+    assert {a["key"] for a in out["axes"]} == {"kospi", "acwi"}
+    for k in ("info:한국_10y", "info:UST10y", "bb:달러원", "info:SMB_USDKRW_3M"):
+        assert any(k in w for w in warns), f"{k} 부재를 알리지 않았다"

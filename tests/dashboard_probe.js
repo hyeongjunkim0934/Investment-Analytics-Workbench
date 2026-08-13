@@ -80,7 +80,8 @@ secNodes.risk.append(elem("p", "risk-panel-link"));
 
 /* 수익률 추정 뼈대(§7.8) — renderEstimate 가 $("#est-…") 로 집는 자리들.
    `est-method` 만 <details> 다(다른 섹션과 같은 규약). */
-["est-summary", "est-controls", "est-table-card", "est-contrib-card", "est-sources"]
+["est-summary", "est-controls", "est-table-card", "est-contrib-card",
+ "est-scenario-card", "est-scenario-result", "est-sources"]
   .forEach((id) => secNodes.estimate.append(elem("div", id)));
 secNodes.estimate.append(elem("details", "est-method"));
 
@@ -192,7 +193,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "allocRedistribute", "allocIsAlt", "allocLambdaForSigma", "allocJointOpt", "allocCcyHedgeRows",
   "allocXeBinds", "allocXeBindNotes", "allocXeRange", "openAllocDetail",
   "estEngine", "estDayCount", "estIndexYtd", "EST_ASSETS",
-  "SECTION_LABELS", "sectionLink"];
+  "SECTION_LABELS", "sectionLink", "estScenario", "estAxisDelta", "EST_SCEN"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -2157,10 +2158,15 @@ safe("estimateCalc", () => {
   P.renderSection("estimate");
   const sec = DOC.getElementById("estimate");
   r.renderErrors = sec.querySelectorAll(".render-error").length;
-  r.assetRowCount = DOC.querySelectorAll(".est-table tr").length - 1;   // 헤더 제외 → 11
-  r.inputCount = DOC.querySelectorAll(".est-table input").length;       // 규모11+수익11+듀레6
+  /* **축을 좁혀서 센다** — `.est-table` 은 시나리오 카드의 축 표도 함께 쓰므로 전체
+     셀렉터로 세면 기준일 표 11행이 17행이 된다(§7.7.15 의 `.sim-bar-wrap` 과 같은 함정). */
+  r.assetRowCount = DOC.getElementById("est-table-card")
+    .querySelectorAll(".est-table tr").length - 1;                      // 헤더 제외 → 11
+  r.inputCount = DOC.getElementById("est-table-card")
+    .querySelectorAll(".est-table input").length;                       // 규모11+수익11+듀레6
   /* 자동 표식은 **자동값이 실제로 들어간 칸에만** — 빈 칸까지 칠하면 채워진 것처럼 읽힌다 */
-  r.autoMarkCount = DOC.querySelectorAll(".est-auto").length;           // 국내주식·해외주식 2
+  r.autoMarkCount = DOC.getElementById("est-table-card")
+    .querySelectorAll(".est-auto").length;                              // 국내주식·해외주식 2
   const secTxt = sec.textContent.replace(/\s+/g, " ");
   r.screenStatesFactor = /연환산 계수 2\.0166/.test(secTxt);
   r.screenStatesElapsed = /경과 181일/.test(secTxt);
@@ -2244,9 +2250,210 @@ safe("estimateCalc", () => {
     .find((n) => n.getAttribute("type") === "date");
   r.defaultAsofUsesAllIndexReach = dateIn && dateIn.value === "2026-06-30";
 
+  /* ⑧ 적대적 재점검(§7.10.1)이 잡은 결함 — 전부 실브라우저로 재현했던 것들 */
+
+  // (a) CRITICAL: 입력 중인 칸을 되쓰면 사용자가 친 문자가 지워지고 자동값 뒤에 붙는다
+  //     (실측: 자동 20.00% 칸에 `-3.5` → **20.0035**, 그대로 저장까지 됐다)
+  P.DATA.estimate = A;
+  shim.localStorage.setItem("iaw-estimate", JSON.stringify({ saved: true,
+    asof: "2026-06-30", amt: { "국내주식": 1000 }, ret: {}, dur: {}, dlt: {}, hedge: {} }));
+  P.renderSection("estimate");
+  const retIn = Array.from(DOC.getElementById("est-table-card").querySelectorAll("input"))
+    .find((n) => /국내주식 기준일 수익률/.test(n.getAttribute("aria-label") || ""));
+  r.autoFillPresentBeforeTyping = retIn.value !== "";
+  retIn.focus();                                   // 사용자가 그 칸에 들어간 상태
+  retIn.value = "";                                // "-" 만 친 순간과 같은 상태
+  retIn.dispatchEvent({ type: "input" });
+  r.focusedFieldNotOverwritten = retIn.value === "";
+  retIn.value = "-3.5";
+  retIn.dispatchEvent({ type: "input" });
+  r.typedNegativeSurvives = retIn.value === "-3.5"
+    && JSON.parse(shim.localStorage.getItem("iaw-estimate")).ret["국내주식"] === -3.5;
+  /* 포커스를 뺀 뒤에는(=수기값이 없으면) 자동값으로 다시 맞춰야 한다 */
+  retIn.value = "";
+  retIn.dispatchEvent({ type: "input" });
+  DOC.body.focus();
+  retIn.dispatchEvent({ type: "blur" });
+  r.blurRestoresAutoFill = retIn.value !== "";
+
+  // (b) CRITICAL: 기준일이 없으면 연환산 헤드라인은 **정의되지 않는다**
+  //     (예전에는 「주식 수익 ÷ 전체 규모」가 26px 로 나가 참고치보다 작았다)
+  const EnoAsof = P.estEngine(A, { asof: null, amt: { "장부가 국내채권": 5000, "국내주식": 1000 },
+    ret: { "장부가 국내채권": 1.5, "국내주식": 4 }, dur: {}, dlt: {}, hedge: {} });
+  r.noAsofPortIsNull = EnoAsof.port === null;
+  r.noAsofStillHasPeriodRef = EnoAsof.portPeriod != null;   // 참고치는 계수가 필요 없다
+  r.noAsofFlagged = EnoAsof.portBlockedByAsof === true;
+  /* 화면에서의 실제 도달 경로는 **사용자가 기준일 칸을 지우는 것**이다 — 렌더 진입 시에는
+     페이로드의 asof_all 이 기본값으로 채워지므로 저장분만 null 로 두면 재현되지 않는다. */
+  shim.localStorage.setItem("iaw-estimate", JSON.stringify({ saved: true,
+    amt: { "장부가 국내채권": 5000, "국내주식": 1000 },
+    ret: { "장부가 국내채권": 1.5, "국내주식": 4 }, dur: {}, dlt: {}, hedge: {} }));
+  P.renderSection("estimate");
+  const asofIn = Array.from(DOC.getElementById("est-controls").querySelectorAll("input"))
+    .find((n) => n.getAttribute("type") === "date");
+  asofIn.value = "";
+  asofIn.dispatchEvent({ type: "input" });
+  const sumTxt = DOC.getElementById("est-summary").textContent;
+  r.noAsofExplainedOnScreen = /기준일이 없어 연환산 계수를 만들 수 없습니다/.test(sumTxt);
+  /* 헤드라인이 「주식 수익 ÷ 전체 규모」라는 뜻 없는 수를 내지 않는가 —
+     예전에는 참고치(미연환산)가 본치보다 **큰** 상태가 나왔다 */
+  r.noAsofHeadlineBlank = /연환산 반영 \(주식 제외\)\s*–/.test(sumTxt.replace(/\s+/g, " "));
+  /* 「총 운용수익(연환산 반영)」도 같은 이유로 주식만 담게 되므로 함께 비어야 한다 */
+  r.noAsofProfitBlank = /총 운용수익 \(연환산 반영\)\s*–/.test(sumTxt.replace(/\s+/g, " "));
+
+  // (c) NaN 경과일수 — `days <= 0` 만으로는 통과한다(연도 0000 → 전년이 -1년)
+  r.rejectsNaNElapsed = P.estDayCount("0000-01-01") === null;
+
+  // (d) 축약 구간의 오류 문구가 **사실**이어야 한다 — estDayCount 가 기준일 > 전년 연말을
+  //     보장하므로 "기준일이 전년 연말보다 앞섭니다"는 결코 참이 될 수 없다
+  const packedGap = { ...A.indices[0],
+    t: [Math.floor(Date.UTC(2025, 11, 26) / 1000), Math.floor(Date.UTC(2026, 0, 9) / 1000)],
+    v: [100, 110], last: "2026-01-09",
+    year_end: { 2025: { v: 101, d: "2025-12-31" } } };
+  const gapErr = P.estIndexYtd(packedGap, "2026-01-02");
+  r.compactionGapSaysTruth = /축약되지 않은 관측이 없습니다/.test(gapErr.error || "");
+  r.compactionGapNotMislabelled = !/전년 연말보다 앞섭니다/.test(gapErr.error || "");
+
   P.DATA.estimate = A;
   shim.localStorage.removeItem("iaw-estimate");
   P.renderSection("estimate");
+  return r;
+});
+
+/* ====== 추정일 시나리오 (§7.10) — 부호가 이 화면의 심장이다 ==================== */
+safe("estimateScenario", () => {
+  const r = {};
+  /* 축 6개를 직접 만든다. 값은 **결정적**으로 두어 손계산과 1:1 로 맞춘다. */
+  const t = [], v0 = [];
+  for (let d = Date.UTC(2026, 0, 1); d <= Date.UTC(2026, 11, 31); d += 86400000) {
+    t.push(Math.floor(d / 1000)); v0.push(100);
+  }
+  const flat = (val) => ({ t, v: t.map(() => val), last: "2026-12-31" });
+  const A = {
+    active: true, asof: "2026-12-31", asof_all: "2026-12-31",
+    indices: [
+      { key: "kospi_tr", asset: "국내주식", label: "KOSPI TR", src: "s", basis: "b",
+        basis_matches_request: true, caveat: "", ...flat(100),
+        year_end: { 2025: { v: 100, d: "2025-12-31" } }, first: "2026-01-01" },
+      { key: "acwi", asset: "해외주식", label: "ACWI", src: "s", basis: "b",
+        basis_matches_request: true, caveat: "", ...flat(100),
+        year_end: { 2025: { v: 100, d: "2025-12-31" } }, first: "2026-01-01" },
+    ],
+    axes: [
+      { key: "kr_rate", label: "국고", kind: "rate", unit: "bp", src: "a", ...flat(3.0), first: "2026-01-01" },
+      { key: "us_rate", label: "미국채", kind: "rate", unit: "bp", src: "a", ...flat(4.0), first: "2026-01-01" },
+      { key: "usdkrw", label: "달러원", kind: "price", unit: "%", src: "a", ...flat(1300), first: "2026-01-01" },
+      { key: "swap", label: "스왑", kind: "rate", unit: "bp", src: "a", ...flat(-2.0), first: "2026-01-01" },
+      { key: "kospi", label: "KOSPI TR", kind: "price", unit: "%", index: "kospi_tr" },
+      { key: "acwi", label: "ACWI", kind: "price", unit: "%", index: "acwi" },
+    ],
+    unavailable: [], annualize: { basis: "days", day_count: 365, note: "n" },
+    scenario: { formula: "F", terms: ["a"], book_value: "BV", limits: "L" },
+  };
+  /* 기준일 6/30 → 추정일 12/31 (184일). 전부 수기 시나리오. */
+  const st = {
+    asof: "2026-06-30", est_date: "2026-12-31",
+    amt: { "장부가 국내채권": 1000, "장부가 해외채권": 1000, "시가 국내채권 직접": 1000,
+           "국내주식": 1000, "해외주식": 1000 },
+    ret: { "장부가 국내채권": 3.65, "장부가 해외채권": 3.65, "시가 국내채권 직접": 3.65 },
+    dur: { "장부가 국내채권": 5, "장부가 해외채권": 5, "시가 국내채권 직접": 4 },
+    dlt: { kr_rate: 50, us_rate: 30, usdkrw: 3, swap: -100, kospi: 5, acwi: 4 },
+    hedge: { "장부가 해외채권": 90, "해외주식": 30 }, swap_tau: 0.25,
+  };
+  const S = P.estScenario(A, st);
+  r.ready = S.ready === true;
+  r.days = S.days;                                   // 184
+  const row = (k) => S.rows.find((x) => x.key === k);
+
+  /* ① 부호 — 금리 상승은 채권 가격 하락. 이 하나가 뒤집히면 화면 전체가 거짓이 된다. */
+  const kb = row("시가 국내채권 직접");
+  r.rateUpMeansPriceDown = kb.price < 0;
+  r.priceIsMinusDurationTimesDy = Math.abs(kb.price - (-4 * 0.005)) < 1e-15;
+
+  /* ② 부호 — 스왑레이트 하락은 MTM 이익(사용자 예시: −2% 체결 → −3% 로 하락) */
+  const fb = row("장부가 해외채권");
+  r.swapDownMeansGain = fb.swap > 0;
+  r.swapMtmMatchesAcctModel = Math.abs(fb.swap - (0.9 * 0.25 * 0.01)) < 1e-15;
+  const stUp = { ...st, dlt: { ...st.dlt, swap: 100 } };
+  r.swapUpMeansLoss = P.estScenario(A, stUp).rows
+    .find((x) => x.key === "장부가 해외채권").swap < 0;
+
+  /* ③ 장부가는 원가법 — 듀레이션을 넣어도 가격효과가 0 이어야 한다 */
+  r.bookValueHasNoPriceEffect = row("장부가 국내채권").price === 0
+    && row("장부가 해외채권").price === 0;
+  r.bookValueDurationWasEntered = st.dur["장부가 국내채권"] === 5;   // 검사가 헛돌지 않게
+  /* 장부가 **해외**채권은 환·스왑으로 움직인다(사용자 지시의 핵심) */
+  r.bookForeignMovesByFxAndSwap = fb.fx !== 0 && fb.swap !== 0 && fb.total !== fb.carry;
+  r.bookDomesticMovesOnlyByCarry = Math.abs(row("장부가 국내채권").total
+    - row("장부가 국내채권").carry) < 1e-15;
+
+  /* ④ 환효과 = (1−h)·Δ환율 — 헤지분만 상쇄된다 */
+  const eq = row("해외주식");
+  r.fxIsUnhedgedShareOnly = Math.abs(eq.fx - (1 - 0.3) * 0.03) < 1e-15;
+  r.domesticHasNoFx = row("시가 국내채권 직접").fx === 0;
+  /* 헤지 100% 면 환효과가 정확히 0 */
+  const stFull = { ...st, hedge: { ...st.hedge, "해외주식": 100 } };
+  r.fullHedgeZeroesFx = Math.abs(P.estScenario(A, stFull).rows
+    .find((x) => x.key === "해외주식").fx) < 1e-15;
+
+  /* ⑤ 캐리 — 기준일 연환산 수익률의 구간 비례분. 주식은 캐리가 없다(가격이 곧 수익). */
+  r.carryIsProRated = Math.abs(kb.carry - (0.0365 * 184 / 365)) < 1e-15;
+  r.equityHasNoCarry = eq.carry === 0 && row("국내주식").carry === 0;
+  r.equityPriceIsIndexMove = Math.abs(row("국내주식").price - 0.05) < 1e-15;
+
+  /* ⑥ 합계·포트폴리오가 항의 합과 정확히 같은가 */
+  r.totalIsSumOfTerms = S.rows.filter((x) => x.total != null).every((x) =>
+    Math.abs(x.total - (x.carry + x.price + x.fx + x.swap)) < 1e-15);
+  const manual = S.rows.reduce((a, x) => a + (x.amt || 0) * (x.total || 0), 0) / S.totalAmt;
+  r.portfolioMatchesHandCalc = Math.abs(S.portPeriod - manual) < 1e-15;
+
+  /* ⑦ 입력이 모자라면 **0 으로 대체하지 않고** 막고 사유를 남긴다 */
+  const stNoDur = { ...st, dur: {} };
+  const SN = P.estScenario(A, stNoDur);
+  const kbn = SN.rows.find((x) => x.key === "시가 국내채권 직접");
+  r.missingDurationBlocks = kbn.total === null && /듀레이션 미입력/.test(kbn.priceNote);
+  r.blockedListed = SN.blocked.some((x) => x.key === "시가 국내채권 직접");
+
+  /* ⑧ 추정일이 기준일보다 앞이면 거부 */
+  r.rejectsBackwardEstDate =
+    P.estScenario(A, { ...st, est_date: "2026-01-31" }).ready === false;
+
+  /* ⑨ 축 자동 조회 — 수기값이 없으면 데이터에서, 실제 두 관측일을 밝힌다 */
+  const stAuto = { ...st, dlt: {} };
+  const SA = P.estScenario(A, stAuto);
+  const ax = SA.axes.find((x) => x.key === "kr_rate");
+  r.axisAutoFilled = ax.source === "자동" && ax.auto.from.d === "2026-06-30"
+    && ax.auto.to.d === "2026-12-31";
+  r.axisAutoFlatIsZero = Math.abs(ax.delta) < 1e-15;      // 픽스처가 평평하므로 0
+  r.keyedAxisBeatsAuto = SA.axes.find((x) => x.key === "kospi").source === "자동"
+    && S.axes.find((x) => x.key === "kospi").source === "수기";
+
+  /* ⑩ 화면 */
+  P.DATA.estimate = A;
+  shim.localStorage.setItem("iaw-estimate", JSON.stringify({ saved: true, ...st }));
+  P.renderSection("estimate");
+  const sec = DOC.getElementById("estimate");
+  r.renderErrors = sec.querySelectorAll(".render-error").length;
+  r.axisRowCount = DOC.getElementById("est-scenario-card")
+    .querySelectorAll(".est-table tr").length - 1;                       // 6
+  r.resultRowCount = DOC.getElementById("est-scenario-result")
+    .querySelectorAll(".est-table tr").length - 1;                       // 11
+  const txt = sec.textContent.replace(/\s+/g, " ");
+  r.screenStatesSignRule = /금리 상승 = 채권 가격 하락/.test(txt);
+  r.screenStatesSwapSign = /스왑레이트 상승 = 스왑 MTM 손실/.test(txt);
+  r.screenStatesBookValue = /BV/.test(txt);
+  r.screenStatesLimits = /L/.test(txt);
+  r.screenShowsFourTerms = /캐리/.test(txt) && /가격효과/.test(txt)
+    && /환효과/.test(txt) && /스왑 MTM/.test(txt);
+  /* 시나리오 입력도 즉시 저장(모형 입력) */
+  const tauIn = Array.from(DOC.getElementById("est-scenario-card").querySelectorAll("input"))
+    .find((n) => /스왑 잔존만기/.test(n.getAttribute("aria-label") || ""));
+  tauIn.value = "0.5";
+  tauIn.dispatchEvent({ type: "input" });
+  r.scenarioInputsSave =
+    JSON.parse(shim.localStorage.getItem("iaw-estimate")).swap_tau === 0.5;
+
+  shim.localStorage.removeItem("iaw-estimate");
   return r;
 });
 
