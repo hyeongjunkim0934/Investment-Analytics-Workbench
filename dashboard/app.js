@@ -7826,7 +7826,7 @@ function openEstHedge(key, st, band, done) {
     if (isFinite(+num.value)) set(+num.value);
   });
 
-  const clearBtn = el("button", { class: "btn", type: "button" }, "비우기");
+  const clearBtn = el("button", { class: "btn-ghost", type: "button" }, "비우기");
   clearBtn.addEventListener("click", () => {
     delete st.hedge[key];
     num.value = "";
@@ -7834,7 +7834,7 @@ function openEstHedge(key, st, band, done) {
     estSaveState(st);
     done();
   });
-  const okBtn = el("button", { class: "btn", type: "button" }, "닫기");
+  const okBtn = el("button", { class: "btn-ghost", type: "button" }, "닫기");
   okBtn.addEventListener("click", close);
   back.addEventListener("click", (e) => { if (!e || e.target === back) close(); });
   document.addEventListener("keydown", onKey);

@@ -561,12 +561,12 @@ button.vchip { cursor: pointer; }
 .btn-ghost { display: inline-block; background: var(--surface); color: var(--ink-2);
   border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px;
   font-size: 12.5px; font-family: inherit; cursor: pointer; min-height: 30px; }
-.btn-ghost:hover { border-color: var(--accent-ink); color: var(--ink); }
+.btn-ghost:hover { border-color: var(--accent-ink); color: var(--ink-1); }
 /* ---------- 자산배분 시뮬레이션 콘솔 ---------- */
 .sim-mix { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
 .sim-cell { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--ink-3); }
 .sim-cell input { width: 86px; min-height: 30px; border: 1px solid var(--border); border-radius: 7px;
-  background: var(--surface); color: var(--ink); padding: 4px 8px; font-size: 13px;
+  background: var(--surface); color: var(--ink-1); padding: 4px 8px; font-size: 13px;
   font-variant-numeric: tabular-nums; }
 .sim-sum { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 /* 합계가 목표(100 − 대출)와 다르면 경고색 — 그 상태의 위험 비교는 성립하지 않는다 */
@@ -951,9 +951,13 @@ button.vchip { cursor: pointer; }
   align-items: center; justify-content: center;
   background: rgba(0, 0, 0, .5); padding: 16px;
 }
+/* **카드면 토큰은 `--surface` 다 — `--card` 는 이 저장소에 없다.** 없는 변수를 쓰면
+   `background` 가 통째로 무효가 되어 패널이 투명해지고 글자가 아래 표와 겹쳐 읽을 수
+   없게 된다(실브라우저에서만 드러났다 — CSS 는 오류를 내지 않는다). */
 .est-hedge-panel {
-  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
   padding: 14px 16px; width: min(420px, 100%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
 }
 
 /* ── 개요 구역 (2026-08-13 — 상단 탭 7개로 축소하며 시장 화면들이 개요로 내려왔다) ──
