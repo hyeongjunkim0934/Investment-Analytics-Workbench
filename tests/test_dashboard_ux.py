@@ -1966,9 +1966,15 @@ def test_estimate_table_puts_asof_and_estimate_side_by_side(probe):
     c = probe["estimateCalc"]
     assert c["headerRowCount"] == 2, "기준일/추정일 그룹 헤더가 사라졌다"
     assert c["assetRowCount"] == 11, "자산군 행이 11개가 아니다"
-    assert c["inputCount"] == 28, "입력칸이 규모11+수익률11+듀레이션6 이 아니다"
+    assert c["inputCount"] == 43, (
+        "입력칸이 규모11+기준일수익률11+듀레이션6+추정일규모11+승계자산군수익률4 가 아니다")
     assert c["headerHasBothDateBlocks"] is True, "한 표에 기준일·추정일 블록이 없다"
-    assert c["headerHasFourTerms"] is True, "4항 분해가 표에서 사라졌다"
+    assert c["headerDroppedFourTermColumns"] is True, (
+        "4항 분해 열이 표에 남아 있다 — §7.12 에서 결과 카드 접이식으로 내렸다")
+    assert c["headerHasReason"] is True, "근거 열이 없다"
+    assert c["headerDroppedSourceColumn"] is True, "출처 열이 표에 남아 있다"
+    assert c["sourcesMovedToDetails"] is True, (
+        "출처가 접이식으로 내려가지 않았다 — 지우는 것이 아니라 한 단계 내리는 것이다")
     assert c["headerHasDiffColumn"] is True, "차이 열이 없다"
     assert c["headerDroppedAppliedColumn"] is True, "폐지된 연환산·반영수익률 열이 남아 있다"
     assert c["headerDroppedContribColumn"] is True, (
@@ -2058,7 +2064,7 @@ def test_estimate_screen_states_its_conventions_and_data_gaps(probe):
     """
     c = probe["estimateCalc"]
     assert c["assetRowCount"] == 11, "자산군 11개가 아니다"
-    assert c["inputCount"] == 28, "입력칸 수가 규모11+수익률11+듀레이션6 과 다르다"
+    assert c["inputCount"] == 43, "입력칸 수가 §7.12 구성(43개)과 다르다"
     assert c["autoMarkCount"] == 2, "자동 표식이 자동값 없는 빈 칸에도 붙었다"
     assert c["screenStatesElapsed"] is True, "경과일수를 화면이 적지 않는다"
     assert c["screenSaysEquityExcluded"] is True, "주식 제외 규약을 화면이 밝히지 않는다"
@@ -2515,16 +2521,123 @@ def test_estimate_scenario_terms_and_blocking(probe):
     assert c["axisAutoFilled"] is True, "과거 추정일인데 시장 변화를 조회하지 않는다"
     assert c["keyedAxisBeatsAuto"] is True, "수기 시나리오가 자동 조회에 밀린다"
     assert c["axisRowCount"] == 6
-    assert c["screenShowsFourTerms"] is True, "네 항 분해가 화면에 없다"
+    assert c["resultCardHasBreakdown"] is True, "네 항 분해가 화면 어디에도 없다"
     assert c["screenStatesSignRule"] is True and c["screenStatesSwapSign"] is True
     assert c["screenStatesBookValue"] is True, "장부가 규약을 화면이 밝히지 않는다"
     assert c["screenStatesLimits"] is True, "1차 근사·평행이동 한계를 밝히지 않는다"
     assert c["scenarioInputsSave"] is True
     # §7.11 — 분해는 **통합 표에만** 있고 결과 카드에는 없다(두 곳에 그리면 조용히 갈린다)
-    assert c["resultCardHasNoAssetTable"] is True, (
-        "결과 카드에 자산군 표가 남아 있다 — 같은 수가 한 화면에 두 번 나온다")
+    assert c["tableHasNoFourTermColumns"] is True, (
+        "표에 4항 열이 남아 있다 — 결과 카드와 같은 수가 한 화면에 두 번 나온다")
+    assert c["carryRowsHaveNoBreakdown"] is True, (
+        "승계 자산군에 4항 분해가 붙어 있다 — 계산하지 않은 행을 계산한 척한다")
+    assert c["bookDomesticIsCarryNotCalc"] is True, "장부가 국내채권이 승계가 아니다"
     assert c["tableShowsEstReturn"] is True, "계산된 추정일 수익률이 표에 안 나온다"
     assert c["tableShowsDiff"] is True, "차이 열이 표에 안 나온다"
+
+
+def test_estimate_computes_the_estimate_date_per_asset_class(probe):
+    """§7.12 — 2026-08-13 사용자 지시. 추정일 쪽에서 **사용자가 치는 것은 규모뿐**이다.
+
+    수익률은 자산군마다 갈린다(가르는 선은 「가격 축이 있는가」이고 사용자가 지정했다):
+
+      계산(calc, 7개)  — 장부가 해외채권(환·스왑) · 국내주식(KOSPI) · 해외주식(ACWI) ·
+                         시가 국내/해외채권 직접·간접(−D×Δy). **수기 덮어쓰기 없음**
+      승계(carry, 4개) — 장부가 국내채권 · 단기자금 · 대출금 · 대체투자.
+                         기준일과 같게 두되 필요하면 수기
+
+    규모는 비우면 기준일을 승계하고, 넣으면 그것이 정본이다. 승계값은 **칸에 실제로
+    표시**해야 한다 — placeholder 로만 두면 빈 칸으로 읽혀 다시 넣게 된다.
+    """
+    c = probe["estimateTwoBlocks"]
+    assert c["renderErrors"] == 0
+    assert c["calcCount"] == 7 and c["carryCount"] == 4, "계산/승계 자산군 수가 다르다"
+    assert c["carrySetExact"] is True, "승계 대상이 사용자가 지정한 목록과 다르다"
+    assert c["bookForeignIsCalc"] is True, (
+        "장부가 해외채권이 계산 대상이 아니다 — 원가법이어도 환헤지 스왑은 파생이다")
+    # 규모 승계
+    assert c["sizeInheritedWhenBlank"] is True, "추정일 규모를 비웠는데 승계하지 않는다"
+    assert c["inheritedTotalMatches"] is True, "승계했는데 총 규모가 다르다"
+    assert c["keyedSizeUsed"] is True, "추정일 규모를 넣었는데 반영되지 않는다"
+    assert c["otherRowsStillInherit"] is True, "한 행을 넣었더니 나머지 승계가 깨졌다"
+    assert c["sizeChangedFlagFalse"] is True and c["sizeChangedFlagTrue"] is True
+    assert c["inheritedSizeShownInInput"] is True, "승계 규모가 칸에 보이지 않는다"
+    assert c["inheritedSizeNotStored"] is True, (
+        "승계값을 상태에 저장했다 — 기준일 규모를 바꿔도 옛 값이 눌러앉는다")
+    # 가중치가 두 벌
+    assert c["estPortUsesEstSizes"] is True, "추정일 수익률이 기준일 규모로 가중됐다"
+    assert c["estPortDiffersFromBaseWeighting"] is True, (
+        "리밸런싱을 넣었는데 포트폴리오 수익률이 그대로다 — 가중치가 한 벌이다")
+    # 승계 자산군
+    assert c["carryInheritsBaseReturn"] is True and c["carryDiffIsZero"] is True
+    assert c["carryHasNoBreakdown"] is True, "계산하지 않은 행에 4항 분해를 붙였다"
+    assert c["carryNoteSaysInherited"] is True, "승계라는 사실을 화면이 밝히지 않는다"
+    assert c["carryStillHasPeriodReturn"] is True, "승계 행이 추정 구간에서 빠졌다"
+    assert c["carryKeyedOverride"] is True and c["carryKeyedDiff"] is True
+    assert c["calcIgnoresKeyedReturn"] is True, (
+        "계산 자산군이 수기값에 덮였다 — 산식이 정본이라 그 자리를 만들지 않는다")
+    # 화면 구조
+    assert c["headerHasTwoBlocks"] is True, "기준일‖추정일 두 블록이 아니다"
+    assert c["headerHasSizeTwice"] is True and c["headerHasWeightTwice"] is True
+    assert c["headerHasReasonColumn"] is True
+    assert c["inputCount"] == 43
+    assert c["estSizeInputsExist"] is True, "추정일 규모 입력칸이 11개가 아니다"
+    assert c["carryReturnInputsOnly"] is True, (
+        "추정일 수익률 입력칸이 승계 자산군 4개에만 있지 않다")
+
+
+def test_estimate_hedge_ratio_is_picked_per_asset_with_no_default(probe):
+    """§7.12 — 헤지비율은 **해외자산 자산군을 눌러** 0~105% 에서 고른다.
+
+    2026-08-13 사용자 확인: 기관의 현재 헤지 정책(해외채권 100% 헤지·해외주식 100%
+    오픈)은 운용 정보라 **공개 저장소에 기본값으로 박지 않는다**. 고르기 전에는
+    환효과·스왑 MTM 을 0 으로 지어내지 않고 「헤지비율 미입력」이라고 적는다 —
+    0 으로 채우면 미헤지 자산의 환위험이 통째로 사라진 수가 보고 숫자로 들어간다.
+
+    105% 상한은 오버헤지(펀드 NAV 변동에 따른 일시 초과)를 담기 위한 것이고, 그
+    구간에서는 환효과의 **부호가 뒤집힌다** — 밴드가 100 을 넘는다는 사실의 결과다.
+    """
+    c = probe["estimateTwoBlocks"]
+    assert c["hedgeHasNoDefault"] is True, (
+        "헤지비율에 기본값이 있다 — 고르기 전에 0 으로 지어내면 안 된다")
+    assert c["hedgeBandIs0to105"] is True, "헤지 밴드가 0~105% 가 아니다"
+    assert c["foreignNamesAreButtons"] is True, (
+        "해외자산 이름이 버튼이 아니다 — 누를 자리가 없으면 헤지비율이 영영 미입력이다")
+    assert c["hedgeTagSaysUnsetFirst"] is True, "미입력 상태를 배지가 밝히지 않는다"
+    assert c["hedgeUnsetBeforeClick"] is True
+    assert c["hedgePanelOpens"] is True, "자산군을 눌렀는데 헤지 선택이 열리지 않는다"
+    assert c["sliderRangeIs0to105"] is True, "슬라이더 범위가 0~105 가 아니다"
+    assert c["hedgeSavesOnPick"] is True, "고른 헤지비율이 저장되지 않는다"
+    assert c["hedgeClampedToBand"] is True, "밴드 밖 값을 그대로 받는다"
+    assert c["fullHedgeZeroesFx"] is True, "100% 헤지인데 환효과가 남는다"
+    assert c["fullHedgeKeepsSwapMtm"] is True, (
+        "100% 헤지인데 스왑 MTM 이 사라졌다 — 스왑은 파생이라 MTM 이 난다")
+    assert c["overHedgeFlipsFxSign"] is True, "105% 오버헤지인데 환효과 부호가 그대로다"
+
+
+def test_estimate_market_card_keys_levels_not_deltas(probe):
+    """§7.12 — 시장지표 카드는 기준일·추정일 **수준**을 나란히 보여 주고, 사용자는
+    추정일 수준을 친다("국고 10년이 3.50% 가 될 것"). 변화(bp/%)는 화면이 계산한다.
+
+    수준↔변화 환산을 사용자에게 시키면 금리는 bp, 환율은 % 라 단위를 오갈 때마다
+    실수가 난다. 구 저장분(변화량)은 **기준일 수준 + Δ** 로 한 번 이관한다 —
+    버리면 사용자가 넣은 시나리오가 소리 없이 사라진다.
+    """
+    s = probe["estimateScenario"]
+    assert s["axisFromLevelFromData"] is True, "기준일 수준을 데이터에서 가져오지 않는다"
+    assert s["axisKeyedLevelUsed"] is True, "키인한 추정일 수준이 쓰이지 않는다"
+    assert s["axisRateDeltaIsDifference"] is True, "금리 변화를 차이로 내지 않는다"
+    assert s["axisPriceDeltaIsRatio"] is True, "환율 변화를 변화율로 내지 않는다"
+    assert s["sameObservationIsUnknownNotZero"] is True, (
+        "두 날짜가 같은 관측인데 변화를 0 으로 지어냈다")
+    assert s["marketCardShowsBothLevels"] is True, "카드가 두 수준을 보여 주지 않는다"
+    assert s["levelInputSaves"] is True, "키인한 수준이 저장되지 않는다"
+    assert s["axisRowCount"] == 6, "시장 축이 6개가 아니다"
+    t = probe["estimateTwoBlocks"]
+    assert t["migrationRan"] is True, "구 저장분(변화량) 이관이 돌지 않는다"
+    assert t["migratedRateLevel"] is True, "금리 이관이 기준일 수준 + Δ 가 아니다"
+    assert t["migratedPriceLevel"] is True, "환율 이관이 기준일 수준 × (1+Δ) 가 아니다"
+    assert t["migrationRunsOnce"] is True, "이관이 매 렌더마다 다시 돈다"
 
 
 def test_estimate_chains_asof_to_estimate_date_on_the_same_annualized_basis(probe):
