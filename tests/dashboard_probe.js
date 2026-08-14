@@ -80,8 +80,8 @@ secNodes.risk.append(elem("p", "risk-panel-link"));
 
 /* 수익률 추정 뼈대(§7.8) — renderEstimate 가 $("#est-…") 로 집는 자리들.
    `est-method` 만 <details> 다(다른 섹션과 같은 규약). */
-["est-summary", "est-controls", "est-table-card", "est-contrib-card",
- "est-scenario-card", "est-scenario-result", "est-sources"]
+["est-summary", "est-controls", "est-table-card", "est-market-card",
+ "est-scenario-result", "est-contrib-card", "est-sources"]
   .forEach((id) => secNodes.estimate.append(elem("div", id)));
 secNodes.estimate.append(elem("details", "est-method"));
 
@@ -193,7 +193,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "allocRedistribute", "allocIsAlt", "allocLambdaForSigma", "allocJointOpt", "allocCcyHedgeRows",
   "allocXeBinds", "allocXeBindNotes", "allocXeRange", "openAllocDetail",
   "estEngine", "estDayCount", "estIndexYtd", "EST_ASSETS",
-  "SECTION_LABELS", "sectionLink", "estScenario", "estAxisDelta", "EST_SCEN"];
+  "SECTION_LABELS", "sectionLink", "estScenario", "estAxisLevels", "estAxisAt", "EST_SCEN", "estMigrateLevels"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -2007,14 +2007,37 @@ const EST_FIXTURE = (() => {
                      2026: { v: 1260, d: "2026-12-31" } },
     first: "2025-01-01", last: "2026-12-31",
   });
+  /* 시장 축은 **평평하게** 둔다 — 기준일 수준이 결정적이어야 「수준 키인」(§7.12)을
+     손계산과 대조할 수 있고, 자동 변화가 0 이라 키인 효과만 따로 잰다. */
+  const flat = (val) => ({ t, v: t.map(() => val), first: "2025-01-01", last: "2026-12-31" });
   return {
     active: true, asof: "2026-12-31",
     indices: [mk("kospi_tr", "국내주식", "KOSPI TR", true),
               mk("acwi", "해외주식", "MSCI ACWI", false)],
+    axes: [
+      { key: "kr_rate", label: "국고", kind: "rate", unit: "bp", src: "t",
+        level_unit: "%", level_dp: 2, note: "국내채권", ...flat(3.0) },
+      { key: "us_rate", label: "미국채", kind: "rate", unit: "bp", src: "t",
+        level_unit: "%", level_dp: 2, note: "해외채권", ...flat(4.0) },
+      { key: "usdkrw", label: "달러원", kind: "price", unit: "%", src: "t",
+        level_unit: "원", level_dp: 1, note: "환효과", ...flat(1300) },
+      { key: "swap", label: "스왑", kind: "rate", unit: "bp", src: "t",
+        level_unit: "%", level_dp: 2, note: "스왑 MTM", ...flat(-2.0) },
+      { key: "kospi", label: "KOSPI TR", kind: "price", unit: "%", index: "kospi_tr",
+        level_unit: "", level_dp: 1, note: "국내주식" },
+      { key: "acwi", label: "ACWI", kind: "price", unit: "%", index: "acwi",
+        level_unit: "", level_dp: 1, note: "해외주식" },
+    ],
     unavailable: [{ assets: ["시가 해외채권 직접", "장부가 해외채권"],
                     want: "미국채 총수익 지수",
                     reason: "보유 시리즈는 전부 금리(yield)입니다", have_kind: "금리(yield)" }],
     annualize: { basis: "days", day_count: 365, note: "주식은 연환산하지 않습니다" },
+    scenario: {
+      formula: "F", terms: ["a"], book_value: "BV", limits: "L",
+      cumulative: "CUM", cross_year: "XY", size_carry: "SIZE",
+      hedge_band: { lo: 0, hi: 105, step: 1, note: "HB" },
+      row_modes: [{ asset: "대체투자", mode: "carry", why: "가격 축 없음" }],
+    },
   };
 })();
 
@@ -2184,9 +2207,14 @@ safe("estimateCalc", () => {
   r.headerHasBothDateBlocks = /기준일/.test(headTxt) && /추정일/.test(headTxt);
   r.headerDroppedAppliedColumn = !/반영 수익률/.test(headTxt) && !/연환산\|/.test(headTxt);
   r.headerDroppedContribColumn = !/기여도/.test(headTxt);
-  r.headerHasFourTerms = /캐리/.test(headTxt) && /가격효과/.test(headTxt)
-    && /환효과/.test(headTxt) && /스왑 MTM/.test(headTxt);
+  /* §7.12 — 4항 열은 표에서 빠져 결과 카드 접이식으로 갔다. 표에는 「근거」 한 줄만 */
+  r.headerDroppedFourTermColumns = !/캐리/.test(headTxt) && !/스왑 MTM/.test(headTxt);
+  r.headerHasReason = /근거/.test(headTxt);
   r.headerHasDiffColumn = /차이/.test(headTxt);
+  /* 출처 열도 내렸다 — 접이식으로 갔을 뿐 사라지지 않았는지 함께 본다 */
+  r.headerDroppedSourceColumn = !/출처/.test(headTxt);
+  r.sourcesMovedToDetails = DOC.getElementById("est-sources")
+    .querySelectorAll("details").length === 1;
   /* 구분선은 **클래스로** 붙는다 — 재계산이 className 을 통째로 다시 써도 살아남아야 한다 */
   r.sepCellsPresent = DOC.getElementById("est-table-card")
     .querySelectorAll(".est-sep").length >= 11;
@@ -2251,6 +2279,8 @@ safe("estimateCalc", () => {
   r.summaryWarnsStale = /자동 채움 지수가 기준일까지 오지 않았습니다/.test(staleTxt);
   /* 표식이 **실제 노드**로 있어야 한다 — title 속성에만 있으면 터치 기기에서 아예
      보이지 않는다(셰이드에 innerHTML 이 없으므로 노드로 확인한다). */
+  /* §7.12 로 출처 열을 내렸지만 이 경고는 **값에 대한 경고**라 행에 남아야 한다
+     (실제로 한 번 함께 사라졌고 이 단언이 잡았다). 이제 「근거」 열에 붙는다. */
   r.staleMarkIsVisibleNotTooltipOnly = Array.from(
     DOC.getElementById("est-table-card").querySelectorAll("span"))
     .some((n) => /까지만 있음/.test(n.textContent || ""));
@@ -2384,7 +2414,8 @@ safe("estimateScenario", () => {
            "국내주식": 1000, "해외주식": 1000 },
     ret: { "장부가 국내채권": 3.65, "장부가 해외채권": 3.65, "시가 국내채권 직접": 3.65 },
     dur: { "장부가 국내채권": 5, "장부가 해외채권": 5, "시가 국내채권 직접": 4 },
-    dlt: { kr_rate: 50, us_rate: 30, usdkrw: 3, swap: -100, kospi: 5, acwi: 4 },
+    lvl: { kr_rate: 3.5, us_rate: 4.3, usdkrw: 1339, swap: -3.0, kospi: 105, acwi: 104 },
+    amt2: {}, ret2: {}, dlt: {},
     hedge: { "장부가 해외채권": 90, "해외주식": 30 }, swap_tau: 0.25,
   };
   const S = P.estScenario(A, st);
@@ -2401,18 +2432,23 @@ safe("estimateScenario", () => {
   const fb = row("장부가 해외채권");
   r.swapDownMeansGain = fb.swap > 0;
   r.swapMtmMatchesAcctModel = Math.abs(fb.swap - (0.9 * 0.25 * 0.01)) < 1e-15;
-  const stUp = { ...st, dlt: { ...st.dlt, swap: 100 } };
+  const stUp = { ...st, lvl: { ...st.lvl, swap: -1.0 } };
   r.swapUpMeansLoss = P.estScenario(A, stUp).rows
     .find((x) => x.key === "장부가 해외채권").swap < 0;
 
   /* ③ 장부가는 원가법 — 듀레이션을 넣어도 가격효과가 0 이어야 한다 */
-  r.bookValueHasNoPriceEffect = row("장부가 국내채권").price === 0
-    && row("장부가 해외채권").price === 0;
-  r.bookValueDurationWasEntered = st.dur["장부가 국내채권"] === 5;   // 검사가 헛돌지 않게
+  /* §7.12 — 장부가 **국내**채권은 승계(carry)라 분해가 없다. 원가법이라 가격효과가
+     0 이라는 성질은 계산(calc) 대상인 장부가 **해외**채권으로 확인한다(듀레이션을
+     넣었는데도 0 이어야 한다 — 검사가 헛돌지 않게 그 입력도 함께 단언한다). */
+  r.bookValueHasNoPriceEffect = row("장부가 해외채권").price === 0;
+  r.bookValueDurationWasEntered = st.dur["장부가 해외채권"] === 5;
+  r.bookDomesticIsCarryNotCalc = row("장부가 국내채권").mode === "carry"
+    && row("장부가 국내채권").price === null;
   /* 장부가 **해외**채권은 환·스왑으로 움직인다(사용자 지시의 핵심) */
   r.bookForeignMovesByFxAndSwap = fb.fx !== 0 && fb.swap !== 0 && fb.total !== fb.carry;
+  /* 승계 행의 구간수익은 캐리 그 자체다(4항을 만들지 않으므로 total 로 직접 본다) */
   r.bookDomesticMovesOnlyByCarry = Math.abs(row("장부가 국내채권").total
-    - row("장부가 국내채권").carry) < 1e-15;
+    - 0.0365 * 184 / 365) < 1e-15;
 
   /* ④ 환효과 = (1−h)·Δ환율 — 헤지분만 상쇄된다 */
   const eq = row("해외주식");
@@ -2430,8 +2466,11 @@ safe("estimateScenario", () => {
   r.equityPriceIsIndexMove = Math.abs(row("국내주식").price - 0.05) < 1e-15;
 
   /* ⑥ 합계·포트폴리오가 항의 합과 정확히 같은가 */
-  r.totalIsSumOfTerms = S.rows.filter((x) => x.total != null).every((x) =>
-    Math.abs(x.total - (x.carry + x.price + x.fx + x.swap)) < 1e-15);
+  r.totalIsSumOfTerms = S.rows.filter((x) => x.mode === "calc" && x.total != null)
+    .every((x) => Math.abs(x.total - (x.carry + x.price + x.fx + x.swap)) < 1e-15);
+  /* 승계 행에는 분해가 **없어야** 한다 — 계산하지 않은 행에 분해를 붙이면 계산한 척이 된다 */
+  r.carryRowsHaveNoBreakdown = S.rows.filter((x) => x.mode === "carry")
+    .every((x) => x.carry === null && x.price === null && x.fx === null && x.swap === null);
   const manual = S.rows.reduce((a, x) => a + (x.amt || 0) * (x.total || 0), 0) / S.totalAmt;
   r.portfolioMatchesHandCalc = Math.abs(S.portPeriod - manual) < 1e-15;
 
@@ -2490,14 +2529,26 @@ safe("estimateScenario", () => {
     P.estScenario(A, { ...st, est_date: "2026-01-31" }).ready === false;
 
   /* ⑨ 축 자동 조회 — 수기값이 없으면 데이터에서, 실제 두 관측일을 밝힌다 */
-  const stAuto = { ...st, dlt: {} };
+  const stAuto = { ...st, lvl: {} };
   const SA = P.estScenario(A, stAuto);
   const ax = SA.axes.find((x) => x.key === "kr_rate");
-  r.axisAutoFilled = ax.source === "자동" && ax.auto.from.d === "2026-06-30"
-    && ax.auto.to.d === "2026-12-31";
+  r.axisAutoFilled = ax.source === "자동" && ax.from.d === "2026-06-30"
+    && ax.toAuto.d === "2026-12-31";
   r.axisAutoFlatIsZero = Math.abs(ax.delta) < 1e-15;      // 픽스처가 평평하므로 0
   r.keyedAxisBeatsAuto = SA.axes.find((x) => x.key === "kospi").source === "자동"
     && S.axes.find((x) => x.key === "kospi").source === "수기";
+
+  /* ⑨-b **수준 키인**(§7.12) — 사용자는 변화량이 아니라 추정일 수준을 친다.
+     기준일 수준은 언제나 데이터에서 오고, 변화는 화면이 아니라 엔진이 계산한다. */
+  const axKr = S.axes.find((x) => x.key === "kr_rate");
+  r.axisFromLevelFromData = Math.abs(axKr.from.v - 3.0) < 1e-12;
+  r.axisKeyedLevelUsed = Math.abs(axKr.to.v - 3.5) < 1e-12;   // st.lvl 이 3.5
+  r.axisRateDeltaIsDifference = Math.abs(axKr.delta - 0.005) < 1e-15;  // (3.5−3.0)/100
+  const axFx = S.axes.find((x) => x.key === "usdkrw");
+  r.axisPriceDeltaIsRatio = Math.abs(axFx.delta - (1339 / 1300 - 1)) < 1e-15;
+  /* 자동인데 두 날짜가 같은 관측이면 변화는 0 이 아니라 **모른다** */
+  const same = P.estAxisLevels(A, A.axes[0], "2026-06-30", "2026-06-30", null);
+  r.sameObservationIsUnknownNotZero = same.delta === null && !!same.error;
 
   /* ⑩ 화면 */
   P.DATA.estimate = A;
@@ -2505,14 +2556,18 @@ safe("estimateScenario", () => {
   P.renderSection("estimate");
   const sec = DOC.getElementById("estimate");
   r.renderErrors = sec.querySelectorAll(".render-error").length;
-  r.axisRowCount = DOC.getElementById("est-scenario-card")
+  /* 시장지표 카드가 **표 밑의 자기 카드**로 분리됐다(§7.12) */
+  r.axisRowCount = DOC.getElementById("est-market-card")
     .querySelectorAll(".est-table tr").length - 1;                       // 6
-  /* **4항 분해는 결과 카드가 아니라 통합 표에 있다**(§7.11) — 두 곳에 그리면 같은 수가
-     한 화면에 두 번 나오고 한쪽만 고쳤을 때 조용히 갈린다. */
-  r.resultCardHasNoAssetTable = DOC.getElementById("est-scenario-result")
-    .querySelectorAll(".est-table").length === 0;
-  /* 통합 표의 추정일 칸이 실제로 채워졌는가 — 계산이 되는데 화면이 비면 그게 §7.11 의 실패다 */
+  r.marketCardShowsBothLevels = /3\.00/.test(
+    DOC.getElementById("est-market-card").textContent);
+  /* **4항 분해는 표에서 빠지고 결과 카드의 접이식으로 갔다**(§7.12) — 표에는 「근거」
+     한 줄만 간다. 두 곳에 그리지 않는 규약은 그대로다. */
   const tableTxt = DOC.getElementById("est-table-card").textContent.replace(/\s+/g, " ");
+  r.tableHasNoFourTermColumns = !/캐리/.test(tableTxt) && !/스왑 MTM/.test(tableTxt);
+  r.resultCardHasBreakdown = /캐리/.test(
+    DOC.getElementById("est-scenario-result").textContent);
+  /* 통합 표의 추정일 칸이 실제로 채워졌는가 */
   const kbCum = (kb.cumAnnual * 100).toFixed(2);
   r.tableShowsEstReturn = tableTxt.indexOf(kbCum) >= 0;
   const kbDiff = (kb.diff * 100).toFixed(2);
@@ -2523,8 +2578,6 @@ safe("estimateScenario", () => {
   r.screenStatesBookValue = /BV/.test(txt);
   r.screenStatesLimits = /L/.test(txt);
   r.screenStatesCumulativeRule = /CUM/.test(txt);      // 나란히 놓기의 항등식 문장
-  r.screenShowsFourTerms = /캐리/.test(txt) && /가격효과/.test(txt)
-    && /환효과/.test(txt) && /스왑 MTM/.test(txt);
   /* 다른 해면 화면이 **사유를 적는다** — 조용히 비우면 고장으로 읽힌다 */
   shim.localStorage.setItem("iaw-estimate", JSON.stringify({ saved: true, ...st,
     est_date: "2027-03-31" }));
@@ -2533,15 +2586,165 @@ safe("estimateScenario", () => {
     DOC.getElementById("estimate").textContent.replace(/\s+/g, " "));
   shim.localStorage.setItem("iaw-estimate", JSON.stringify({ saved: true, ...st }));
   P.renderSection("estimate");
-  /* 시나리오 입력도 즉시 저장(모형 입력) */
-  const tauIn = Array.from(DOC.getElementById("est-scenario-card").querySelectorAll("input"))
+  /* 시장지표 입력도 즉시 저장(모형 입력) */
+  const tauIn = Array.from(DOC.getElementById("est-market-card").querySelectorAll("input"))
     .find((n) => /스왑 잔존만기/.test(n.getAttribute("aria-label") || ""));
   tauIn.value = "0.5";
   tauIn.dispatchEvent({ type: "input" });
   r.scenarioInputsSave =
     JSON.parse(shim.localStorage.getItem("iaw-estimate")).swap_tau === 0.5;
+  const lvlIn = Array.from(DOC.getElementById("est-market-card").querySelectorAll("input"))
+    .find((n) => /국고 추정일 수준/.test(n.getAttribute("aria-label") || ""));
+  lvlIn.value = "4.25";
+  lvlIn.dispatchEvent({ type: "input" });
+  r.levelInputSaves =
+    JSON.parse(shim.localStorage.getItem("iaw-estimate")).lvl["kr_rate"] === 4.25;
 
   shim.localStorage.removeItem("iaw-estimate");
+  return r;
+});
+
+/* ====== §7.12 — 추정일 자동계산 · 규모 승계 · 헤지 선택 ====================== */
+safe("estimateTwoBlocks", () => {
+  const r = {};
+  const A = EST_FIXTURE;
+  const base = {
+    asof: "2026-06-30", est_date: "2026-12-31",
+    amt: { "장부가 국내채권": 5000, "대체투자": 3000, "시가 국내채권 직접": 2000 },
+    ret: { "장부가 국내채권": 3.0, "대체투자": 4.0, "시가 국내채권 직접": 3.65 },
+    dur: { "시가 국내채권 직접": 5 },
+    lvl: {}, amt2: {}, ret2: {}, dlt: {}, hedge: {}, swap_tau: 0.25,
+  };
+
+  /* ① 모드 축이 사용자가 지정한 그대로인가 — calc 7 / carry 4 */
+  const modes = Object.keys(P.EST_SCEN).map((k) => P.EST_SCEN[k].mode);
+  r.calcCount = modes.filter((m) => m === "calc").length;       // 7
+  r.carryCount = modes.filter((m) => m === "carry").length;     // 4
+  r.carrySetExact = ["장부가 국내채권", "단기자금", "대출금", "대체투자"]
+    .every((k) => P.EST_SCEN[k].mode === "carry");
+  r.bookForeignIsCalc = P.EST_SCEN["장부가 해외채권"].mode === "calc";
+
+  /* ② 규모 승계 — 비우면 기준일 규모를 그대로 쓰고, 넣으면 그것이 정본 */
+  const S0 = P.estScenario(A, base);
+  const row = (S, k) => S.rows.find((x) => x.key === k);
+  r.sizeInheritedWhenBlank = row(S0, "대체투자").amt2 === 3000
+    && row(S0, "대체투자").amt2Keyed === false;
+  r.inheritedTotalMatches = S0.totalAmt2 === S0.totalAmt;
+  r.sizeChangedFlagFalse = S0.sizeChanged === false;
+  const S1 = P.estScenario(A, { ...base, amt2: { "대체투자": 1000 } });
+  r.keyedSizeUsed = row(S1, "대체투자").amt2 === 1000
+    && row(S1, "대체투자").amt2Keyed === true;
+  r.otherRowsStillInherit = row(S1, "장부가 국내채권").amt2 === 5000;
+  r.sizeChangedFlagTrue = S1.sizeChanged === true;
+  /* **추정일 열은 추정일 규모로 가중한다** — 한 벌로 재면 리밸런싱 효과가 사라진다 */
+  const w = S1.rows.reduce((a, x) => a + (x.amt2 || 0), 0);
+  const manual = S1.rows.reduce((a, x) =>
+    a + ((x.amt2 != null && x.cumAnnual != null) ? x.amt2 * x.cumAnnual : 0), 0) / w;
+  r.estPortUsesEstSizes = Math.abs(S1.portCumAnnual - manual) < 1e-15;
+  r.estPortDiffersFromBaseWeighting =
+    Math.abs(S1.portCumAnnual - S0.portCumAnnual) > 1e-9;
+
+  /* ③ carry 자산군 — 기준일 승계가 기본, 수기로 덮을 수 있고, 4항을 만들지 않는다 */
+  const alt = row(S0, "대체투자");
+  r.carryInheritsBaseReturn = Math.abs(alt.cumAnnual - 0.04) < 1e-15;
+  r.carryDiffIsZero = Math.abs(alt.diff) < 1e-15;
+  r.carryHasNoBreakdown = alt.carry === null && alt.price === null
+    && alt.fx === null && alt.swap === null;
+  r.carryNoteSaysInherited = alt.modeNote === "기준일 승계";
+  /* 구간수익은 낸다 — 포트폴리오 「추정 구간」에 들어가야 하기 때문 */
+  r.carryStillHasPeriodReturn = Math.abs(alt.total - 0.04 * 184 / 365) < 1e-15;
+  const S2 = P.estScenario(A, { ...base, ret2: { "대체투자": 6 } });
+  const alt2 = row(S2, "대체투자");
+  r.carryKeyedOverride = Math.abs(alt2.cumAnnual - 0.06) < 1e-15
+    && alt2.ret2Keyed === true && alt2.modeNote === "수기";
+  r.carryKeyedDiff = Math.abs(alt2.diff - 0.02) < 1e-15;
+
+  /* ④ calc 자산군은 수기 덮어쓰기가 **없다** — 산식이 정본이라 ret2 를 무시해야 한다 */
+  const S3 = P.estScenario(A, { ...base, ret2: { "시가 국내채권 직접": 99 } });
+  r.calcIgnoresKeyedReturn =
+    Math.abs(row(S3, "시가 국내채권 직접").cumAnnual
+             - row(S0, "시가 국내채권 직접").cumAnnual) < 1e-15;
+
+  /* ⑤ 헤지비율에 **기본값이 없다** — 고르기 전에는 0 으로 지어내지 않는다 */
+  const fb = row(S0, "장부가 해외채권");
+  r.hedgeHasNoDefault = fb.h === null && fb.fx === null && fb.swap === null
+    && /헤지비율 미입력/.test(fb.fxNote);
+  r.hedgeBandIs0to105 = P.EST_SCEN && A.scenario && A.scenario.hedge_band
+    ? (A.scenario.hedge_band.lo === 0 && A.scenario.hedge_band.hi === 105) : false;
+  const S4 = P.estScenario(A, { ...base, amt: { ...base.amt, "장부가 해외채권": 1000 },
+    ret: { ...base.ret, "장부가 해외채권": 2.0 },
+    hedge: { "장부가 해외채권": 100 }, lvl: { usdkrw: 1339, swap: -3.0 } });
+  const fb4 = row(S4, "장부가 해외채권");
+  /* 100% 헤지면 환효과가 정확히 0, 스왑 MTM 은 남는다(파생이라 MTM 이 난다) */
+  r.fullHedgeZeroesFx = Math.abs(fb4.fx) < 1e-15;
+  r.fullHedgeKeepsSwapMtm = fb4.swap > 0;
+  /* 오버헤지 105% 는 **음의 환효과**를 만든다 — 밴드가 100 을 넘는다는 사실의 결과다 */
+  const S5 = P.estScenario(A, { ...base, amt: { ...base.amt, "장부가 해외채권": 1000 },
+    ret: { ...base.ret, "장부가 해외채권": 2.0 },
+    hedge: { "장부가 해외채권": 105 }, lvl: { usdkrw: 1339 } });
+  r.overHedgeFlipsFxSign = row(S5, "장부가 해외채권").fx < 0;
+
+  /* ⑥ 구 저장분(변화량) → 수준 이관. **기준일 수준 + Δ** 로 옮겨야 한다. */
+  const stOld = { ...base, lvl: {}, dlt: { kr_rate: 50, usdkrw: 3 }, _hadDlt: true };
+  const moved = P.estMigrateLevels(A, stOld);
+  r.migrationRan = moved === true;
+  r.migratedRateLevel = Math.abs(stOld.lvl["kr_rate"] - (3.0 + 0.5)) < 1e-9;
+  r.migratedPriceLevel = Math.abs(stOld.lvl["usdkrw"] - 1300 * 1.03) < 1e-6;
+  r.migrationRunsOnce = P.estMigrateLevels(A, stOld) === false;
+
+  /* ⑦ 화면 */
+  P.DATA.estimate = A;
+  shim.localStorage.setItem("iaw-estimate", JSON.stringify({ saved: true, ...base }));
+  P.renderSection("estimate");
+  const card = DOC.getElementById("est-table-card");
+  r.renderErrors = DOC.getElementById("estimate").querySelectorAll(".render-error").length;
+  const heads = Array.from(card.querySelectorAll("th")).map((n) => n.textContent).join("|");
+  r.headerHasTwoBlocks = /기준일/.test(heads) && /추정일/.test(heads);
+  r.headerHasSizeTwice = (heads.match(/규모/g) || []).length === 2;
+  r.headerHasWeightTwice = (heads.match(/비중/g) || []).length === 2;
+  r.headerHasReasonColumn = /근거/.test(heads);
+  /* 입력칸: 규모11 + 수익률11 + 듀레6 + 추정일규모11 + carry 추정일수익률4 = 43 */
+  r.inputCount = card.querySelectorAll("input").length;
+  r.estSizeInputsExist = Array.from(card.querySelectorAll("input"))
+    .filter((n) => /추정일 규모$/.test(n.getAttribute("aria-label") || "")).length === 11;
+  r.carryReturnInputsOnly = Array.from(card.querySelectorAll("input"))
+    .filter((n) => /추정일 수익률$/.test(n.getAttribute("aria-label") || "")).length === 4;
+  /* 해외자산 이름은 **버튼**이다(헤지비율을 여는 자리). 그 외는 버튼이 아니다. */
+  const btns = Array.from(card.querySelectorAll(".est-name-btn"));
+  r.foreignNamesAreButtons = btns.length === 4;   // 장부가해외채권·해외주식·시가해외채권 직접/간접
+  r.hedgeTagSaysUnsetFirst = /헤지 미입력/.test(card.textContent);
+  /* 승계 규모가 **실제로 칸에 보인다** — placeholder 로만 두면 빈 칸으로 읽힌다 */
+  const a2 = Array.from(card.querySelectorAll("input"))
+    .find((n) => /^대체투자 추정일 규모$/.test(n.getAttribute("aria-label") || ""));
+  r.inheritedSizeShownInInput = a2.value === "3000";
+  r.inheritedSizeNotStored =
+    JSON.parse(shim.localStorage.getItem("iaw-estimate")).amt2["대체투자"] == null;
+
+  /* ⑧ 헤지 고르기 오버레이 — 자산군을 누르면 열리고, 고른 값만 저장된다 */
+  const before = JSON.parse(shim.localStorage.getItem("iaw-estimate")).hedge["해외주식"];
+  r.hedgeUnsetBeforeClick = before == null;
+  const eqBtn = btns.find((n) => /해외주식/.test(n.textContent));
+  eqBtn.dispatchEvent({ type: "click" });
+  const panel = DOC.querySelectorAll(".est-hedge-panel");
+  r.hedgePanelOpens = panel.length === 1;
+  const slider = DOC.querySelectorAll(".est-hedge-back input")[0];
+  r.sliderRangeIs0to105 = slider.getAttribute("min") === "0"
+    && slider.getAttribute("max") === "105";
+  slider.value = "70";
+  slider.dispatchEvent({ type: "input" });
+  r.hedgeSavesOnPick =
+    JSON.parse(shim.localStorage.getItem("iaw-estimate")).hedge["해외주식"] === 70;
+  /* 밴드 밖은 조용히 받지 않고 밴드 안으로 되돌린다 */
+  const numIn = Array.from(DOC.querySelectorAll(".est-hedge-back input"))
+    .find((n) => /숫자/.test(n.getAttribute("aria-label") || ""));
+  numIn.value = "180";
+  numIn.dispatchEvent({ type: "input" });
+  r.hedgeClampedToBand =
+    JSON.parse(shim.localStorage.getItem("iaw-estimate")).hedge["해외주식"] === 105;
+
+  shim.localStorage.removeItem("iaw-estimate");
+  P.DATA.estimate = A;
+  P.renderSection("estimate");
   return r;
 });
 

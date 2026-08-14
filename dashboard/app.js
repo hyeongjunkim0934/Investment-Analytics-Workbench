@@ -6709,24 +6709,39 @@ const EST_DAY_MS = 86400000;
    사용자 설명): 채권 자체는 원가법이라 금리에 안 움직이지만, 환헤지 스왑은 파생상품이라
    스왑레이트가 변하면 평가손익이 난다("−2% 로 체결했는데 −3% 로 떨어지면 계약 가치가
    올라 수익률이 소폭 상승"). `hedge.py` 회계모형 ②③⑤ 가 그대로 이 두 항이다. */
+/* `mode` 는 §7.12 에서 붙었다(2026-08-13 사용자 지시로 자산군을 하나하나 지정했다):
+     calc  — 화면이 시장 축으로 **계산한다**. 수기 덮어쓰기 없음(산식이 정본)
+     carry — 기준일 수익률을 **그대로 승계**하고 필요하면 사용자가 수기로 덮는다
+   가르는 선은 「가격 축이 있는가」이고 그 판정은 사용자가 내렸다 — 임의로 옮기지 말 것.
+   파이프라인 `estimate.ROW_MODES` 가 같은 표를 사유와 함께 싣고 화면이 그것을 적는다
+   (`tests/test_estimate.py` 가 두 파일을 대조한다). */
 const EST_SCEN = {
-  "장부가 국내채권":    { fx: false },
-  "장부가 해외채권":    { fx: true },
-  "단기자금":           { fx: false },
-  "대출금":             { fx: false },
-  "국내주식":           { px: "kospi", fx: false },
-  "해외주식":           { px: "acwi", fx: true },
-  "시가 국내채권 직접": { rate: "kr_rate", fx: false },
-  "시가 국내채권 간접": { rate: "kr_rate", fx: false },
-  "시가 해외채권 직접": { rate: "us_rate", fx: true },
-  "시가 해외채권 간접": { rate: "us_rate", fx: true },
-  "대체투자":           { fx: false },
+  "장부가 국내채권":    { mode: "carry", fx: false },
+  "장부가 해외채권":    { mode: "calc",  fx: true },
+  "단기자금":           { mode: "carry", fx: false },
+  "대출금":             { mode: "carry", fx: false },
+  "국내주식":           { mode: "calc",  px: "kospi", fx: false },
+  "해외주식":           { mode: "calc",  px: "acwi", fx: true },
+  "시가 국내채권 직접": { mode: "calc",  rate: "kr_rate", fx: false },
+  "시가 국내채권 간접": { mode: "calc",  rate: "kr_rate", fx: false },
+  "시가 해외채권 직접": { mode: "calc",  rate: "us_rate", fx: true },
+  "시가 해외채권 간접": { mode: "calc",  rate: "us_rate", fx: true },
+  "대체투자":           { mode: "carry", fx: false },
 };
+
+/* 헤지비율 입력 범위(§7.12). **기본값을 두지 않는다** — 기관의 현재 헤지 정책은 운용
+   정보라 공개 저장소에 박지 않는다(2026-08-13 사용자 확인). 파이프라인이 같은 값을
+   `scenario.hedge_band` 로 싣고 화면은 그것을 우선 쓴다. */
+const EST_HEDGE_BAND = { lo: 0, hi: 105, step: 1 };
 
 function estDefaults() {
   return { asof: null, amt: {}, ret: {}, dur: {}, saved: false,
-           /* 시나리오(§7.10): 추정일 · 축별 Δ 수기값 · 슬리브 헤지비율 · 스왑 잔존만기 */
-           est_date: null, dlt: {}, hedge: {}, swap_tau: null };
+           /* 시나리오(§7.10 → §7.12): 추정일 · 축별 **수준** 수기값(`lvl`) ·
+              추정일 규모(`amt2`, 비면 기준일 승계) · carry 자산군의 추정일 수익률
+              수기값(`ret2`) · 슬리브 헤지비율 · 스왑 잔존만기.
+              `dlt`(구 변화량 저장분)는 `estMigrateLevels` 가 수준으로 옮긴다. */
+           est_date: null, lvl: {}, amt2: {}, ret2: {}, dlt: {},
+           hedge: {}, swap_tau: null };
 }
 
 function estState() {
@@ -6735,10 +6750,38 @@ function estState() {
   const st = { ...estDefaults(), ...saved };
   /* 옛 저장분·손상 저장분 방어 — 없으면 저장 핸들러가 undefined 에 인덱싱하며 죽는다.
      `dlt`/`hedge` 는 §7.10 에서 새로 생긴 칸이라 그 이전 저장분에는 아예 없다. */
-  ["amt", "ret", "dur", "dlt", "hedge"].forEach((k) => {
+  ["amt", "ret", "dur", "dlt", "lvl", "amt2", "ret2", "hedge"].forEach((k) => {
     if (!st[k] || typeof st[k] !== "object") st[k] = {};
   });
+  /* 구 저장분 판정은 **`saved` 쪽으로** 한다 — `st` 는 위에서 빈 객체를 채워 넣으므로
+     `st.dlt` 로 가드하면 영영 참이 되어 마이그레이션이 매번 돈다(§7.7.11 의 fold 가드에서
+     같은 실수를 했다). 실제 변환은 기준일 수준이 필요해 렌더에서 한다. */
+  st._hadDlt = !!(saved && saved.dlt && Object.keys(saved.dlt).length
+                  && !(saved.lvl && Object.keys(saved.lvl).length));
   return st;
+}
+
+/* 구 저장분(축별 **변화량** `dlt`)을 새 형식(추정일 **수준** `lvl`)으로 한 번 옮긴다.
+   §7.12 에서 사용자가 "추정일 수준을 친다"로 규약을 바꿨기 때문이다. 기준일 수준이
+   있어야 변환되므로 데이터가 로드된 뒤(렌더 시점)에 돈다.
+     rate  : 수준 = 기준일수준 + Δbp/100        (게시 금리가 % 단위)
+     price : 수준 = 기준일수준 × (1 + Δ%/100)
+   변환하지 못한 축은 **버리지 않고 그대로 둔다** — 조용히 0 으로 만들면 사용자가 넣은
+   시나리오가 소리 없이 사라진다. */
+function estMigrateLevels(A, st) {
+  if (!st._hadDlt || !st.asof) return false;
+  let moved = 0;
+  ((A && A.axes) || []).forEach((ax) => {
+    const d = st.dlt[ax.key];
+    if (d == null || d === "" || !isFinite(+d)) return;
+    const s = estAxisSeries(A, ax);
+    const at = estAxisAt(s, st.asof);
+    if (!at) return;
+    const v = ax.kind === "rate" ? at.v + (+d) / 100 : at.v * (1 + (+d) / 100);
+    if (isFinite(v)) { st.lvl[ax.key] = +v.toFixed(6); moved += 1; }
+  });
+  st._hadDlt = false;
+  return moved > 0;
 }
 
 /* 축 하나의 기준일→추정일 변화. **kind 가 뜻을 정한다** — 금리는 차이(%p), 지수·환율은
@@ -6754,26 +6797,48 @@ function estAxisSeries(A, axis) {
   return axis.t ? { t: axis.t, v: axis.v, last: axis.last, label: axis.label } : null;
 }
 
-function estAxisDelta(A, axis, fromStr, toStr) {
+/* 시리즈에서 **그 날짜 이하 마지막 관측**을 집는다(이분 탐색). 실제로 집힌 날짜를 함께
+   돌려주는 것이 규약이다 — 화면이 「언제 값을 썼는지」를 밝혀야 하기 때문(조용한 대체 금지). */
+function estAxisAt(s, dstr) {
+  if (!s || !dstr || !s.t || !s.t.length) return null;
+  const target = Math.floor(Date.parse(dstr + "T23:59:59Z") / 1000);
+  if (!isFinite(target)) return null;
+  let lo = 0, hi = s.t.length - 1, k = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (s.t[mid] <= target) { k = mid; lo = mid + 1; } else { hi = mid - 1; }
+  }
+  return k < 0 ? null : { v: s.v[k], d: tsToDate(s.t[k]) };
+}
+
+/* 축 하나의 **기준일 수준 · 추정일 수준 · 변화**(§7.12 — 사용자가 변화량 대신 추정일
+   수준을 친다). 돌려주는 `delta` 는 소수이고 단위 변환은 `kind` 가 정한다:
+     rate  → (수준To − 수준From) / 100   (게시값이 % 단위 금리라 소수로 내린다)
+     price → 수준To / 수준From − 1
+   이 구분을 화면이 스스로 정하게 두면 금리를 비율로 나누는 사고가 조용히 난다. */
+function estAxisLevels(A, axis, fromStr, toStr, keyedLevel) {
   const s = estAxisSeries(A, axis);
-  if (!s || !fromStr || !toStr) return null;
-  const at = (dstr) => {
-    const target = Math.floor(Date.parse(dstr + "T23:59:59Z") / 1000);
-    let lo = 0, hi = s.t.length - 1, k = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (s.t[mid] <= target) { k = mid; lo = mid + 1; } else { hi = mid - 1; }
-    }
-    return k < 0 ? null : { v: s.v[k], d: tsToDate(s.t[k]) };
-  };
-  const a = at(fromStr), b = at(toStr);
-  if (!a || !b) return { error: "구간 안에 관측이 없습니다" };
-  if (a.d === b.d) return { error: "기준일과 추정일이 같은 관측을 가리킵니다" };
-  const delta = axis.kind === "rate"
-    ? (b.v - a.v) / 100                 // 게시값이 % 단위 금리 → 소수로
-    : (a.v === 0 ? null : b.v / a.v - 1);
-  if (delta == null) return { error: "기준일 값이 0 입니다" };
-  return { delta, from: a, to: b, beyondData: !!(s.last && toStr > s.last) };
+  const from = estAxisAt(s, fromStr);
+  const toAuto = estAxisAt(s, toStr);
+  const isKeyed = keyedLevel != null && keyedLevel !== "" && isFinite(+keyedLevel);
+  const to = isKeyed ? { v: +keyedLevel, d: null } : toAuto;
+  const beyondData = !!(s && s.last && toStr && toStr > s.last);
+  if (!from) return { from: null, to, toAuto, isKeyed, delta: null, beyondData,
+                      error: "기준일 관측이 없습니다" };
+  if (!to) return { from, to: null, toAuto, isKeyed, delta: null, beyondData,
+                    error: "추정일 수준을 넣으십시오" };
+  /* **자동인데 두 날짜가 같은 관측을 가리키면 변화는 0 이 아니라 「모른다」다.**
+     수기로 수준을 넣은 경우는 해당 없다 — 사용자가 값을 정했기 때문이다. */
+  if (!isKeyed && toAuto && from.d === toAuto.d) {
+    return { from, to, toAuto, isKeyed, delta: null, beyondData,
+             error: "기준일과 추정일이 같은 관측을 가리킵니다" };
+  }
+  let delta;
+  if (axis.kind === "rate") delta = (to.v - from.v) / 100;
+  else if (from.v === 0) return { from, to, toAuto, isKeyed, delta: null, beyondData,
+                                  error: "기준일 값이 0 입니다" };
+  else delta = to.v / from.v - 1;
+  return { from, to, toAuto, isKeyed, delta, beyondData, error: "" };
 }
 
 /* 추정 산식 — `estimate.json.scenario` 가 적은 그대로.
@@ -6792,17 +6857,13 @@ function estScenario(A, st) {
   const days = Math.round((Date.parse(to + "T00:00:00Z") - Date.parse(from + "T00:00:00Z")) / EST_DAY_MS);
   if (days <= 0) return { ready: false, reason: "추정일은 기준일보다 뒤여야 합니다" };
 
-  /* 축별 Δ — 수기값이 있으면 그것이 정본, 없으면 데이터에서 조회(자동 채움과 같은 규약) */
+  /* 축별 **수준** — 사용자가 치는 것은 추정일 수준이다(§7.12). 기준일 수준은 항상
+     데이터에서 오고, 추정일 수준은 수기값이 정본, 없으면 조회. 변화는 화면이 아니라
+     여기서 계산한다(단위 규약이 `kind` 에 있기 때문). */
   const axes = ((A && A.axes) || []).map((ax) => {
-    const keyed = st.dlt[ax.key];
-    const isKeyed = keyed != null && keyed !== "" && isFinite(+keyed);
-    const auto = estAxisDelta(A, ax, from, to);
-    /* 표시 단위(bp/%)를 소수로: rate 는 bp/10000, price 는 %/100 */
-    const scale = ax.unit === "bp" ? 1e-4 : 1e-2;
-    const delta = isKeyed ? +keyed * scale
-      : (auto && auto.delta != null ? auto.delta : null);
-    return { ...ax, auto, isKeyed, delta, scale,
-             source: isKeyed ? "수기" : (auto && auto.delta != null ? "자동" : "미입력") };
+    const lv = estAxisLevels(A, ax, from, to, st.lvl[ax.key]);
+    return { ...ax, ...lv,
+             source: lv.isKeyed ? "수기" : (lv.delta != null ? "자동" : "미입력") };
   });
   const byKey = {};
   axes.forEach((a) => { byKey[a.key] = a; });
@@ -6820,6 +6881,44 @@ function estScenario(A, st) {
   const crossYear = dcFrom.year !== dcTo.year;
   const rows = base.rows.map((b) => {
     const spec = EST_SCEN[b.key] || {};
+    const mode = spec.mode || "carry";
+    /* **추정일 규모 — 비면 기준일 규모를 승계한다**(§7.12 사용자 지시). 승계인지
+       수기인지를 함께 실어야 화면이 밝힐 수 있다: 조용히 같은 수를 보여 주면
+       사용자는 리밸런싱이 반영된 줄 알고 넘어간다. */
+    const a2 = st.amt2[b.key];
+    const amt2Keyed = a2 != null && a2 !== "" && isFinite(+a2);
+    const amt2 = amt2Keyed ? +a2 : b.amt;
+
+    /* ---- carry 자산군: 기준일 수익률 승계(+ 수기 덮어쓰기) ----
+       가격 축이 없는 자산군이다(장부가 국내채권·단기자금·대출금·대체투자).
+       **4항 분해를 만들지 않는다** — 계산하지 않은 행에 분해를 붙이면 계산한 척이 된다.
+       다만 포트폴리오 「추정 구간」에는 들어가야 하므로 구간수익만 낸다. */
+    if (mode === "carry") {
+      const k = st.ret2[b.key];
+      const ret2Keyed = k != null && k !== "" && isFinite(+k);
+      /* **다른 해면 승계 행도 비운다.** 「기준일과 같다」고 적고 싶어지지만, 그때
+         비교 대상은 *다른 연초*부터 잰 수익률이라 같다고 말할 근거가 없다. 무엇보다
+         계산(calc) 행은 다른 해에서 비는데 승계 행만 수를 내면 **한 열 안에 두 규칙이
+         공존**하고 포트폴리오 합계는 비어 있는 모순이 생긴다. */
+      const r2 = crossYear ? null : (ret2Keyed ? +k / 100 : b.r);
+      /* 승계면 구간수익 = 연환산율 × 구간일수/365(캐리 그 자체) — 이건 연초 기준과
+         무관하므로 다른 해에도 낸다. 수기로 덮었으면 두 연환산율을 각자 기간수익으로
+         되돌려 그 차로 내는데, 되돌리기가 연초 기준을 쓰므로 다른 해면 비운다. */
+      let total = null;
+      if (!ret2Keyed) total = b.r == null ? null : b.r * (days / 365);
+      else if (!crossYear && b.r != null) {
+        total = r2 * (yearDays / 365) - b.r * (dcFrom.days / 365);
+      }
+      return { ...b, mode, amt2, amt2Keyed, ret2Keyed,
+               carry: null, price: null, fx: null, swap: null,
+               priceNote: "", fxNote: "", h: null, total,
+               basePeriod: b.r == null ? null : b.r * (dcFrom.days / 365),
+               cumAnnual: r2,
+               diff: (r2 == null || b.r == null) ? null : r2 - b.r,
+               modeNote: ret2Keyed ? "수기" : "기준일 승계" };
+    }
+
+    /* ---- calc 자산군: 시장 축으로 계산 ---- */
     /* 캐리 — 기준일 **연환산** 수익률(= 입력값 그대로)을 구간 길이로 비례 배분.
        주식은 기준일 수익률이 연환산이 아니라 가격 그 자체이므로 캐리가 없다. */
     const carry = (b.equity || b.r == null) ? 0 : b.r * (days / 365);
@@ -6837,9 +6936,10 @@ function estScenario(A, st) {
       priceNote = b.bond ? "장부가 — 원가법이라 가격효과 없음" : "가격 축 없음";
     }
     const hRaw = st.hedge[b.key];
-    const h = isFinite(+hRaw) && hRaw !== "" && hRaw != null ? +hRaw / 100 : null;
+    const h = hRaw != null && hRaw !== "" && isFinite(+hRaw) ? +hRaw / 100 : null;
     let fx = null, swap = null, fxNote = "";
     if (spec.fx) {
+      /* **헤지비율에 기본값이 없다**(§7.12) — 고르기 전에는 0 으로 지어내지 않고 비운다. */
       if (h == null) { fxNote = "헤지비율 미입력"; }
       else {
         if (dFx != null) fx = (1 - h) * dFx;
@@ -6867,30 +6967,41 @@ function estScenario(A, st) {
     /* 나란히 놓은 두 열의 차이 — 화면이 이 값을 그대로 적는다(빼기를 화면에서 다시 하면
        반올림 자리가 어긋난 두 수가 공존한다). */
     const diff = (cumAnnual == null || b.r == null) ? null : cumAnnual - b.r;
-    return { ...b, carry, price, priceNote, h, fx, swap, fxNote, total,
-             basePeriod, cumPeriod, cumAnnual, diff };
+    return { ...b, mode, amt2, amt2Keyed, ret2Keyed: false,
+             carry, price, priceNote, h, fx, swap, fxNote, total,
+             basePeriod, cumPeriod, cumAnnual, diff, modeNote: "계산" };
   });
 
+  /* 가중치가 **두 벌**이다 — 기준일 열은 기준일 규모로, 추정일 열은 추정일 규모로 잰다.
+     리밸런싱을 넣으면 비중이 달라지므로 한 벌로 재면 그 효과가 통째로 사라진다. */
   const tot = rows.reduce((a, x) => a + (x.amt || 0), 0);
-  const sum = (f) => (tot > 0
-    ? rows.reduce((a, x) => a + ((x.amt != null && f(x) != null) ? x.amt * f(x) : 0), 0) / tot
+  const tot2 = rows.reduce((a, x) => a + (x.amt2 || 0), 0);
+  const wsum = (amtOf, total, f) => (total > 0
+    ? rows.reduce((a, x) => {
+        const w = amtOf(x);
+        return a + ((w != null && f(x) != null) ? w * f(x) : 0);
+      }, 0) / total
     : null);
   /* 포트폴리오 기준일 수익률은 **base 에서 다시 계산하지 않고 같은 가중합으로 낸다** —
      `estEngine.port` 와 같은 수이지만, 여기서 따로 부르면 한쪽만 고쳤을 때 화면 안에
      서로 다른 두 「기준일 수익률」이 공존한다(§7.7.17 에서 겪은 실패). */
   const anyRet = rows.some((x) => x.amt && x.r != null);
-  const portBase = anyRet ? sum((x) => x.r) : null;
-  const portCumAnnual = crossYear ? null : sum((x) => x.cumAnnual);
+  const anyEst = rows.some((x) => x.amt2 && x.cumAnnual != null);
+  const portBase = anyRet ? wsum((x) => x.amt, tot, (x) => x.r) : null;
+  const portCumAnnual = (crossYear || !anyEst) ? null
+    : wsum((x) => x.amt2, tot2, (x) => x.cumAnnual);
   /* 차이는 **가중합을 따로 내지 않고 두 헤드라인을 그대로 뺀다.** 행별 diff 를 가중합하면
      추정 불가 행(blocked)이 기준일 쪽에는 들어가고 추정일 쪽에는 0 으로 들어가서
      「차이 ≠ 추정일 − 기준일」인 세 수가 한 화면에 놓인다. 그 왜곡의 원인(blocked)은
      화면이 따로 적는다 — 숫자끼리는 반드시 맞아야 한다. */
   const portDiff = (portCumAnnual == null || portBase == null) ? null : portCumAnnual - portBase;
   return {
-    ready: true, days, yearDays, axes, tau, rows, totalAmt: tot, crossYear,
+    ready: true, days, yearDays, axes, tau, rows, crossYear,
+    totalAmt: tot, totalAmt2: tot2,
+    sizeChanged: rows.some((x) => x.amt2Keyed && x.amt2 !== x.amt),
     portBase, portCumAnnual, portDiff,
-    portPeriod: sum((x) => x.total),
-    blocked: rows.filter((x) => x.amt && x.total == null),
+    portPeriod: wsum((x) => x.amt, tot, (x) => x.total),
+    blocked: rows.filter((x) => x.amt2 && x.cumAnnual == null),
   };
 }
 
@@ -7053,9 +7164,31 @@ function renderEstScenarioResult(A, S) {
       sub ? el("div", { style: "color:var(--ink-3);font-size:11px" }, sub) : "");
     box.append(el("div", { style: "display:flex;gap:26px;flex-wrap:wrap;margin:6px 0 8px" },
       big("추정 구간만", S.portPeriod, 20, `기준일 → 추정일 ${S.days}일 · 연환산 안 함`),
-      big("기준일 수익률 (연환산)", S.portBase, 15, "표 왼쪽 블록의 가중합"),
+      big("기준일 수익률 (연환산)", S.portBase, 15, "기준일 규모 가중"),
       big("추정일 수익률 (연환산)", S.portCumAnnual, 15,
-          S.crossYear ? "다른 해라 미산출" : "표 오른쪽 블록의 가중합")));
+          S.crossYear ? "다른 해라 미산출" : "추정일 규모 가중")));
+    /* 계산한 자산군의 4항 분해 — 표에서 뺀 열이라 여기 한 번만 둔다(§7.12).
+       표에는 「근거」 한 줄이 가고, 어느 항이 결과를 끌고 갔는지는 이 접이식에서 본다.
+       두 곳에 그리지 않는 이유는 §7.11 과 같다 — 한쪽만 고치면 조용히 갈린다. */
+    const calc = S.rows.filter((x) => x.mode === "calc" && x.amt2);
+    if (calc.length) {
+      const det = el("details", { class: "method", style: "margin-top:6px" });
+      det.append(el("summary", {}, "자산군별 4항 분해 (계산한 자산군만)"));
+      const t = el("table", { class: "mini-table est-table" },
+        el("tr", {}, ...["자산군", "캐리", "가격효과", "환효과", "스왑 MTM", "추정 구간(%)"]
+          .map((h, i) => el("th", { style: i === 0 ? "text-align:left" : "" }, h))));
+      const cell = (v) => el("td",
+        { class: "num" + (v == null ? "" : v >= 0 ? " d-up" : " d-down") },
+        v == null ? "–" : pc(v));
+      calc.forEach((x) => {
+        t.append(el("tr", {}, el("td", {}, x.key),
+          cell(x.carry), cell(x.price), cell(x.fx), cell(x.swap),
+          el("td", { class: "num" + (x.total == null ? "" : x.total >= 0 ? " d-up" : " d-down") },
+            x.total == null ? "–" : el("b", {}, pc(x.total)))));
+      });
+      det.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, t));
+      box.append(det);
+    }
   } else {
     box.append(el("div", { class: "card-sub", style: "margin:6px 0" },
       S.reason || "기준일과 추정일을 모두 넣으십시오"));
@@ -7077,53 +7210,67 @@ function renderEstimate() {
      둘 다 없으면 비워 두고 사용자가 넣게 한다 — 오늘 날짜를 지어 넣으면 지수가 아직
      없는 날을 기준일로 잡아 자동 채움이 조용히 어긋난다. */
   if (!st.asof) st.asof = A.asof_all || A.asof || null;
+  /* 구 저장분(축별 변화량) → 새 형식(추정일 수준) 1회 이관. 데이터가 있어야 변환되므로
+     여기서 돈다. 옮긴 뒤에는 저장해 둔다 — 안 그러면 매 렌더마다 다시 변환한다. */
+  if (estMigrateLevels(A, st)) estSaveState(st);
+
+  const band = (A.scenario && A.scenario.hedge_band) || EST_HEDGE_BAND;
+  const modeWhy = {};
+  ((A.scenario && A.scenario.row_modes) || []).forEach((m) => { modeWhy[m.asset] = m.why; });
 
   const cells = {};        // 자산군 → 계산 결과를 쓰는 노드들(입력을 다시 만들지 않는다)
   const retInputs = {};
-  /* 재계산은 **한 벌**이다 — 기준일 표와 추정일 열이 한 표에 있으므로(2026-08-13 사용자
-     지시) 둘을 따로 돌리면 같은 행의 왼쪽과 오른쪽이 다른 상태로 그려진다. 입력 핸들러는
-     전부 이 이름을 부르고, 실제 함수는 아래에서 채운다(시나리오 노드가 먼저 있어야 한다). */
+  const ret2Inputs = {};
+  const amt2Inputs = {};
+  const hedgeCells = {};
+  /* 재계산은 **한 벌**이다 — 기준일 블록과 추정일 블록이 한 표에 있으므로 둘을 따로
+     돌리면 같은 행의 왼쪽과 오른쪽이 다른 상태로 그려진다. 입력 핸들러는 전부 이 이름을
+     부르고, 실제 함수는 아래에서 채운다(시나리오 노드가 먼저 있어야 한다). */
   let recalcAll = () => {};
 
-  /* ---- 조작: 기준일 ---- */
+  /* ---- 조작: 기준일 · 추정일 ---- */
   const ctl = $("#est-controls");
   ctl.textContent = "";
   const asofInput = el("input", {
-    type: "date", value: st.asof || "", "aria-label": "기준일",
-    style: "width:150px",
+    type: "date", value: st.asof || "", "aria-label": "기준일", style: "width:150px",
+  });
+  const estInput = el("input", {
+    type: "date", value: st.est_date || "", "aria-label": "추정일", style: "width:150px",
   });
   const dcLine = el("span", { style: "color:var(--ink-3);font-size:12px;margin-left:10px" });
-  ctl.append(el("b", {}, "기준일"), " ", asofInput, dcLine,
+  ctl.append(
+    el("div", { style: "display:flex;gap:22px;flex-wrap:wrap;align-items:center" },
+      el("span", {}, el("b", {}, "기준일"), " ", asofInput),
+      el("span", {}, el("b", {}, "추정일"), " ", estInput),
+      dcLine),
     el("div", { style: "margin-top:6px;color:var(--ink-3);font-size:12px" },
       el("b", {}, "기준일 수익률은 이미 연환산된 값을 넣으십시오"),
       " — 화면이 다시 연환산하지 않습니다(이중 연환산 방지). ",
       el("b", {}, "주식(국내·해외)은 연환산하지 않는 연초이후 수익률"), "입니다. ",
-      "일수 계수(365 ÷ 경과일수, 연초 = 전년 12/31)는 추정일 열에서만 씁니다."));
+      (A.scenario && A.scenario.size_carry) || ""));
 
-  /* ---- 표 — 기준일과 추정일을 한 행에 나란히 (2026-08-13 사용자 지시) ----
-     왼쪽 블록 = 기준일(입력·비중·운용수익), 오른쪽 블록 = 추정일(4항 분해 → 추정일
-     수익률 → 차이). 가운데 4항이 **두 열을 잇는 다리**라서 한 행에서 「기준일 → 무엇이
-     움직여서 → 추정일」이 그대로 읽힌다. 표를 둘로 나누면 같은 자산군을 위아래로
-     찾아다녀야 한다. */
+  /* ---- 표 — 기준일 블록 ‖ 추정일 블록 (§7.12 사용자 지시) ----
+     왼쪽에서 자산군·규모·수익률을 넣고, 오른쪽에서 같은 모양으로 추정일을 본다.
+     추정일 쪽에서 **사용자가 치는 것은 규모뿐**이고(비면 기준일 승계), 수익률은
+     자산군마다 계산(calc)이거나 승계(carry, 수기 덮어쓰기 가능)다. */
   const card = $("#est-table-card");
   card.textContent = "";
   card.append(el("div", { class: "card-head" },
-    el("span", { class: "card-title" }, "자산군별 기준일 → 추정일"),
+    el("span", { class: "card-title" }, "자산군별 기준일 ‖ 추정일"),
     el("span", { class: "card-sub" },
-      "규모·기준일 수익률·듀레이션은 수기 입력이며 즉시 저장됩니다 · 단위는 자유이되 전 자산군이 같아야 합니다")));
+      "추정일 규모를 비우면 기준일을 승계합니다 · 해외자산은 자산군을 눌러 헤지비율을 고르십시오")));
 
-  const BASE_HEADS = ["규모", "비중", "듀레이션", "수익률(%)", "출처", "운용수익"];
-  const SCEN_HEADS = ["캐리", "가격효과", "환효과", "스왑 MTM", "수익률(%)", "차이(%p)"];
+  const BASE_HEADS = ["규모", "비중", "듀레이션", "수익률(%)"];
+  const EST_HEADS = ["규모", "비중", "수익률(%)", "차이(%p)"];
   const tbl = el("table", { class: "mini-table est-table" },
     el("tr", {},
       el("th", { rowspan: "2", style: "text-align:left" }, "자산군"),
       el("th", { colspan: String(BASE_HEADS.length), class: "est-sep" }, "기준일"),
-      el("th", { colspan: String(SCEN_HEADS.length), class: "est-sep" }, "추정일"),
-      el("th", { rowspan: "2", style: "text-align:left" }, "메모")),
+      el("th", { colspan: String(EST_HEADS.length), class: "est-sep" }, "추정일"),
+      el("th", { rowspan: "2", style: "text-align:left" }, "근거")),
     el("tr", {},
-      ...BASE_HEADS.map((h, i) => el("th",
-        { class: i === 0 ? "est-sep" : "", style: h === "출처" ? "text-align:left" : "" }, h)),
-      ...SCEN_HEADS.map((h, i) => el("th", { class: i === 0 ? "est-sep" : "" }, h))));
+      ...BASE_HEADS.map((h, i) => el("th", { class: i === 0 ? "est-sep" : "" }, h)),
+      ...EST_HEADS.map((h, i) => el("th", { class: i === 0 ? "est-sep" : "" }, h))));
 
   const numInput = (bag, key, step, width) => el("input", {
     type: "number", step: String(step), inputmode: "decimal",
@@ -7132,23 +7279,49 @@ function renderEstimate() {
   });
 
   EST_ASSETS.forEach((spec) => {
+    const scen = EST_SCEN[spec.key] || {};
     const tr = el("tr", {});
-    const amtIn = numInput(st.amt, spec.key, "any", 100);
+    const amtIn = numInput(st.amt, spec.key, "any", 96);
     amtIn.setAttribute("aria-label", `${spec.key} 규모`);
     amtIn.setAttribute("min", "0");        // 음수 규모는 뜻이 없다(요약이 한 번 더 잡는다)
-    const retIn = numInput(st.ret, spec.key, "0.01", 80);
+    const retIn = numInput(st.ret, spec.key, "0.01", 78);
     retIn.setAttribute("aria-label", `${spec.key} 기준일 수익률`);
     retInputs[spec.key] = retIn;
-    const durIn = spec.bond ? numInput(st.dur, spec.key, "0.1", 62) : null;
+    const durIn = spec.bond ? numInput(st.dur, spec.key, "0.1", 60) : null;
     if (durIn) durIn.setAttribute("aria-label", `${spec.key} 듀레이션`);
+    const amt2In = numInput(st.amt2, spec.key, "any", 96);
+    amt2In.setAttribute("aria-label", `${spec.key} 추정일 규모`);
+    amt2In.setAttribute("min", "0");
+    amt2Inputs[spec.key] = amt2In;
+    /* **calc 자산군의 추정일 수익률은 입력칸이 아니다** — 산식이 정본이므로 덮어쓸
+       자리를 만들지 않는다. carry 자산군만 수기 칸을 준다(사용자 지시). */
+    const ret2In = scen.mode === "carry" ? numInput(st.ret2, spec.key, "0.01", 78) : null;
+    if (ret2In) {
+      ret2In.setAttribute("aria-label", `${spec.key} 추정일 수익률`);
+      ret2Inputs[spec.key] = ret2In;
+    }
+
+    /* 해외자산이면 자산군 이름이 **헤지비율을 여는 버튼**이 된다(§7.12 사용자 지시
+       "개별 해외자산 자산군을 클릭해서 선택"). 아닌 자산군은 그냥 글자로 둔다 —
+       눌러도 아무 일이 없는 자리를 만들면 고장으로 읽힌다. */
+    const hCell = el("span", { class: "est-hedge-tag" });
+    hedgeCells[spec.key] = hCell;
+    let nameNode;
+    if (scen.fx) {
+      nameNode = el("button", {
+        class: "est-name-btn", type: "button",
+        "aria-label": `${spec.key} 헤지비율 고르기`,
+      }, spec.key, " ", hCell);
+      nameNode.addEventListener("click", () => openEstHedge(spec.key, st, band, recalcAll));
+    } else {
+      nameNode = el("span", {}, spec.key, spec.equity
+        ? el("span", { style: "color:var(--ink-3);font-size:11px" }, " · 연환산 안 함") : "");
+    }
 
     const c = {
-      w: el("td", { class: "num" }), src: el("td", { style: "font-size:11.5px" }),
-      profit: el("td", { class: "num" }),
-      carry: el("td", { class: "num est-sep" }), price: el("td", { class: "num" }),
-      fx: el("td", { class: "num" }), swap: el("td", { class: "num" }),
-      cum: el("td", { class: "num" }), diff: el("td", { class: "num" }),
-      memo: el("td", { class: "est-memo", style: "font-size:11px;color:var(--ink-3)" }),
+      w: el("td", { class: "num" }), w2: el("td", { class: "num" }),
+      r2: el("td", { class: "num" }), diff: el("td", { class: "num" }),
+      why: el("td", { class: "est-memo", style: "font-size:11px;color:var(--ink-3)" }),
     };
     cells[spec.key] = c;
 
@@ -7169,41 +7342,56 @@ function renderEstimate() {
         estSaveState(st); recalcAll();
       });
     }
+    amt2In.addEventListener("input", () => {
+      st.amt2[spec.key] = amt2In.value === "" ? null : +amt2In.value;
+      estSaveState(st); recalcAll();
+    });
+    if (ret2In) {
+      ret2In.addEventListener("input", () => {
+        st.ret2[spec.key] = ret2In.value === "" ? null : +ret2In.value;
+        estSaveState(st); recalcAll();
+      });
+    }
 
     tr.append(
-      el("td", {}, spec.key, spec.equity
-        ? el("span", { style: "color:var(--ink-3);font-size:11px" }, " · 연환산 안 함") : ""),
+      el("td", {}, nameNode),
       el("td", { class: "num est-sep" }, amtIn), c.w,
       el("td", { class: "num" }, durIn || el("span", { style: "color:var(--ink-3)" }, "–")),
-      el("td", { class: "num" }, retIn), c.src, c.profit,
-      c.carry, c.price, c.fx, c.swap, c.cum, c.diff, c.memo);
+      el("td", { class: "num" }, retIn),
+      el("td", { class: "num est-sep" }, amt2In), c.w2,
+      /* **`c.r2` 는 이미 `<td>` 다 — 다시 `<td>` 로 감싸면 안 된다.** 감싸면 중첩 td 가
+         되고 브라우저가 풀면서 **셀이 하나 더 생겨** 그 행만 열이 밀린다(실측: calc 행이
+         11칸, carry 행이 10칸이었다). 셰이드는 중첩을 그대로 두어 이 사고를 못 잡는다. */
+      ret2In ? el("td", { class: "num" }, ret2In) : c.r2,
+      c.diff, c.why);
+    /* carry 행은 수익률 칸이 입력이라 계산 결과를 쓸 자리가 따로 필요 없다 —
+       입력칸 자체에 승계값을 표시(placeholder 아님, 실제 value)한다. */
+    if (ret2In) c.r2 = null;
     tbl.append(tr);
   });
   card.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, tbl));
   const tblNote = el("div", { style: "margin-top:6px;font-size:12px;color:var(--ink-3)" });
   card.append(tblNote);
 
-  /* ---- 페인트 — 입력 노드는 그대로 두고 계산 칸만 갱신한다(포커스 유지) ---- */
+  /* ---- 페인트: 표 ---- */
   function paintTable(E, S) {
     dcLine.textContent = E.dc
-      ? `경과 ${E.dc.days}일 (${E.dc.base} → ${st.asof})`
+      ? `기준일 경과 ${E.dc.days}일` + (S.ready ? ` · 구간 ${S.days}일` : "")
       : "기준일을 넣으면 경과일수가 여기 나옵니다";
     tblNote.textContent = "";
     if (!S.ready) {
-      tblNote.append(el("span", { class: "d-up" }, "추정일 열은 비어 있습니다 — "),
+      tblNote.append(el("span", { class: "d-up" }, "추정일 블록이 비어 있습니다 — "),
         S.reason || "추정일을 넣으십시오");
     } else if (S.crossYear) {
       tblNote.append(el("span", { class: "d-up" }, "추정일이 다른 해입니다 — "),
-        (A.scenario && A.scenario.cross_year)
-        || "연초 기준이 달라져 연초이후 누적을 잇지 못합니다. 4항(추정 구간)만 냅니다.");
+        (A.scenario && A.scenario.cross_year) || "연초 기준이 달라져 누적을 잇지 못합니다.");
     } else {
       tblNote.append((A.scenario && A.scenario.cumulative) || "");
     }
     const srow = {};
     if (S.ready) S.rows.forEach((x) => { srow[x.key] = x; });
-    /* 값 하나를 칸에 쓰는 한 벌 — 부호 색을 여기서만 정한다(칸마다 따로 쓰면 한 곳을
-       고쳤을 때 같은 표 안에서 색 규약이 갈린다). */
     const put = (node, v, opt) => {
+      if (!node) return;
       const o = opt || {};
       node.textContent = "";
       /* className 을 통째로 다시 쓰므로 **구분선 클래스도 여기서 같이 붙여야 한다** —
@@ -7211,72 +7399,99 @@ function renderEstimate() {
       node.className = "num" + (o.sep ? " est-sep" : "")
         + (v == null ? "" : v >= 0 ? " d-up" : " d-down");
       if (v == null) { node.textContent = "–"; return; }
-      const txt = fmtNum(v * 100, 2);
-      node.append(o.bold ? el("b", {}, txt) : txt);
+      node.append(o.bold ? el("b", {}, fmtNum(v * 100, 2)) : fmtNum(v * 100, 2));
     };
 
     E.rows.forEach((r) => {
       const c = cells[r.key];
+      const s = srow[r.key];
+      const scen = EST_SCEN[r.key] || {};
       /* 자동값은 입력칸에 **표시만** 하고 상태에는 안 넣는다 — 넣는 순간 "수기"가 되어
          기준일을 바꿔도 옛 자동값이 눌러앉는다(자산배분 μ 디폴트에서 겪은 사고). */
       const hasAuto = !r.isKeyed && r.auto && r.auto.ytd != null;
-      /* **입력 중인 칸은 절대 되쓰지 않는다**(재점검이 잡은 CRITICAL).
+      /* **입력 중인 칸은 절대 되쓰지 않는다**(§7.10.1 CRITICAL).
          `<input type=number>` 는 사용자가 "-" 하나만 쳤거나 지운 순간 value 가 "" 다.
-         그러면 isKeyed 가 false 로 떨어지고, 되쓰기가 자동값을 도로 넣어 방금 친 문자를
-         지우며 캐럿을 끝으로 보낸다 — 이어 치는 숫자가 그 뒤에 붙는다.
-         실측: 자동 20.00% 칸에 `-3.5` 를 치면 **20.0035** 가 되고 그대로 저장됐다.
-         음수 수익률은 흔한 입력이라 상시 재현된다. blur 에서 다시 맞춘다. */
+         그러면 수기 판정이 풀리고, 되쓰기가 자동값을 도로 넣어 방금 친 문자를 지우며
+         캐럿을 끝으로 보낸다 — 이어 치는 숫자가 그 뒤에 붙는다.
+         실측: 자동 20.00% 칸에 `-3.5` 를 치면 **20.0035** 가 되고 그대로 저장됐다. */
       if (!r.isKeyed && document.activeElement !== retInputs[r.key]) {
         retInputs[r.key].value = hasAuto ? (r.auto.ytd * 100).toFixed(2) : "";
       }
-      /* 「자동」 표식은 **자동값이 실제로 들어간 칸에만** 붙인다 — 그냥 빈 칸까지
-         기울임·회색으로 칠하면 채워지지 않은 자리가 채워진 것처럼 읽힌다. */
       retInputs[r.key].classList.toggle("est-auto", !!hasAuto);
       c.w.textContent = r.weight == null ? "–" : fmtNum(r.weight * 100, 1) + "%";
-      c.src.textContent = "";
-      c.src.className = "";
-      if (r.source === "자동") {
-        const bad = r.ix && r.ix.basis_matches_request === false;
-        c.src.append(el("span", { class: bad ? "d-up" : "" },
-          `자동 · ${r.ix.label}${bad ? " ⚠" : ""}`));
-        /* **실제로 쓴 관측일을 눈에 보이게 적는다.** 예전에는 title(툴팁)에만 있었는데
-           툴팁은 터치 기기에서 아예 안 뜨고 발견되지도 않는다 — 그 사이 16일 묵은 값이
-           기준일 값인 것처럼 읽혔다(실측). 기준일과 다르면 날짜를, 데이터가 기준일까지
-           오지 않았으면 경고색으로 그 사실까지 적는다. */
-        if (r.auto.gapDays > 0) {
-          c.src.append(el("span", {
-            class: r.auto.beyondData ? "d-up" : "",
-            style: "display:block;font-size:10.5px" + (r.auto.beyondData ? "" : ";color:var(--ink-3)"),
-          }, r.auto.beyondData
-            ? `⚠ ${r.auto.obs.d} 까지만 있음 (${r.auto.gapDays}일 전)`
-            : `${r.auto.obs.d} 관측`));
-        }
-        c.src.title = `${r.ix.basis} · 분모 ${r.auto.base.d} · 분자 ${r.auto.obs.d}`
-          + (bad ? `\n${r.ix.caveat}` : "");
-      } else if (r.source === "자동 실패") {
-        c.src.append(el("span", { class: "d-up" }, "자동 불가"));
-        c.src.title = (r.auto && r.auto.error) || "지수에서 값을 만들 수 없습니다";
-      } else {
-        c.src.textContent = r.ix ? "수기(자동 대체)" : "수기";
+
+      /* ---- 추정일 블록 ---- */
+      /* 규모: 비었으면 **승계값을 실제로 표시**한다(placeholder 로만 두면 빈 칸으로 읽혀
+         "규모를 안 넣었으니 계산이 안 되나" 하고 다시 넣게 된다). 표시하되 상태에는
+         넣지 않는다 — 넣으면 기준일 규모를 바꿔도 옛 값이 눌러앉는다. */
+      const a2 = amt2Inputs[r.key];
+      if (!(s && s.amt2Keyed) && document.activeElement !== a2) {
+        a2.value = (s && s.amt2 != null) ? String(s.amt2) : "";
       }
-      c.profit.textContent = r.profit == null ? "–" : fmtNum(r.profit, 1);
-      /* ---- 추정일 블록 — 시나리오가 준비돼야 채운다 ---- */
-      const s = srow[r.key];
-      put(c.carry, s ? s.carry : null, { sep: true });
-      put(c.price, s ? s.price : null);
-      put(c.fx, s ? s.fx : null);
-      put(c.swap, s ? s.swap : null);
-      put(c.cum, s ? s.cumAnnual : null, { bold: true });
+      a2.classList.toggle("est-auto", !!(s && !s.amt2Keyed && s.amt2 != null));
+      const w2 = (s && s.amt2 != null && S.totalAmt2 > 0) ? s.amt2 / S.totalAmt2 : null;
+      c.w2.textContent = w2 == null ? "–" : fmtNum(w2 * 100, 1) + "%";
+
+      const r2in = ret2Inputs[r.key];
+      if (r2in) {
+        /* carry 자산군 — 승계값을 칸에 채워 보여 주고, 사용자가 치면 그것이 정본이 된다 */
+        if (!(s && s.ret2Keyed) && document.activeElement !== r2in) {
+          r2in.value = (s && s.cumAnnual != null) ? (s.cumAnnual * 100).toFixed(2) : "";
+        }
+        r2in.classList.toggle("est-auto", !!(s && !s.ret2Keyed && s.cumAnnual != null));
+      } else {
+        put(c.r2, s ? s.cumAnnual : null, { bold: true });
+      }
       put(c.diff, s ? s.diff : null);
-      c.memo.textContent = s ? [s.priceNote, s.fxNote].filter(Boolean).join(" · ") : "";
+
+      /* 근거 — 왜 이 수가 나왔는가. 계산이면 산식 요약, 승계면 그 사실, 막혔으면 사유. */
+      c.why.textContent = "";
+      c.why.className = "est-memo";
+      /* **묵은 자동값 경고를 여기서 되살린다(§7.8.1).** 이 경고는 「출처 정보」가 아니라
+         「지금 보고 있는 수가 며칠 전 값이다」라는 **값에 대한 경고**라, 출처 열을 내렸을
+         때(§7.12) 함께 사라져서는 안 된다 — 실제로 한 번 사라졌고 프로브가 잡았다.
+         요약에도 한 줄 나가지만 어느 행인지는 여기서만 보인다. */
+      if (r.auto && r.auto.beyondData && !r.isKeyed) {
+        c.why.append(el("span", { class: "d-up", style: "display:block" },
+          `⚠ ${r.auto.obs.d} 까지만 있음 (${r.auto.gapDays}일 전)`));
+      } else if (r.auto && r.auto.gapDays > 0 && !r.isKeyed) {
+        c.why.append(el("span", { style: "display:block;color:var(--ink-3)" },
+          `${r.auto.obs.d} 관측`));
+      }
+      /* **경고색은 실제로 막혔을 때만.** `priceNote` 에는 「장부가 — 원가법이라 가격효과
+         없음」처럼 정상 동작을 설명하는 문장도 들어 있어서, 그것까지 빨갛게 칠하면
+         계산이 잘 된 행이 고장난 것처럼 읽힌다(실측: 장부가 해외채권 2.33% 가 정상인데
+         경고색이었다). 판정 기준은 문구가 아니라 **결과가 비었는가**다. */
+      const isBlocked = !!(s && s.cumAnnual == null && !S.crossYear);
+      const blockNote = s ? [s.priceNote, s.fxNote].filter(Boolean).join(" · ") : "";
+      if (!S.ready) {
+        c.why.append(el("span", { style: "color:var(--ink-3)" }, modeWhy[r.key] || ""));
+      } else if (isBlocked && blockNote) {
+        c.why.append(el("span", { class: "d-up" }, blockNote));
+      } else if (s && s.modeNote === "수기") {
+        c.why.append(el("span", { class: "d-up" }, "수기 입력"));
+      } else if (s && s.modeNote === "기준일 승계") {
+        c.why.append(el("span", { style: "color:var(--ink-3)" }, "기준일 승계"));
+      } else {
+        c.why.append(el("span", { style: "color:var(--ink-3)" }, modeWhy[r.key] || "계산"));
+      }
+
+      /* 헤지비율 배지 — 고르기 전에는 **미입력**이라고 적는다(0 으로 지어내지 않는다) */
+      const hc = hedgeCells[r.key];
+      if (hc) {
+        const hv = st.hedge[r.key];
+        const hasH = hv != null && hv !== "" && isFinite(+hv);
+        hc.textContent = hasH ? `헤지 ${fmtNum(+hv, 0)}%` : "헤지 미입력";
+        hc.className = "est-hedge-tag" + (hasH ? "" : " d-up");
+      }
     });
   }
 
-  /* ---- 요약 ---- */
+  /* ---- 페인트: 요약 ---- */
   function paintSummary(E, S) {
     const box = $("#est-summary");
     box.textContent = "";
-    const big = (label, v, unit, size) => el("div", { style: "min-width:190px" },
+    const big = (label, v, unit, size) => el("div", { style: "min-width:180px" },
       el("div", { style: "color:var(--ink-3);font-size:12px" }, label),
       el("div", { style: `font-size:${size}px;font-weight:700;line-height:1.25` },
         v == null ? "–" : fmtNum(v, 2) + unit));
@@ -7285,48 +7500,47 @@ function renderEstimate() {
       el("span", { class: "card-sub" },
         (E.dc ? `${st.asof} 기준` : "기준일 미입력")
         + (S.ready ? ` → ${st.est_date} 추정` : "") + " · 주식 제외 연환산")));
-    /* **기준일과 추정일을 헤드라인에서도 나란히** 둔다 — 표만 나란히 두면 「그래서 지금
-       몇 %인가」를 읽으려고 표를 가로로 훑어야 한다. 차이는 두 수를 그대로 뺀 값이다. */
     box.append(el("div", { style: "display:flex;gap:26px;flex-wrap:wrap;margin-top:6px" },
       big("기준일 수익률 (연환산)", E.port == null ? null : E.port * 100, "%", 26),
       big("추정일 수익률 (연환산)", S.portCumAnnual == null ? null : S.portCumAnnual * 100, "%", 26),
       big("차이", S.portDiff == null ? null : S.portDiff * 100, "%p", 15),
-      big("총 규모", E.totalAmt || null, "", 15),
+      big("기준일 규모", E.totalAmt || null, "", 15),
+      big("추정일 규모", S.ready ? (S.totalAmt2 || null) : null, "", 15),
       big("총 운용수익 (연환산 기준)", E.port == null ? null : (E.totalProfit || null), "", 15),
       big("채권 가중평균 듀레이션", E.durW, "", 15)));
     const notes = [];
-    /* 수익률이 하나도 없으면 0.00% 가 아니라 빈칸이다 — 왜 비었는지 적는다
-       (구 `portBlockedByAsof` 자리. 계수를 안 쓰게 되면서 조건이 바뀌었다). */
     if (E.portBlockedNoRet) {
       notes.push(el("div", { class: "d-up", style: "margin-top:6px;font-size:12px" },
         "규모는 있는데 수익률이 하나도 없어 포트폴리오 수익률을 내지 않았습니다 — "
         + "0.00% 는 「계산했더니 0」이라는 뜻이라 쓰지 않습니다."));
     }
-    /* 추정일 열이 비어 있는 이유 — 헤드라인 옆의 「–」만 두면 고장으로 읽힌다. */
     if (!S.ready) {
       notes.push(el("div", { style: "margin-top:6px;font-size:12px;color:var(--ink-3)" },
         `추정일 수익률은 아직 없습니다 — ${S.reason || "추정일을 넣으십시오"}`));
     } else if (S.crossYear) {
       notes.push(el("div", { class: "d-up", style: "margin-top:6px;font-size:12px" },
         (A.scenario && A.scenario.cross_year)
-        || "추정일이 다른 해라 연초이후 누적을 잇지 못합니다 — 추정 구간만 냅니다."));
+        || "추정일이 다른 해라 연초이후 누적을 잇지 못합니다."));
     } else if (S.blocked.length) {
       notes.push(el("div", { class: "d-up", style: "margin-top:6px;font-size:12px" },
         `추정 입력이 모자란 자산군 ${S.blocked.length}개 — `
         + S.blocked.map((x) => `${x.key}(${x.priceNote || x.fxNote || "입력 부족"})`).join(", ")
-        + " · 추정일 쪽에서만 0 으로 잡히므로 차이가 실제보다 작게 나옵니다"));
+        + " · 추정일 쪽에서만 빠지므로 차이가 실제보다 작게 나옵니다"));
     }
-    /* 자동값이 기준일까지 오지 않은 지수 — 요약에서도 한 번 말한다. 표의 작은 글씨만
-       두면 스크롤해야 보이는데, 이건 포트폴리오 수익률 자체를 흔드는 사실이다. */
+    /* 리밸런싱을 넣었으면 **두 열의 가중치가 다르다**는 사실을 적는다 — 안 적으면
+       수익률만 보고 "왜 이만큼 움직였지" 하고 시장효과 탓을 하게 된다. */
+    if (S.ready && S.sizeChanged) {
+      notes.push(el("div", { style: "margin-top:6px;font-size:12px;color:var(--ink-3)" },
+        "추정일 규모를 직접 넣으셨습니다 — 추정일 수익률은 그 비중으로 가중합한 값이라 "
+        + "차이에는 시장효과와 리밸런싱 효과가 함께 들어 있습니다."));
+    }
     const stale = E.rows.filter((x) => x.auto && x.auto.beyondData && !x.isKeyed && x.amt);
     if (stale.length) {
       notes.push(el("div", { class: "d-up", style: "margin-top:6px;font-size:12px" },
-        `⚠ 자동 채움 지수가 기준일까지 오지 않았습니다 — `
+        "⚠ 자동 채움 지수가 기준일까지 오지 않았습니다 — "
         + stale.map((x) => `${x.key}(${x.ix.label} ${x.auto.obs.d}, ${x.auto.gapDays}일 전)`).join(", ")
         + " · 그 날의 값이 기준일 값으로 쓰이고 있습니다"));
     }
-    /* 규모 합이 0 이하면 포트폴리오 수익률이 나오지 않는다 — 왜 비었는지 적는다
-       (음수 규모를 조용히 받고 「–」만 보이면 고장으로 읽힌다). */
     const negAmt = E.rows.filter((x) => x.amt != null && x.amt < 0);
     if (negAmt.length) {
       notes.push(el("div", { class: "d-up", style: "margin-top:6px;font-size:12px" },
@@ -7341,22 +7555,18 @@ function renderEstimate() {
         `규모는 있는데 수익률이 빈 자산군 ${E.missingRet.length}개 — `
         + `${E.missingRet.map((x) => x.key).join(", ")} · 이 자산군은 수익 0 으로 잡힙니다`));
     }
-    /* 경과일수가 짧으면 **추정일 재연환산**이 크게 흔들린다(기준일 값 자체는 이미
-       연환산된 입력이라 여기서 증폭되지 않는다 — 문장을 그에 맞게 적는다). */
     if (S.ready && !S.crossYear && S.yearDays < 30) {
       notes.push(el("div", { class: "d-up", style: "margin-top:6px;font-size:12px" },
         `연초→추정일이 ${S.yearDays}일뿐이라 추정일 재연환산 계수가 `
         + `${fmtNum(365 / S.yearDays, 1)}배입니다 — 추정일 수익률은 크게 흔들립니다`));
     }
     notes.forEach((n) => box.append(n));
-    /* **듀레이션은 이제 실제로 쓰인다** — §7.10 시나리오의 가격효과(−D×Δy)가 그 자리다.
-       §7.8 당시의 "쓰이지 않습니다" 문장을 그대로 두면 화면이 거짓말을 한다. */
     box.append(el("div", { style: "margin-top:6px;color:var(--ink-3);font-size:12px" },
       "듀레이션은 ", el("b", {}, "추정일 가격효과"), "(−듀레이션 × Δ금리)에 쓰입니다 — ",
       "기준일 수익률 계산에는 쓰이지 않고, 넣은 값은 저장됩니다."));
   }
 
-  /* ---- 기여도 막대 ---- */
+  /* ---- 페인트: 기여도 막대 ---- */
   function paintContrib(E) {
     const cc = $("#est-contrib-card");
     cc.textContent = "";
@@ -7368,79 +7578,63 @@ function renderEstimate() {
     if (!withC.length) {
       cc.append(el("div", { class: "card-sub", style: "margin-top:6px" },
         "규모와 수익률을 넣으면 기여도가 나옵니다."));
-    } else {
-      const mx = Math.max(...withC.map((r) => Math.abs(r.contrib)));
-      const bt = el("table", { class: "mini-table" });
-      withC.forEach((r) => {
-        const pctW = mx > 0 ? Math.abs(r.contrib) / mx * 100 : 0;
-        bt.append(el("tr", {},
-          el("td", { style: "text-align:left" }, r.key),
-          el("td", { class: "num" }, fmtNum(r.contrib * 100, 2)),
-          el("td", { style: "width:52%" },
-            el("div", { style: "background:var(--border);height:9px;border-radius:5px;overflow:hidden" },
-              el("div", { style: `width:${pctW.toFixed(1)}%;height:9px;background:var(--${r.contrib >= 0 ? "up" : "down"}-ink)` })))));
-      });
-      cc.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, bt));
+      return;
     }
+    const mx = Math.max(...withC.map((r) => Math.abs(r.contrib)));
+    const bt = el("table", { class: "mini-table" });
+    withC.forEach((r) => {
+      const pctW = mx > 0 ? Math.abs(r.contrib) / mx * 100 : 0;
+      bt.append(el("tr", {},
+        el("td", { style: "text-align:left" }, r.key),
+        el("td", { class: "num" }, fmtNum(r.contrib * 100, 2)),
+        el("td", { style: "width:52%" },
+          el("div", { style: "background:var(--border);height:9px;border-radius:5px;overflow:hidden" },
+            el("div", { style: `width:${pctW.toFixed(1)}%;height:9px;background:var(--${r.contrib >= 0 ? "up" : "down"}-ink)` })))));
+    });
+    cc.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, bt));
   }
 
-  /* ---- 추정일 시나리오 (§7.10) ----
-     입력 노드는 한 번만 만들고 계산 칸만 갱신한다(기준일 표와 같은 규약 — 포커스 유지). */
-  const scCard = $("#est-scenario-card");
-  const axisCells = {};
-  const axisInputs = {};
+  /* ---- 시장지표 카드 (§7.12) — 기준일·추정일 **수준**을 나란히 ----
+     사용자가 치는 것은 추정일 수준이다("국고 10년이 3.50% 가 될 것"). 변화(bp/%)는
+     화면이 계산해 옆에 적는다 — 사용자가 두 단위를 오가며 환산하지 않도록. */
+  const mkCard = $("#est-market-card");
+  const axInputs = {};
+  const axCells = {};
   let paintAxes = () => {};
-  let estDateInput = null;      // 재조회하지 않는다 — 셰이드가 속성 셀렉터를 지원하지 않는다
-  if (scCard) {
-    scCard.textContent = "";
-    scCard.append(el("div", { class: "card-head" },
-      el("span", { class: "card-title" }, "추정일 시나리오"),
+  if (mkCard) {
+    mkCard.textContent = "";
+    mkCard.append(el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, "시장지표"),
       el("span", { class: "card-sub" },
-        "추정일이 데이터 안이면 실제 변화를 채우고, 미래면 예상값을 넣으십시오")));
-    const estIn = el("input", { type: "date", value: st.est_date || "",
-      "aria-label": "추정일", style: "width:150px" });
-    estDateInput = estIn;
-    const spanLine = el("span", { style: "color:var(--ink-3);font-size:12px;margin-left:10px" });
-    scCard.append(el("div", { style: "margin:6px 0 10px" },
-      el("b", {}, "추정일"), " ", estIn, spanLine));
-
-    const axes = (A.axes || []);
+        "추정일이 데이터 안이면 실제 수준을 채우고, 미래면 예상 수준을 넣으십시오")));
     const at = el("table", { class: "mini-table est-table" },
-      el("tr", {}, ...["시장 축", "기준일 → 추정일 변화", "단위", "출처", "쓰는 곳"]
-        .map((h, i) => el("th", { style: i === 0 || i === 3 || i === 4 ? "text-align:left" : "" }, h))));
-    axes.forEach((ax) => {
-      const inp = el("input", { type: "number", step: "any", inputmode: "decimal",
-        value: st.dlt[ax.key] == null ? "" : String(st.dlt[ax.key]),
-        style: "width:96px;text-align:right", "aria-label": `${ax.label} 변화` });
-      axisInputs[ax.key] = inp;
+      el("tr", {}, ...["시장 축", "기준일", "추정일", "변화", "출처"]
+        .map((h, i) => el("th", { style: i === 0 || i === 4 ? "text-align:left" : "" }, h))));
+    (A.axes || []).forEach((ax) => {
+      const inp = el("input", {
+        type: "number", step: "any", inputmode: "decimal",
+        value: st.lvl[ax.key] == null ? "" : String(st.lvl[ax.key]),
+        style: "width:104px;text-align:right", "aria-label": `${ax.label} 추정일 수준`,
+      });
+      axInputs[ax.key] = inp;
       inp.addEventListener("input", () => {
-        st.dlt[ax.key] = inp.value === "" ? null : +inp.value;
+        st.lvl[ax.key] = inp.value === "" ? null : +inp.value;
         estSaveState(st); recalcAll();
       });
-      const src = el("td", { style: "font-size:11.5px" });
-      axisCells[ax.key] = src;
+      const c = { from: el("td", { class: "num" }), chg: el("td", { class: "num" }),
+                  src: el("td", { style: "font-size:11.5px" }) };
+      axCells[ax.key] = c;
       at.append(el("tr", {},
         el("td", {}, ax.label),
-        el("td", { class: "num" }, inp),
-        el("td", { class: "num", style: "font-size:11.5px" }, ax.unit),
-        src,
-        el("td", { style: "font-size:11.5px;color:var(--ink-3)" }, ax.note || "")));
+        c.from,
+        el("td", { class: "num" }, inp,
+          el("span", { style: "color:var(--ink-3);font-size:11px;margin-left:3px" },
+            ax.level_unit || "")),
+        c.chg, c.src));
     });
-    scCard.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, at));
+    mkCard.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, at));
 
-    /* 헤지비율(해외 4슬리브) + 스왑 잔존만기 — 환효과·스왑 MTM 에 필요한 값들 */
-    const hRow = el("div", { style: "display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;align-items:flex-end" });
-    EST_ASSETS.filter((s) => (EST_SCEN[s.key] || {}).fx).forEach((s) => {
-      const hi = el("input", { type: "number", step: "1", min: "0", max: "100",
-        inputmode: "decimal", value: st.hedge[s.key] == null ? "" : String(st.hedge[s.key]),
-        style: "width:74px;text-align:right", "aria-label": `${s.key} 헤지비율` });
-      hi.addEventListener("input", () => {
-        st.hedge[s.key] = hi.value === "" ? null : +hi.value;
-        estSaveState(st); recalcAll();
-      });
-      hRow.append(el("label", { style: "font-size:12px" },
-        el("div", { style: "color:var(--ink-3)" }, `${s.key} 헤지비율(%)`), hi));
-    });
+    /* 스왑 잔존만기 — 스왑 MTM 에 필요한 유일한 비-시장 입력이라 여기 둔다 */
     const tauIn = el("input", { type: "number", step: "0.05", min: "0", inputmode: "decimal",
       value: st.swap_tau == null ? "" : String(st.swap_tau),
       style: "width:74px;text-align:right", "aria-label": "스왑 잔존만기(년)" });
@@ -7448,46 +7642,51 @@ function renderEstimate() {
       st.swap_tau = tauIn.value === "" ? null : +tauIn.value;
       estSaveState(st); recalcAll();
     });
-    hRow.append(el("label", { style: "font-size:12px" },
-      el("div", { style: "color:var(--ink-3)" }, "스왑 잔존만기(년)"), tauIn));
-    scCard.append(hRow);
-    scCard.append(el("div", { style: "margin-top:8px;color:var(--ink-3);font-size:12px" },
-      (A.scenario && A.scenario.formula) || "추정 기간수익률 = 캐리 + 가격효과 + 환효과 + 스왑 MTM",
-      " · ", el("b", {}, "금리 상승 = 채권 가격 하락"), "(−듀레이션×Δ금리), ",
+    mkCard.append(el("div", { style: "margin-top:10px;display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap" },
+      el("label", { style: "font-size:12px" },
+        el("div", { style: "color:var(--ink-3)" }, "스왑 잔존만기(년)"), tauIn)));
+    mkCard.append(el("div", { style: "margin-top:8px;color:var(--ink-3);font-size:12px" },
+      el("b", {}, "금리 상승 = 채권 가격 하락"), "(−듀레이션×Δ금리), ",
       el("b", {}, "스왑레이트 상승 = 스왑 MTM 손실"), "."));
 
     paintAxes = (S) => {
-      spanLine.textContent = S.ready
-        ? `구간 ${S.days}일 · 연초→추정일 ${S.yearDays}일`
-          + (S.crossYear ? " · 다른 해라 누적 미산출" : ` (재연환산 계수 ${fmtNum(365 / S.yearDays, 4)})`)
-        : (S.reason || "");
-      /* 축별 출처·실제 변화 */
       (S.axes || []).forEach((ax) => {
-        const c = axisCells[ax.key];
+        const c = axCells[ax.key];
         if (!c) return;
-        c.textContent = "";
-        const disp = ax.delta == null ? null : ax.delta / ax.scale;
-        if (!ax.isKeyed) {
-          /* 기준일 표와 같은 이유로 포커스가 있는 칸은 되쓰지 않는다 */
-          if (document.activeElement !== axisInputs[ax.key]) {
-            axisInputs[ax.key].value = disp == null ? "" : disp.toFixed(ax.unit === "bp" ? 1 : 2);
-          }
-          axisInputs[ax.key].classList.toggle("est-auto", disp != null);
-        } else {
-          axisInputs[ax.key].classList.remove("est-auto");
+        const dp = ax.level_dp == null ? 2 : ax.level_dp;
+        const unit = ax.level_unit || "";
+        c.from.textContent = ax.from ? fmtNum(ax.from.v, dp) + unit : "–";
+        /* 수기가 아니면 조회한 수준을 칸에 **표시**한다(상태에는 안 넣는다 — 기준일을
+           바꿔도 옛 값이 눌러앉지 않게). 포커스가 있는 칸은 되쓰지 않는다. */
+        if (!ax.isKeyed && document.activeElement !== axInputs[ax.key]) {
+          axInputs[ax.key].value = (ax.toAuto && ax.toAuto.v != null)
+            ? ax.toAuto.v.toFixed(dp) : "";
         }
-        if (ax.source === "자동") {
-          c.append(el("span", { class: ax.auto.beyondData ? "d-up" : "" },
-            ax.auto.beyondData ? "⚠ 자동(데이터 밖)" : "자동"));
-          c.append(el("span", { style: "display:block;font-size:10.5px;color:var(--ink-3)" },
-            `${ax.auto.from.d} → ${ax.auto.to.d}`));
-        } else if (ax.source === "수기") {
-          c.textContent = "수기";
+        axInputs[ax.key].classList.toggle("est-auto",
+          !ax.isKeyed && !!(ax.toAuto && ax.toAuto.v != null));
+        c.chg.textContent = "";
+        c.chg.className = "num";
+        if (ax.delta == null) { c.chg.textContent = "–"; }
+        else {
+          const disp = ax.kind === "rate" ? ax.delta * 1e4 : ax.delta * 100;
+          c.chg.className = "num " + (disp >= 0 ? "d-up" : "d-down");
+          c.chg.textContent = (disp >= 0 ? "+" : "") + fmtNum(disp, ax.unit === "bp" ? 0 : 2)
+            + (ax.unit === "bp" ? "bp" : "%");
+        }
+        c.src.textContent = "";
+        c.src.className = "";
+        if (ax.isKeyed) {
+          c.src.textContent = "수기";
+        } else if (ax.delta != null) {
+          c.src.append(el("span", { class: ax.beyondData ? "d-up" : "" },
+            ax.beyondData ? "⚠ 자동(데이터 밖)" : "자동"));
+          c.src.append(el("span", { style: "display:block;font-size:10.5px;color:var(--ink-3)" },
+            `${ax.from ? ax.from.d : "?"} → ${ax.toAuto ? ax.toAuto.d : "?"}`));
         } else {
-          c.append(el("span", { class: "d-up" }, "미입력"));
-          if (ax.auto && ax.auto.error) {
-            c.append(el("span", { style: "display:block;font-size:10.5px;color:var(--ink-3)" },
-              ax.auto.error));
+          c.src.append(el("span", { class: "d-up" }, "미입력"));
+          if (ax.error) {
+            c.src.append(el("span", { style: "display:block;font-size:10.5px;color:var(--ink-3)" },
+              ax.error));
           }
         }
       });
@@ -7498,17 +7697,13 @@ function renderEstimate() {
     st.asof = asofInput.value || null;
     estSaveState(st); recalcAll();
   });
-  if (estDateInput) {
-    estDateInput.addEventListener("input", () => {
-      st.est_date = estDateInput.value || null;
-      estSaveState(st); recalcAll();
-    });
-  }
+  estInput.addEventListener("input", () => {
+    st.est_date = estInput.value || null;
+    estSaveState(st); recalcAll();
+  });
 
-  /* **계산은 한 번, 그림은 다섯 곳.** 표·요약·기여도·축·결과카드가 전부 같은 `E`/`S` 를
-     보므로 한 화면 안에서 서로 다른 수가 공존할 수 없다. `estScenario` 는 base 를 스스로
-     만들지만(§7.10 의 함정 방지) 여기서도 `E` 를 따로 계산한다 — 같은 `st` 로 만드는 같은
-     값이고, 11행짜리라 비용이 없다. */
+  /* **계산은 한 번, 그림은 다섯 곳.** 표·요약·기여도·시장지표·산식카드가 전부 같은
+     `E`/`S` 를 보므로 한 화면 안에서 서로 다른 수가 공존할 수 없다. */
   recalcAll = () => {
     const E = estEngine(A, st);
     const S = estScenario(A, st);
@@ -7520,26 +7715,44 @@ function renderEstimate() {
   };
   recalcAll();
 
-  /* ---- 출처·부재 ---- */
+  /* ---- 출처·부재 — 접이식 (§7.12 사용자 지시 "자료 출처, 쓰는 곳은 빼버려") ----
+     지우지는 않는다. ACWI 가 PR 이라는 사실과 미국채 부재 사유는 숫자의 뜻을 바꾸는
+     정보라 화면에서 닿을 수 있어야 한다 — 다만 상시 노출에서 한 단계 내린다. */
   const srcBox = $("#est-sources");
   srcBox.textContent = "";
-  srcBox.append(el("b", {}, "자동 채움 지수"), el("br"));
+  const det = el("details", { class: "method" });
+  det.append(el("summary", {}, "자료 출처 · 자동 채움 범위"));
+  const inner = el("div", { class: "howto" });
   if (A.active && (A.indices || []).length) {
     (A.indices || []).forEach((ix) => {
       const bad = ix.basis_matches_request === false;
-      srcBox.append(el("div", { style: "font-size:12px;margin-top:3px" },
+      inner.append(el("div", { style: "font-size:12px;margin-top:3px" },
         `· ${ix.asset} ← `, el("b", {}, ix.label), ` (${ix.src}) — ${ix.basis}`,
         bad ? el("span", { class: "d-up" }, ` ⚠ ${ix.caveat}`) : ""));
     });
   } else {
-    srcBox.append(el("div", { class: "d-up", style: "font-size:12px" },
+    inner.append(el("div", { class: "d-up", style: "font-size:12px" },
       A.reason || "자동 채움 지수가 없습니다 — 전부 수기 입력입니다"));
   }
+  (A.axes || []).forEach((ax) => {
+    inner.append(el("div", { style: "font-size:12px;margin-top:3px;color:var(--ink-3)" },
+      `· ${ax.label}${ax.src ? ` (${ax.src})` : ""} — ${ax.note || ""}`));
+  });
   (A.unavailable || []).forEach((u) => {
-    srcBox.append(el("div", { style: "font-size:12px;margin-top:5px" },
+    inner.append(el("div", { style: "font-size:12px;margin-top:5px" },
       el("b", { class: "d-up" }, `· ${u.assets.join(" · ")} — 자동 채움 없음`), el("br"),
       el("span", { style: "color:var(--ink-3)" }, `${u.want} 부재. ${u.reason}`)));
   });
+  det.append(inner);
+  srcBox.append(det);
+  /* **PR 경고만은 접힌 채로 두지 않는다** — 배당이 빠진 수가 보고 숫자로 들어가는
+     자리라 자동 채움이 실제로 쓰이는 동안에는 겉에 한 줄 남긴다. */
+  const prBad = (A.indices || []).filter((x) => x.basis_matches_request === false);
+  if (prBad.length) {
+    srcBox.append(el("div", { class: "d-up", style: "font-size:12px;margin-top:6px" },
+      "⚠ " + prBad.map((x) => `${x.asset} 자동값은 ${x.label} 가격지수(PR)입니다`).join(" · ")
+      + " — 배당수익률만큼 낮게 나옵니다."));
+  }
 
   const meth = $("#est-method");
   meth.textContent = "";
@@ -7551,17 +7764,94 @@ function renderEstimate() {
       el("p", {}, el("b", {}, "포트폴리오 기준일 수익률"),
         " = Σ(자산군 규모 × 기준일 수익률) ÷ Σ(자산군 규모). 입력값을 그대로 쓰며 계수를 다시 "
         + "곱하지 않습니다. 기여도의 합은 이 값과 정확히 같습니다."),
-      el("p", {}, el("b", {}, "포트폴리오 추정일 수익률"), " — 자산군마다 기준일 연환산율을 "
+      el("p", {}, el("b", {}, "포트폴리오 추정일 수익률"),
+        " = Σ(추정일 규모 × 추정일 수익률) ÷ Σ(추정일 규모). **가중치가 기준일과 다를 수 "
+        + "있습니다** — 추정일 규모를 직접 넣으면 리밸런싱 효과가 차이에 함께 들어갑니다."),
+      el("p", {}, el("b", {}, "추정일 수익률"), " — 자산군마다 기준일 연환산율을 "
         + "기간수익으로 되돌리고(× 경과일수 ÷ 365) 추정 구간 4항을 더한 뒤 추정일 기준으로 다시 "
         + "연환산합니다(× 365 ÷ 연초→추정일 일수). 되돌리기는 위 연환산 규칙의 정확한 역입니다. "
         + "캐리가 기준일 연환산율을 보존하므로 결과는 "
         + "「기준일 수익률 + 시장효과 × 365 ÷ 연초→추정일 일수」와 대수적으로 같습니다."),
       el("p", {}, el("b", {}, "자동 채움"),
         " — 지수의 연초이후 수익률 = 지수(기준일 이하 마지막 관측) ÷ 지수(전년 마지막 관측) − 1. "
-        + "분모 앵커는 파이프라인이 축약 전 원본에서 뽑아 싣습니다. 실제로 쓴 두 날짜는 출처 칸에 "
-        + "마우스를 올리면 나옵니다. 값을 직접 넣으면 수기가 되고, 지우면 자동으로 돌아갑니다."),
+        + "분모 앵커는 파이프라인이 축약 전 원본에서 뽑아 싣습니다. 값을 직접 넣으면 수기가 되고, "
+        + "지우면 자동으로 돌아갑니다."),
+      el("p", {}, el("b", {}, "헤지비율"), " — ", (band && band.note) || ""),
       el("p", {}, el("b", {}, "저장"),
         " — 입력값은 이 브라우저에만 저장됩니다(서버로 나가지 않습니다).")));
+}
+
+/* 헤지비율 고르기 — 해외자산 자산군을 눌렀을 때 뜨는 작은 오버레이(§7.12 사용자 지시).
+   **기본값을 넣지 않는다**: 열었을 때 비어 있으면 비어 있는 채로 두고, 사용자가 고른
+   값만 저장한다. 범위는 파이프라인이 싣는 `hedge_band`(0~105%)를 쓴다 —
+   105% 는 펀드 NAV 변동에 따른 일시 오버헤지를 담기 위한 상한이다. */
+function openEstHedge(key, st, band, done) {
+  const lo = band && band.lo != null ? band.lo : 0;
+  const hi = band && band.hi != null ? band.hi : 105;
+  const step = band && band.step != null ? band.step : 1;
+  const cur = st.hedge[key];
+  const has = cur != null && cur !== "" && isFinite(+cur);
+
+  const back = el("div", { class: "est-hedge-back" });
+  const panel = el("div", { class: "est-hedge-panel", role: "dialog",
+                            "aria-label": `${key} 헤지비율` });
+  const val = el("span", { style: "font-weight:700;font-size:19px" },
+    has ? `${fmtNum(+cur, 0)}%` : "미입력");
+  const slider = el("input", { type: "range", min: String(lo), max: String(hi),
+    step: String(step), value: String(has ? +cur : 0),
+    "aria-label": `${key} 헤지비율 슬라이더`, style: "width:100%" });
+  const num = el("input", { type: "number", min: String(lo), max: String(hi),
+    step: String(step), inputmode: "decimal", value: has ? String(+cur) : "",
+    "aria-label": `${key} 헤지비율 숫자`, style: "width:86px;text-align:right" });
+
+  const close = () => {
+    document.removeEventListener("keydown", onKey);
+    back.remove();
+    done();
+  };
+  const onKey = (e) => { if (e && e.key === "Escape") close(); };
+  const set = (v) => {
+    /* 밴드 밖 값은 **조용히 자르지 않고** 밴드 안으로 되돌린 뒤 그 사실이 보이게 한다 */
+    const c = Math.min(hi, Math.max(lo, v));
+    st.hedge[key] = c;
+    slider.value = String(c);
+    if (document.activeElement !== num) num.value = String(c);
+    val.textContent = `${fmtNum(c, 0)}%`;
+    estSaveState(st);
+    done();
+  };
+  slider.addEventListener("input", () => set(+slider.value));
+  num.addEventListener("input", () => {
+    if (num.value === "") return;              // 지우는 중에는 건드리지 않는다
+    if (isFinite(+num.value)) set(+num.value);
+  });
+
+  const clearBtn = el("button", { class: "btn", type: "button" }, "비우기");
+  clearBtn.addEventListener("click", () => {
+    delete st.hedge[key];
+    num.value = "";
+    val.textContent = "미입력";
+    estSaveState(st);
+    done();
+  });
+  const okBtn = el("button", { class: "btn", type: "button" }, "닫기");
+  okBtn.addEventListener("click", close);
+  back.addEventListener("click", (e) => { if (!e || e.target === back) close(); });
+  document.addEventListener("keydown", onKey);
+
+  panel.append(
+    el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, `${key} 헤지비율`),
+      el("span", { class: "card-sub" }, `${lo}~${hi}%`)),
+    el("div", { style: "margin:8px 0 4px" }, val),
+    slider,
+    el("div", { style: "display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap" },
+      num, el("span", { style: "color:var(--ink-3);font-size:12px" }, "%"),
+      clearBtn, okBtn),
+    el("div", { style: "margin-top:8px;color:var(--ink-3);font-size:11.5px" },
+      (band && band.note) || ""));
+  back.append(panel);
+  document.body.appendChild(back);
 }
 
 /* ---------------- render all / boot ---------------- */

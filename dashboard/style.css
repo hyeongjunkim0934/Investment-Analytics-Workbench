@@ -934,6 +934,27 @@ button.vchip { cursor: pointer; }
 .est-table td.est-memo, .est-table > tr > td.est-memo {
   white-space: normal; max-width: 168px; line-height: 1.35;
 }
+/* ── 헤지비율 고르기 (§7.12) ────────────────────────────────────────────────
+   해외자산은 자산군 이름 자체가 버튼이다. **버튼처럼 보여야 한다** — 눌리는 자리를
+   평범한 글자로 두면 사용자가 클릭할 생각을 못 한다(그러면 헤지비율이 영영 미입력이고
+   환효과·스왑 MTM 이 계속 비어 있다). */
+.est-name-btn {
+  background: none; border: 0; padding: 0; font: inherit; color: inherit;
+  cursor: pointer; text-align: left; border-bottom: 1px dashed var(--ink-3);
+}
+.est-name-btn:hover { color: var(--accent, var(--ink-1)); }
+.est-hedge-tag { font-size: 10.5px; color: var(--ink-3); white-space: nowrap; }
+/* `[hidden]` 이 아니라 실제 오버레이다 — `.gate` 에서 겪은 함정을 피해 display 를
+   클래스에 두고 여는 쪽이 append/remove 로 통제한다(CLAUDE.md 「함정」). */
+.est-hedge-back {
+  position: fixed; inset: 0; z-index: 60; display: flex;
+  align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .5); padding: 16px;
+}
+.est-hedge-panel {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; width: min(420px, 100%);
+}
 
 /* ── 개요 구역 (2026-08-13 — 상단 탭 7개로 축소하며 시장 화면들이 개요로 내려왔다) ──
    구역 = 주식 · 금리 · 환율 · 기타. 각 구역 머리에 그 구역의 상세 화면 버튼이 붙는다. */

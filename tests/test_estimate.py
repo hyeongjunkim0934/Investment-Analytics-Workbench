@@ -16,11 +16,15 @@
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 import estimate
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _store(**series):
@@ -274,6 +278,86 @@ def test_scenario_model_states_the_signs_the_screen_must_use():
     assert "차이가 곧 시장효과" in m["cumulative"], "두 열의 차이가 무엇인지 밝히지 않는다"
     assert "365" in m["cumulative"] and "연초→추정일" in m["cumulative"]
     assert "다른 해" in m["cross_year"], "다른 해 가드 문장이 없다"
+
+
+def test_row_modes_match_the_assets_the_user_named():
+    """§7.12 — 자산군마다 추정일 수익률을 **계산할지 승계할지**를 사용자가 지정했다.
+
+    가르는 선은 「가격 축이 있는가」이고, 그 판정은 우리가 아니라 사용자가 내린 것이다:
+
+      계산(calc)  — 장부가 해외채권(환·스왑) · 국내주식(KOSPI) · 해외주식(ACWI) ·
+                    시가 국내채권 직접/간접 · 시가 해외채권 직접/간접  … 7개
+      승계(carry) — 장부가 국내채권 · 단기자금 · 대출금 · 대체투자      … 4개
+
+    자산군이 한쪽에서 다른 쪽으로 조용히 넘어가면 「계산해 준다」던 칸이 승계로 바뀌거나
+    그 반대가 된다 — 둘 다 화면의 뜻이 통째로 달라지므로 여기서 고정한다.
+    """
+    modes = {r["asset"]: r["mode"] for r in estimate.ROW_MODES}
+    assert len(estimate.ROW_MODES) == 11, "자산군 11개가 아니다"
+    calc = {k for k, v in modes.items() if v == "calc"}
+    carry = {k for k, v in modes.items() if v == "carry"}
+    assert calc == {
+        "장부가 해외채권", "국내주식", "해외주식",
+        "시가 국내채권 직접", "시가 국내채권 간접",
+        "시가 해외채권 직접", "시가 해외채권 간접",
+    }, "계산 대상 자산군이 사용자가 지정한 목록과 다르다"
+    assert carry == {"장부가 국내채권", "단기자금", "대출금", "대체투자"}, (
+        "승계 대상 자산군이 사용자가 지정한 목록과 다르다")
+    # 사유를 비워 두면 화면이 「왜 이 칸만 수기인가」에 답하지 못한다
+    assert all(r["why"] for r in estimate.ROW_MODES), "사유가 빈 자산군이 있다"
+    # 페이로드로 나가야 화면이 적을 수 있다
+    assert estimate.SCENARIO_MODEL["row_modes"] is estimate.ROW_MODES
+
+
+def test_row_modes_cover_exactly_the_dashboard_assets():
+    """`ROW_MODES` 의 이름이 `app.js` 의 `EST_ASSETS` 와 **문자 단위로** 같아야 한다.
+
+    어긋나면 화면이 그 자산군의 사유를 못 찾아 오류 없이 조용히 빈칸이 된다 —
+    `INDICES[].asset` 대조와 같은 이유의 검사다(§7.8 에서 이미 한 번 겪었다).
+    """
+    js = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
+    block = re.search(r"const EST_ASSETS = \[(.*?)\n\];", js, re.S)
+    assert block, "app.js 에서 EST_ASSETS 를 찾지 못했습니다"
+    names = re.findall(r'key:\s*"([^"]+)"', block.group(1))
+    assert names, "EST_ASSETS 에서 자산군 이름을 뽑지 못했습니다"
+    assert [r["asset"] for r in estimate.ROW_MODES] == names, (
+        "ROW_MODES 와 EST_ASSETS 의 자산군 이름·순서가 다릅니다")
+    # 실행 매핑(EST_SCEN)의 mode 도 같은 표를 따라야 한다
+    scen = re.search(r"const EST_SCEN = \{(.*?)\n\};", js, re.S)
+    assert scen, "app.js 에서 EST_SCEN 을 찾지 못했습니다"
+    pairs = re.findall(r'"([^"]+)":\s*\{\s*mode:\s*"(calc|carry)"', scen.group(1))
+    assert dict(pairs) == {r["asset"]: r["mode"] for r in estimate.ROW_MODES}, (
+        "EST_SCEN 의 mode 가 ROW_MODES 와 다릅니다 — 설명과 실제 동작이 갈립니다")
+
+
+def test_hedge_band_is_published_without_an_institutional_default():
+    """§7.12 — 헤지비율 범위는 0~105% 이고 **기본값이 없다**(2026-08-13 사용자 확인).
+
+    기관의 현재 헤지 정책(해외채권 100% 헤지·해외주식 100% 오픈)은 운용 정보라 공개
+    저장소에 박지 않는다 — 사용자가 화면에서 고르면 브라우저에만 남는다. 여기에
+    기본값 키가 생기면 그 자체가 정책 유출이므로 부재를 단언한다.
+    """
+    b = estimate.HEDGE_BAND
+    assert b["lo"] == 0 and b["hi"] == 105, "헤지 밴드가 0~105% 가 아니다"
+    assert "default" not in b and "value" not in b, (
+        "헤지비율 기본값이 페이로드에 들어 있습니다 — 기관 운용 정보는 공개하지 않습니다")
+    assert "기본값이 없습니다" in b["note"], "기본값 부재를 화면이 밝히지 않는다"
+    assert estimate.SCENARIO_MODEL["hedge_band"] is b
+    # 화면이 「승계」를 밝히는 문장도 함께 나가야 한다
+    assert "승계" in estimate.SCENARIO_MODEL["size_carry"]
+
+
+def test_axes_carry_level_display_metadata():
+    """§7.12 — 사용자가 **수준**을 치므로 축마다 표시 단위·소수자리가 필요하다.
+
+    화면이 단위를 스스로 정하게 두면 달러원을 % 로, 금리를 원으로 적는 사고가 난다.
+    """
+    for ax in estimate.SCENARIO_AXES:
+        assert "level_unit" in ax and "level_dp" in ax, f"{ax['key']} 에 수준 표시 메타가 없다"
+        assert isinstance(ax["level_dp"], int) and 0 <= ax["level_dp"] <= 4
+    by = {a["key"]: a for a in estimate.SCENARIO_AXES}
+    assert by["usdkrw"]["level_unit"] == "원", "환율 수준 단위가 원이 아니다"
+    assert by["kr_rate"]["level_unit"] == "%", "금리 수준 단위가 % 가 아니다"
 
 
 def test_scenario_axes_survive_missing_series():
