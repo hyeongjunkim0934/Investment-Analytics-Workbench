@@ -2738,3 +2738,54 @@ def test_estimate_headline_is_blank_when_it_would_be_meaningless(probe):
     assert c["rejectsNaNElapsed"] is True, "경과일수 NaN 이 통과한다"
     assert c["compactionGapSaysTruth"] is True, "축약 구간 오류의 사유가 사실과 다르다"
     assert c["compactionGapNotMislabelled"] is True
+
+
+def test_every_css_variable_and_class_actually_exists():
+    """CSS 는 **오타에 오류를 내지 않는다** — 없는 토큰·클래스는 조용히 무효가 된다.
+
+    §7.12 에서 실제로 두 번 겪었다(둘 다 실브라우저에서만 드러났다):
+      · `background: var(--card)` — 이 저장소의 카드면 토큰은 `--surface` 다. 선언이
+        통째로 무효가 되어 헤지 오버레이가 **투명해지고 글자가 아래 표와 겹쳤다.**
+      · `class="btn"` — 실제 클래스는 `.btn-ghost`/`.btn-primary` 다. 버튼이 맨몸으로 떴다.
+    덤으로 기존 결함 하나가 같이 걸렸다 — `.btn-ghost:hover` 와 시뮬 입력의 `var(--ink)`
+    는 정의된 적이 없는 이름이라(토큰은 `--ink-1/2/3`) 색이 상속으로 떨어지고 있었다.
+
+    런타임에 JS 가 주입하는 토큰만 예외로 둔다 — 목록에 이름을 적어 두면 "왜 예외인가"가
+    문서로 남고, 새 미정의 토큰은 그대로 잡힌다.
+    """
+    css = (ROOT / "dashboard" / "style.css").read_text(encoding="utf-8")
+    js = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+    # ① 미정의 CSS 변수 — 한 줄 `:root { --a: x; --b: y }` 도 잡히게 앵커를 두지 않는다
+    defined = set(re.findall(r"(--[\w-]+)\s*:", css))
+    used = set(re.findall(r"var\(\s*(--[\w-]+)", css))
+    runtime_injected = {"--village-img"}          # app.js 가 setProperty 로 넣는다
+    for name in sorted(runtime_injected):
+        assert name in js, f"{name} 을 런타임 주입 예외로 뒀는데 app.js 에 없습니다"
+    missing = sorted(used - defined - runtime_injected)
+    assert not missing, f"정의되지 않은 CSS 변수: {missing}"
+
+    # ② app.js 가 붙이는 클래스가 CSS 에 있는가
+    known_dynamic = {
+        "num", "d-up", "d-down", "hidden", "on", "active", "row-off",
+    }
+    # **CSS 가 없는 것이 의도인 클래스들** — 전수 확인해 사유를 적어 둔다. 여기 없는
+    # 새 이름이 나오면 그건 `.btn` 같은 오타이므로 잡힌다.
+    intentionally_unstyled = {
+        "aum-row",          # 스타일은 함께 붙는 `tenor-row` 가 준다 · 프로브 셀렉터 훅
+        "cma-cut-note",     # 인라인 style + 프로브 셀렉터 훅(§7.7.18)
+        "sim-ccy",          # <details> 기본 스타일 + 인라인 style
+        "sim-hedge-line",   # 인라인 style + 프로브 셀렉터 훅
+        "sim-hedge-why",    # 인라인 style
+        "terms", "term",    # <details> 기본 스타일 · 용어집 셀렉터 훅
+    }
+    used_cls = set()
+    for m in re.finditer(r'class:\s*"([^"{}$]+)"', js):
+        used_cls.update(m.group(1).split())
+    css_cls = set(re.findall(r"\.([A-Za-z][\w-]*)", css))
+    unknown = sorted(c for c in used_cls - css_cls - known_dynamic - intentionally_unstyled
+                     if not c.isdigit())
+    assert not unknown, f"CSS 에 없는 클래스를 app.js 가 씁니다: {unknown}"
+    # 목록이 낡으면(그 사이 CSS 가 생기면) 예외가 조용히 쌓인다 — 그것도 잡는다
+    stale = sorted(intentionally_unstyled & css_cls)
+    assert not stale, f"CSS 가 생겼는데 무스타일 예외 목록에 남아 있습니다: {stale}"
