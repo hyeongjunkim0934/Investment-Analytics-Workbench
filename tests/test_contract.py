@@ -1250,3 +1250,34 @@ def test_overview_no_longer_carries_the_risk_scores():
     assert "prependRiskCards" not in js, "위험 점수 카드를 개요에 넣는 코드가 남아 있습니다"
     assert 'id="cards"' not in _index_html(), (
         "개요의 옛 단일 카드 컨테이너가 남아 있습니다 — 구역 조립으로 대체됐습니다")
+
+
+def test_json_contract_count_matches_docs():
+    """JSON 계약 수는 **네 곳**에 적혀 있다 — 코드 셋 + 비공개 Data 저장소의 CLAUDE.md.
+
+    코드 세 곳(process.payloads · app.js FILES · check_output.EXPECTED)은 위의 계약
+    테스트들이 서로 대조하지만, **넷째 자리는 다른 저장소**라 아무도 안 보고 있었다 —
+    estimate.json 을 추가할 때(15→16) 세 곳만 고치고 `../Data/CLAUDE.md` 는 15 로 남아
+    실측으로 걸렸다. 문서가 다음 세션의 유일한 지도라는 이 절의 전제 그대로, 기계로
+    확인 가능한 수는 기계가 잠근다.
+
+    Data 체크아웃은 CI 에 없으므로(비공개 저장소 — tests.yml 은 권한도 없다) 있을 때만
+    대조한다. skip 은 조용한 통과가 아니라 "그 환경에선 볼 수 없다"는 기록이다.
+    """
+    block = re.search(r"EXPECTED\s*=\s*\[(.*?)\]",
+                      (ROOT / "pipeline" / "check_output.py")
+                      .read_text(encoding="utf-8"), re.S).group(1)
+    n = len(re.findall(r'"([a-z_]+)"', block))
+    assert n >= 16, f"EXPECTED 파싱이 이상합니다 — {n}개"
+    # 이 저장소 문서의 「JSON N개」 문장 전수
+    for name, txt in _docs().items():
+        for claimed in re.findall(r"JSON\s+(\d+)개", txt):
+            assert int(claimed) == n, f"{name} 이 JSON {claimed}개라고 적었지만 계약은 {n}개입니다"
+    # 넷째 자리 — 비공개 Data 저장소 (있을 때만)
+    data_doc = ROOT.parent / "Data" / "CLAUDE.md"
+    if not data_doc.exists():
+        pytest.skip("../Data 체크아웃 없음 — CI 환경")
+    for claimed in re.findall(r"JSON\s+(\d+)개", data_doc.read_text(encoding="utf-8")):
+        assert int(claimed) == n, (
+            f"../Data/CLAUDE.md 가 JSON {claimed}개라고 적었지만 계약은 {n}개입니다 — "
+            "JSON 을 추가/삭제하면 네 곳을 함께 고쳐야 합니다")

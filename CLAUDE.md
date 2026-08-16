@@ -47,7 +47,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 408개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 409개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (약 2.5분)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js                 (약 2.5분)
 #   ↑ 하네스가 시간을 다 쓴다(실측) — 최적화를 실제로 여러 번 돌리는 프로브
@@ -487,8 +487,12 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 - `wf_validation.py` 는 `process.load_data_dir()` + `risk.derive_inputs`/`risk.factor_specs` +
   `risk` 의 상수 + `common.spearman`/`common.auc` 를 import 한다. 이 파일이 스스로 정하는 것은
   **평가 설계**(가중 방식·타깃·표본 외 구간)뿐이다.
-- **JSON 16개 계약은 세 곳에 적혀 있다**: `process.py` 의 `payloads`, `dashboard/app.js` 의 `FILES`,
-  `pipeline/check_output.py` 의 `EXPECTED`. 하나만 고치면 `tests/test_contract.py` 가 잡는다.
+- **JSON 16개 계약은 네 곳에 적혀 있다**: 코드 세 곳(`process.py` 의 `payloads`,
+  `dashboard/app.js` 의 `FILES`, `pipeline/check_output.py` 의 `EXPECTED`)과 **비공개
+  `../Data/CLAUDE.md` 의 「JSON N개」 문장**이다. 코드 세 곳은 `tests/test_contract.py` 가
+  서로 대조하고, Data 쪽은 같은 파일의 `test_json_contract_count_matches_docs` 가
+  `../Data` 체크아웃이 있을 때만 대조한다(CI 에는 없어 skip) — estimate.json 을 추가할 때
+  Data 쪽만 15 로 남아 실측으로 걸린 자리다. 넷 중 하나만 고치면 잡힌다.
 - **상단 탭은 7개뿐이다(§7.9 — 2026-08-13 사용자 지시).** 마을·개요·이벤트·리스크·
   수익률 추정·자산배분·환헤지. 나머지 8개 화면은 **사라진 게 아니라 부모 화면 안의
   입구로 내려왔다** — 금리·IRS·크레딧·FX·물가·ACWI·매크로는 개요 구역으로, 관계분석은
