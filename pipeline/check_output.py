@@ -12,7 +12,9 @@
 표준 라이브러리만 쓴다 — 의존성 설치가 깨진 상황에서도 돌아야 한다.
 
 검사 항목
-    1. JSON 파일 집합이 계약의 15개와 **정확히** 일치 (부족·초과 모두 실패)
+    1. JSON 파일 집합이 계약(아래 EXPECTED)과 **정확히** 일치 (부족·초과 모두 실패.
+       개수를 여기 산문에 적지 않는다 — 실측: 16개가 된 뒤에도 이 줄이 「15개」로
+       남아 있었다. 정본은 EXPECTED 목록 하나다)
     2. 전부 파싱 가능한 JSON 이고 비어 있지 않음
     3. meta.json 필수 필드 존재
     4. meta.json.warnings 개수 <= --max-warnings   (등호가 아니라 **상한**:
@@ -259,9 +261,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="빌드 산출물 JSON 계약 검사")
     ap.add_argument("--out", required=True, type=Path, help="process.py 의 --out 디렉터리")
     ap.add_argument("--max-warnings", type=int, default=20,
-                    help="meta.json.warnings 개수 상한 (등호 아님). 현재 기준선 7건")
+                    help="meta.json.warnings 개수 상한 (등호 아님). 기준선 수치는 데이터에서 "
+                         "오는 수라 여기 적지 않는다 — CLAUDE.md 의 기준선 문장이 정본 "
+                         "(실측: 7건이라 적혀 있던 동안 실제 기준선은 15건이었다)")
     ap.add_argument("--min-series", type=int, default=100,
-                    help="meta.json.series_count 바닥 (고정값 아님). 현재 기준선 444개")
+                    help="meta.json.series_count 바닥 (고정값 아님). 기준선 수치는 "
+                         "CLAUDE.md 참조 (실측: 444개라 적혀 있던 동안 실제는 481개였다)")
     ap.add_argument("--dashboard", type=Path, default=None,
                     help="dashboard/app.js 경로 — 주면 FILES 상수까지 대조")
     a = ap.parse_args()

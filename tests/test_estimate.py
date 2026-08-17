@@ -360,6 +360,33 @@ def test_axes_carry_level_display_metadata():
     assert by["kr_rate"]["level_unit"] == "%", "금리 수준 단위가 % 가 아니다"
 
 
+def test_built_axes_carry_level_display_metadata():
+    """§7.12 회귀 — 표시 메타는 스펙 상수가 아니라 **게시 페이로드**에 있어야 한다.
+
+    실측 사고: `build()` 의 rec 복사 키에 `level_unit`/`level_dp` 가 빠져 실제
+    `estimate.json.axes` 전 축에서 탈락했다. 화면 폴백(`|| ""` / `== null ? 2`)이
+    달러원 수준 입력을 **단위 없이 소수 2자리**로 그렸고, 위의 상수 검사와 프로브
+    픽스처(필드를 손으로 채움)는 둘 다 통과했다 — 그래서 이 테스트는 build() 출력을 본다.
+    """
+    warns: list[str] = []
+    out = estimate.build(_store(**{
+        "bb:한국_KOSPI_TR": _daily("2024-01-01", 400),
+        "idx:ACWI": _daily("2024-01-01", 400),
+        "info:한국_10y": _daily("2024-01-01", 400, 2.5, 3.5),
+        "info:UST10y": _daily("2024-01-01", 400, 3.5, 4.5),
+        "bb:달러원": _daily("2024-01-01", 400, 1250.0, 1400.0),
+        "info:SMB_USDKRW_3M": _daily("2024-01-01", 400, -3.0, -1.0),
+    }), warns.append)
+    assert out["active"] is True
+    assert len(out["axes"]) == len(estimate.SCENARIO_AXES), "축이 전부 게시되지 않았다"
+    for ax in out["axes"]:
+        assert "level_unit" in ax and "level_dp" in ax, (
+            f"{ax['key']} 게시 레코드에 수준 표시 메타가 없다 — 화면 폴백이 단위를 지운다")
+    by = {a["key"]: a for a in out["axes"]}
+    assert by["usdkrw"]["level_unit"] == "원" and by["usdkrw"]["level_dp"] == 1
+    assert by["kr_rate"]["level_unit"] == "%" and by["kr_rate"]["level_dp"] == 2
+
+
 def test_scenario_axes_survive_missing_series():
     """축 시리즈가 빠져도 나머지는 나가고 빠진 것은 경고로 남는다(수기 입력으로 살아 있어야)."""
     warns: list[str] = []

@@ -282,7 +282,11 @@ def build(series_store: dict, warn) -> dict:
     have_idx = {r["key"] for r in out}
     axes = []
     for spec in SCENARIO_AXES:
-        rec = {k: spec[k] for k in ("key", "label", "kind", "unit", "note")}
+        # level_unit/level_dp 를 빠뜨리면 화면 폴백이 달러원 수준 입력을 단위 없이
+        # 소수 2자리로 그린다(§7.12 — "화면이 스스로 정하면 달러원을 % 로 적는다"의
+        # 실측 변형). 스펙에 있는 표시 메타는 **전부** 게시한다.
+        rec = {k: spec[k] for k in
+               ("key", "label", "kind", "unit", "note", "level_unit", "level_dp")}
         if spec.get("index"):
             if spec["index"] not in have_idx:
                 warn(f"estimate: 시나리오 축 {spec['key']} 의 지수({spec['index']})가 없어 수기 입력만 됩니다")
