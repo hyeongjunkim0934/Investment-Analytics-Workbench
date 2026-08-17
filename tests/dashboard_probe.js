@@ -216,7 +216,16 @@ safe("axis", () => {
   const labels = yAxis.values(u, v);
   /* refmt 를 주지 않는 호출자는 예전과 완전히 같아야 한다 (회귀 방지). */
   const plain = P.baseAxes({ ink3: "", grid: "" }, (x) => `${Math.round(x)}%`)[1].values(u, v);
-  return { labels, unique: new Set(labels).size, n: labels.length, plain, plainUnique: new Set(plain).size };
+  /* 알려진 공백 ② (CLAUDE.md) — 라벨이 **처음부터 유일하면 refmt 가 적용되면 안 된다.**
+     "refmt 를 조건 없이 항상 적용" 뮤테이션은 위 두 측정으로는 안 잡혔다(중복 케이스는
+     어차피 재포맷되고, plain 은 refmt 자체가 없다). 유일 케이스를 직접 태운다. */
+  const v2 = [1, 2, 3, 4];
+  shim.UPlotStub.made.length = 0;
+  P.makeTimeChart(box, { labels: ["x"], colors: ["#000"], data: [t, v2], dec: 0, unit: "%" });
+  const u2 = shim.UPlotStub.made[shim.UPlotStub.made.length - 1];
+  const uniqueLabels = u2.opts.axes[1].values(u2, v2);
+  return { labels, unique: new Set(labels).size, n: labels.length, plain,
+           plainUnique: new Set(plain).size, uniqueLabels };
 });
 
 /* ============ P2. 기간 버튼은 효과가 있는 화면에서만 보인다 ============ */
@@ -245,6 +254,23 @@ safe("rangeGating", () => {
   return res;
 });
 
+/* ============ P2b. 상단 탭이 「지금 이 화면」을 보조기기에 알린다 ============
+   알려진 공백 ④ (CLAUDE.md) — aria-current 를 안 달아도(또는 안 떼어도) 색(.active)만
+   보는 검사로는 통과한다. index.html 의 실제 탭과 같은 링크를 세워 라우팅을 실행한다. */
+safe("navCurrent", () => {
+  const links = ["#village", "#overview", "#risk"].map((h) => P.el("a", { href: h }, h));
+  nav.append(...links);
+  shim.location.hash = "#risk";
+  P.routeView();
+  const at = links.map((a) => [a.getAttribute("href"), a.getAttribute("aria-current"),
+                               a.classList.contains("active")]);
+  shim.location.hash = "#overview";
+  P.routeView();
+  const after = links.map((a) => [a.getAttribute("href"), a.getAttribute("aria-current")]);
+  links.forEach((a) => a.remove());          // 뒤 프로브의 #nav a 순회에 영향 없게 청소
+  return { at, after };
+});
+
 /* ============ P3. 드릴다운 오버레이 = 진짜 대화상자 (열림/닫힘 대칭) ============ */
 safe("overlay", () => {
   const opener = P.el("a", { href: "#detail-vol" }, "여는 쪽");
@@ -261,6 +287,9 @@ safe("overlay", () => {
     /* header/main/footer 만 이름으로 집으면 이 형제가 남아 Tab 이 오버레이 밖으로 샌다.
        실브라우저에서 Tab 16회 중 8회가 밖으로 나갔고 그중 하나가 이 링크였다. */
     inertSkipLink: skip.inert, inertGate: gate.inert,
+    /* 알려진 공백 ③ — 열 때 body 스크롤을 잠근다. 닫을 때 안 풀면 페이지 전체가
+       스크롤 불가가 되는데 겉보기엔 멀쩡해서 눈으로 못 잡는다. */
+    bodyOverflow: DOC.body.style.overflow,
     overlayItselfNotInert: DOC.getElementById("detail-overlay").inert === false,
     focusIsCloseButton: DOC.activeElement && DOC.activeElement.className === "detail-close",
     hasCloseButton: !!inner.querySelector(".detail-close"),
@@ -274,6 +303,7 @@ safe("overlay", () => {
     ariaModal: ov.getAttribute("aria-modal"),
     inertHeader: header.inert, inertMain: main.inert, inertFooter: footer.inert,
     inertSkipLink: skip.inert, inertGate: gate.inert,
+    bodyOverflow: DOC.body.style.overflow,
     focusRestored: DOC.activeElement === opener,
   };
   opener.remove();
@@ -305,6 +335,21 @@ safe("stamp", () => {
     futureDateDemoted: mk({ data: [t, [-1.11, -0.78, -0.45]], dec: 2, unit: "%" }, "2026-07-20"),
     /* 계열이 여럿이면 날짜만 */
     multiSeries: mk({ data: [t, [1, 2, 3], [4, 5, 6]], dec: 2 }, "2026-12-31"),
+    /* 알려진 공백 ① — 계열마다 마지막 관측 인덱스가 다르면 **가장 최신**(Math.max)을
+       찍어야 한다. 위 multiSeries 는 두 계열이 같은 길이라 max→min 뮤테이션이 통과했다.
+       여기서는 둘째 계열이 한 관측 짧다(마지막 null) — min 이면 6/30 이 나온다. */
+    multiSeriesStaggered: mk({ data: [t, [1, 2, 3], [4, 5, null]], dec: 2 }, "2026-12-31"),
+    /* 알려진 공백 ⑥ — 같은 카드에 두 번 불려도 「최근 …」 은 한 번만 붙는다.
+       가드(줄 265-266)를 지우는 뮤테이션이 여기서 잡힌다. */
+    dupCount: (() => {
+      const card = P.el("div", { class: "card" });
+      DOC.body.append(card);
+      const box = P.cardScaffold(card, { title: "t", sub: "s" });
+      P.DATA.meta = { last_observation: "2026-12-31" };
+      P.stampLatest(box, { data: [t, [1, 2, 3]], dec: 2, unit: "%" });
+      P.stampLatest(box, { data: [t, [1, 2, 3]], dec: 2, unit: "%" });
+      return card.querySelectorAll(".card-last").length;
+    })(),
     stampDatePast: P.stampDate(t[0]),
   };
 });
@@ -607,6 +652,10 @@ safe("hedgeScreen", () => {
     mtmHeader: mtmRows[0].children.map((c) => c.textContent),
     /* τ 열 — 만기 ÷ 2 (년). 3/6/9/12 개월 → 0.125/0.250/0.375/0.500 */
     mtmTau: mtmRows.slice(1).map((r) => cell(r, 1)),
+    /* §5.3.1 공백 ④ — 「평상시 MTM 변동」 = τ × σ_Δs,3M × √12 (연율). √12 를 빼면
+       ±0.23% 가 ±0.07% 로 줄어드는데 열 제목은 「연 %」 그대로다 — 값으로 대조한다. */
+    mtmVol: mtmRows.slice(1).map((r) => cell(r, 2)),
+    mtmSigma: HEDGE_FIXTURE.mtm.sigma_ds_3m,
     mtmWorst: mtmRows.slice(1).map((r) => cell(r, 3)),
     boldRowText: boldRow ? boldRow.textContent : null,
     method: txt("hedge-method"),

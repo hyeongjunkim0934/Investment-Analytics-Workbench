@@ -80,6 +80,16 @@ def test_y_axis_without_refmt_is_unchanged(probe):
     assert a["plainUnique"] == 1
 
 
+def test_y_axis_unique_labels_are_not_reformatted(probe):
+    """알려진 공백 ② — 라벨이 처음부터 유일하면 refmt 가 손대면 안 된다.
+
+    "refmt 를 조건 없이 항상 적용" 뮤테이션은 중복 케이스(어차피 재포맷)와 plain
+    케이스(refmt 없음)를 다 통과했다 — 유일 케이스에서 자릿수가 늘면 여기서 잡힌다.
+    """
+    labels = probe["axis"]["uniqueLabels"]
+    assert labels == ["1", "2", "3", "4"], f"유일한 라벨이 재포맷됐다: {labels}"
+
+
 # ---- 기간 버튼 ------------------------------------------------------------
 def test_range_filter_hidden_where_it_does_nothing(probe):
     """기간 버튼은 그 화면에 기간이 먹는 차트가 있을 때만 보인다."""
@@ -93,6 +103,21 @@ def test_range_filter_hidden_where_it_does_nothing(probe):
 def test_one_section_visible_at_a_time(probe):
     """섹션은 한 번에 하나만 — 이 구조의 요점이라 라우팅을 고칠 때 같이 확인한다."""
     assert probe["rangeGating"]["visibleSections"] == ["rates"]
+
+
+def test_nav_marks_the_current_screen_with_aria_current(probe):
+    """알려진 공백 ④ — `.active` 는 색일 뿐이라 보조기기에는 신호가 아니다.
+
+    aria-current="page" 가 지금 화면의 탭에만 붙고, 화면을 옮기면 따라 옮겨야 한다.
+    설정을 빼먹는 뮤테이션도, 이전 탭에서 떼지 않는 뮤테이션도 여기서 잡힌다.
+    """
+    at = {href: (cur, active) for href, cur, active in probe["navCurrent"]["at"]}
+    assert at["#risk"] == ("page", True), f"현재 탭에 aria-current 가 없다: {at}"
+    assert at["#overview"][0] is None and at["#village"][0] is None, \
+        f"현재가 아닌 탭에 aria-current 가 남아 있다: {at}"
+    after = dict(probe["navCurrent"]["after"])
+    assert after["#overview"] == "page" and after["#risk"] is None, \
+        f"화면을 옮겼는데 aria-current 가 따라오지 않았다: {after}"
 
 
 # ---- 드릴다운 오버레이 ----------------------------------------------------
@@ -135,12 +160,39 @@ def test_overlay_releases_everything_when_closed(probe):
     assert c["focusRestored"] is True, "닫은 뒤 초점이 열기 전 자리로 돌아가지 않는다"
 
 
+def test_overlay_restores_body_scroll_on_close(probe):
+    """알려진 공백 ③ — 열 때 잠근 body 스크롤을 닫을 때 반드시 푼다.
+
+    안 풀면 페이지 전체가 스크롤 불가가 되는데 겉보기에는 멀쩡해서 눈으로 못 잡는다.
+    """
+    assert probe["overlay"]["openState"]["bodyOverflow"] == "hidden", \
+        "열려 있는 동안 배경 스크롤이 잠기지 않았다"
+    assert probe["overlay"]["closedState"]["bodyOverflow"] == "", \
+        "닫은 뒤에도 body.style.overflow 가 남아 페이지가 스크롤 불가다"
+
+
 # ---- 차트 제목줄의 "최근 …" -----------------------------------------------
 def test_stamp_shows_last_observation_not_first(probe):
     s = probe["stamp"]
     assert s["lastNotFirst"] == "최근 -0.45% (2026-07-31)"
     assert s["skipsTrailingNull"] == "최근 -0.78% (2026-06-30)"
     assert s["multiSeries"] == "최근 2026-07-31 기준"
+
+
+def test_stamp_multi_series_uses_the_newest_observation(probe):
+    """알려진 공백 ① — 계열마다 마지막 관측이 다르면 **가장 최신** 인덱스를 찍는다.
+
+    기존 multiSeries 케이스는 두 계열 길이가 같아 Math.max→Math.min 뮤테이션이
+    통과했다. 둘째 계열이 한 관측 짧은 케이스에서 min 이면 6/30 이 나온다.
+    """
+    assert probe["stamp"]["multiSeriesStaggered"] == "최근 2026-07-31 기준", \
+        probe["stamp"]["multiSeriesStaggered"]
+
+
+def test_stamp_is_not_duplicated_on_repeated_calls(probe):
+    """알려진 공백 ⑥ — 같은 카드에 두 번 불려도 「최근 …」 은 하나만 남는다."""
+    assert probe["stamp"]["dupCount"] == 1, \
+        f"「최근 …」 이 {probe['stamp']['dupCount']}개 붙었다 — 중복 가드가 사라졌다"
 
 
 def test_stamp_never_prints_a_date_after_the_asof(probe):
@@ -407,6 +459,49 @@ def test_focus_ring_is_visible(light):
     assert cr >= AA_NONTEXT, f"포커스 링 {light[token]} 대비 {cr:.3f}"
 
 
+def test_focus_ring_is_not_neutralized_by_a_later_rule():
+    """알려진 공백 ⑤ — 위 검사는 **첫** `:focus-visible` 규칙만 본다.
+
+    캐스케이드에서는 뒤에 오는 `:focus-visible { outline: none }` 이 이기므로
+    시트 전체를 본다. 단 `outline: none` 이 전부 결함은 아니다 — `.vz` 는 outline 을
+    끄는 대신 같은 컴포넌트의 다른 `:focus-visible` 규칙(라벨 색·밑줄)이 포커스를
+    표시한다(이 테스트를 만들며 실측). 그래서 판정은 「**대체 표시 없이** 링만 지우는
+    규칙이 있는가」다.
+    """
+    rules = [(sels, decl) for sels, decl in _rules() if ":focus-visible" in sels]
+    assert rules, "전제가 깨졌다 — :focus-visible 규칙이 있어야 한다"
+    killers = []          # (선택자, 컴파운드) — outline 을 none/0 으로 두는 규칙
+    for sels, decl in rules:
+        m = re.search(r"outline\s*:\s*([^;]+)", decl)
+        if not m or not re.match(r"(none|0)(\s|$)", m.group(1).strip()):
+            continue
+        for sel in (s.strip() for s in sels.split(",")):
+            km = re.match(r"([.#\w-]*):focus-visible\s*$", sel)
+            if km:
+                killers.append((sel, km.group(1)))
+    visible_props = r"(outline\s*:\s*(?!none|0)|box-shadow|text-decoration|border|background|color)"
+    for sel, compound in killers:
+        assert compound, (
+            f"전역 :focus-visible 의 outline 이 none 이다({sel!r}) — 키보드 포커스가 사라진다")
+        alt = any(compound + ":focus-visible" in sels and re.search(visible_props, decl)
+                  and not re.search(r"outline\s*:\s*(none|0)", decl)
+                  for sels, decl in rules)
+        assert alt, (
+            f"{sel!r} 이 outline 을 지우는데 같은 컴포넌트에 대체 포커스 표시가 없다")
+
+
+def test_skip_link_exists_in_the_markup():
+    """알려진 공백 ⑦ — 본문 바로가기 링크는 index.html 의 정적 마크업이다.
+
+    프로브는 자기 뼈대에 skip 노드를 스스로 세우므로, 실제 마크업에서 링크를
+    지워도 프로브 쪽 검사(inert 대칭)는 통과한다 — 마크업을 직접 본다.
+    """
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    m = re.search(r'<a\s+class="skip-link"\s+href="#([\w-]+)"', html)
+    assert m, "본문 바로가기 링크(.skip-link)가 index.html 에 없다"
+    assert f'id="{m.group(1)}"' in html, f"바로가기 목적지 #{m.group(1)} 가 마크업에 없다"
+
+
 # ---- 최소 조작부 크기 (뒤에 오는 선언까지 본다) ----------------------------
 _GUARANTEED_TARGETS = [
     ".card-actions button",
@@ -459,6 +554,28 @@ def test_reduced_motion_stops_scroll_animation():
     assert blocks, "prefers-reduced-motion 블록이 없다"
     assert any(re.search(r"html\s*\{[^}]*scroll-behavior:\s*auto", b) for b in blocks), \
         "모션 축소에서 scroll-behavior 를 auto 로 되돌리지 않는다"
+
+
+def test_reduced_motion_override_is_not_reenabled_later():
+    """알려진 공백 ⑧ — 위 검사는 모션 축소 블록 **안**만 본다.
+
+    그 블록 뒤에 `scroll-behavior: smooth` 를 다시 선언하면(모션 축소 밖 규칙이라도
+    소스 순서상 뒤면 같은 특이성에서 이긴다) auto 가 조용히 무력화된다 — 마지막
+    모션 축소 블록 이후의 CSS 에 smooth 재선언이 없어야 한다.
+    """
+    css = _css()
+    starts = list(re.finditer(r"@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{", css))
+    assert starts, "prefers-reduced-motion 블록이 없다"
+    i, depth = starts[-1].end(), 1
+    while i < len(css) and depth:
+        if css[i] == "{":
+            depth += 1
+        elif css[i] == "}":
+            depth -= 1
+        i += 1
+    tail = css[i:]
+    assert not re.search(r"scroll-behavior\s*:\s*smooth", tail), (
+        "모션 축소 블록 뒤에서 scroll-behavior: smooth 를 재활성화한다")
 
 
 # ---- 마을 장면 자동 순환 (실행해서 확인) -----------------------------------
@@ -736,6 +853,23 @@ def test_mtm_tau_is_half_the_tenor_everywhere(probe):
     for tau, w in zip((0.125, 0.25, 0.375, 0.5), worst):
         assert abs(w - tau * 3.3) < 0.006, (tau, w)   # toFixed(2) 반올림 폭
     assert "잔존만기 τ = 만기 ÷ 2" in probe["hedgeSim"]["tenorNote"]
+
+
+def test_mtm_normal_vol_is_annualized_with_sqrt12(probe):
+    """§5.3.1 공백 ④ — 「평상시 MTM 변동」 = τ × σ_Δs,3M × **√12** (연율).
+
+    √12 를 빼면 ±0.23% 가 ±0.07% 로 줄어드는데 열 제목은 「연 %」 그대로라
+    눈으로는 못 잡는다 — 픽스처 σ 로 독립 재계산해 표시값과 대조한다.
+    """
+    h = probe["hedgeScreen"]
+    sigma = h["mtmSigma"]
+    assert sigma > 0, "전제가 깨졌다 — 픽스처 σ 가 있어야 한다"
+    for m, shown in zip((3, 6, 9, 12), h["mtmVol"]):
+        expect = (m / 24) * sigma * math.sqrt(12)
+        val = float(shown.replace("±", "").replace("%", ""))
+        assert abs(val - expect) < 0.006, (   # toFixed(2) 반올림 폭
+            f"{m}개월: 화면 {shown} vs τ·σ·√12 = {expect:.4f} — 연율화가 어긋난다")
+        assert shown.startswith("±"), f"{m}개월: 변동 표기가 ± 가 아니다: {shown}"
 
 
 def test_amount_line_matches_its_own_stated_formula(probe):
