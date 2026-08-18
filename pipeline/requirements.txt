@@ -5,5 +5,5 @@
 # - 버전을 올릴 때는 손으로 고치지 말고 .github/dependabot.yml 이 여는 주간 PR로 올린다.
 # - 검증 환경: Python 3.12.3 (build-dashboard.yml 의 3.12 와 동일) — 실데이터 완주 확인.
 pandas==3.0.5
-numpy==2.5.1
+numpy==2.5.2
 openpyxl==3.1.5
