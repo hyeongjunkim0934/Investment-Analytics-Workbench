@@ -1705,6 +1705,16 @@ def test_cma_alt_factor_mapping_matches_closed_form(probe):
     assert c["altAggregateIdioIsIndependent"] is True, "합산 분산이 (w₁²+w₂²) 잔차와 어긋난다"
     assert c["altCrossIsFactorCross"] is True
     assert c["econMatrixIsPD"] is True, "잔차를 더했는데도 행렬이 정칙이 아니다"
+    # §7.7.19 감사에서 제기된 세 불변식 — h₀ 도입으로 _fx 열 계수가 xeOf 와 w주식 만큼
+    # 어긋나는데, 그 차이가 (hb,he) 무관 **상수**라 등위집합·범위·왕복이 보존된다.
+    # 실데이터로 확인했고(σ 산포 0.000e+00, 범위 [0, wF] 정확) 여기서 고정한다.
+    assert c["isoXePairsGiveSameSigma"] is True, (
+        "같은 Xe 를 만드는 헤지쌍의 위험이 갈린다 — Xe 붕괴 항등식이 깨졌다"
+    )
+    assert c["xeStaysInStructuralRange"] is True, "Xe 가 [0, wF] 를 벗어난다"
+    assert c["fxLoadCountsDirectEquity"] is True, (
+        "총 환노출이 직접 해외주식 슬리브를 빠뜨린다 — w주식 만큼 과소계상"
+    )
     assert c["bmModeUsesRawAlt"] is True, "「벤치마크 그대로(진단)」 모드가 관측 σ 로 돌아가지 않는다"
     assert c["bmModeClassesIdentical"] is True, "bm 진단 모드에서 두 분류가 같은 행이 아니다"
 

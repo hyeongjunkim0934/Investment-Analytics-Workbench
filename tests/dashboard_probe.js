@@ -1471,6 +1471,36 @@ safe("cmaLayer", () => {
   const fxTot = E.fxLoadW ? E.fxLoadW(wAlt) : null;
   r.altCarriesEmbeddedFx = fxTot != null && Math.abs(fxTot - 0.075) < 1e-9;
   r.altXeIsZeroSoTotalExceedsXe = Math.abs(E.xeOfW(wAlt, 0.9, 0.9)) < 1e-12 && fxTot > 0;
+  /* fxLoadW 는 **직접 해외주식 슬리브도** 세야 한다 — 매핑 대체만 세면 w주식 만큼
+     과소계상이다(감사에서 제기된 자리). 해외주식만 10%, he 를 움직이며 확인. */
+  const wEqOnly = [0, 0, 0, 0.10, 0, 0, 0];
+  r.fxLoadCountsDirectEquity = [0, 0.5, 1].every((he) => {
+    const Eh = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), h_bond: 100, h_eq: he * 100 });
+    return Math.abs(Eh.fxLoadW(wEqOnly) - 0.10 * (1 - he)) < 1e-9;
+  });
+  /* **Xe 항등식이 h₀ 도입 후에도 성립하는가** — 이것이 감사에서 제기된 핵심 가설이다.
+     _fx 열 계수는 Σwᵢ(h₀ᵢ−hᵢ) 라 xeOf 가 돌려주는 Σwᵢ(1−hᵢ) 와 **w주식 만큼 다르다**.
+     그러나 그 차이는 (hb,he) 와 무관한 **상수 평행이동**이므로 등위집합이 보존되고,
+     같은 Xe 를 만드는 모든 쌍의 σ 가 여전히 정확히 같다. 실데이터로 확인했고 여기서
+     고정한다 — 좌표가 어긋나는 변경이 들어오면 산포가 0 을 벗어난다. */
+  {
+    const Ex = P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC));
+    const wb = Ex.w0[1], we = Ex.w0[3];
+    const sigAt = (hb, he) => Ex.sigmaHedge(hb, he);
+    const target = 0.5 * (wb + we);            // 도달 가능한 중간 Xe
+    const pairs = [];
+    for (let t = 0; t <= 100; t++) {
+      const hb = t / 100, he = 1 - (target - wb * (1 - hb)) / we;
+      if (he >= -1e-12 && he <= 1 + 1e-12) pairs.push([hb, Math.min(Math.max(he, 0), 1)]);
+    }
+    const pick = [pairs[0], pairs[(pairs.length / 2) | 0], pairs[pairs.length - 1]];
+    const ss = pick.map(([hb, he]) => sigAt(hb, he));
+    r.isoXePairsGiveSameSigma = pick.length === 3
+      && Math.max(...ss) - Math.min(...ss) < 1e-9;
+    /* 구조적 범위 [0, wF] 도 유지되는가 — §7.7.17 의 서술이 h₀ 도입 후에도 참인지 */
+    r.xeStaysInStructuralRange =
+      Math.abs(Ex.xeOf(1, 1)) < 1e-12 && Math.abs(Ex.xeOf(0, 0) - (wb + we)) < 1e-12;
+  }
   /* 잔차 덕에 정칙 — 촐레스키가 끝까지 간다 */
   const chol = (C) => {
     const n = C.length, L = C.map((row) => row.slice());
