@@ -725,6 +725,51 @@ def test_total_fx_exposure_is_separated_from_xe():
     assert 'layer !== "cma"' in blk and "return null" in blk, (
         "프록시 층에서 0 을 지어내고 있습니다 — 기저가 달라 null 이어야 합니다"
     )
-    assert "헤지 슬라이더로 조절되지 않습니다" in src, (
-        "총 환노출과 Xe 의 차이를 화면이 설명하지 않습니다"
+    # §7.7.20 이후 이 몫도 조절할 수 있게 됐다 — 다만 **다른 슬라이더**다.
+    # "조절되지 않습니다"로 되돌아가면 사용자를 없는 제약으로 안내하게 된다.
+    assert "이 몫은 위 두 슬라이더가 아니라 「대체투자 환헤지 비율」이 움직입니다" in src, (
+        "총 환노출과 Xe 의 차이를 화면이 설명하지 않거나, 어느 레버가 움직이는지 적지 않습니다"
     )
+    assert "헤지 슬라이더로 조절되지 않습니다" not in src, (
+        "§7.7.20 이후 이 몫은 「대체투자 환헤지 비율」로 조절됩니다 — 옛 문장이 되살아났습니다"
+    )
+
+
+def test_alt_fx_hedge_is_a_model_input_outside_xe():
+    """대체투자 환헤지 비율(§7.7.20 — 2026-08-19 사용자 지시) 계약.
+
+    사용자가 「유동적으로 환헤지 중, 현재 90% 정도」라고 확인해 화면 입력이 됐다.
+    규약은 사용자가 고른 것이라 코드가 임의로 바꾸지 말 것:
+    ① **모형 입력**이라 즉시 저장한다(μ·σ·λ 와 같은 칸 — 최적화가 고르는 레버가 아니다)
+    ② **두 분류에 한 비율**을 건다(지분형·대출형 분리 없음)
+    ③ **Xe 에는 들어가지 않는다** — 합치면 최적 헤지쌍이 사용자가 정한 값을 덮어쓴다.
+
+    값 자체(90)는 자리표시자이며 기관 수치가 아니다 — 실제 값은 브라우저
+    localStorage 에만 남는다(공개 저장소).
+    """
+    root = Path(__file__).resolve().parents[1]
+    src = (root / "dashboard" / "app.js").read_text(encoding="utf-8")
+    alloc = (root / "pipeline" / "alloc.py").read_text(encoding="utf-8")
+
+    assert re.search(r'"h_alt"\s*:\s*\d+', alloc), (
+        "alloc.py DEFAULTS 에 h_alt 가 없습니다 — 화면 폴백만으로는 디폴트가 두 벌이 됩니다"
+    )
+    assert "h_alt: d.h_alt == null" in src, "allocDefaults 가 h_alt 를 승계하지 않습니다"
+
+    # 팩터 행에서 실제로 빼는가 — 더하면 헤지가 노출을 늘리는 반대 모형이다
+    blk = src.split("const hAlt =")[1][:900]
+    assert "r[fxi] -= hAlt * (we / 100)" in blk, (
+        "대체투자 헤지가 _fx 를 빼지 않습니다 — 부호가 뒤집혔는지 확인"
+    )
+    # 슬라이더는 즉시 저장하고 dirty 배지를 켜지 않는다(모형 입력 규약)
+    box = src.split("const altHedgeBox = () => {")[1][:1200]
+    assert "allocSaveState(st)" in box, "대체투자 헤지가 즉시 저장되지 않습니다"
+    assert "markDirty()" not in box, (
+        "모형 입력인데 「저장 안 됨」 배지를 켭니다 — 저장했으므로 거짓 표시입니다"
+    )
+    # Xe 산식에 섞이지 않았는가 — xeOf/xeOfW 는 h_bond/h_eq 만 본다
+    for fn in ("xeOf(hbX, heX)", "xeOfW(w, hbX, heX)"):
+        body = src.split(fn + " {")[1][:200]
+        assert "h_alt" not in body and "hAlt" not in body, (
+            f"{fn} 가 대체투자 헤지를 Xe 에 넣고 있습니다 — 최적 헤지쌍이 사용자 값을 덮어씁니다"
+        )

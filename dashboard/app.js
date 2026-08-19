@@ -3973,11 +3973,26 @@ function allocEngine(A, st) {
       return { rEq: r, rDt: r.slice(), idio: 0 };
     }
     /* 분류별 팩터 매핑(2026-08-12 사용자 지시) — 지분형은 주식 성격이 지배적이고
-       대출형은 채권 성격이라 다른 블렌드를 기본으로 둔다(콘솔에서 조정). */
+       대출형은 채권 성격이라 다른 블렌드를 기본으로 둔다(콘솔에서 조정).
+
+       **환헤지(§7.7.20 — 2026-08-19 사용자 지시 "유동적으로 환헤지 하는중").**
+       팩터로 쓰는 시가 해외주식은 h₀=0(미헤지)이라 매핑 비율 `we/100` 만큼 환이
+       **딸려 들어온다**. 그 몫에 사용자의 대체투자 헤지비율을 걸어 `_fx` 를 뺀다:
+       순 환노출 = (we/100)·(1 − h_alt). 매핑이 채권 100%(we=0)면 걸 환이 없어
+       비율과 무관하게 0 이 된다 — 분류별 매핑이 달라도 한 비율로 맞게 작동하므로
+       슬라이더를 분류마다 두지 않았다(2026-08-19 사용자 선택 「하나로」).
+       **Xe 에는 넣지 않는다** — Xe 는 최적화가 고르는 레버(해외채권·해외주식)의
+       축이고 이쪽은 모형 입력이라, 합치면 「최적 헤지쌍」이 사용자가 이미 정한 값을
+       덮어쓰게 된다. 총 환노출은 `fxLoadW` 가 따로 세고 화면이 Xe 와 구분해 적는다. */
+    const hAlt = (isFinite(+st.h_alt) ? +st.h_alt : 90) / 100;
     const mk = (we, wb) => {
       const r = new Array(mcols).fill(0);
       r[cmaCI["시가 해외주식"]] += we / 100;
       r[cmaCI["시가 국내채권"]] += wb / 100;
+      const fxi = cmaCI["_fx"];
+      /* h₀(시가 해외주식) = 0 이므로 딸려 온 환은 we/100 이고, 그중 h_alt 를 헤지한다.
+         부호는 뺄셈이다 — 더하면 헤지가 노출을 늘리는 반대 모형이 된다. */
+      if (fxi != null && we !== 0 && hAlt !== 0) r[fxi] -= hAlt * (we / 100);
       return r;
     };
     const am = st.alt_map;
@@ -4131,14 +4146,14 @@ function allocEngine(A, st) {
     xeOfW(w, hbX, heX) { return w[1] * (1 - hbX) + w[3] * (1 - heX); },
     xeOpen() { return w0[1] + w0[3]; },
     /* 배분이 실제로 지는 **총 환노출** — _fx 열 적재량에 더해, 팩터로 쓴 BM 계열에
-       **내재된** 환(계열별 1 − h₀)까지 센다. 매핑 대체투자는 _fx 열이 0 인데도 시가
-       해외주식(h₀=0, 환 내재)을 팩터로 쓰므로 슬리브당 we/100 만큼 환을 지는데, 이
-       항을 빼면 총 환노출이 실제의 절반 아래로 적힌다(실측 대표 배분: Xe 6.00% 외에
-       8.00% — 표기의 2.33배가 실제). **Xe 와 같은 수가 아니다** — Xe 는 헤지 레버로
-       조절 가능한 부분이고 이쪽은 레버가 닿지 않는 몫까지 포함한 실제 노출이라,
-       화면은 둘을 구분해서 적어야 한다.
-       프록시 층은 로딩 기저가 달라(e_usd 축을 명시로 얹는다) null 을 돌려준다 —
-       없는 수를 0 으로 지어내지 않는다. */
+       **내재된** 환(계열별 1 − h₀)까지 센다. 매핑 대체투자는 시가 해외주식(h₀=0,
+       환 내재)을 팩터로 쓰므로 슬리브당 we/100 의 환을 지고, 거기에 사용자의
+       대체투자 헤지비율이 걸려 순 노출이 (we/100)(1 − h_alt) 가 된다(§7.7.20).
+       **Xe 와 같은 수가 아니다** — Xe 는 최적화가 고르는 레버(해외채권·해외주식)의
+       축이고, 대체투자 헤지는 모형 입력이라 Xe 밖에 있다. 그래서 화면은 둘을 구분해
+       적어야 한다(합치면 「최적 헤지쌍」이 사용자가 정한 값을 덮어쓰게 된다).
+       프록시 층은 로딩 기저가 달라(e_usd 축을 명시로 얹고 대체투자 기저가 원화라
+       환노출이 구조적으로 0) null 을 돌려준다 — 없는 수를 0 으로 지어내지 않는다. */
     fxLoadW(w) {
       if (layer !== "cma" || cmaCI == null || cmaCI["_fx"] == null) return null;
       const f = cmaCI["_fx"];
@@ -4768,6 +4783,11 @@ function allocDefaults(A) {
     loan_w: d.loan_w, loan_y: d.loan_y,
     alt_alpha: d.alt_alpha, alt_vol: d.alt_vol,
     tenor_m: d.tenor_m, h_bond: d.h_bond, h_eq: d.h_eq,
+    /* 대체투자 환헤지 비율 — 위 둘과 **성격이 다르다**(2026-08-19 사용자 지시).
+       해외채권·해외주식 헤지는 최적화가 고르는 레버(시뮬레이션 트랙·저장 안 함)인 반면
+       이쪽은 **모형 입력**이라 즉시 저장한다 — 사용자가 「유동적으로 헤지 중」인 현재
+       운용 상태를 모형에 넣는 칸이지 최적화가 고를 선택지가 아니다(§7.7.20). */
+    h_alt: d.h_alt == null ? 90 : d.h_alt,
     h_bands: JSON.parse(JSON.stringify(d.h_bands || { 해외채권: [0, 100], 해외주식: [0, 100] })),
     h_tol_hi: { ...(d.h_tol_hi || { 해외채권: null, 해외주식: null }) },
     ccy: JSON.parse(JSON.stringify(d.ccy || { 해외채권: {}, 해외주식: {} })),
@@ -4881,11 +4901,15 @@ function allocState(A) {
      NaN 이 되어 참고치가 사유 없이 전부 "–"가 된다(NaN 비교는 모든 검사를 통과).
      null 은 유효한 "없음"이므로 유지하고, 숫자로 못 읽는 값만 기본값으로 되돌린다. */
   ["cap_foreign", "cap_equity", "target_ret", "risk_cap",
-   "loan_w", "loan_y", "alt_alpha", "alt_vol", "tenor_m", "h_bond", "h_eq",
+   "loan_w", "loan_y", "alt_alpha", "alt_vol", "tenor_m", "h_bond", "h_eq", "h_alt",
    "dur_liab", "dur_asset", "la_ratio"].forEach((k) => {
     if (st[k] == null) return;
     st[k] = isFinite(+st[k]) ? +st[k] : d[k];
   });
+  /* 대체투자 헤지비율은 밴드도 함께 소독한다(§7.7.20) — 슬라이더는 0~100 이지만
+     저장분은 손으로 고칠 수 있고, 범위를 벗어난 값은 라벨에 그대로 찍히면서
+     계산에도 들어간다(예 −50% 는 「오버노출」이라는 없는 상태를 만든다). */
+  st.h_alt = Math.min(100, Math.max(0, st.h_alt == null ? d.h_alt : st.h_alt));
   /* ---- 2026-08-12 이관 ② — 장부가 축 제거(§7.7.11) ----
      회계 9축 저장분을 시가 7축으로 접는다. 채권 쌍은 **합산**(구 경제 관점 mixEcon 과
      같은 규칙 — 합계 100 과 경제적 환노출 보존), σ 키인은 시가 키를 승계하고,
@@ -5241,6 +5265,35 @@ function renderAlloc() {
         el("div", { style: "font-size:12.5px" }, el("b", {}, label)),
         el("div", { style: "display:flex;gap:8px;align-items:center" }, wrap, lbl));
     };
+    /* 대체투자 환헤지 — 슬라이더 모양은 위와 같지만 **트랙이 다르다**(§7.7.20):
+       최적 ▼ 마커가 없고(최적화가 고르는 축이 아니다), 조정하면 **즉시 저장**한다
+       (모형 입력 — μ·σ·λ 와 같은 규약). markDirty() 를 부르지 않는 이유가 그것이다 —
+       "저장 안 된 조정"이 아니므로 배지를 띄우면 사용자를 헷갈리게 한다. */
+    const altHedgeBox = () => {
+      const lbl = el("span", { class: "hlbl" }, `${st.h_alt}%`);
+      const inp = el("input", { type: "range", min: "0", max: "100", step: "1",
+        value: String(st.h_alt), "aria-label": "대체투자 환헤지 비율" });
+      inp.addEventListener("input", () => {
+        st.h_alt = +inp.value;
+        lbl.textContent = `${st.h_alt}%`;
+        recalc(false);
+      });
+      inp.addEventListener("change", () => { allocSaveState(st); recalc(true); });
+      return el("div", { style: "margin-top:8px" },
+        el("div", { style: "font-size:12.5px" },
+          el("b", {}, "대체투자 환헤지 비율"),
+          el("span", { style: "color:var(--ink-3);font-size:11.5px;margin-left:6px" },
+            "모형 입력 — 즉시 저장 · 최적화 대상이 아닙니다")),
+        /* 래퍼에 `sim-alt-hedge` 를 더 단다 — 위 두 레버와 **다른 트랙**이라
+           래퍼만 세는 검사가 이 칸을 헤지 레버로 잘못 세지 않게 하는 자리다
+           (§7.7.15 의 `.sim-bar-wrap` 함정과 같은 종류). */
+        el("div", { style: "display:flex;gap:8px;align-items:center" },
+          el("div", { class: "sim-bar-wrap sim-alt-hedge" }, inp), lbl),
+        el("div", { style: "color:var(--ink-3);font-size:12px" },
+          "매핑 팩터인 시가 해외주식이 미헤지 계열이라 대체투자에 환이 딸려 옵니다 — 그 몫에 이 비율을 겁니다. ",
+          "위 두 슬라이더와 달리 ", el("b", {}, "Xe 에는 들어가지 않습니다"),
+          " (최적 헤지쌍이 여기 값을 덮어쓰지 않도록). 총 환노출은 아래 레버 문단이 Xe 와 나눠 적습니다."));
+    };
     const syncHedgeUi = () => {
       ["h_bond", "h_eq"].forEach((k) => {
         const r = hedgeRefs[k];
@@ -5270,7 +5323,13 @@ function renderAlloc() {
       mkHedge("해외채권 헤지비율", "h_bond"), mkHedge("해외주식 헤지비율", "h_eq"),
       el("span", { style: "color:var(--ink-3);font-size:12px" },
         "즉시 반영·저장 안 함 — 위험은 총 미헤지 환노출(Xe)로만 움직이므로, 같은 Xe 를 만드는 " +
-        "조합은 위험이 정확히 같습니다. ① 최적 카드의 헤지쌍은 그 동점 중 현재값 최근접 대표점입니다.")));
+        "조합은 위험이 정확히 같습니다. ① 최적 카드의 헤지쌍은 그 동점 중 현재값 최근접 대표점입니다."),
+      /* 대체투자 헤지는 **위 둘과 다른 칸이다**(§7.7.20 — 2026-08-19 사용자 지시).
+         최적화가 고르는 레버가 아니라 「지금 이렇게 운용 중」을 넣는 모형 입력이라
+         μ·σ·λ 와 같이 **즉시 저장**하고, Xe 에도 넣지 않는다(합치면 최적 헤지쌍이
+         사용자가 정한 값을 덮어쓴다). 두 분류에 같은 비율을 걸지만 매핑이 다르면
+         환노출은 자동으로 달라진다 — 매핑이 채권 100%면 걸 환이 없어 0 이다. */
+      altHedgeBox()));
 
     const fillCash = el("button", { type: "button", class: "btn-ghost", onclick: () => {
       /* 합계를 몰래 맞추지 않는다 — 사용자가 눌렀을 때만 잔여를 단기자금으로 채운다 */
@@ -5907,17 +5966,18 @@ function renderAlloc() {
         el("b", {}, "총 미헤지 환노출 Xe 하나뿐"), "입니다(총자산 대비). ",
         `현재 Xe ${fmtNum(hq.xeCur * 100, 2)}% → 위험 최소 Xe ${fmtNum(hq.xeBand * 100, 2)}%: `,
         `위험 ${fmtNum(sigCur, 2)}→${fmtNum(hq.sBand, 2)}%. `,
-        /* Xe 는 **헤지 레버가 닿는 몫**이다. 매핑 대체투자는 시가 해외주식(미헤지 계열)을
-           팩터로 쓰므로 레버 밖에서 환을 더 진다 — 그 차이를 적지 않으면 사용자는 Xe 를
-           총 환노출로 읽는다(실측 대표 배분에서 2.33배 차이). §7.7.19. */
+        /* Xe 는 **최적화가 고르는 레버**의 축이다. 매핑 대체투자도 팩터(시가 해외주식 —
+           미헤지 계열)를 통해 환을 지지만 그 헤지는 모형 입력이라 Xe 밖에 있다 — 그
+           차이를 적지 않으면 사용자는 Xe 를 총 환노출로 읽는다. §7.7.19·§7.7.20. */
         (() => {
           const tot = E.fxLoadW ? E.fxLoadW(E.w0) : null;
           if (tot == null || Math.abs(tot - hq.xeCur) < 5e-5) return "";
           return el("span", {},
             el("b", {}, `총 환노출은 ${fmtNum(tot * 100, 2)}%`),
-            `로 Xe 보다 큽니다 — 차이 ${fmtNum((tot - hq.xeCur) * 100, 2)}%p 는 매핑 대체투자가 `,
-            "팩터(시가 해외주식 — 미헤지 계열)를 통해 지는 몫이라 ",
-            el("b", {}, "헤지 슬라이더로 조절되지 않습니다"), ". ");
+            `로 Xe 보다 ${tot > hq.xeCur ? "큽니다" : "작습니다"} — 차이 `,
+            `${fmtNum(Math.abs(tot - hq.xeCur) * 100, 2)}%p 는 매핑 대체투자가 팩터를 통해 지는 몫이며, `,
+            `대체투자 환헤지 ${fmtNum(st.h_alt, 0)}% 가 적용된 뒤의 값입니다 — `,
+            el("b", {}, "이 몫은 위 두 슬라이더가 아니라 「대체투자 환헤지 비율」이 움직입니다"), ". ");
         })(),
         hq.pair
           ? el("span", {}, "같은 Xe 를 만드는 조합은 무수히 많고 ",
