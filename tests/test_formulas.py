@@ -11,6 +11,7 @@ from __future__ import annotations
 import calendar
 import itertools
 import math
+import re
 
 import numpy as np
 import pandas as pd
@@ -649,4 +650,81 @@ def test_hp_median_window_is_odd_and_documented():
     block = src.split("HP_MEDIAN_N =")[0][-2000:]
     assert "자기상관" in block and "임의 상수가 아니다" in block, (
         "HP_MEDIAN_N 의 근거가 소스에 없습니다 — 자의적 상수 금지"
+    )
+
+
+def test_cma_fx_baseline_is_per_series_not_one_size(  # noqa: D401
+):
+    """BM 계열마다 **자체 헤지 스탠스 h₀** 가 다르다 — §7.7.19.
+
+    기관이 자산군별 실제 정책 그대로 지수를 산출하므로 해외채권 BM 은 환헤지 반영
+    (h₀=1), 해외주식 BM 은 미헤지(h₀=0)다(2026-08-17 사용자 확인). 노출은
+    `BM + (h₀ − h)·_fx` 이고 h = h₀ 면 보정이 0 이다.
+
+    예전 코드는 전 계열을 h₀=1 로 읽어 해외주식에 `(1 − he)` 를 더했고, 그 계열은
+    이미 환을 이고 있었으므로 **환노출을 w주식 만큼 이중계상**했다. 그러면 헤지 축이
+    한 칸 밀려 화면의 「완전헤지」가 실제로는 「완전오픈」이 된다.
+
+    오진의 원인은 **단순상관으로 판정한 것**이다 — ACWI 가 달러원과 음의 상관이라
+    미헤지 해외주식도 단순상관이 0 근처로 상쇄된다. 갈라내려면 다변량 회귀라야 한다.
+    이 테스트는 계열별 h₀ 와 그 근거 서술이 소스에 남아 있는지만 본다(동작 검증은
+    프로브 `cmaLayer` 의 equityAtOpenIsRawBm/bondAtFullHedgeIsRawBm 이 한다).
+    """
+    src = (Path(__file__).resolve().parents[1] / "dashboard" / "app.js").read_text(
+        encoding="utf-8")
+
+    m = re.search(r"const CMA_BM_H0 = \{([^}]*)\}", src)
+    assert m, "CMA_BM_H0 상수가 없습니다 — 계열별 환 기준이 정본이어야 합니다"
+    body = m.group(1)
+    assert re.search(r'"시가 해외채권"\s*:\s*1', body), "해외채권 h₀ 가 1(헤지)이 아닙니다"
+    assert re.search(r'"시가 해외주식"\s*:\s*0', body), "해외주식 h₀ 가 0(미헤지)이 아닙니다"
+
+    # 로딩이 상수를 실제로 쓰는가 — `1 - heX` 로 되돌아가면 여기서 걸린다
+    assert 'CMA_BM_H0["시가 해외주식"] - heX' in src, (
+        "해외주식 행이 계열별 h₀ 를 쓰지 않습니다 — (1 − he) 로 되돌아갔는지 확인"
+    )
+    assert 'CMA_BM_H0["시가 해외채권"] - hbX' in src, (
+        "해외채권 행이 계열별 h₀ 를 쓰지 않습니다"
+    )
+    # 옛 규약은 **로딩 행**에서만 금지다 — xeOf/xeOfW 의 `(1 − he)` 는 정당하다
+    # (Xe = 슬리브의 미헤지 비율이라 h₀ 와 무관하다).
+    assert "withFx(base(\"시가 해외주식\"), 1 - heX)" not in src, (
+        "해외주식 로딩이 옛 (1 − he) 규약으로 되돌아갔습니다"
+    )
+
+    # withFx 는 **음수를 통과**시켜야 한다 — h₀=0 계열을 헤지하면 뺄셈이다
+    w = re.search(r"const withFx = \(r, (\w+)\) => \{([^;]*);", src)
+    assert w, "withFx 를 찾지 못했습니다"
+    assert "Math.abs" in w.group(2), (
+        "withFx 가 음수를 버립니다 — `open > 1e-12` 가드가 되살아났는지 확인"
+    )
+
+    # 틀린 단언이 화면에 되살아나지 않았는가
+    assert "환노출 포함이면 나올 수 없는" not in src, (
+        "단순상관 오진 문구가 되살아났습니다 — ACWI 와 달러원의 음의 상관이 상쇄합니다"
+    )
+    # 오진의 원인이 소스에 기록돼 있어야 같은 실수를 반복하지 않는다
+    assert "단순상관으로 판정하지 말 것" in src, "§7.7.19 오진 경위가 소스에서 사라졌습니다"
+
+
+def test_total_fx_exposure_is_separated_from_xe():
+    """매핑 대체투자는 팩터(시가 해외주식 — 미헤지)를 통해 환을 진다 — §7.7.19.
+
+    `_fx` 열 적재량은 0 인데도 실제 환노출이 있어서, Xe(헤지 레버가 닿는 몫)만 적으면
+    총 환노출이 실제의 절반 아래로 나간다(실측 대표 배분에서 2.33배 차이). 그래서
+    엔진이 `fxLoadW` 로 총 노출을 따로 내고 화면이 Xe 와 **구분해서** 적는다.
+    """
+    src = (Path(__file__).resolve().parents[1] / "dashboard" / "app.js").read_text(
+        encoding="utf-8")
+    assert "fxLoadW(w)" in src, "총 환노출 계산(fxLoadW)이 없습니다"
+    # 내재분까지 세는가 — (1 − h₀) 가중이 빠지면 _fx 열만 세어 대체투자를 놓친다
+    blk = src.split("fxLoadW(w) {")[1][:700]
+    assert "CMA_BM_H0" in blk and "1 - CMA_BM_H0" in blk, (
+        "fxLoadW 가 팩터 내재 환을 세지 않습니다 — _fx 열만 세면 매핑 대체투자를 놓칩니다"
+    )
+    assert 'layer !== "cma"' in blk and "return null" in blk, (
+        "프록시 층에서 0 을 지어내고 있습니다 — 기저가 달라 null 이어야 합니다"
+    )
+    assert "헤지 슬라이더로 조절되지 않습니다" in src, (
+        "총 환노출과 Xe 의 차이를 화면이 설명하지 않습니다"
     )

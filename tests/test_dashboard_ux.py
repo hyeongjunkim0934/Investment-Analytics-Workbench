@@ -2280,8 +2280,14 @@ def test_hedge_optimum_markers_and_inert_reasons(probe):
     assert c["hedgeMarkHiddenWhenInert"] is True, "위험에 무영향인 슬리브에 최적 마커를 찍었다"
     assert c["inertSleeveExplained"] is True, "비중 0 슬리브의 헤지 무영향을 화면이 설명하지 않는다"
     assert c["bandBindExplained"] is True, "헤지 밴드가 물었을 때 그 사실을 밝히지 않는다"
-    assert c["bandCaseNotCalledCap"] is True
-    assert c["bandFlagOnlyBand"] is True, "밴드 구속인데 cap 플래그까지 켜졌다"
+    # 「밴드 단독」을 픽스처로 못박지 않는다 — 두 구속은 동시에 성립할 수 있고(§7.7.17)
+    # 어느 쪽이 무는지는 공분산이 바뀌면 따라 바뀐다(§7.7.19 환 기준 교정에서 실제로
+    # band-only → both 로 옮겨 갔다). 화면 문장이 카드가 쓰는 판정과 **일치하는가**를 본다.
+    # 둘을 구분하는 능력 자체는 아래 unitBandOnly/unitCapOnly/unitBoth 가 고정한다.
+    assert c["bandCaseActuallyBindsBand"] is True, "밴드를 좁혔는데 밴드가 안 문다"
+    assert c["bandScreenMatchesVerdict"] is True, (
+        "화면 문장이 allocJointOpt 의 구속 판정과 어긋난다"
+    )
     assert c["capFlagSet"] is True, "노출 상한 구속을 cap 으로 판정하지 못한다"
     assert c["capExplainedAsExposure"] is True, "중립 밴드인데 원인을 밴드로 적는다 — 틀린 조치로 유도"
     assert c["capCaseNotCalledBand"] is True

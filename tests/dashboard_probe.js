@@ -1447,8 +1447,30 @@ safe("cmaLayer", () => {
   const fMix = fEq.map((x, j) => 0.12 * x + 0.03 * fDt[j]);
   r.altAggregateIdioIsIndependent =
     Math.abs(quad(wMix, Vs.C) - (quad(fMix, M) + (0.12 ** 2 + 0.03 ** 2) * idio) * 1e4) < 1e-9;
-  const eqRow = eV("시가 해외주식", [["_fx", 0.1]]);
+  /* 해외주식 BM 은 **미헤지 계열**(h₀=0)이라 헤지하면 _fx 를 **뺀다** — 기본 he=0.9 면
+     −0.9 다. 예전에는 전 계열을 헤지 기준으로 읽어 +0.1 을 더했고, 그 결과 환노출을
+     w주식 만큼 이중계상했다(§7.7.19). 부호가 되돌아가면 여기서 걸린다. */
+  const eqRow = eV("시가 해외주식", [["_fx", -0.9]]);
   r.altCrossIsFactorCross = Math.abs(Vs.C[iAlt][iEq] - dot(eqRow, mv(M, fEq)) * 1e4) < 1e-9;
+  r.foreignEquityRowSubtractsFx =
+    Math.abs(V.C[iEq][iEq] - quad(eqRow, M) * 1e4) < 1e-9;
+  /* h = h₀ 면 보정이 정확히 0 — 계열별 기준점이 맞는지 직접 확인한다.
+     해외주식은 he=0(오픈)에서, 해외채권은 hb=1(완전헤지)에서 BM 그대로여야 한다. */
+  const Eh0 = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), h_eq: 0, h_bond: 100 });
+  r.equityAtOpenIsRawBm =
+    Math.abs(Eh0.V.C[iEq][iEq] - quad(eV("시가 해외주식"), M) * 1e4) < 1e-9;
+  r.bondAtFullHedgeIsRawBm =
+    Math.abs(Eh0.V.C[iFb][iFb] - quad(eV("시가 해외채권"), M) * 1e4) < 1e-9;
+  /* 자연헤지 — 미헤지 계열을 헤지하면 해외주식 위험은 **늘어난다**(달러가 주식과
+     음의 상관이라 환노출이 완충 역할을 한다). 부호가 뒤집히면 여기서 걸린다. */
+  const Eh1 = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), h_eq: 100, h_bond: 100 });
+  r.hedgingEquityRaisesItsRisk = Eh1.V.C[iEq][iEq] > Eh0.V.C[iEq][iEq];
+  /* 매핑 대체투자는 _fx 열이 0 인데도 팩터를 통해 환을 진다 — 총 환노출 ≠ Xe.
+     지분형 12%·대출형 3%, 기본 매핑 50/50 이면 팩터 몫이 0.5×0.15 = 7.5%p 다. */
+  const wAlt = [0, 0, 0, 0, 0.03, 0.12, 0];
+  const fxTot = E.fxLoadW ? E.fxLoadW(wAlt) : null;
+  r.altCarriesEmbeddedFx = fxTot != null && Math.abs(fxTot - 0.075) < 1e-9;
+  r.altXeIsZeroSoTotalExceedsXe = Math.abs(E.xeOfW(wAlt, 0.9, 0.9)) < 1e-12 && fxTot > 0;
   /* 잔차 덕에 정칙 — 촐레스키가 끝까지 간다 */
   const chol = (C) => {
     const n = C.length, L = C.map((row) => row.slice());
@@ -1528,7 +1550,12 @@ safe("cmaLayer", () => {
   r.controlsShowPerClassMapping = /지분형/.test(ctlTxt) && /대출형/.test(ctlTxt);
   r.tableShowsMappingTag = /\[매핑\]/.test(DOC.getElementById("alloc-table-card").textContent);
   const mthTxt = DOC.getElementById("alloc-method").textContent;
-  r.methodShowsFxBasis = /환노출 제거 기준/.test(mthTxt);
+  /* 환 기준은 **계열마다 다르다**는 사실이 방법론에 적혀야 한다(§7.7.19). 예전 문구
+     「해외 벤치마크는 환노출 제거 기준」은 해외주식에 대해 틀렸고, 그 오진이 환노출
+     이중계상으로 이어졌다 — 문구가 되살아나면 두 번째 검사가 걸린다. */
+  r.methodShowsFxBasis = /계열마다 다릅니다/.test(mthTxt)
+    && /해외채권은 환헤지 반영/.test(mthTxt) && /해외주식은 미헤지/.test(mthTxt);
+  r.methodDroppedWrongFxClaim = !/환노출 제거 기준/.test(mthTxt);
   r.methodShowsExcluded = /장부가 금융상품/.test(mthTxt) && /제외/.test(mthTxt);
   r.headlineShowsLayer = /기관 벤치마크/.test(DOC.getElementById("alloc-headline").textContent);
   /* 구 저장분(view:"acct")이 남아 있어도 — 단일 요약이 그대로 나오고 죽지 않는다 */
@@ -3090,11 +3117,20 @@ safe("hedgeTracks", () => {
   P.renderSection("alloc");
   const bandTxt = DOC.getElementById("alloc-sim-panel").textContent;
   r.bandBindExplained = BAND_RE.test(bandTxt);
-  r.bandCaseNotCalledCap = !CAP_RE.test(bandTxt);
+  /* **「밴드 단독」을 픽스처로 못박지 말 것.** 두 구속은 동시에 성립할 수 있고(§7.7.17),
+     어느 쪽이 무는지는 공분산이 바뀌면 따라 바뀐다 — 실제로 §7.7.19 의 환 기준 교정 뒤
+     이 시나리오가 band-only 에서 both 로 옮겨 갔다(헤지를 강제당한 해외주식이 더
+     위험해져 최적 배분이 해외자산을 비우고, 그러면 구조적 상한도 함께 문다 — 화면이
+     둘 다 적는 것이 옳다). 그래서 「밴드만 나와야 한다」가 아니라 **화면 문장이 이 카드가
+     실제로 쓰는 판정(allocJointOpt)과 일치하는가**를 본다. 둘을 구분하는 능력 자체는
+     아래 ③-e 의 단위 검사(crafted 입력)가 고정한다.
+     비교 대상은 **최적 배분**이다 — 이 카드는 ① 이라 현재 배분(w0)이 아니다. */
   const stBand = { ...P.allocDefaults(CMA_ALLOC),
     h_bands: { 해외채권: [95, 100], 해외주식: [95, 100] } };
   const joBand = P.allocJointOpt(P.allocEngine(CMA_ALLOC, stBand), stBand);
-  r.bandFlagOnlyBand = joBand.bandBinds === true && joBand.capBinds === false;
+  r.bandCaseActuallyBindsBand = joBand.bandBinds === true;
+  r.bandScreenMatchesVerdict =
+    BAND_RE.test(bandTxt) === joBand.bandBinds && CAP_RE.test(bandTxt) === joBand.capBinds;
   /* 중립 밴드 + 노출 상한 구속 — 밴드가 아니라 비중이 원인이라고 적어야 한다.
      해외 비중을 눌러(밴드 [0,2]) 최적 노출 폭을 좁히면 이 상태가 만들어진다. */
   const dflt2 = P.allocDefaults(CMA_ALLOC);
