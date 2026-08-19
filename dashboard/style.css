@@ -889,6 +889,10 @@ button.vchip { cursor: pointer; }
    가로 플렉스 안에 있어서, 폭을 주지 않으면 내용 폭으로 쪼그라들어 ▼ 위치가
    슬라이더와 어긋난다(2026-08-12 최적 마커 추가 시 실측). */
 .sim-hedge-row .sim-bar-wrap { flex: 0 0 200px; width: 200px; }
+/* 대체투자 환헤지(§7.7.20)는 같은 행에 있지만 **다른 트랙**이다 — 최적 ▼ 가 없고
+   즉시 저장된다. 래퍼만 세는 검사가 헤지 레버로 잘못 세지 않도록 클래스를 하나 더
+   달았고, 폭도 조금 넓혀 눈으로도 구분되게 한다(마커가 없어 위쪽 여백이 남는다). */
+.sim-hedge-row .sim-bar-wrap.sim-alt-hedge { flex: 0 0 240px; width: 240px; padding-top: 4px; }
 .sim-opt-mark { position: absolute; top: -3px; transform: translateX(-50%);
   font-size: 11px; color: var(--ink-1); pointer-events: none; line-height: 1; }
 .sim8-row input[type="number"] { width: 100%; }

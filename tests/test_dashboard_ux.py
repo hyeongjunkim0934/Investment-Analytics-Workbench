@@ -1715,6 +1715,24 @@ def test_cma_alt_factor_mapping_matches_closed_form(probe):
     assert c["fxLoadCountsDirectEquity"] is True, (
         "총 환노출이 직접 해외주식 슬리브를 빠뜨린다 — w주식 만큼 과소계상"
     )
+    # §7.7.20 — 대체투자 환헤지가 팩터 내재 환에 실제로 걸리는가(2026-08-19 사용자 지시).
+    # 매핑 팩터인 시가 해외주식이 h₀=0(미헤지)이라 대체투자에 환이 딸려 오고, 그 몫에만
+    # 이 비율이 걸린다. Xe 에는 넣지 않는다 — 넣으면 최적 헤지쌍이 사용자 값을 덮어쓴다.
+    assert c["altCarriesEmbeddedFx"] is True, (
+        "매핑 대체투자의 내재 환에 대체투자 헤지비율이 반영되지 않는다"
+    )
+    assert c["altXeIsZeroSoTotalExceedsXe"] is True, "대체투자만 담았는데 Xe 가 0 이 아니다"
+    assert c["altHedgeMovesFxLoad"] is True, "0%/100% 에서 총 환노출이 전액/0 이 아니다"
+    assert c["altHedgeNotInXe"] is True, (
+        "대체투자 헤지가 Xe 를 움직인다 — 최적 헤지쌍이 사용자 입력을 덮어쓴다"
+    )
+    assert c["altHedgeChangesRisk"] is True, "대체투자 헤지가 위험 계산에 닿지 않는다(칸만 있다)"
+    assert c["altHedgeDirectionMatchesEquity"] is True, (
+        "대체투자 헤지의 위험 방향이 직접 해외주식과 어긋난다 — 같은 미헤지 BM 을 쓰므로 같아야 한다"
+    )
+    assert c["altHedgeInertWhenNoEquityFactor"] is True, (
+        "매핑이 채권 100%(we=0)인데도 환노출이 남는다 — 걸 환이 없어야 한다"
+    )
     assert c["bmModeUsesRawAlt"] is True, "「벤치마크 그대로(진단)」 모드가 관측 σ 로 돌아가지 않는다"
     assert c["bmModeClassesIdentical"] is True, "bm 진단 모드에서 두 분류가 같은 행이 아니다"
 
@@ -1779,10 +1797,16 @@ def test_tv_lambda_utility_optimizer_is_sane(probe):
 def test_tv_weights_respond_to_risk_structure_not_bands(probe):
     """시변의 요점 — σ 가 커진 자산의 비중이 실제로 줄어야 한다.
 
-    단 밴드에 붙은 자산은 표본이 바뀌어도 못 움직인다(λ=1 의 국내주식 상한 붙음
-    확인) — 방향성은 내부해가 되는 λ 에서 잰다. 이 구분이 없으면 "시변인데 왜
-    안 움직이나"를 코드 결함으로 오진한다. 프로브는 μ 를 앵커 폴백으로 고정해
-    잰다 — 검사 대상은 최적화기의 성질이지 μ 디폴트 숫자가 아니다(§7.7.10).
+    단 밴드에 붙은 자산은 표본이 바뀌어도 못 움직인다 — 방향성은 내부해가 되는 λ 에서
+    잰다. 이 구분이 없으면 "시변인데 왜 안 움직이나"를 코드 결함으로 오진한다. 프로브는
+    μ 를 앵커 폴백으로 고정해 잰다 — 검사 대상은 최적화기의 성질이지 μ 디폴트 숫자가
+    아니다(§7.7.10).
+
+    **「λ=1 이면 국내주식이 상한 10% 에 붙는다」를 못박지 않는다** — 그건 성질이 아니라
+    그때의 μ·Σ 가 만든 상태이고, §7.7.20 에서 대체투자 환헤지가 행렬을 바꾸자 **롤링
+    표본 쪽에서** 풀렸다(기본 행렬은 그대로 0.10 이고 롤링만 내부해가 됐다 — 옛 검사는
+    둘 다 붙어 있다고 전제했다가 빨간불이 났고 코드는 멀쩡했다). 프로브는 밴드를 눌러
+    **붙는 상태를 구성한 뒤** 재고, 자연 상태의 두 값은 진단으로만 싣는다.
     """
     c = probe["cmaTv"]
     assert c["bandPinnedAtLowLambda"] is True
@@ -2285,6 +2309,11 @@ def test_hedge_optimum_markers_and_inert_reasons(probe):
     c = probe["hedgeTracks"]
     assert c["hedgeMarkWrappers"] == 2, "헤지 슬라이더에 마커 래퍼가 없다"
     assert c["hedgeMarksExist"] is True
+    # §7.7.20 — 대체투자 환헤지는 같은 행·같은 래퍼를 쓰지만 **다른 트랙**이다.
+    # 래퍼만 세면 3 이 되므로 `.sim-alt-hedge` 로 갈라내고, 갈라졌는지도 함께 본다.
+    assert c["altHedgeWrapSeparate"] is True, (
+        "대체투자 환헤지 래퍼가 헤지 레버와 구분되지 않는다(.sim-alt-hedge 누락)"
+    )
     assert c["hedgeMarkMatchesOptimum"] is True, "▼ 위치가 최적 헤지쌍과 어긋난다"
     assert c["hedgeMarkSaysRepresentative"] is True, "마커가 대표점임을 밝히지 않는다"
     assert c["hedgeMarkHiddenWhenInert"] is True, "위험에 무영향인 슬리브에 최적 마커를 찍었다"
@@ -2303,6 +2332,26 @@ def test_hedge_optimum_markers_and_inert_reasons(probe):
     assert c["capCaseNotCalledBand"] is True
     assert c["noopButtonAbsentWhenMovable"] is True
     assert c["noopButtonAppearsAfterApply"] is True, "이미 최적인데 버튼이 계속 눌린다"
+
+
+def test_alt_fx_hedge_slider_is_a_model_input(probe):
+    """대체투자 환헤지 슬라이더(§7.7.20 — 2026-08-19 사용자 지시) — 같은 행, 다른 규약.
+
+    사용자 확인: 「대체투자는 유동적으로 환헤지 하는 중, 현재 거의 90%」. 최적화가 고르는
+    레버가 아니라 「지금 이렇게 운용 중」을 넣는 **모형 입력**이라(사용자 선택) μ·σ·λ 와
+    같이 즉시 저장하고, 최적 ▼ 를 달지 않으며, 「저장 안 됨」 배지도 켜지 않는다 —
+    저장했는데 배지가 뜨면 거짓 표시다. Xe 밖이라는 사실도 화면이 적어야 한다.
+    """
+    c = probe["hedgeTracks"]
+    assert c["altHedgeSliderExists"] is True, "대체투자 환헤지 슬라이더가 없다"
+    assert c["altHedgeHasNoOptMark"] is True, (
+        "최적화 대상이 아닌 칸에 최적 ▼ 를 찍었다 — 없는 최적값을 단언하게 된다"
+    )
+    assert c["altHedgeSavesImmediately"] is True, "모형 입력인데 즉시 저장되지 않는다"
+    assert c["altHedgeDoesNotMarkDirty"] is True, (
+        "즉시 저장하면서 「저장 안 됨」 배지를 켠다 — 조정/저장 분리 표시가 거짓이 된다"
+    )
+    assert c["altHedgeExplainsNotXe"] is True, "Xe 에 들어가지 않는다는 사실을 화면이 적지 않는다"
 
 
 def test_xe_binding_attribution_is_not_exclusive(probe):

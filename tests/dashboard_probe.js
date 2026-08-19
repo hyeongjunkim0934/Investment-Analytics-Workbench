@@ -1418,11 +1418,17 @@ safe("cmaLayer", () => {
   const Es = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC),
     alt_map: { mode: "factor", eq_we: 65, eq_wb: 35, dt_we: 0, dt_wb: 100 } });
   const Vs = Es.V;
-  const mkF = (we, wb) => {
+  /* 손계산 팩터 행 — **대체투자 환헤지가 걸린 뒤의 행**이어야 한다(§7.7.20).
+     팩터인 시가 해외주식이 h₀=0(미헤지)이라 we 만큼 환이 딸려 오고, 그중 h_alt 를
+     헤지해 `_fx` 에서 뺀다. 기본값 90% 기준이며, hAlt 인자로 다른 값도 잰다. */
+  const mkFH = (we, wb, hAlt) => {
     const v = new Array(cm.cols.length).fill(0);
     v[CI["시가 해외주식"]] = we; v[CI["시가 국내채권"]] = wb;
+    if (CI._fx != null && we !== 0) v[CI._fx] -= hAlt * we;
     return v;
   };
+  const H_ALT_D = (P.allocDefaults(CMA_ALLOC).h_alt || 0) / 100;
+  const mkF = (we, wb) => mkFH(we, wb, H_ALT_D);
   const fEq = mkF(0.65, 0.35), fDt = mkF(0, 1);
   const fEE = M[CI["시가 해외주식"]][CI["시가 해외주식"]];
   const fEB = M[CI["시가 해외주식"]][CI["시가 국내채권"]];
@@ -1469,8 +1475,35 @@ safe("cmaLayer", () => {
      지분형 12%·대출형 3%, 기본 매핑 50/50 이면 팩터 몫이 0.5×0.15 = 7.5%p 다. */
   const wAlt = [0, 0, 0, 0, 0.03, 0.12, 0];
   const fxTot = E.fxLoadW ? E.fxLoadW(wAlt) : null;
-  r.altCarriesEmbeddedFx = fxTot != null && Math.abs(fxTot - 0.075) < 1e-9;
+  /* 매핑 대체투자가 지는 환은 **헤지비율이 걸린 뒤**의 값이다(§7.7.20).
+     50/50 매핑·비중 15% 면 딸려 오는 환이 7.5%p 이고 거기에 (1 − h_alt) 가 곱해진다. */
+  r.altCarriesEmbeddedFx = fxTot != null
+    && Math.abs(fxTot - 0.075 * (1 - H_ALT_D)) < 1e-9;
   r.altXeIsZeroSoTotalExceedsXe = Math.abs(E.xeOfW(wAlt, 0.9, 0.9)) < 1e-12 && fxTot > 0;
+  /* 레버가 실제로 움직이는가 — 0% 면 전액 노출, 100% 면 0 */
+  {
+    const mkE = (ha) => P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), h_alt: ha });
+    const f0 = mkE(0).fxLoadW(wAlt), f100 = mkE(100).fxLoadW(wAlt);
+    r.altHedgeMovesFxLoad = Math.abs(f0 - 0.075) < 1e-9 && Math.abs(f100) < 1e-12;
+    /* **Xe 에는 들어가지 않는다** — 최적 헤지쌍이 사용자가 정한 값을 덮어쓰지 않게 */
+    r.altHedgeNotInXe =
+      Math.abs(mkE(0).xeOf(0.9, 0.9) - mkE(100).xeOf(0.9, 0.9)) < 1e-12;
+    /* 위험은 실제로 달라진다 — 모형 입력이 계산에 닿지 않으면 칸만 있는 것이다.
+       **방향을 손으로 못박지 말 것**: 대체투자는 미헤지 BM(시가 해외주식)을 팩터로
+       쓰므로 자연헤지 성질이 그대로 옮겨 오고, 헤지가 위험을 **올릴** 수 있다
+       (직접 해외주식에서 실측된 성질 — `hedgingEquityRaisesItsRisk`). 그래서
+       ① 값이 움직이는가 ② 방향이 직접 해외주식과 같은가 로 나눠 잰다. 상관이
+       뒤집히는 데이터가 오면 둘이 **함께** 뒤집혀 검사는 그대로 성립한다. */
+    const cA0 = mkE(0).V.C[iAlt][iAlt], cA100 = mkE(100).V.C[iAlt][iAlt];
+    r.altHedgeChangesRisk = Math.abs(cA100 - cA0) > 1e-9;
+    r.altHedgeDirectionMatchesEquity =
+      (cA100 > cA0) === (Eh1.V.C[iEq][iEq] > Eh0.V.C[iEq][iEq]);
+    /* 매핑이 채권 100%(we=0)면 걸 환이 없어 비율과 무관하게 0 — 분류별 매핑이 달라도
+       한 비율로 맞게 작동한다는 근거(슬라이더를 분류마다 두지 않은 이유) */
+    const bondOnly = { mode: "factor", eq_we: 0, eq_wb: 100, dt_we: 0, dt_wb: 100 };
+    const Eb0 = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), alt_map: bondOnly, h_alt: 0 });
+    r.altHedgeInertWhenNoEquityFactor = Math.abs(Eb0.fxLoadW(wAlt)) < 1e-12;
+  }
   /* fxLoadW 는 **직접 해외주식 슬리브도** 세야 한다 — 매핑 대체만 세면 w주식 만큼
      과소계상이다(감사에서 제기된 자리). 해외주식만 10%, he 를 움직이며 확인. */
   const wEqOnly = [0, 0, 0, 0.10, 0, 0, 0];
@@ -1644,10 +1677,28 @@ safe("cmaTv", () => {
     return { B, w: Ean.optimizeUtil(B.mu, B.C, lam, 2000) };
   };
   const iEq = P.ALLOC_ECON.indexOf("국내주식");
+  /* **「λ=1 이면 국내주식이 상한 10% 에 붙는다」를 픽스처로 못박지 말 것.**
+     그 상태는 μ·Σ 가 바뀌면 따라 움직인다 — §7.7.20 에서 대체투자 환헤지가 들어와
+     행렬이 바뀌자 **롤링 표본 쪽에서** 풀렸다(기본 행렬은 여전히 0.10 에 붙어 있고
+     롤링 tv[0].cov[0] 만 내부해가 됐다). 옛 검사는 두 표본 모두 붙어 있다고 전제해
+     그 순간 빨간불이 됐지만 코드는 멀쩡했다. 검사하려는 성질은 「밴드에 **붙은**
+     자산은 σ 가 변해도 못 움직인다」이므로, 밴드를 눌러 **확실히 붙는 상태를
+     구성한 뒤** 잰다(자의적 픽스처가 아니라 성질의 구성이다). 자연 상태의 두 값은
+     진단용으로 함께 싣는다 — 다음에 또 움직이면 어느 쪽인지 바로 보인다. */
+  const dAn = P.allocDefaults(CMA_ALLOC);
+  const Epin = P.allocEngine(CMA_ALLOC, { ...dAn, mu_over: {},
+    bands: { ...dAn.bands, 국내주식: [0, 2] } });
+  const optPin = (M2, lam) => {
+    const B = Epin.buildFrom(M2, 0.9, 0.9);
+    return Epin.optimizeUtil(B.mu, B.C, lam, 2000);
+  };
+  const wPinA = optPin(M, 1), wPinB = optPin(cm.tv[0].cov[0], 1);
+  r.bandPinnedAtLowLambda =
+    Math.abs(wPinA[iEq] - 0.02) < 5e-3 && Math.abs(wPinB[iEq] - wPinA[iEq]) < 5e-3;
   const { w: w1an } = optAn(M, 1);
   const { w: w2at1 } = optAn(cm.tv[0].cov[0], 1);
-  r.bandPinnedAtLowLambda =
-    Math.abs(w1an[iEq] - 0.10) < 5e-3 && Math.abs(w2at1[iEq] - w1an[iEq]) < 5e-3;
+  r.natEqAtLambda1 = +w1an[iEq].toFixed(4);        // 진단 — 단언하지 않는다
+  r.natEqAtLambda1Tv = +w2at1[iEq].toFixed(4);     // 같음
   const { w: wA15 } = optAn(M, 15);
   const { w: wB15 } = optAn(cm.tv[0].cov[0], 15);
   r.riskierAssetGetsLess = wB15[iEq] < wA15[iEq] - 1e-3;
@@ -3115,8 +3166,13 @@ safe("hedgeTracks", () => {
   shim.localStorage.removeItem("iaw-alloc");
   P.renderSection("alloc");
   const p3 = DOC.getElementById("alloc-sim-panel");
-  const hedgeWraps = Array.from(p3.querySelectorAll(".sim-hedge-row .sim-bar-wrap"));
+  /* **대체투자 환헤지 래퍼를 함께 세지 말 것**(§7.7.20) — 같은 행·같은 래퍼를 쓰지만
+     최적화 레버가 아니라 모형 입력이라 ▼ 가 없다. `.sim-alt-hedge` 로 갈라낸다
+     (§7.7.15 의 `.sim8-row` 한정과 같은 이유 — 래퍼 공유는 계속 늘어난다). */
+  const allWraps = Array.from(p3.querySelectorAll(".sim-hedge-row .sim-bar-wrap"));
+  const hedgeWraps = allWraps.filter((w) => !w.classList.contains("sim-alt-hedge"));
   r.hedgeMarkWrappers = hedgeWraps.length;
+  r.altHedgeWrapSeparate = allWraps.length - hedgeWraps.length === 1;
   const hMarks = hedgeWraps.map((w) => w.querySelector(".sim-opt-mark")).filter(Boolean);
   r.hedgeMarksExist = hMarks.length === 2;
   const jo2 = P.allocJointOpt(P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC)),
@@ -3130,6 +3186,33 @@ safe("hedgeTracks", () => {
   r.hedgeMarkSaysRepresentative = shown.every((m) => /대표점/.test(m.title || ""));
   r.hedgeMarkHiddenWhenInert =
     (!jo2.inertBond || hMarks[0].hidden) && (!jo2.inertEq || hMarks[1].hidden);
+
+  /* ③-c 대체투자 환헤지 슬라이더(§7.7.20 — 2026-08-19 사용자 지시) — 같은 행에
+     있지만 **규약이 셋 다 다르다**: ① 최적 ▼ 가 없고(최적화 대상이 아님) ②
+     조정하면 즉시 저장되며(모형 입력 — μ·σ·λ 와 같은 칸) ③ 「저장 안 됨」 배지를
+     띄우지 않는다(저장했으니 배지가 뜨면 거짓말이다). 셋을 실행으로 고정한다. */
+  {
+    const altWrap = p3.querySelector(".sim-bar-wrap.sim-alt-hedge");
+    const altInp = altWrap && altWrap.querySelector("input");
+    r.altHedgeSliderExists = !!altInp
+      && altInp.getAttribute("aria-label") === "대체투자 환헤지 비율";
+    r.altHedgeHasNoOptMark = !!altWrap
+      && altWrap.querySelectorAll(".sim-opt-mark").length === 0;
+    /* Xe 와 다르다는 사실을 화면이 적는가 — 합치면 최적 헤지쌍이 이 값을 덮어쓴다 */
+    r.altHedgeExplainsNotXe = /Xe 에는 들어가지 않습니다/.test(p3.textContent);
+    const badgeBefore = p3.querySelector(".sim-dirty");
+    if (altInp) {
+      altInp.value = "40";
+      altInp.dispatchEvent({ type: "input", target: altInp });
+      altInp.dispatchEvent({ type: "change", target: altInp });
+      const savedAlt = JSON.parse(shim.localStorage.getItem("iaw-alloc") || "null");
+      r.altHedgeSavesImmediately = !!savedAlt && savedAlt.h_alt === 40;
+      /* 배지는 「조정했지만 저장 안 됨」의 표시다 — 즉시 저장 칸이 이걸 켜면 안 된다 */
+      const badgeAfter = DOC.getElementById("alloc-sim-panel").querySelector(".sim-dirty");
+      r.altHedgeDoesNotMarkDirty =
+        (!badgeBefore || badgeBefore.hidden) && (!badgeAfter || badgeAfter.hidden);
+    }
+  }
   /* 비중 0 슬리브가 있으면 카드가 그 사유를 적는다 — 합성으로 강제한다:
      해외채권 밴드를 [0,0] 으로 눌러 최적 배분의 해외채권을 0 으로 만든다. */
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
