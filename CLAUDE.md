@@ -20,6 +20,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `pipeline/hedge.py` | `build(SERIES, warn)` → `hedge.json` (7통화 헤지 매트릭스·백테스트·시뮬레이터 공분산·`ust_merit` 미국채 투자 메리트 모니터 §7.7.14 — 헤지 후 UST = UST10y + 스왑레이트, 시리즈 없으면 `active:false` 게시) |
 | `pipeline/alloc.py` | `build(SERIES, warn)` → `alloc.json` (자산배분 원천 10개 공분산·현재 금리·동일 샤프 앵커·블록 부트스트랩 사전계산. **원본 수익률 미게시** — 공분산·평균·분위수만) |
 | `pipeline/bm.py` | 자산군 전략 벤치마크(BM) 파서 + `build_cma(SERIES, warn)` → `alloc.json.cma` (자본시장가정 사전계산 — §7.7 재설계의 데이터층). **원본 수준·수익률 미게시** — 창별 연환산 σ·상관·공분산·과거 평균과 표본 메타만. BM 파일이 없어도 `active:false` 블록을 항상 게시한다(체인 안전장치) |
+| `pipeline/port.py` | 포트폴리오 구성(신규 7자산군 §7.14) → `alloc.json.port` (프록시 통계 — 창별 μ·σ·상관·공분산·MDD·60/40 벤치, KRW 미헤지 환산, 월말 표본. **달러유동성 컬럼은 벤더가 이미 원화 환산** — 재환산 금지, 판정 근거는 `usd_liq_check` 로 매 빌드 게시). Data 저장소 `port_cma.json` 이 있으면 CMA 키인 디폴트로 실어 게시(비유한·범위 밖 값은 경고 후 드롭). 프록시가 없어도 `active:false` 항상 게시(체인 안전장치). 원화유동성 표본(2022-04~)이 짧아 **10년 공통 창은 아직 미충족** — 경고 게시, 표본이 쌓이면 자동 개방 |
 | `pipeline/estimate.py` | `build(SERIES, warn)` → `estimate.json` (수익률 추정 화면 §7.8 의 **자동 채움 지수만**. 수익률 계산은 전부 사용자 입력이라 브라우저가 한다). KOSPI TR·ACWI 일별 + **축약 전 원본에서 뽑은 연말 앵커** + 미국채 부재 사유. 지수가 없어도 `active:false` 로 항상 게시 |
 | `pipeline/panel.py` | `build(SERIES, risk_weekly, warn)` → `panel.json` (관계분석용 주간 정렬 패널. 공개 변수는 `VARS` 화이트리스트로만 통제) |
 | `pipeline/breadth.py` | 미국 증시 데일리 리포트 → **집계 지표만** (`us:*` 12개). 파일 하나 = 관측 하루라 이력은 날짜별 파일이 쌓여야 생긴다. **종목 단위(티커·회사명·현재가)는 한 줄도 읽지 않는다** — 공개 저장소이므로 그 계약이 값 정확도만큼 중요하고, `tests/test_breadth.py` 가 상세 시트를 일부러 넣고 유출이 없는지 확인한다 |
@@ -48,7 +49,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 424개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 435개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (약 2.5분)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js                 (약 2.5분)
 #   ↑ 하네스가 시간을 다 쓴다(실측) — 최적화를 실제로 여러 번 돌리는 프로브
@@ -75,10 +76,12 @@ python pipeline/research/wf_validation.py --data-dir ../Data
   (합계 약 2.2MB), 마지막 줄 `N warning(s) — see meta.json`.
 - **16은 코드가 정한 수**(아래 JSON 계약)라 달라지면 그 자체가 버그다. 반대로 `N`·`M`·경고 건수는
   `--data-dir` 의 엑셀에서 오는 수라 데이터를 갱신하면 정상적으로 바뀐다 — 현재 `../Data` 기준선은
-  **483 시리즈 / 8 파일 / 경고 13건**(duplicate column 12건 = `data_bb (3).xlsx` 5건 +
-  `data_bb_대체투자.xlsx` 7건, + 파일 간 병합 고지 1건)이며, 이 기준선의 정본은 Data 저장소
-  쪽(`../Data/CLAUDE.md`)이다. 2026-08-21 교체 전 체크아웃(구 `data_bb.xlsx`)이면
-  481 / 8 / 경고 15건으로 나온다. 급감이나 경고 성격 변화만 신호로 볼 것.
+  **483 시리즈 / 8 파일 / 경고 14건**(duplicate column 12건 = `data_bb (3).xlsx` 5건 +
+  `data_bb_대체투자.xlsx` 7건, + 파일 간 병합 고지 1건, + port 창 미충족 고지 1건 — 원화유동성
+  표본이 10년을 채우면 저절로 사라진다)이며, 이 기준선의 정본은 Data 저장소
+  쪽(`../Data/CLAUDE.md` — 그쪽 문서의 13건은 port 이전 수치라 +1 갱신 필요)이다.
+  2026-08-21 교체 전 체크아웃(구 `data_bb.xlsx`)이면
+  481 / 8 / 경고 16건으로 나온다. 급감이나 경고 성격 변화만 신호로 볼 것.
   데일리 리포트를 더 올려도 **시리즈 수는 그대로**이고 각 `us:*` 의 관측 수만 는다 —
   파일 하나가 하루치이기 때문이다(파일 수와 `meta.json.files` 항목은 는다).
 - 서빙 확인: `curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/data/meta.json` → `200`.

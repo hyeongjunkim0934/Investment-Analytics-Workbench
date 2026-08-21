@@ -1857,13 +1857,13 @@ def test_char_card_renders_with_honest_mdd_labels(probe):
 
 
 def test_alloc_toc_navigates_without_touching_the_hash(probe):
-    """컨텐츠 탭 — 버튼 8개가 있고 눌러도 죽지 않는다.
+    """컨텐츠 탭 — 버튼 10개가 있고 눌러도 죽지 않는다.
 
     해시 앵커(href="#…")를 쓰면 섹션 라우팅 축과 충돌해 마을로 튕긴다 — 버튼 +
     scrollIntoView 여야 한다. index.html 쪽 검사는 계약 테스트(id 대조)가 맡는다.
     """
     c = probe["allocChar"]
-    assert c["tocButtonCount"] == 9      # 시뮬레이터가 첫 항목 (§7.7.8)
+    assert c["tocButtonCount"] == 10     # 시뮬레이터가 첫 항목 (§7.7.8) + 포트폴리오 구성 (§7.14)
     assert c["tocClicksSafe"] is True
 
 
@@ -3024,3 +3024,45 @@ def test_explain_fold_behaviour_and_warning_visibility(probe):
         "구속 ⚠ 가 접혔다 — 경고는 explain 에 넣지 않는다(§7.13 계약)"
     )
     assert c["fallbackReasonVisible"] is True, "프록시 폴백 사유가 접혔다 — 조용한 대체 금지 위반"
+
+
+# ---- 포트폴리오 구성 (신규 7자산군 · §7.14) — 실행으로 확인 ----------------------
+def test_port_panel_defaults_and_two_track_saving(probe):
+    """대분류 초기 세팅(50/30/20/10)·적용 규칙·2트랙 저장 계약."""
+    c = probe["portPanel"]
+    assert "ERROR" not in c, c.get("ERROR")
+    assert c["panelRendered"] is True
+    assert c["panelAboveSim"] is True, "대분류 초기 세팅은 제일 상단이다(사용자 지시)"
+    assert c["groupDefaults"] == [50, 30, 20, 10]
+    assert abs(c["applySum"] - 100) < 1e-9, "적용 후 합계가 정확히 100.0 이 아니다"
+    assert c["applyMix"] == [13.5, 13.5, 22.5, 22.5, 18.0, 5.0, 5.0], (
+        "비례 축소·그룹 내 균등 분할 결과가 어긋난다"
+    )
+    assert c["liqEqualSplit"] is True, "달러/원화 유동성 동일 비중(사용자 지정)이 깨졌다"
+    assert c["applyDoesNotSave"] is True and c["mixInputDoesNotSave"] is True, (
+        "비중은 시뮬레이션 트랙 — 입력 이벤트에서 저장하면 안 된다"
+    )
+    assert c["muInputSavesImmediately"] is True, "μ 키인은 모형 입력 — 즉시 저장"
+    assert c["windowChoiceSaved"] is True
+
+
+def test_port_panel_frontier_hover_and_review(probe):
+    """효율적 경계선 hover 상세·벤치마크 리뷰·경고 가시성."""
+    c = probe["portPanel"]
+    assert "ERROR" not in c, c.get("ERROR")
+    assert c["frontierChartMade"] is True
+    assert c["hoverHookPresent"] is True and c["hoverShowsDetail"] is True, (
+        "마우스 올리면 세부 수치(배분 포함)가 보여야 한다 — 사용자 지시"
+    )
+    assert c["hoverResets"] is True
+    assert c["frontierMonotone"] is True, "경계선이 위험 오름·수익 비내림이 아니다"
+    assert c["frontierMaxSharpeBeatsBench"] is True, "최대샤프 점이 벤치마크보다 못하다"
+    assert c["srcAfterKeyin"] is True and c["srcShowsCmaFile"] is True, (
+        "μ 출처(키인 > CMA 파일 > 과거 평균) 표시가 깨졌다"
+    )
+    assert c["reviewHasRows"] is True and c["reviewShowsRealized"] is True
+    assert c["missingWindowWarnVisible"] is True, (
+        "10년 창 미충족 경고가 접혔거나 사라졌다 — 경고는 접지 않는다(§7.13)"
+    )
+    assert c["sumWarnAfterDrift"] is True, "합계≠100 인데 몰래 정규화했거나 침묵했다"
+    assert c["inactiveShowsReason"] is True, "비활성 사유가 화면에 없다 — 조용한 대체 금지"

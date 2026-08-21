@@ -62,7 +62,10 @@ REQUIRED_KEYS = {
               "defaults", "ccy_bench", "boot", "checks", "acct_model", "limits",
               # cma = 벤치마크 기반 자본시장가정(bm.build_cma). BM 파일이 없어도
               # active:false 블록이 게시돼야 한다 — 부재는 wiring 누락이다.
-              "cma"],
+              "cma",
+              # port = 신규 7자산군 포트폴리오 구성(port.build). 프록시가 없어도
+              # active:false 블록이 게시돼야 한다 — cma 와 같은 체인 안전장치.
+              "port"],
     "risk":  ["asof", "grade_bands", "howto", "layers", "weights",
               "validation", "factors", "limits"],
     "panel": ["asof", "freq", "t", "risk", "risk_meta", "vars",

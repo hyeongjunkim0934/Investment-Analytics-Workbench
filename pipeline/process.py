@@ -32,6 +32,7 @@ import breadth
 import estimate
 import hedge
 import panel
+import port
 import risk
 # 재수출(re-export): 예전 process.epoch_seconds 를 쓰던 호출부를 그대로 두면서
 # 정의는 common 한 곳만 남긴다. tests/test_formulas.py 가 동일성을 단정한다.
@@ -829,6 +830,13 @@ def main() -> None:
             traceback.print_exc()
             warn("cma: 자본시장가정 계산 실패 — 최적화 카드 없이 배포됩니다")
             payloads["alloc.json"]["cma"] = {"active": False, "reason": "계산 실패 — 빌드 로그 확인"}
+        try:
+            payloads["alloc.json"]["port"] = port.build(SERIES, warn, args.data_dir)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            warn("port: 포트폴리오 구성 통계 계산 실패 — 해당 패널 없이 배포됩니다")
+            payloads["alloc.json"]["port"] = {"active": False, "reason": "계산 실패 — 빌드 로그 확인"}
 
     # 수익률 추정 화면의 자동 채움 지수(§7.8). 실패해도 화면은 **수기 입력으로 살아 있어야**
     # 하므로 격리하되, 블록 자체는 active:false 로 반드시 게시한다 — 게이트가 부재를 막는다.

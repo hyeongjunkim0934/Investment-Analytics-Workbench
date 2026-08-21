@@ -66,7 +66,8 @@ footer.append(elem("p", "build-line"), elem("div", "build-warnings"));
 /* 자산배분 뼈대 — renderAlloc 이 $("#alloc-…") 로 집는 자리들(index.html 과의 계약).
    하나라도 빠지면 그 자리에서 죽으므로 실제 마크업과 같은 목록을 둔다. */
 secNodes.alloc.append(elem("nav", "alloc-toc"));
-["alloc-sim-panel",
+["alloc-port-panel",
+ "alloc-sim-panel",
  "alloc-headline", "alloc-summary", "alloc-controls", "alloc-cards", "alloc-levers",
  "alloc-frontier-card", "alloc-path-card", "alloc-tv-card", "alloc-char-card",
  "alloc-table-card", "alloc-inputs-box", "alloc-method"]
@@ -194,7 +195,9 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "allocXeBinds", "allocXeBindNotes", "allocXeRange", "openAllocDetail",
   "estEngine", "estDayCount", "estIndexYtd", "EST_ASSETS",
   "SECTION_LABELS", "sectionLink", "estScenario", "estAxisLevels", "estAxisAt", "EST_SCEN", "estMigrateLevels",
-  "explainBox", "EXPLAIN_OPEN"];
+  "explainBox", "EXPLAIN_OPEN",
+  "renderPortPanel", "portState", "portDefaults", "portMixFromGroups", "portEngine",
+  "portRound01", "projSimplex", "PORT_LS_KEY"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -1110,7 +1113,53 @@ const ALLOC_FIXTURE = (() => {
     const r = rho[`${a}|${b}`] != null ? rho[`${a}|${b}`] : (rho[`${b}|${a}`] || 0);
     return r * sd[a] * sd[b];
   }));
+  /* 신규 7자산군 포트폴리오 구성(port) 블록 — 파이프라인 port.build 게시물의 축약판 */
+  const PA = ["국내채권", "해외채권", "국내주식", "해외주식", "대체투자", "달러유동성", "원화유동성"];
+  const psd = [0.035, 0.09, 0.28, 0.14, 0.22, 0.10, 0.002];
+  const prho = { "0|1": 0.30, "2|3": 0.55, "1|5": 0.60, "3|5": -0.45, "4|5": 0.25 };
+  const pcorr = PA.map((_, i) => PA.map((_, j) => i === j ? 1
+    : (prho[`${i}|${j}`] != null ? prho[`${i}|${j}`] : (prho[`${j}|${i}`] || 0))));
+  const pcov = PA.map((_, i) => PA.map((_, j) => pcorr[i][j] * psd[i] * psd[j]));
+  const pmean = [2.0, 5.0, 9.0, 12.0, 4.0, 6.0, 3.0];
+  const pwb = PA.map((a) => a === "해외주식" ? 0.6 : a === "국내채권" ? 0.4 : 0);
+  const bmean = pwb.reduce((s, w, i) => s + w * pmean[i], 0);
+  const bvar = PA.reduce((s, _, i) => s + PA.reduce((t, __, j) => t + pwb[i] * pwb[j] * pcov[i][j], 0), 0);
+  const pwin = (key) => ({
+    key, n_months: key === "all" ? 42 : 36, start: "2027-01-31", end: "2030-06-30",
+    mean_pct: pmean, vol_pct: psd.map((s) => s * 100), mdd_pct: PA.map(() => 10),
+    corr: pcorr, cov: pcov,
+    bench: { mean_pct: bmean, vol_pct: Math.sqrt(bvar) * 100, mdd_pct: 8.0 },
+  });
+  const port = {
+    active: true, asof: "2030-06-30", assets: PA,
+    proxies: Object.fromEntries(PA.map((a) => [a, `bb:${a}-probe`])),
+    usd_assets: ["대체투자", "해외주식", "해외채권"], fx_key: "bb:달러원",
+    basis: "KRW 원화 환산(미헤지)",
+    defaults: {
+      groups: { 주식: ["국내주식", "해외주식"], 채권: ["국내채권", "해외채권"],
+                대체: ["대체투자"], 유동성: ["달러유동성", "원화유동성"] },
+      group_default: { 주식: 50, 채권: 30, 대체: 20 },
+      liq_default: 10, liq_range: [0, 20], split_note: "probe",
+    },
+    bench_w: { 해외주식: 0.6, 국내채권: 0.4 },
+    coverage: PA.map((a) => ({ asset: a, key: `bb:${a}-probe`, currency: "KRW",
+      first: a === "원화유동성" ? "2027-01-31" : "2010-01-31",
+      last: "2030-06-30", n_months: a === "원화유동성" ? 42 : 246 })),
+    windows: [pwin("3"), pwin("all")],
+    window_years: [1, 3, 5, 10], missing_windows: [5, 10],
+    ref10y: { years: 10,
+      per_asset: Object.fromEntries(PA.map((a) => [a, a === "원화유동성" ? null
+        : { mean_pct: 5.5, vol_pct: 11.1, start: "2020-07-31", end: "2030-06-30", n_months: 120 }])),
+      bench: { mean_pct: 8.4, vol_pct: 9.1, mdd_pct: 12.3,
+               start: "2020-07-31", end: "2030-06-30", n_months: 120 },
+      note: "probe" },
+    cma_input: { source: "port_cma.json", asof: "2030-06-01", note: null,
+      mu_pct: { 국내채권: 3.0, 해외채권: 4.5, 국내주식: 7.5, 해외주식: 6.5,
+                대체투자: 5.0, 달러유동성: 3.5, 원화유동성: 2.5 } },
+    method: "probe",
+  };
   return {
+    port,
     asof: "2030-06-30",
     sources: { labels: L, desc: {} },
     sets: [{ key: "full", label: "공통 표본 전체", cov, n_months: 234 },
@@ -2132,6 +2181,117 @@ safe("simPanel", () => {
     .filter((n) => (n.getAttribute("aria-label") || "").includes("위험 % 키인"));
   r.proxySigDisabled = sigInputs.length === 7 && sigInputs.every((n) => n.disabled === true);
   r.proxyOptDeferred = /최적 포트폴리오 — 보류/.test(p2.textContent);
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
+/* ====== P-port. 포트폴리오 구성(신규 7자산군 · §7.14) — 실행으로 잰다 ==========
+   ① 대분류 디폴트(50/30/20/10)와 적용 규칙(비례 축소·그룹 내 균등·합계 100.0)
+   ② 2트랙 저장(비중 = 저장 안 함 / μ 키인 = 즉시 저장) ③ CMA 파일 디폴트 표시
+   ④ 효율적 경계선 hover 상세 ⑤ 벤치마크 리뷰 표 ⑥ 창 미충족 경고의 가시성. */
+safe("portPanel", () => {
+  const r = {};
+  P.DATA.alloc = ALLOC_FIXTURE;
+  shim.localStorage.removeItem("iaw-alloc");
+  shim.localStorage.removeItem(P.PORT_LS_KEY);
+  shim.UPlotStub.made.length = 0;
+  P.renderSection("alloc");
+  const panel = DOC.getElementById("alloc-port-panel");
+  r.panelRendered = /포트폴리오 구성/.test(panel.textContent);
+  /* 패널이 시뮬레이터보다 위(제일 상단)인가 — DOM 순서로 잰다 */
+  const kids = DOC.getElementById("alloc").childNodes;
+  r.panelAboveSim = kids.indexOf(panel) >= 0 &&
+    kids.indexOf(panel) < kids.indexOf(DOC.getElementById("alloc-sim-panel"));
+
+  /* ① 대분류 디폴트 + 적용 */
+  const gIn = Array.from(panel.querySelectorAll("input"))
+    .filter((n) => (n.getAttribute("aria-label") || "").startsWith("대분류"));
+  r.groupDefaults = gIn.map((n) => +n.value);          // [50, 30, 20, 10]
+  const applyBtn = Array.from(panel.querySelectorAll("button"))
+    .find((b) => b.textContent === "7자산군에 적용");
+  applyBtn.dispatchEvent({ type: "click", target: applyBtn });
+  const mixIn = Array.from(panel.querySelectorAll("input"))
+    .filter((n) => /비중$/.test(n.getAttribute("aria-label") || ""));
+  const mixVals = mixIn.map((n) => +n.value);
+  r.applySum = mixVals.reduce((a, b) => a + b, 0);     // 100 정확
+  r.applyMix = mixVals;                                // [13.5,13.5,22.5,22.5,18,5,5]
+  const la = mixIn.map((n) => n.getAttribute("aria-label"));
+  const vOf = (name) => mixVals[la.indexOf(`${name} 비중`)];
+  r.liqEqualSplit = vOf("달러유동성") === vOf("원화유동성");
+  r.applyDoesNotSave = shim.localStorage.getItem(P.PORT_LS_KEY) == null;
+
+  /* ② 비중 입력도 저장하지 않는다 / μ 키인은 즉시 저장한다 */
+  const wIn = mixIn[0];
+  wIn.value = "20";
+  wIn.dispatchEvent({ type: "input", target: wIn });
+  r.mixInputDoesNotSave = shim.localStorage.getItem(P.PORT_LS_KEY) == null;
+  const muIn = Array.from(panel.querySelectorAll("input"))
+    .find((n) => (n.getAttribute("aria-label") || "") === "국내채권 기대수익");
+  muIn.value = "4.2";
+  muIn.dispatchEvent({ type: "input", target: muIn });
+  const savedRaw = shim.localStorage.getItem(P.PORT_LS_KEY);
+  r.muInputSavesImmediately = savedRaw != null && JSON.parse(savedRaw).mu["국내채권"] === 4.2;
+
+  /* ③ μ 출처 — 키인 > CMA 파일 > 과거 평균 */
+  r.srcAfterKeyin = Array.from(panel.querySelectorAll("td"))
+    .some((n) => n.textContent === "키인");
+  r.srcShowsCmaFile = Array.from(panel.querySelectorAll("td"))
+    .some((n) => n.textContent === "CMA 파일");
+
+  /* ④ 효율적 경계선 — 차트가 실제로 만들어지고 hover 훅이 상세를 적는가.
+     recalc 마다 다시 만들므로 **마지막** 인스턴스를 집는다(앞 것의 hover 는 떼어졌다). */
+  const chart = shim.UPlotStub.made.filter((u) =>
+    u.opts && u.opts.series && u.opts.series.some((s) => s.label === "경계선")).pop();
+  r.frontierChartMade = !!chart;
+  const hook = chart && chart.opts.hooks && chart.opts.hooks.setCursor
+    && chart.opts.hooks.setCursor[0];
+  r.hoverHookPresent = typeof hook === "function";
+  if (hook) {
+    hook({ cursor: { idx: 2 } });
+    const hv = panel.querySelector(".port-hover");
+    r.hoverShowsDetail = /배분/.test(hv.textContent) && /국내채권/.test(hv.textContent)
+      && /위험/.test(hv.textContent);
+    hook({ cursor: { idx: null } });
+    r.hoverResets = /마우스를 올리면/.test(hv.textContent);
+  }
+  /* 경계선 점들이 위험 오름차순·수익 비내림인가 (게시가 아니라 엔진 실행으로) */
+  const E = P.portEngine(ALLOC_FIXTURE.port, P.portState(ALLOC_FIXTURE.port));
+  r.frontierMonotone = E.front.every((p, i, arr) => !i
+    || (p.sig >= arr[i - 1].sig - 1e-9 && p.mu >= arr[i - 1].mu - 1e-6));
+  r.frontierMaxSharpeBeatsBench = E.maxSharpe
+    && (E.maxSharpe.mu - E.rf) / E.maxSharpe.sig
+       >= (E.bench.mu - E.rf) / E.bench.sig - 1e-9;
+
+  /* ⑤ 벤치마크 리뷰 표 + 실현 성과 참고 줄 */
+  const rvTxt = panel.textContent;
+  r.reviewHasRows = /최적\(최대 샤프\)/.test(rvTxt) && /벤치마크 60\/40/.test(rvTxt);
+  r.reviewShowsRealized = /실현 성과\(창/.test(rvTxt) && /실현 성과\(10년 참고/.test(rvTxt);
+
+  /* ⑥ 10년 창 미충족 경고 — 접힌 설명(details.explain) 안이 아니라 본문에 있어야 한다 */
+  const warnNode = Array.from(panel.querySelectorAll(".port-warn"))
+    .find((n) => /창 미충족/.test(n.textContent));
+  let warnFolded = false;
+  for (let anc = warnNode; anc; anc = anc.parentElement)
+    if ((anc.className || "").split(/\s+/).includes("explain")) warnFolded = true;
+  r.missingWindowWarnVisible = !!warnNode && !warnFolded;
+
+  /* ⑦ 합계 ≠ 100 이면 현재점을 몰래 정규화하지 않고 사유를 적는다 */
+  r.sumWarnAfterDrift = /100% 가 아니라 현재점을 계산하지 않았습니다/.test(panel.textContent);
+
+  /* ⑧ 창 선택은 모형 입력 — 즉시 저장 */
+  const segBtn = Array.from(panel.querySelectorAll(".seg button"))
+    .find((b) => b.textContent === "3년");
+  segBtn.dispatchEvent({ type: "click", target: segBtn });
+  const saved2 = JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY) || "{}");
+  r.windowChoiceSaved = saved2.win === "3";
+
+  /* ⑨ 비활성 블록 — 조용히 사라지지 않고 사유를 적는다 */
+  P.DATA.alloc = { ...ALLOC_FIXTURE, port: { active: false, reason: "probe 사유" } };
+  P.renderSection("alloc");
+  r.inactiveShowsReason = /비활성 — probe 사유/.test(
+    DOC.getElementById("alloc-port-panel").textContent);
+  P.DATA.alloc = ALLOC_FIXTURE;
+  shim.localStorage.removeItem(P.PORT_LS_KEY);
   shim.localStorage.removeItem("iaw-alloc");
   return r;
 });
