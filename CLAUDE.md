@@ -75,10 +75,10 @@ python pipeline/research/wf_validation.py --data-dir ../Data
   (합계 약 2.2MB), 마지막 줄 `N warning(s) — see meta.json`.
 - **16은 코드가 정한 수**(아래 JSON 계약)라 달라지면 그 자체가 버그다. 반대로 `N`·`M`·경고 건수는
   `--data-dir` 의 엑셀에서 오는 수라 데이터를 갱신하면 정상적으로 바뀐다 — 현재 `../Data` 기준선은
-  **481 시리즈 / 8 파일 / 경고 15건**(duplicate column 14건 = 같은 중복 라벨 6종이
-  `data_bb.xlsx`·`data_bb_대체투자.xlsx` 두 파일에서 각 7건 + 파일 간 병합 고지 1건)이며, 이 기준선의
-  정본은 Data 저장소 쪽(`../Data/CLAUDE.md`)이다. 2026-08-11 업로드 2건 반영 전 체크아웃이면
-  466 / 6 / 경고 7건으로 나온다. 급감이나 경고 성격 변화만 신호로 볼 것.
+  **483 시리즈 / 8 파일 / 경고 13건**(duplicate column 12건 = `data_bb (3).xlsx` 5건 +
+  `data_bb_대체투자.xlsx` 7건, + 파일 간 병합 고지 1건)이며, 이 기준선의 정본은 Data 저장소
+  쪽(`../Data/CLAUDE.md`)이다. 2026-08-21 교체 전 체크아웃(구 `data_bb.xlsx`)이면
+  481 / 8 / 경고 15건으로 나온다. 급감이나 경고 성격 변화만 신호로 볼 것.
   데일리 리포트를 더 올려도 **시리즈 수는 그대로**이고 각 `us:*` 의 관측 수만 는다 —
   파일 하나가 하루치이기 때문이다(파일 수와 `meta.json.files` 항목은 는다).
 - 서빙 확인: `curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/data/meta.json` → `200`.
