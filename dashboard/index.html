@@ -84,7 +84,7 @@
     <div class="village-list" id="village-list" aria-label="구역 목록"></div>
   </section>
 
-  <div class="filter-row" role="group" aria-label="기간 선택">
+  <div class="filter-row" role="group" aria-label="기간 선택" title="이 화면의 시계열 차트에 한꺼번에 적용됩니다">
     <span class="filter-label">기간</span>
     <div class="range-group" id="range-group">
       <button data-range="1">1년</button>
@@ -93,16 +93,15 @@
       <button data-range="10">10년</button>
       <button data-range="0">전체</button>
     </div>
-    <span class="filter-note">이 화면의 시계열 차트에 한꺼번에 적용됩니다</span>
   </div>
 
   <section id="overview" class="section">
     <h2>시장 개요</h2>
     <!-- HANDOVER §3.1 "화면이 답하는 질문을 맨 위에 한 줄로 쓴다" — 14개 섹션 중
          이 화면에만 그 줄이 없었다(나머지 13개는 .qa 또는 .section-note 로 갖고 있음). -->
-    <p class="section-note">이 화면이 답하는 질문 — 오늘 주요 시장 지표가 어디에 있고, 하루·한 달·연초
+    <details class="explain"><summary>설명</summary><div class="explain-body">이 화면이 답하는 질문 — 오늘 주요 시장 지표가 어디에 있고, 하루·한 달·연초
        이후·1년 사이 얼마나 움직였나. 주식 · 금리 · 환율 · 기타 네 구역이며, 카드를 누르면 그 지표의
-       상세 화면으로 들어갑니다. 위험 점수는 <a href="#risk">리스크</a> 화면에 있습니다.</p>
+       상세 화면으로 들어갑니다. 위험 점수는 <a href="#risk">리스크</a> 화면에 있습니다.</div></details>
     <!-- 구역(주식·금리·환율·기타)은 renderOverview 가 payload 의 groups 로 조립한다.
          구역마다 그 구역에서 들어갈 수 있는 상세 화면 버튼이 따라붙는다. -->
     <div id="ov-groups"></div>
@@ -122,7 +121,7 @@
     </div>
     <!-- 안내가 표 두 개(요인 11행) 아래에 있어서 정작 필요한 시점에는 읽히지 않았다.
          첫 표 바로 위로 올린다. -->
-    <p class="section-note" style="margin:22px 0 -4px">아래 표에서 <b>요인 이름을 누르면</b> 그 요인의 구성 지표·계산 과정·이력 상세로 들어갑니다 (키보드는 Tab 으로 이동 후 Enter).</p>
+    <details class="explain" style="margin:22px 0 -4px"><summary>설명</summary><div class="explain-body">아래 표에서 <b>요인 이름을 누르면</b> 그 요인의 구성 지표·계산 과정·이력 상세로 들어갑니다 (키보드는 Tab 으로 이동 후 Enter).</div></details>
     <h3 class="rows-title" id="risk-stress-title"></h3>
     <div class="frows" id="risk-stress-rows"></div>
     <h3 class="rows-title" id="risk-vuln-title"></h3>
@@ -177,8 +176,7 @@
     <!-- 미국채 투자 메리트 모니터(§7.7.14) — 헤지비용이 미국채 원화수익률에서
          차감되는 관계와 위험수준의 연동을 한 카드에서 상시 감시한다. -->
     <div class="card" id="hedge-merit-card" style="margin-top:14px"></div>
-    <p style="margin-top:14px"><a id="hedge-sim-btn" href="#hedge-sim" class="btn-primary">우리 포트폴리오 숫자로 계산해 보기 (7통화 시뮬레이터) →</a>
-       <span class="filter-note" style="margin-left:10px">통화별 금액·헤지비율을 넣으면 두 관점의 변동성과 연간 헤지 캐리가 바로 나옵니다</span></p>
+    <p style="margin-top:14px"><a id="hedge-sim-btn" href="#hedge-sim" class="btn-primary" title="통화별 금액·헤지비율을 넣으면 두 관점의 변동성과 연간 헤지 캐리가 바로 나옵니다">우리 포트폴리오 숫자로 계산해 보기 (7통화 시뮬레이터) →</a></p>
     <details class="method" id="hedge-method"></details>
   </section>
 
@@ -233,7 +231,7 @@
 
   <section id="rates" class="section">
     <h2>금리</h2>
-    <p class="section-note">이 화면이 답하는 질문 — 주요국 금리 커브의 수준과 기울기가 어디로 움직였나</p>
+    <details class="explain"><summary>설명</summary><div class="explain-body">이 화면이 답하는 질문 — 주요국 금리 커브의 수준과 기울기가 어디로 움직였나</div></details>
     <div class="grid-2">
       <div class="card" id="card-curve"></div>
       <div class="card" id="card-ts10"></div>
@@ -244,8 +242,8 @@
 
   <section id="irs" class="section">
     <h2>IRS 포워드</h2>
-    <p class="section-note">이 화면이 답하는 질문 — 시장은 앞으로의 금리를 몇 %로 보고 있나 (포워드 = 예측이 아니라 현재 가격의 함의).
-       <b>표기 읽는 법: <code>1y1y</code> = 1년 뒤 시작하는 1년짜리 금리, <code>5y5y</code> = 5년 뒤 시작하는 5년짜리 금리.</b></p>
+    <details class="explain"><summary>설명</summary><div class="explain-body">이 화면이 답하는 질문 — 시장은 앞으로의 금리를 몇 %로 보고 있나 (포워드 = 예측이 아니라 현재 가격의 함의).
+       <b>표기 읽는 법: <code>1y1y</code> = 1년 뒤 시작하는 1년짜리 금리, <code>5y5y</code> = 5년 뒤 시작하는 5년짜리 금리.</b></div></details>
     <div class="grid-2">
       <div class="card" id="card-irs-fwd"></div>
       <div class="card" id="card-irs-ts"></div>
@@ -254,9 +252,9 @@
 
   <section id="credit" class="section">
     <h2>크레딧</h2>
-    <p class="section-note">이 화면이 답하는 질문 — 신용 스프레드가 벌어지고 있나, 어느 등급부터인가.
+    <details class="explain"><summary>설명</summary><div class="explain-body">이 화면이 답하는 질문 — 신용 스프레드가 벌어지고 있나, 어느 등급부터인가.
        <b>용어: 스프레드 = 같은 만기 국채보다 더 얹어 주는 금리(1bp = 0.01%p) · IG = 투자등급 ·
-       HY = 하이일드(투기등급) · CDS = 부도 위험을 사고파는 값(높을수록 위험하게 본다).</b></p>
+       HY = 하이일드(투기등급) · CDS = 부도 위험을 사고파는 값(높을수록 위험하게 본다).</b></div></details>
     <div class="grid-2">
       <div class="card" id="card-credit-kr1"></div>
       <div class="card" id="card-credit-kr2"></div>
@@ -275,14 +273,14 @@
        이 화면은 순수 시세로 남는다. -->
   <section id="fx" class="section">
     <h2>FX · 환율</h2>
-    <p class="section-note">이 화면이 답하는 질문 — 환율 <b>시세가 지금 어디에 있나</b>.
-       헤지비용(스왑포인트)과 <b>헤지비율을 얼마로 둘지</b>는 <a href="#hedge">환헤지</a> 화면입니다.</p>
+    <details class="explain"><summary>설명</summary><div class="explain-body">이 화면이 답하는 질문 — 환율 <b>시세가 지금 어디에 있나</b>.
+       헤지비용(스왑포인트)과 <b>헤지비율을 얼마로 둘지</b>는 <a href="#hedge">환헤지</a> 화면입니다.</div></details>
     <div class="grid-2" id="fx-grid"></div>
   </section>
 
   <section id="inflation" class="section">
     <h2>기대인플레이션</h2>
-    <p class="section-note">이 화면이 답하는 질문 — 채권시장이 가격에 반영한 기대물가(BEI)는 몇 %인가</p>
+    <details class="explain"><summary>설명</summary><div class="explain-body">이 화면이 답하는 질문 — 채권시장이 가격에 반영한 기대물가(BEI)는 몇 %인가</div></details>
     <div class="grid-2">
       <div class="card" id="card-bei"></div>
       <div class="card" id="card-tips"></div>
@@ -291,7 +289,7 @@
 
   <section id="acwi" class="section">
     <h2>MSCI ACWI</h2>
-    <p class="section-note">이 화면이 답하는 질문 — 글로벌 주식(위탁 벤치마크)의 수준·낙폭·변동성은 어디에 있나</p>
+    <details class="explain"><summary>설명</summary><div class="explain-body">이 화면이 답하는 질문 — 글로벌 주식(위탁 벤치마크)의 수준·낙폭·변동성은 어디에 있나</div></details>
     <div class="cards" id="acwi-stats"></div>
     <div class="grid-2">
       <div class="card" id="card-acwi-price"></div>
@@ -305,15 +303,15 @@
 
   <section id="macro" class="section">
     <h2>매크로</h2>
-    <p class="section-note">이 화면이 답하는 질문 — 성장·물가·고용의 최신 발표치는 추세 대비 어디에 있나</p>
+    <details class="explain"><summary>설명</summary><div class="explain-body">이 화면이 답하는 질문 — 성장·물가·고용의 최신 발표치는 추세 대비 어디에 있나</div></details>
     <div class="grid-3" id="macro-grid"></div>
   </section>
 
   <section id="catalog" class="section">
     <h2>시리즈 카탈로그</h2>
-    <p class="section-note">이 화면이 답하는 질문 — 우리가 어떤 시계열을 갖고 있고, 각각 언제부터 언제까지
+    <details class="explain"><summary>설명</summary><div class="explain-body">이 화면이 답하는 질문 — 우리가 어떤 시계열을 갖고 있고, 각각 언제부터 언제까지
        몇 개의 관측치가 있나. 비공개 데이터 저장소에 존재하는 전체 시계열의 <b>메타데이터만</b> 싣습니다 —
-       값 자체는 공개되지 않습니다.</p>
+       값 자체는 공개되지 않습니다.</div></details>
     <div class="catalog-controls">
       <input type="search" id="catalog-search" placeholder="이름·카테고리 검색" aria-label="시리즈 검색">
       <span id="catalog-count" class="filter-note"></span>
