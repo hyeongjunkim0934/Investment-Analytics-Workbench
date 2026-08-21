@@ -193,7 +193,8 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "allocRedistribute", "allocIsAlt", "allocLambdaForSigma", "allocJointOpt", "allocCcyHedgeRows",
   "allocXeBinds", "allocXeBindNotes", "allocXeRange", "openAllocDetail",
   "estEngine", "estDayCount", "estIndexYtd", "EST_ASSETS",
-  "SECTION_LABELS", "sectionLink", "estScenario", "estAxisLevels", "estAxisAt", "EST_SCEN", "estMigrateLevels"];
+  "SECTION_LABELS", "sectionLink", "estScenario", "estAxisLevels", "estAxisAt", "EST_SCEN", "estMigrateLevels",
+  "explainBox", "EXPLAIN_OPEN"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -3491,6 +3492,90 @@ safe("simConsole", () => {
   r.revertRestoresSaved = (DOC.getElementById("sim-mix-해외주식") || {}).value === "2";
 
   store.removeItem("iaw-alloc");
+  return r;
+});
+
+/* ============ §7.13 설명 접기 — 답·경고만 보이고 산문은 클릭 뒤 ============
+   details.explain 은 코드 토글(preventDefault + open 반전)이라 셰이드에서도 실행으로
+   잰다. 핵심 계약 둘: ① 기본 닫힘 + 같은 id 재생성 시 열림 유지(recalc 내성) ②
+   **경고·사유는 explain 안에 있지 않다** — 접힌 정보는 없는 정보라, 구속 ⚠·폴백
+   사유가 접히면 §7.7.17·§7.8.1 계약이 조용히 무력화된다. visText() 가 닫힌 explain
+   본문을 제외한 「보이는 텍스트」를 계산해 그 계약을 실행으로 확인한다. */
+const visText = (node) => {
+  let t = "";
+  const walk = (n) => {
+    if (n.nodeType === 3) { t += n.textContent; return; }
+    if (n.nodeType !== 1) return;
+    if (n.tagName === "DETAILS" && !n.hasAttribute("open")) {
+      const sum = (n.children || []).find((c) => c.tagName === "SUMMARY");
+      if (sum) t += sum.textContent;
+      return;
+    }
+    (n.childNodes || []).forEach(walk);
+  };
+  walk(node);
+  return t;
+};
+safe("explainFold", () => {
+  const r = {};
+  r.helperExists = typeof P.explainBox === "function";
+  /* 단독 동작 — 기본 닫힘 · 클릭 토글 · 같은 id 재생성 시 상태 유지 */
+  P.EXPLAIN_OPEN.clear();
+  const d1 = P.explainBox("probe-x", "본문내용");
+  r.closedByDefault = !d1.hasAttribute("open");
+  r.labelDefault = d1.querySelector("summary").textContent === "설명";
+  r.customLabel = P.explainBox("probe-y", { label: "커스텀" }, "x")
+    .querySelector("summary").textContent === "커스텀";
+  d1.querySelector("summary").click();
+  r.clickOpens = d1.hasAttribute("open");
+  const d2 = P.explainBox("probe-x", "본문내용");     // recalc 재생성 시뮬레이션
+  r.reopenSurvivesRerender = d2.hasAttribute("open");
+  d2.querySelector("summary").click();
+  r.clickCloses = !d2.hasAttribute("open");
+  r.closeAlsoSurvives = !P.explainBox("probe-x", "본문내용").hasAttribute("open");
+  /* 닫힌 본문은 「보이는 텍스트」에서 빠지고, 열면 들어온다 */
+  const d3 = P.explainBox("probe-z", "숨은본문");
+  const host = P.el("div", {}, "보이는답 ", d3);
+  r.closedBodyHidden = !visText(host).includes("숨은본문") && visText(host).includes("보이는답");
+  d3.querySelector("summary").click();
+  r.openBodyVisible = visText(host).includes("숨은본문");
+
+  /* 화면 적용 — alloc 를 렌더해 explain 이 실제로 깔렸고 전부 닫혀 있는지 */
+  P.EXPLAIN_OPEN.clear();
+  P.DATA.alloc = CMA_ALLOC;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const panel = DOC.getElementById("alloc");
+  const folds = panel.querySelectorAll("details.explain");
+  r.allocHasFolds = folds.length >= 5;
+  r.allFoldsClosedByDefault = folds.every((d) => !d.hasAttribute("open"));
+  const vis = visText(panel);
+  const full = panel.textContent;
+  /* 접기의 요점 — 보이는 글자가 전체의 일부여야 한다(산문이 실제로 접혀 있다) */
+  r.visibleIsSubset = vis.length < full.length * 0.85;
+  /* 계약 문자열은 textContent 에 남는다(닫혀 있어도) — 기존 프로브들의 전제 */
+  r.contractStringsStillInDom = /Xe 에는 들어가지 않습니다/.test(full);
+  /* 핵심 답·경고는 **보이는 텍스트**에 있어야 한다 */
+  r.answersVisible = /기대수익 /.test(vis) && /위험 /.test(vis) && /① 최적 포트폴리오/.test(vis);
+  r.hedgeControlsVisible = /해외채권 헤지비율/.test(vis) && /대체투자 환헤지 비율/.test(vis);
+  /* 산문 대표 두 건은 보이는 텍스트에서 빠져 있어야 한다(접힘 확인) */
+  r.proseFolded = !/레버는 두 개뿐입니다/.test(vis) && !/원가법 BM 은 시장위험을 나르지 않아/.test(vis);
+
+  /* 경고는 접히지 않는다 — 밴드를 눌러 구속을 강제하고, ⚠ 문장이 **보이는** 텍스트에
+     있는지 잰다(§7.7.17 네 자리 중 시뮬레이터 카드·요약표가 이 화면에 있다). */
+  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
+    h_bands: { 해외채권: [95, 100], 해외주식: [95, 100] } }));
+  P.renderSection("alloc");
+  const vis2 = visText(DOC.getElementById("alloc"));
+  r.bindWarningVisibleNotFolded = /(헤지 밴드\(내규 키인\)가 구간을 좁힙니다|환노출의 상한입니다|오버헤지 불가)/.test(vis2);
+  shim.localStorage.removeItem("iaw-alloc");
+
+  /* 프록시 폴백 사유(layerNote)도 보이는 텍스트에 남는다 */
+  P.DATA.alloc = { ...CMA_ALLOC, cma: { active: false, reason: "probe-접힘검사" } };
+  P.renderSection("alloc");
+  r.fallbackReasonVisible = /probe-접힘검사/.test(visText(DOC.getElementById("alloc")));
+  P.DATA.alloc = CMA_ALLOC;
+  P.renderSection("alloc");
   return r;
 });
 

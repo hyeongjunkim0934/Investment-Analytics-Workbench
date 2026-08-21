@@ -2988,3 +2988,39 @@ def test_every_css_variable_and_class_actually_exists():
     # 목록이 낡으면(그 사이 CSS 가 생기면) 예외가 조용히 쌓인다 — 그것도 잡는다
     stale = sorted(intentionally_unstyled & css_cls)
     assert not stale, f"CSS 가 생겼는데 무스타일 예외 목록에 남아 있습니다: {stale}"
+
+
+# ---- §7.13 설명 접기 — 답·경고만 보이고 산문은 클릭 뒤 (실행해서 확인) ----------
+def test_explain_fold_behaviour_and_warning_visibility(probe):
+    """산문 접기(§7.13 — 2026-08-19 사용자 지시 "화면을 심플하게")의 계약.
+
+    ① 기본 닫힘, 클릭 토글, 같은 id 재생성(recalc) 시 열림 상태 유지 — 상태 유지가
+       없으면 슬라이더를 끌 때마다 열어 둔 설명이 닫힌다.
+    ② 닫힌 본문은 보이는 텍스트에서 빠지지만 **textContent 에는 남는다** — 문자열
+       기반 기존 프로브·테스트의 전제가 유지된다.
+    ③ **경고·사유는 접히지 않는다** — 구속 ⚠(§7.7.17)·폴백 사유(layerNote)가 접히면
+       그 계약이 조용히 무력화된다. visText(닫힌 explain 본문 제외)로 실행 확인.
+    """
+    c = probe["explainFold"]
+    assert c["helperExists"] is True
+    assert c["closedByDefault"] is True, "explain 이 기본 열림이다 — 접기의 요점이 사라진다"
+    assert c["labelDefault"] is True and c["customLabel"] is True
+    assert c["clickOpens"] is True and c["clickCloses"] is True
+    assert c["reopenSurvivesRerender"] is True, (
+        "재렌더에서 열림 상태가 사라진다 — 슬라이더를 끌 때마다 설명이 닫힌다"
+    )
+    assert c["closeAlsoSurvives"] is True
+    assert c["closedBodyHidden"] is True and c["openBodyVisible"] is True
+    assert c["allocHasFolds"] is True, "자산배분 화면에 explain 접기가 깔리지 않았다"
+    assert c["allFoldsClosedByDefault"] is True
+    assert c["visibleIsSubset"] is True, "접었는데 보이는 글자가 줄지 않았다"
+    assert c["contractStringsStillInDom"] is True, (
+        "계약 문자열이 DOM 에서 사라졌다 — title 속성으로 옮겼는지 확인(textContent 상실)"
+    )
+    assert c["answersVisible"] is True, "답(기대수익·위험·최적 카드)이 접혔다 — 접는 대상이 뒤집혔다"
+    assert c["hedgeControlsVisible"] is True
+    assert c["proseFolded"] is True, "대표 산문이 기본 상태에 그대로 보인다 — 접기가 안 걸렸다"
+    assert c["bindWarningVisibleNotFolded"] is True, (
+        "구속 ⚠ 가 접혔다 — 경고는 explain 에 넣지 않는다(§7.13 계약)"
+    )
+    assert c["fallbackReasonVisible"] is True, "프록시 폴백 사유가 접혔다 — 조용한 대체 금지 위반"
