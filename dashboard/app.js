@@ -2817,6 +2817,11 @@ function makeRatioChart(box, opts) {
   /* 점 마커 — 효율적 투자선 위의 「기준 × · 조정 ▲ · 참고치 ●」 처럼, 선이 아니라
      **한 점**인 상태를 라벨과 함께 그린다. 시리즈로 넣지 않는 이유: uPlot 은 x 배열이
      공유라 선 밖 임의 좌표를 못 받는다 — draw 훅에서 좌표 변환으로 직접 찍는다. */
+  if (opts.onCursor) {
+    cfg.hooks = cfg.hooks || {};
+    (cfg.hooks.setCursor = cfg.hooks.setCursor || []).push(
+      (u) => opts.onCursor(u.cursor ? u.cursor.idx : null));
+  }
   if (opts.markers && opts.markers.length) {
     cfg.hooks = cfg.hooks || {};
     (cfg.hooks.draw = cfg.hooks.draw || []).push((u) => {
@@ -5079,6 +5084,397 @@ function allocSrcTag(key) {
   }[key] || "";
 }
 
+/* ---------------- 포트폴리오 구성 — 신규 7자산군 (§7.14 인프라) ---------------- */
+
+const PORT_LS_KEY = "iaw-port";
+let portCharts = [];
+
+function projSimplex(v) {
+  const n = v.length;
+  const u = [...v].sort((a, b) => b - a);
+  let css = 0, theta = 0;
+  for (let i = 0; i < n; i++) {
+    css += u[i];
+    const t = (css - 1) / (i + 1);
+    if (u[i] - t > 0) theta = t;
+  }
+  return v.map((x) => Math.max(x - theta, 0));
+}
+
+function portRound01(vals, total = 100) {
+  const scaled = vals.map((v) => Math.max(0, +v || 0) * 10);
+  const fl = scaled.map(Math.floor);
+  let rem = Math.round(total * 10) - fl.reduce((a, b) => a + b, 0);
+  const order = scaled.map((v, i) => [v - fl[i], i]).sort((a, b) => b[0] - a[0]);
+  for (let k = 0; rem > 0; k++, rem--) fl[order[k % order.length][1]] += 1;
+  return fl.map((x) => x / 10);
+}
+
+function portMixFromGroups(P, grp, liq) {
+  const G = (P.defaults && P.defaults.groups) || {};
+  const base = ["주식", "채권", "대체"];
+  const bsum = base.reduce((a, g) => a + Math.max(0, +grp[g] || 0), 0);
+  const scale = bsum > 0 ? (100 - liq) / bsum : 0;
+  const raw = {};
+  base.forEach((g) => {
+    const assets = G[g] || [];
+    assets.forEach((a) => { raw[a] = Math.max(0, +grp[g] || 0) * scale / assets.length; });
+  });
+  (G["유동성"] || []).forEach((a, _, arr) => { raw[a] = liq / arr.length; });
+  const vals = portRound01(P.assets.map((a) => raw[a] || 0));
+  const out = {};
+  P.assets.forEach((a, i) => { out[a] = vals[i]; });
+  return out;
+}
+
+function portDefaults(P) {
+  const d = P.defaults || {};
+  const grp = { ...(d.group_default || { 주식: 50, 채권: 30, 대체: 20 }) };
+  const liq = d.liq_default != null ? +d.liq_default : 10;
+  return { grp, liq, mix: portMixFromGroups(P, grp, liq), mu: {}, win: null };
+}
+
+function portState(P) {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(PORT_LS_KEY)) || {}; } catch { saved = {}; }
+  const d = portDefaults(P);
+  const st = { ...d, ...saved };
+  if (!st.grp || typeof st.grp !== "object") st.grp = d.grp;
+  ["주식", "채권", "대체"].forEach((g) => { if (!isFinite(+st.grp[g])) st.grp[g] = d.grp[g]; });
+  if (!isFinite(+st.liq)) st.liq = d.liq;
+  if (!st.mix || typeof st.mix !== "object") st.mix = { ...d.mix };
+  P.assets.forEach((a) => { if (!isFinite(+st.mix[a])) st.mix[a] = d.mix[a] || 0; });
+  if (!st.mu || typeof st.mu !== "object") st.mu = {};
+  return st;
+}
+
+function portSaveState(st) {
+  try {
+    localStorage.setItem(PORT_LS_KEY, JSON.stringify({
+      grp: st.grp, liq: st.liq, mix: st.mix, mu: st.mu, win: st.win, saved: true }));
+  } catch {}
+}
+
+function portWinLabel(k) { return k === "all" ? "전체" : `${k}년`; }
+
+function portEngine(P, st) {
+  const wins = P.windows || [];
+  const W = wins.find((w) => w.key === st.win) || wins[wins.length - 1];
+  const n = P.assets.length;
+  const C = W.cov.map((row) => row.map((v) => v * 1e4));          // %² 단위
+  const fileMu = (P.cma_input && P.cma_input.mu_pct) || {};
+  const mu = [], src = [];
+  P.assets.forEach((a, i) => {
+    const k = st.mu[a];
+    if (k != null && isFinite(+k)) { mu.push(+k); src.push("키인"); }
+    else if (fileMu[a] != null && isFinite(+fileMu[a])) { mu.push(+fileMu[a]); src.push("CMA 파일"); }
+    else { mu.push(W.mean_pct[i]); src.push("과거 평균(참고)"); }
+  });
+  const dot = (a, b) => a.reduce((s, x, i) => s + x * b[i], 0);
+  const mv = (M, v) => M.map((r) => dot(r, v));
+  const sig = (w) => Math.sqrt(Math.max(0, dot(w, mv(C, w))));
+  const muOf = (w) => dot(mu, w);
+  const L = Math.max(1e-9, ...C.map((r) => r.reduce((a, b) => a + Math.abs(b), 0)));
+  const solve = (lam, iters = 400) => {
+    let w = new Array(n).fill(1 / n);
+    const eta = 1 / L;
+    for (let t = 0; t < iters; t++) {
+      const g = mv(C, w).map((x, i) => x - mu[i] / lam);
+      w = projSimplex(w.map((x, i) => x - eta * g[i]));
+    }
+    return w;
+  };
+  const pts = [];
+  for (let k = 0; k <= 32; k++) {
+    const lam = Math.pow(10, 3 - 6 * k / 32);
+    const w = solve(lam);
+    pts.push({ sig: sig(w), mu: muOf(w), w, lam });
+  }
+  pts.sort((a, b) => a.sig - b.sig || a.mu - b.mu);
+  const front = [];
+  for (const p of pts) {
+    if (!front.length) { front.push(p); continue; }
+    const last = front[front.length - 1];
+    if (p.sig - last.sig < 1e-4) { if (p.mu > last.mu) front[front.length - 1] = p; }
+    else if (p.mu > last.mu - 1e-9) front.push(p);
+  }
+  const wb = P.assets.map((a) => (P.bench_w && P.bench_w[a]) || 0);
+  const bench = { sig: sig(wb), mu: muOf(wb), w: wb };
+  const rf = mu[P.assets.indexOf("원화유동성")] ?? 0;
+  let best = null;
+  for (const p of front) {
+    const s = p.sig > 1e-9 ? (p.mu - rf) / p.sig : -Infinity;
+    if (!best || s > best.sharpe) best = { ...p, sharpe: s };
+  }
+  const metrics = (w) => {
+    const m = muOf(w), s = sig(w);
+    const dw = w.map((x, i) => x - wb[i]);
+    const te = sig(dw);
+    return { mu: m, sig: s, sharpe: s > 1e-9 ? (m - rf) / s : null,
+             act: m - bench.mu, te, ir: te > 1e-9 ? (m - bench.mu) / te : null };
+  };
+  return { W, mu, src, rf, front, minVar: front[0] || null,
+           maxSharpe: best, bench, wb, sig, muOf, metrics };
+}
+
+function renderPortPanel(A) {
+  const box = $("#alloc-port-panel");
+  if (!box) return;
+  portCharts.forEach(destroyChart);
+  portCharts = [];
+  box.textContent = "";
+  const P = A && A.port;
+  const head = el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, "포트폴리오 구성 — 7자산군 (신규 우주 · 인프라)"));
+  if (!P || !P.active || !(P.windows || []).length) {
+    head.append(el("span", { class: "card-sub d-up" },
+      `비활성 — ${(P && P.reason) || "데이터 없음"}`));
+    box.append(head);
+    return;
+  }
+  const pal = palette();
+  const st = portState(P);
+  const wins = P.windows;
+  const W = wins.find((w) => w.key === st.win) || wins[wins.length - 1];
+
+  head.append(el("span", { class: "card-sub" },
+    `원화 기준(미헤지 환산) · 월말 표본 · 창 ${portWinLabel(W.key)} ${W.start}~${W.end} (${W.n_months}개월)`
+    + (W.key === "all" ? " — 최장 공통 표본(기본)" : "")));
+  const seg = el("div", { class: "seg", role: "group" });
+  wins.forEach((w) => seg.append(el("button", {
+    class: w.key === W.key ? "active" : "",
+    onclick: () => { st.win = w.key; portSaveState(st); renderPortPanel(A); },
+  }, portWinLabel(w.key))));
+  head.append(el("span", {}, seg));
+  box.append(head);
+
+  const missing = P.missing_windows || [];
+  if (missing.length) {
+    const cov = P.coverage || [];
+    const short = cov.length ? cov.reduce((a, b) => (a.n_months <= b.n_months ? a : b)) : null;
+    box.append(el("div", { class: "port-warn d-up" },
+      `⚠ ${missing.map((y) => `${y}년`).join("·")} 창 미충족 — ` +
+      (short ? `최단 자산 ${short.asset} 표본 ${short.first}~. ` : "") +
+      "요청된 10년 통계는 공통 표본이 쌓이면 자동으로 열립니다(참고: 아래 자산별 10년 열)."));
+  }
+  box.append(explainBox("port-method",
+    { label: "방법론 · 프록시 · 규약" },
+    el("p", {}, `프록시: ${P.assets.map((a) => `${a}=${(P.proxies || {})[a] || "?"}`).join(" · ")}`),
+    el("p", {}, P.method || ""),
+    el("p", {}, "대분류 초기 세팅: 주식·채권·대체의 상대비를 유지한 채 (100−유동성)% 로 " +
+      "비례 축소하고, 그룹 안은 균등 분할(달러/원화 유동성 동일 비중은 사용자 지정)합니다. " +
+      "50+30+20=100 과 「유동성 10% 내외」가 동시에 성립하도록 채택한 규칙입니다."),
+    el("p", {}, "CMA 키인은 이 브라우저(localStorage)에 즉시 저장됩니다. 「CMA JSON 내보내기」로 만든 " +
+      "내용을 비공개 Data 저장소의 port_cma.json 으로 커밋하면 다음 빌드부터 모든 브라우저의 " +
+      "디폴트로 실립니다 — 그 값은 공개 대시보드 JSON 에 게시됩니다(원본 지수 값은 게시되지 않습니다).")));
+
+  /* ① 대분류 초기 세팅 */
+  const gWrap = el("div", { class: "port-groups" });
+  const gInputs = {};
+  const preview = el("div", { class: "port-preview" });
+  const grpRow = (label, get, set, min, max) => {
+    const inp = el("input", { type: "number", step: "0.5", min: String(min), max: String(max),
+                              value: String(get()), "aria-label": `대분류 ${label}` });
+    inp.addEventListener("input", () => {
+      const v = parseFloat(inp.value);
+      set(isFinite(v) ? v : 0);
+      updPreview();
+    });
+    gInputs[label] = inp;
+    return el("label", { class: "port-grp" }, `${label} `, inp, " %");
+  };
+  gWrap.append(
+    grpRow("주식", () => st.grp["주식"], (v) => { st.grp["주식"] = v; }, 0, 100),
+    grpRow("채권", () => st.grp["채권"], (v) => { st.grp["채권"] = v; }, 0, 100),
+    grpRow("대체", () => st.grp["대체"], (v) => { st.grp["대체"] = v; }, 0, 100),
+    grpRow("유동성", () => st.liq, (v) => { st.liq = v; },
+           (P.defaults.liq_range || [0, 20])[0], (P.defaults.liq_range || [0, 20])[1]));
+  const applyBtn = el("button", { class: "btn-primary", onclick: () => {
+    const mix = portMixFromGroups(P, st.grp, st.liq);
+    P.assets.forEach((a) => {
+      st.mix[a] = mix[a];
+      if (mixInputs[a]) mixInputs[a].value = String(mix[a]);
+    });
+    recalc();
+  } }, "7자산군에 적용");
+  gWrap.append(applyBtn);
+  box.append(el("div", { class: "port-sec-title" },
+    "① 대분류 초기 세팅 — 유동성만큼 주식·채권·대체를 비례 축소"), gWrap, preview);
+  function updPreview() {
+    const mix = portMixFromGroups(P, st.grp, st.liq);
+    preview.textContent = "적용 시: " +
+      P.assets.map((a) => `${a} ${fmtNum(mix[a], 1)}`).join(" · ") + " (합계 100.0)";
+  }
+  updPreview();
+
+  /* ② 자산군 표 — 비중(시뮬레이션·저장 안 함) + CMA μ 키인(모형 입력·즉시 저장) */
+  const E0 = portEngine(P, st);
+  const mixInputs = {}, srcCells = {};
+  const table = el("table", { class: "port-table" });
+  table.append(el("thead", {}, el("tr", {},
+    ...["자산군", "비중 %", "기대수익 μ % (키인)", "μ 출처", `σ % (${portWinLabel(W.key)})`,
+        "10년 참고 μ/σ"].map((h) => el("th", {}, h)))));
+  const tbody = el("tbody");
+  P.assets.forEach((a, i) => {
+    const wInp = el("input", { type: "number", step: "0.1", min: "0", max: "100",
+                               value: String(st.mix[a]), "aria-label": `${a} 비중` });
+    wInp.addEventListener("input", () => {
+      const v = parseFloat(wInp.value);
+      st.mix[a] = isFinite(v) ? v : 0;
+      recalc();
+    });
+    mixInputs[a] = wInp;
+    const dflt = (P.cma_input && P.cma_input.mu_pct && P.cma_input.mu_pct[a] != null)
+      ? P.cma_input.mu_pct[a] : E0.W.mean_pct[i];
+    const muInp = el("input", { type: "number", step: "0.01",
+                                placeholder: fmtNum(dflt, 2), "aria-label": `${a} 기대수익` });
+    if (st.mu[a] != null && isFinite(+st.mu[a])) muInp.value = String(st.mu[a]);
+    muInp.addEventListener("input", () => {
+      const v = parseFloat(muInp.value);
+      if (isFinite(v)) st.mu[a] = v; else delete st.mu[a];
+      portSaveState(st);
+      const E = portEngine(P, st);
+      srcCells[a].textContent = E.src[i];
+      recalc();
+    });
+    const srcCell = el("td", {}, E0.src[i]);
+    srcCells[a] = srcCell;
+    const r10 = (P.ref10y && P.ref10y.per_asset && P.ref10y.per_asset[a]) || null;
+    const cdRef = a === "원화유동성" && !r10 && P.krw_liq_ref ? P.krw_liq_ref : null;
+    const refCell = r10 ? `${fmtNum(r10.mean_pct, 1)} / ${fmtNum(r10.vol_pct, 1)}`
+      : cdRef ? el("span", { title: `${cdRef.note} · ${cdRef.start}~${cdRef.end}`
+          + (cdRef.overlap ? ` · 실ETF 겹침 ${cdRef.overlap.n_months}개월 corr ${fmtNum(cdRef.overlap.corr, 2)}` : "") },
+          `${fmtNum(cdRef.mean_pct, 1)} / ${fmtNum(cdRef.vol_pct, 1)} (CD 적립 참고)`)
+      : "–";
+    tbody.append(el("tr", {},
+      el("td", {}, a),
+      el("td", { class: "num" }, wInp),
+      el("td", { class: "num" }, muInp),
+      srcCell,
+      el("td", { class: "num" }, fmtNum(W.vol_pct[i], 2)),
+      el("td", { class: "num" }, refCell)));
+  });
+  table.append(tbody);
+  const sumBadge = el("span", { class: "port-badge" });
+  const saveNote = el("span", { class: "port-note" },
+    "비중·대분류는 저장 전까지 이 화면에만 적용됩니다(μ 키인은 즉시 저장).");
+  const btnRow = el("div", { class: "port-btns" },
+    sumBadge,
+    el("button", { class: "btn-ghost", onclick: () => { portSaveState(st); renderPortPanel(A); } },
+      "기본값으로 저장"),
+    el("button", { class: "btn-ghost", onclick: () => { renderPortPanel(A); } },
+      "저장값으로 되돌리기"),
+    el("button", { class: "btn-ghost", onclick: () => {
+      st.mu = {}; portSaveState(st); renderPortPanel(A);
+    } }, "μ 디폴트로 되돌리기"),
+    el("button", { class: "btn-ghost", onclick: () => { expWrap.hidden = !expWrap.hidden; } },
+      "CMA JSON 내보내기"),
+    saveNote);
+  box.append(el("div", { class: "port-sec-title" }, "② 자산군 비중 · CMA 기대수익 키인"),
+    el("div", { class: "table-wrap" }, table), btnRow);
+
+  const expTa = el("textarea", { class: "port-export", readonly: "", rows: "11",
+                                 "aria-label": "CMA JSON" });
+  const expWrap = el("div", { class: "port-export-wrap" }, expTa,
+    el("div", { class: "port-note" },
+      "위 내용을 비공개 Data 저장소에 port_cma.json 으로 저장하면 다음 빌드부터 " +
+      "디폴트로 실립니다. 이 값은 공개 대시보드 JSON 에 게시됩니다."));
+  expWrap.hidden = true;
+  box.append(expWrap);
+
+  /* ③ 효율적 경계선 + ④ 벤치마크 성과 리뷰 */
+  const frontCard = el("div", { class: "card port-sub-card" });
+  const reviewCard = el("div", { class: "card port-sub-card" });
+  box.append(el("div", { class: "port-two" }, frontCard, reviewCard));
+
+  function recalc() {
+    const E = portEngine(P, st);
+    const sum = P.assets.reduce((s, a) => s + (+st.mix[a] || 0), 0);
+    const sumOk = Math.abs(sum - 100) <= 0.05;
+    sumBadge.textContent = `합계 ${fmtNum(sum, 1)}%` + (sumOk ? "" : " — 100% 아님");
+    sumBadge.className = "port-badge" + (sumOk ? "" : " d-up");
+    expTa.value = JSON.stringify({
+      asof: new Date().toISOString().slice(0, 10),
+      mu_pct: Object.fromEntries(P.assets.map((a, i) => [a, +E.mu[i].toFixed(4)])),
+      note: "워크벤치 화면에서 내보낸 CMA 기대수익 (연 %)",
+    }, null, 2);
+
+    const wCur = sumOk ? P.assets.map((a) => (+st.mix[a] || 0) / 100) : null;
+    const pts = E.front;
+    const fbox = cardScaffold(frontCard, {
+      title: "효율적 경계선 — 합계 100 · 공매도 금지",
+      sub: `μ 출처 혼합(키인/CMA 파일/과거 평균) · 무위험 = 원화유동성 μ ${fmtNum(E.rf, 2)}%`,
+      csvName: "효율적경계선.csv",
+      tableFn: () => ({
+        headers: ["위험%", "기대수익%", ...P.assets.map((a) => `${a}%`)],
+        rows: pts.map((p) => [fmtNum(p.sig, 2), fmtNum(p.mu, 2),
+                              ...p.w.map((x) => fmtNum(x * 100, 1))]),
+      }),
+    });
+    const markers = [];
+    if (E.minVar) markers.push({ x: E.minVar.sig, y: E.minVar.mu, kind: "dot",
+                                 label: "최소위험", color: pal.series[1] });
+    if (E.maxSharpe) markers.push({ x: E.maxSharpe.sig, y: E.maxSharpe.mu, kind: "tri",
+                                    label: "최적(샤프)", color: pal.series[1] });
+    markers.push({ x: E.bench.sig, y: E.bench.mu, kind: "dot",
+                   label: "BM 60/40", color: pal.series[2] });
+    if (wCur) markers.push({ x: E.sig(wCur), y: E.muOf(wCur), kind: "x", label: "현재" });
+    const xsF = pts.map((p) => +p.sig.toFixed(3));
+    const ysF = pts.map((p) => +p.mu.toFixed(3));
+    const mxs = markers.map((m) => m.x), mys = markers.map((m) => m.y);
+    const hover = el("div", { class: "port-hover" });
+    const hoverReset = () => {
+      hover.textContent = "선 위에 마우스를 올리면 그 점의 위험·수익·배분이 여기에 표시됩니다.";
+    };
+    hoverReset();
+    portCharts.push(makeRatioChart(fbox, {
+      seriesDefs: [{ label: "경계선", color: pal.series[0], x: xsF, v: ysF }],
+      xLabel: "위험(연)", unit: "%", height: 260, markers,
+      xRange: [Math.min(...xsF, ...mxs) * 0.9, Math.max(...xsF, ...mxs) * 1.05],
+      yRange: [Math.min(...ysF, ...mys) - 0.3, Math.max(...ysF, ...mys) + 0.3],
+      onCursor: (idx) => {
+        if (idx == null || !pts[idx]) { hoverReset(); return; }
+        const p = pts[idx];
+        const sh = p.sig > 1e-9 ? (p.mu - E.rf) / p.sig : null;
+        hover.textContent =
+          `위험 ${fmtNum(p.sig, 2)}% · 기대수익 ${fmtNum(p.mu, 2)}% · 샤프 ${fmtNum(sh, 2)} — 배분: ` +
+          P.assets.map((a, i) => `${a} ${fmtNum(p.w[i] * 100, 1)}`).join(" · ");
+      },
+    }));
+    frontCard.append(hover);
+
+    reviewCard.textContent = "";
+    reviewCard.append(el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, "벤치마크 대비 성과 리뷰"),
+      el("span", { class: "card-sub" },
+        `BM = S&P500_TR(원화) 60 / 한국종합 40 · 창 ${portWinLabel(E.W.key)}`)));
+    const rows = [];
+    const fmtRow = (name, m) => [name, fmtNum(m.mu, 2), fmtNum(m.sig, 2), fmtNum(m.sharpe, 2),
+                                 fmtNum(m.act, 2), fmtNum(m.te, 2), fmtNum(m.ir, 2)];
+    if (wCur) rows.push(fmtRow("현재 배분", E.metrics(wCur)));
+    if (E.maxSharpe) rows.push(fmtRow("최적(최대 샤프)", E.metrics(E.maxSharpe.w)));
+    if (E.minVar) rows.push(fmtRow("최소위험", E.metrics(E.minVar.w)));
+    rows.push(["벤치마크 60/40", fmtNum(E.bench.mu, 2), fmtNum(E.bench.sig, 2),
+               fmtNum(E.bench.sig > 1e-9 ? (E.bench.mu - E.rf) / E.bench.sig : null, 2),
+               "0.00", "0.00", "–"]);
+    const wrap = el("div", { class: "table-wrap" });
+    renderTable(wrap, {
+      headers: ["구분", "기대수익%", "위험%", "샤프", "초과수익%p", "TE%p", "IR"], rows });
+    reviewCard.append(wrap);
+    if (!wCur) reviewCard.append(el("div", { class: "port-warn d-up" },
+      `합계 ${fmtNum(sum, 1)}% — 100% 가 아니라 현재점을 계산하지 않았습니다(몰래 정규화하지 않습니다).`));
+    const wb = E.W.bench || null;
+    if (wb) reviewCard.append(el("div", { class: "port-note" },
+      `실현 성과(창 ${portWinLabel(E.W.key)} · 월별 리밸런싱): BM μ ${fmtNum(wb.mean_pct, 2)}% · ` +
+      `σ ${fmtNum(wb.vol_pct, 2)}% · MDD ${fmtNum(wb.mdd_pct, 2)}%`));
+    const rb10 = P.ref10y && P.ref10y.bench;
+    if (rb10) reviewCard.append(el("div", { class: "port-note" },
+      `실현 성과(10년 참고 ${rb10.start}~${rb10.end}): BM μ ${fmtNum(rb10.mean_pct, 2)}% · ` +
+      `σ ${fmtNum(rb10.vol_pct, 2)}% · MDD ${fmtNum(rb10.mdd_pct, 2)}%`));
+  }
+  recalc();
+}
+
 function renderAlloc() {
   const A = DATA.alloc;
   if (!$("#alloc")) return;
@@ -5107,7 +5503,8 @@ function renderAlloc() {
      섹션 안 앵커로 쓰면 마을로 튕긴다 — 버튼 + scrollIntoView 로만 움직인다. */
   const toc = $("#alloc-toc");
   toc.textContent = "";
-  [["시뮬레이터", "#alloc-sim-panel"], ["요약", "#alloc-summary"], ["설정", "#alloc-controls"],
+  [["시뮬레이터", "#alloc-sim-panel"], ["포트폴리오 구성", "#alloc-port-panel"],
+   ["요약", "#alloc-summary"], ["설정", "#alloc-controls"],
    ["참고치", "#alloc-cards"], ["투자선", "#alloc-frontier-card"], ["시변·민감도", "#alloc-tv-card"],
    ["특성", "#alloc-char-card"], ["자산군 표", "#alloc-table-card"], ["방법론", "#alloc-method"]]
     .forEach(([label, sel]) => {
@@ -5116,6 +5513,8 @@ function renderAlloc() {
         if (n && n.scrollIntoView) n.scrollIntoView({ block: "start" });
       } }, label));
     });
+
+  renderPortPanel(A);
 
   /* 층·창·매핑 표식용 엔진 한 벌 — recalc 는 매번 새로 만들므로 이건 표시 전용이다 */
   const E0 = allocEngine(A, st);

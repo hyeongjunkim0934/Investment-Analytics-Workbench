@@ -56,6 +56,14 @@ BB_SPEC = [
     ("한국_KOSPI_TR", "주식", "geo", 1500.0),
     ("미국_S&P500_TR", "주식", "geo", 1000.0),
     ("미국종합", "채권", "geo", 100.0),
+    # 포트폴리오 구성(port.py) 프록시 — 한국종합·유동성 2종·원자재.
+    # 원화유동성은 실파일처럼 늦개시(LATE_START) — 창 게이팅 경로를 지나가게 한다.
+    ("한국종합", "채권", "geo", 250.0),
+    ("달러유동성", "유동성", "geo", 150000.0),
+    ("원화유동성", "유동성", "geo", 110000.0),
+    ("S&P GSCI TR CME", "원자재", "geo", 650.0),
+    # 원화유동성 CD 적립 참고(krw_liq_ref) 경로 — 금리(%) 시리즈
+    ("한국_크레딧_CD_AAA_3m", "금리", "walk", 3.0),
     ("달러원", "환율", "walk", 1200.0),
     ("달러캐나다달러", "환율", "walk", 1.30),
     ("파운드달러", "환율", "walk", 1.30),
@@ -104,6 +112,8 @@ INFO_SPEC = [
 ]
 
 VOL = {"geo": 0.011, "walk": None}
+#: 늦개시 시리즈 — 이 날짜 전 칸은 빈 셀로 쓴다 (실파일의 원화유동성 ETF 상대역)
+LATE_START = {"원화유동성": pd.Timestamp("2022-06-01")}
 # 중복 Notation 컬럼에 채우는 센티넬 — 결과에 이 값이 있으면 두 번째 컬럼이 채택된 것
 DUP_SENTINEL = -987654.0
 _DUP_COL = "__dup__"
@@ -147,10 +157,12 @@ def write_wide(path, spec, *, dup_notation: str | None = None,
         ws.append(["DATES"] + ["PX_LAST"] * len(names))
     ws.append(["Category"] + [cats[n] for n in names])
     ws.append(["Notation"] + names)
-    cols = [data[n] for n in names[:-1]] + [data[_DUP_COL]] \
-        if dup_notation is not None else [data[n] for n in names]
+    src = ([(n, data[n]) for n in names[:-1]] + [(_DUP_COL, data[_DUP_COL])]) \
+        if dup_notation is not None else [(n, data[n]) for n in names]
     for i, d in enumerate(idx):
-        ws.append([d.to_pydatetime()] + [float(c[i]) for c in cols])
+        ws.append([d.to_pydatetime()]
+                  + [None if (n in LATE_START and d < LATE_START[n]) else float(c[i])
+                     for n, c in src])
     wb.save(path)
 
 

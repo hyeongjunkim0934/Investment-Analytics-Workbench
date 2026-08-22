@@ -220,6 +220,54 @@ def test_alloc_cma_active_end_to_end_on_synth(built):
     assert cma["cols"][-1] == "_fx"       # 합성 데이터에 달러원이 있으므로
 
 
+def test_alloc_port_active_end_to_end_on_synth(built):
+    """`alloc.json.port` — 신규 7자산군 배선 전체 (판정→파싱→build→게시).
+
+    단위 수학·CMA 파일 검증은 `tests/test_port.py` 가 정본이다. 여기서는
+    합성 픽스처의 늦개시 원화유동성이 창 게이팅으로 이어지는지까지 본다.
+    """
+    import math
+    import numpy as np
+    import port
+    out, _ = built
+    A = json.loads((out / "alloc.json").read_text(encoding="utf-8"))
+    p = A["port"]
+    assert p["active"] is True, p.get("reason")
+    assert p["assets"] == port.ASSETS
+    keys = [w["key"] for w in p["windows"]]
+    assert "all" in keys and "1" in keys and "3" in keys
+    assert "10" not in keys and "5" not in keys, "늦개시 원화유동성이 있는데 장기 창이 열렸다"
+    assert p["missing_windows"] == [5, 10]
+    cov_liq = next(c for c in p["coverage"] if c["asset"] == "원화유동성")
+    assert cov_liq["first"] and cov_liq["first"] >= "2022-06-30"
+    assert p["ref10y"]["per_asset"]["원화유동성"] is None
+    assert p["ref10y"]["per_asset"]["국내주식"] is not None
+    assert p["ref10y"]["bench"] is not None and p["ref10y"]["bench"]["n_months"] == 120
+    assert p["cma_input"] is None
+    assert p["usd_liq_check"] is not None and p["usd_liq_check"]["n_months"] >= 12
+    ref = p["krw_liq_ref"]
+    assert ref is not None and ref["key"] == port.KRW_LIQ_CD_KEY
+    assert "참고 전용" in ref["note"], "CD 적립 수치는 참고 전용 — 공통 행렬 미포함 표기"
+    assert ref["overlap"] is not None and ref["overlap"]["n_months"] >= 12
+
+    for w in p["windows"]:
+        C = np.array(w["cov"])
+        assert C.shape == (7, 7)
+        assert np.allclose(C, C.T, atol=1e-12)
+        assert float(np.linalg.eigvalsh(C)[0]) > -1e-10
+        for row in w["corr"]:
+            for v in row:
+                assert v is None or -1.0000001 <= v <= 1.0000001
+        # 벤치마크 항등식 — 게시된 μ·Σ 만으로 재구성해 일치해야 한다
+        iu, ik = p["assets"].index("해외주식"), p["assets"].index("국내채권")
+        wv = np.zeros(7)
+        wv[iu], wv[ik] = 0.6, 0.4
+        mu_b = float(wv @ np.array(w["mean_pct"]))
+        sig_b = math.sqrt(float(wv @ C @ wv)) * 100
+        assert abs(mu_b - w["bench"]["mean_pct"]) < 1e-2
+        assert abs(sig_b - w["bench"]["vol_pct"]) < 1e-2
+
+
 def test_catalog_has_metadata_only(built):
     """카탈로그는 값 없이 메타데이터만 (공개 범위 규약)."""
     out, _ = built
