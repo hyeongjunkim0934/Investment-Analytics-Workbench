@@ -245,6 +245,10 @@ def test_alloc_port_active_end_to_end_on_synth(built):
     assert p["ref10y"]["bench"] is not None and p["ref10y"]["bench"]["n_months"] == 120
     assert p["cma_input"] is None
     assert p["usd_liq_check"] is not None and p["usd_liq_check"]["n_months"] >= 12
+    ref = p["krw_liq_ref"]
+    assert ref is not None and ref["key"] == port.KRW_LIQ_CD_KEY
+    assert "참고 전용" in ref["note"], "CD 적립 수치는 참고 전용 — 공통 행렬 미포함 표기"
+    assert ref["overlap"] is not None and ref["overlap"]["n_months"] >= 12
 
     for w in p["windows"]:
         C = np.array(w["cov"])

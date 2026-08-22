@@ -3066,3 +3066,21 @@ def test_port_panel_frontier_hover_and_review(probe):
     )
     assert c["sumWarnAfterDrift"] is True, "합계≠100 인데 몰래 정규화했거나 침묵했다"
     assert c["inactiveShowsReason"] is True, "비활성 사유가 화면에 없다 — 조용한 대체 금지"
+
+
+def test_port_panel_longest_window_and_cd_reference(probe):
+    """2026-08-22 사용자 확정 — 기본 창은 최장 공통 표본, 원화유동성은 CD 적립 참고."""
+    c = probe["portPanel"]
+    assert "ERROR" not in c, c.get("ERROR")
+    assert c["defaultWindowLongest"] is True, (
+        "저장이 없으면 최장 공통 표본(all)이 기본 창이어야 하고 화면이 그 사실을 적는다"
+    )
+    assert c["longestMarkOnlyOnAll"] is True, (
+        "최장 표본 표기가 다른 창에도 붙는다 — all 창에만 붙어야 한다"
+    )
+    assert c["cdRefShown"] is True, (
+        "원화유동성 10년 참고 자리에 CD 적립 수치(참고 표기)가 없다"
+    )
+    assert c["cdRefTooltipHasOverlap"] is True, (
+        "CD 참고 툴팁에 참고 전용·실ETF 겹침 검증치가 없다"
+    )

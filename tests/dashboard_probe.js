@@ -1153,9 +1153,14 @@ const ALLOC_FIXTURE = (() => {
       bench: { mean_pct: 8.4, vol_pct: 9.1, mdd_pct: 12.3,
                start: "2020-07-31", end: "2030-06-30", n_months: 120 },
       note: "probe" },
-    cma_input: { source: "port_cma.json", asof: "2030-06-01", note: null,
+    /* 공개 경계(2026-08-22) — 파이프라인은 asof·mu_pct 만 게시한다(source·note 없음) */
+    cma_input: { asof: "2030-06-01",
       mu_pct: { 국내채권: 3.0, 해외채권: 4.5, 국내주식: 7.5, 해외주식: 6.5,
                 대체투자: 5.0, 달러유동성: 3.5, 원화유동성: 2.5 } },
+    krw_liq_ref: { key: "bb:한국_크레딧_CD_AAA_3m", years: 10,
+      mean_pct: 3.7, vol_pct: 0.5, start: "2020-07-31", end: "2030-06-30", n_months: 120,
+      overlap: { n_months: 41, corr: 0.91, mean_diff_pa_pct: 0.25 },
+      note: "CD(AAA) 3M 일할 적립 지수 — 참고 전용(공통 행렬 미포함)" },
     method: "probe",
   };
   return {
@@ -2278,12 +2283,28 @@ safe("portPanel", () => {
   /* ⑦ 합계 ≠ 100 이면 현재점을 몰래 정규화하지 않고 사유를 적는다 */
   r.sumWarnAfterDrift = /100% 가 아니라 현재점을 계산하지 않았습니다/.test(panel.textContent);
 
+  /* ⑦b 기본 창 = 최장 공통 표본(all) — 저장이 없을 때 가장 긴 창이 기본이고
+     화면이 그 사실을 적는다 (2026-08-22 사용자 지시 "가능한 긴 표본") */
+  r.defaultWindowLongest = /최장 공통 표본\(기본\)/.test(panel.textContent);
+
+  /* ⑦c 원화유동성 CD 적립 참고 — 10년 참고가 없는 자리에 CD 수치가 참고 표기로
+     들어오고, 출처·기간·실ETF 겹침 검증치는 툴팁에 있다 (참고 전용 — 행렬 미포함) */
+  const cdSpan = Array.from(panel.querySelectorAll("span"))
+    .find((n) => /CD 적립 참고/.test(n.textContent));
+  r.cdRefShown = !!cdSpan && /3\.7 \/ 0\.5/.test(cdSpan.textContent);
+  r.cdRefTooltipHasOverlap = !!cdSpan
+    && /참고 전용/.test(cdSpan.getAttribute("title") || "")
+    && /겹침 41개월 corr 0\.91/.test(cdSpan.getAttribute("title") || "");
+
   /* ⑧ 창 선택은 모형 입력 — 즉시 저장 */
   const segBtn = Array.from(panel.querySelectorAll(".seg button"))
     .find((b) => b.textContent === "3년");
   segBtn.dispatchEvent({ type: "click", target: segBtn });
   const saved2 = JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY) || "{}");
   r.windowChoiceSaved = saved2.win === "3";
+  /* 최장 표본 표기는 all 창에만 붙는다 — 3년 창으로 바꾸면 사라져야 한다 */
+  r.longestMarkOnlyOnAll = !/최장 공통 표본\(기본\)/.test(
+    DOC.getElementById("alloc-port-panel").textContent);
 
   /* ⑨ 비활성 블록 — 조용히 사라지지 않고 사유를 적는다 */
   P.DATA.alloc = { ...ALLOC_FIXTURE, port: { active: false, reason: "probe 사유" } };

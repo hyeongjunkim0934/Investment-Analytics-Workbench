@@ -5,10 +5,12 @@
 평균·σ·상관·공분산·MDD 와 표본 메타만 나간다(alloc 유출 가드가 강제).
 
 CMA 입력 파일(선택): Data 저장소 어디든 `port_cma.json` 하나.
-    {"asof": "YYYY-MM-DD", "mu_pct": {"국내채권": 3.2, ...}, "note": "..."}
-자산군 이름은 ASSETS 와 문자 단위 일치, 값은 연 % (−50~50). 화면 키인의
-디폴트로 쓰이며, 이 값은 Pages 로 공개 게시된다(원본 지수 값과 달리 사용자
-자신의 가정치 — alloc.DEFAULTS["mu_over"] 와 같은 취급).
+    {"asof": "YYYY-MM-DD", "mu_pct": {"국내채권": 3.2, ...}, ...}
+자산군 이름은 ASSETS 와 문자 단위 일치, 값은 연 % (−50~50).
+
+공개 경계(2026-08-22 사용자 지시): 게시되는 것은 **최종 수치(asof·mu_pct)뿐**이다.
+파일에 빌딩블록·산출 과정·메모 등 다른 필드가 있어도 파이프라인은 읽지 않고
+게시하지 않는다 — 산출 프로세스는 비공개 저장소 안에서만 존재한다.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ PROXY = {
     "해외채권": "bb:미국종합",
     "국내주식": "bb:한국_KOSPI_TR",
     "해외주식": "bb:미국_S&P500_TR",
-    "대체투자": "bb:S&P GSCI SPOT",
+    "대체투자": "bb:S&P GSCI TR CME",
     "달러유동성": "bb:달러유동성",
     "원화유동성": "bb:원화유동성",
 }
@@ -46,6 +48,7 @@ LIQ_RANGE = [0.0, 20.0]
 
 CMA_FILE = "port_cma.json"
 MU_BAND = (-50.0, 50.0)
+KRW_LIQ_CD_KEY = "bb:한국_크레딧_CD_AAA_3m"
 
 
 def _me_levels(s: pd.Series) -> pd.Series:
@@ -123,8 +126,7 @@ def load_cma_input(data_dir, warn) -> dict | None:
     if not mu:
         warn(f"port: {p.name} 에 유효한 mu_pct 항목이 없음 — CMA 입력 무시")
         return None
-    return {"source": p.name, "asof": raw.get("asof") if isinstance(raw.get("asof"), str) else None,
-            "note": raw.get("note") if isinstance(raw.get("note"), str) else None,
+    return {"asof": raw.get("asof") if isinstance(raw.get("asof"), str) else None,
             "mu_pct": {k: mu.get(k) for k in ASSETS}}
 
 
@@ -213,6 +215,33 @@ def build(series_store: dict, warn, data_dir=None) -> dict:
 
     cma_input = load_cma_input(data_dir, warn)
 
+    # 원화유동성 CD 적립 참고(2026-08-22 사용자 지시 "수치만") — 실ETF(2022-04~)보다
+    # 긴 CD(AAA) 3M 일할 적립 지수의 10년 μ·σ 와 겹침 검증치를 참고로만 게시한다.
+    # 공통 행렬에는 넣지 않는다 — 위험 축은 실ETF 그대로다.
+    krw_liq_ref = None
+    if KRW_LIQ_CD_KEY in series_store:
+        cd = series_store[KRW_LIQ_CD_KEY]["s"].sort_index().dropna()
+        if len(cd) >= 24:
+            dd = cd.index.to_series().diff().dt.days.iloc[1:]
+            acc = (1.0 + cd.shift(1).iloc[1:] / 100.0 * dd / 365.0).cumprod()
+            r_cd = _me_levels(acc).pct_change().dropna()
+            if len(r_cd) >= 12:
+                rr = r_cd.iloc[-REF_YEARS * 12:]
+                ov = pd.concat([r_cd.rename("cd"), rets["원화유동성"].rename("etf")],
+                               axis=1, sort=True).dropna()
+                krw_liq_ref = {
+                    "key": KRW_LIQ_CD_KEY, "years": REF_YEARS,
+                    "mean_pct": _rd(rr.mean() * 12.0 * 100, 4),
+                    "vol_pct": _rd(rr.std(ddof=1) * math.sqrt(12.0) * 100, 4),
+                    "start": str(rr.index.min().date()), "end": str(rr.index.max().date()),
+                    "n_months": int(len(rr)),
+                    "overlap": ({"n_months": int(len(ov)),
+                                 "corr": _rd(float(ov["cd"].corr(ov["etf"])), 4),
+                                 "mean_diff_pa_pct": _rd(float((ov["etf"] - ov["cd"]).mean() * 12 * 100), 4)}
+                                if len(ov) >= 12 else None),
+                    "note": "CD(AAA) 3M 일할 적립 지수 — 참고 전용(공통 행렬 미포함)",
+                }
+
     # 달러유동성 원화환산 판정의 근거를 매 빌드 게시 — 벤더가 컬럼 기준을 바꾸면 여기서 드러난다
     usd_liq_check = None
     uj = pd.concat([rets["달러유동성"].rename("a"),
@@ -239,6 +268,7 @@ def build(series_store: dict, warn, data_dir=None) -> dict:
         "ref10y": {"years": REF_YEARS, "per_asset": ref, "bench": bench_ref,
                    "note": "자산별 자체 이력 최근 120개월 — 공통 표본이 아니라 행렬 없음(참고 전용)"},
         "cma_input": cma_input,
+        "krw_liq_ref": krw_liq_ref,
         "usd_liq_check": usd_liq_check,
         "method": "월말 수준 → 월간 수익률 → 연환산(평균 ×12, σ ×√12, 공분산 ×12) · "
                   "마지막 부분월 폐기 · USD 표시 자산(해외채권·해외주식·대체투자)은 "
@@ -246,8 +276,8 @@ def build(series_store: dict, warn, data_dir=None) -> dict:
                   "원화 환산이라 그대로 사용(달러 노출 내재 — 재환산 시 환위험 이중계상, "
                   "판정 근거는 usd_liq_check 로 매 빌드 게시) · "
                   "창 종료 = 공통 표본 마지막 월말(경계 포함) · "
-                  "대체투자 프록시 = S&P GSCI SPOT(사용자 지정 'SPGSCI Index' 티커와 문자 일치 — "
-                  "TR 계열(S&P GSCI TR CME)은 파일에 있으며 교체 가능) · "
+                  "대체투자 프록시 = S&P GSCI TR CME(2026-08-22 사용자 확정 — 롤·담보수익 "
+                  "포함 총수익. 스팟(S&P GSCI SPOT)은 지시 문자열과 티커가 일치하나 TR 로 확정) · "
                   "벤치마크 = S&P500_TR(원화 환산) 60 / 한국종합 40, 월별 리밸런싱 · "
                   "기대수익률은 계산하지 않는다 — 화면 키인이 정본(과거 평균·CMA 파일은 디폴트)",
     }

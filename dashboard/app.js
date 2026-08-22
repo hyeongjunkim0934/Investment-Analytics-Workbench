@@ -5238,7 +5238,8 @@ function renderPortPanel(A) {
   const W = wins.find((w) => w.key === st.win) || wins[wins.length - 1];
 
   head.append(el("span", { class: "card-sub" },
-    `원화 기준(미헤지 환산) · 월말 표본 · 창 ${portWinLabel(W.key)} ${W.start}~${W.end} (${W.n_months}개월)`));
+    `원화 기준(미헤지 환산) · 월말 표본 · 창 ${portWinLabel(W.key)} ${W.start}~${W.end} (${W.n_months}개월)`
+    + (W.key === "all" ? " — 최장 공통 표본(기본)" : "")));
   const seg = el("div", { class: "seg", role: "group" });
   wins.forEach((w) => seg.append(el("button", {
     class: w.key === W.key ? "active" : "",
@@ -5339,13 +5340,19 @@ function renderPortPanel(A) {
     const srcCell = el("td", {}, E0.src[i]);
     srcCells[a] = srcCell;
     const r10 = (P.ref10y && P.ref10y.per_asset && P.ref10y.per_asset[a]) || null;
+    const cdRef = a === "원화유동성" && !r10 && P.krw_liq_ref ? P.krw_liq_ref : null;
+    const refCell = r10 ? `${fmtNum(r10.mean_pct, 1)} / ${fmtNum(r10.vol_pct, 1)}`
+      : cdRef ? el("span", { title: `${cdRef.note} · ${cdRef.start}~${cdRef.end}`
+          + (cdRef.overlap ? ` · 실ETF 겹침 ${cdRef.overlap.n_months}개월 corr ${fmtNum(cdRef.overlap.corr, 2)}` : "") },
+          `${fmtNum(cdRef.mean_pct, 1)} / ${fmtNum(cdRef.vol_pct, 1)} (CD 적립 참고)`)
+      : "–";
     tbody.append(el("tr", {},
       el("td", {}, a),
       el("td", { class: "num" }, wInp),
       el("td", { class: "num" }, muInp),
       srcCell,
       el("td", { class: "num" }, fmtNum(W.vol_pct[i], 2)),
-      el("td", { class: "num" }, r10 ? `${fmtNum(r10.mean_pct, 1)} / ${fmtNum(r10.vol_pct, 1)}` : "–")));
+      el("td", { class: "num" }, refCell)));
   });
   table.append(tbody);
   const sumBadge = el("span", { class: "port-badge" });

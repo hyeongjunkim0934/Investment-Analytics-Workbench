@@ -102,10 +102,15 @@ def test_cma_input_file_validation(tmp_path):
         "asof": "2026-08-01",
         "mu_pct": {"국내채권": 3.2, "해외주식": 6.5, "없는자산군": 1.0, "국내주식": 999.0},
         "note": "테스트",
+        "building_blocks": {"국내채권": {"금리": 2.8, "롤다운": 0.4}},
+        "process": "비공개 산출 과정 메모",
     }), encoding="utf-8")
     warns = []
     got = port.load_cma_input(d, warns.append)
-    assert got is not None and got["source"] == "port_cma.json"
+    assert got is not None
+    # 공개 경계(2026-08-22) — 최종 수치만: 파일에 빌딩블록·산출 과정이 있어도
+    # 게시물 키는 정확히 {asof, mu_pct} 뿐이다
+    assert set(got) == {"asof", "mu_pct"}, "CMA 게시 화이트리스트가 깨졌다"
     assert got["asof"] == "2026-08-01"
     assert got["mu_pct"]["국내채권"] == 3.2 and got["mu_pct"]["해외주식"] == 6.5
     assert got["mu_pct"]["국내주식"] is None, "범위 밖 값이 통과했다"
@@ -133,13 +138,39 @@ def test_cma_input_file_validation(tmp_path):
 
 
 def test_cma_input_flows_into_pipeline(tmp_path):
-    """데이터 디렉터리에 port_cma.json 을 두면 build 가 실어 나른다."""
+    """데이터 디렉터리에 port_cma.json 을 두면 build 가 실어 나른다 — 최종 수치만."""
     store, _ = _full_store()
     (tmp_path / "port_cma.json").write_text(json.dumps(
-        {"asof": "2026-08-01", "mu_pct": {a: 3.0 for a in port.ASSETS}}), encoding="utf-8")
+        {"asof": "2026-08-01", "mu_pct": {a: 3.0 for a in port.ASSETS},
+         "building_blocks": {"국내주식": [1, 2, 3]}}), encoding="utf-8")
     out = port.build(store, lambda m: None, tmp_path)
     assert out["active"] is True
     assert out["cma_input"]["mu_pct"] == {a: 3.0 for a in port.ASSETS}
+    assert set(out["cma_input"]) == {"asof", "mu_pct"}, (
+        "빌딩블록·산출 과정 필드가 공개 게시물에 새어 나갔다 (2026-08-22 공개 경계)"
+    )
+
+
+def test_krw_liq_cd_reference():
+    """CD 적립 참고 — 상수 금리 r 이면 연환산 μ ≈ r, σ ≈ 0. 겹침 검증치도 게시."""
+    store, dates = _full_store(n_me=40)
+    cd_days = pd.bdate_range("2019-06-01", "2023-05-31")
+    store[port.KRW_LIQ_CD_KEY] = _mk_series([3.65] * len(cd_days), cd_days)
+    out = port.build(store, lambda m: None)
+    ref = out["krw_liq_ref"]
+    assert ref is not None and ref["key"] == port.KRW_LIQ_CD_KEY
+    # 일할 적립 (1 + 3.65%/365 × Δ일) 의 연환산 평균은 3.65% 근방 (복리 오차 허용)
+    assert abs(ref["mean_pct"] - 3.65) < 0.15
+    assert ref["vol_pct"] < 0.1, "상수 금리인데 σ 가 크다 — 적립 산식이 깨졌다"
+    assert "참고 전용" in ref["note"], "공통 행렬 미포함(참고 전용) 표기가 없다"
+    ov = ref["overlap"]
+    assert ov is not None and ov["n_months"] >= 12
+    assert set(ov) == {"n_months", "corr", "mean_diff_pa_pct"}
+
+    # CD 시리즈가 없으면 조용히 None — 블록 부재가 빌드를 막지 않는다
+    store2, _ = _full_store()
+    out2 = port.build(store2, lambda m: None)
+    assert out2["active"] is True and out2["krw_liq_ref"] is None
 
 
 def test_synth_fixture_has_port_proxies():
