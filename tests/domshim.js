@@ -227,6 +227,8 @@ class Document {
   querySelectorAll(sel) { return this.body.querySelectorAll(sel); }
   contains(n) { return this.body.contains(n) || n === this.body; }
   addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
+  /* 개요 카드 상세 오버레이(openOvDetail)가 닫을 때 부른다 — 규약대로 그때 채웠다 */
+  removeEventListener(t, f) { this.listeners[t] = (this.listeners[t] || []).filter((x) => x !== f); }
 }
 
 const DOC = new Document();
