@@ -1001,6 +1001,30 @@ a.kpi-link .kpi-label > span:first-child::after {
   content: " ›"; color: var(--ink-3); font-weight: 400;
 }
 
+/* 전용 화면이 없는 카드 — 누르면 상세 오버레이 (2026-08-24). 링크 카드와 같은
+   손모양·호버를 줘서 "이 카드만 안 눌린다"는 오해를 없앤다 */
+.kpi-pop { cursor: pointer; }
+.kpi-pop:hover { border-color: var(--accent); }
+.kpi-pop .kpi-label > span:first-child::after {
+  content: " ＋"; color: var(--ink-3); font-weight: 400;
+}
+.ov-detail-back {
+  position: fixed; inset: 0; z-index: 60; display: flex;
+  align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .5); padding: 16px;
+}
+/* 카드면 토큰은 --surface (--card 는 없다 — 없는 변수는 선언이 통째로 무효) */
+.ov-detail-panel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; width: min(760px, 100%); max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+}
+.ov-detail-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.ov-detail-head .btn-ghost { margin-left: auto; }
+.ov-detail-title { font-size: 16px; font-weight: 700; color: var(--ink-1); }
+.ov-detail-value { font-size: 20px; font-weight: 700; color: var(--ink-1); }
+.ov-detail-deltas { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0 10px; }
+
 /* ── 포트폴리오 구성 (신규 7자산군 · §7.14 인프라) ─────────────────────────── */
 .port-sec-title { margin: 16px 0 8px; font-size: 14px; font-weight: 700; color: var(--ink-1); }
 .port-groups { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
@@ -1008,7 +1032,12 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-grp input { width: 74px; }
 .port-preview { margin-top: 6px; font-size: 12.5px; color: var(--ink-3); }
 .port-table th, .port-table td { padding: 5px 8px; }
-.port-table input[type="number"] { width: 86px; }
+/* 이 표만 가운데 정렬 — 열 제목과 그 아래 키인 칸이 세로로 맞아 보이게
+   (2026-08-23 사용자 지시). 전역 td.num 우측 정렬을 여기서만 이긴다. */
+.port-table thead th, .port-table tbody td, .port-table tbody td.num { text-align: center; }
+.port-table input[type="number"] { width: 86px; text-align: center; }
+/* μ 출처는 열이 아니라 키인 칸 아래 주석이다 */
+.port-src { display: block; font-size: 11px; color: var(--ink-3); margin-top: 2px; }
 .port-badge { font-size: 12.5px; padding: 2px 8px; border: 1px solid var(--border);
   border-radius: 8px; color: var(--ink-2); }
 .port-btns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }

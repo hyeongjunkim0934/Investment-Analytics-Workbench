@@ -2237,11 +2237,20 @@ safe("portPanel", () => {
   const savedRaw = shim.localStorage.getItem(P.PORT_LS_KEY);
   r.muInputSavesImmediately = savedRaw != null && JSON.parse(savedRaw).mu["국내채권"] === 4.2;
 
-  /* ③ μ 출처 — 키인 > CMA 파일 > 과거 평균 */
-  r.srcAfterKeyin = Array.from(panel.querySelectorAll("td"))
+  /* ③ μ 출처 — 키인 > CMA 파일 > 과거 평균. 열이 아니라 키인 칸 아래 주석(.port-src)이고
+     (2026-08-23 사용자 지시), 그 자리는 실현 μ(선택 창) 열이 받았다 */
+  r.srcAfterKeyin = Array.from(panel.querySelectorAll(".port-src"))
     .some((n) => n.textContent === "키인");
-  r.srcShowsCmaFile = Array.from(panel.querySelectorAll("td"))
+  r.srcShowsCmaFile = Array.from(panel.querySelectorAll(".port-src"))
     .some((n) => n.textContent === "CMA 파일");
+  r.srcIsAnnotationNotColumn = !Array.from(panel.querySelectorAll("th"))
+    .some((n) => /μ 출처/.test(n.textContent));
+  const pTh = Array.from(panel.querySelectorAll(".port-table th")).map((n) => n.textContent);
+  r.realizedColShown = pTh.some((t) => /^실현 μ %/.test(t));
+  /* 실현 μ 열의 값이 게시 창 평균과 일치하는가 — 국내채권 행(첫 행), 픽스처 pmean[0]=2.0 */
+  const row0 = panel.querySelector(".port-table tbody tr");
+  r.realizedMatchesWindowMean = !!row0
+    && Array.from(row0.querySelectorAll("td")).some((n) => n.textContent === "2.00");
 
   /* ④ 효율적 경계선 — 차트가 실제로 만들어지고 hover 훅이 상세를 적는가.
      recalc 마다 다시 만들므로 **마지막** 인스턴스를 집는다(앞 것의 hover 는 떼어졌다). */
@@ -2385,9 +2394,12 @@ safe("infoArchitecture", () => {
   const r = {};
   const card = (key, label, group, link, v) => ({
     key, label, kind: "price", unit: "", group, link, value: v, date: "2026-06-30",
-    chg: { d1: 0.1, m1: 0.2, ytd: 0.3, y1: 0.4 },
+    chg: { d1: 0.1, w1: 0.15, m1: 0.2, m3: 0.25, ytd: 0.3, y1: 0.4 },
     spark: { t: [1, 2, 3], v: [1, 2, 3] },
   });
+  /* 전용 화면이 없는 카드에는 hist 가 실린다(2026-08-24) — VIX 로 오버레이를 잰다 */
+  const vixHist = { t: [1700000000, 1700086400, 1700172800, 1700259200],
+                    v: [14.0, 16.5, 15.2, 15.8] };
   const OV = {
     groups: [
       { key: "equity", label: "주식", sections: ["acwi"] },
@@ -2401,7 +2413,7 @@ safe("infoArchitecture", () => {
             card("b", "MSCI ACWI", "equity", "acwi", 1117),
             card("c", "달러/원", "fx", "fx", 1555),
             card("d", "국고 3년", "rate", "rates", 3.87),
-            card("e", "VIX", "equity", "", 15.8),
+            { ...card("e", "VIX", "equity", "", 15.8), hist: vixHist },
             card("f", "WTI", "other", "", 75)],
   };
   P.DATA.overview = OV;
@@ -2420,9 +2432,30 @@ safe("infoArchitecture", () => {
     .find((n) => /MSCI ACWI/.test(n.textContent));
   r.overlappingCardIsLink = acwi.tagName === "A" && acwi.getAttribute("href") === "#acwi";
   r.linkCardHasAriaLabel = /MSCI ACWI 화면으로/.test(acwi.getAttribute("aria-label") || "");
-  /* 전용 화면이 없는 카드는 링크가 **아니어야** 한다 — 눌러도 무동작이면 고장으로 읽힌다 */
+  /* 전용 화면이 없는 카드는 링크가 아니라 **상세 오버레이**를 연다(2026-08-24) —
+     눌러도 무동작인 카드는 여전히 금지이고, 이제는 눌리는 것으로 해소한다 */
   const vix = Array.from(DOC.querySelectorAll(".kpi")).find((n) => /VIX/.test(n.textContent));
   r.cardWithoutScreenIsNotLink = vix.tagName !== "A" && !vix.getAttribute("href");
+  r.popCardIsButton = vix.getAttribute("role") === "button"
+    && /상세 차트 열기/.test(vix.getAttribute("aria-label") || "");
+  shim.UPlotStub.made.length = 0;
+  vix.dispatchEvent({ type: "click", target: vix });
+  const ovBack = DOC.querySelector(".ov-detail-back");
+  r.popOpensOverlay = !!ovBack && /VIX 이력/.test(ovBack.textContent);
+  r.popOverlayChartMade = shim.UPlotStub.made.some((u) =>
+    u.opts && u.opts.series && u.opts.series.some((s) => s.label === "VIX"));
+  r.popOverlayHasSixDeltas = !!ovBack
+    && ["1일", "1주", "1개월", "3개월", "YTD", "1년"].every(
+      (lb) => new RegExp(lb).test(ovBack.textContent));
+  /* 카탈로그가 안 실렸을 때(로드 실패) 메타가 조용히 사라지지 않고 이력 범위로 적는가 */
+  r.popMetaFallsBackToHistRange = !!ovBack && /표본 2023-11-1/.test(ovBack.textContent);
+  const ovClose = ovBack && Array.from(ovBack.querySelectorAll("button"))
+    .find((b) => b.textContent === "닫기");
+  if (ovClose) ovClose.dispatchEvent({ type: "click", target: ovClose });
+  r.popCloseRemovesOverlay = !DOC.querySelector(".ov-detail-back");
+  /* hist 없는 옛 페이로드 카드는 예전 그대로 눌리지 않는 카드다(조용한 실패 금지) */
+  const wti = Array.from(DOC.querySelectorAll(".kpi")).find((n) => /WTI/.test(n.textContent));
+  r.cardWithoutHistStaysPlain = wti.getAttribute("role") !== "button";
   r.everyLinkPointsAtRealSection = Array.from(DOC.querySelectorAll(".kpi-link"))
     .every((n) => P.SECTION_IDS.includes(n.getAttribute("href").slice(1)));
 

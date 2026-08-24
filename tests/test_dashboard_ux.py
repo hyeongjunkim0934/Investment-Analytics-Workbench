@@ -2078,6 +2078,19 @@ def test_overview_groups_cards_and_opens_the_detail_screens(probe):
     assert c["overlappingCardIsLink"] is True, "겹치는 지표 카드가 상세 화면으로 안 간다"
     assert c["linkCardHasAriaLabel"] is True, "링크 카드가 어디로 가는지 읽어주지 않는다"
     assert c["cardWithoutScreenIsNotLink"] is True, "전용 화면이 없는 카드를 링크로 만들었다"
+    # 2026-08-24 사용자 지시 — 무링크 카드도 누르면 상세(오버레이 이력 차트)가 나온다
+    assert c["popCardIsButton"] is True, "무링크 카드가 눌리는 상세 버튼이 아니다"
+    assert c["popOpensOverlay"] is True and c["popOverlayChartMade"] is True, (
+        "무링크 카드 오버레이가 안 열리거나 이력 차트가 없다"
+    )
+    assert c["popOverlayHasSixDeltas"] is True, "변화 6구간(1일~1년)이 빠졌다"
+    assert c["popMetaFallsBackToHistRange"] is True, (
+        "카탈로그가 없을 때 표본 메타가 조용히 사라진다 — 이력 범위로 적어야 한다"
+    )
+    assert c["popCloseRemovesOverlay"] is True, "닫기가 오버레이를 제거하지 않는다"
+    assert c["cardWithoutHistStaysPlain"] is True, (
+        "hist 없는 옛 페이로드 카드까지 버튼으로 만들었다 — 눌러도 열 것이 없다"
+    )
     assert c["everyLinkPointsAtRealSection"] is True
     assert c["groupHeadLinks"] == "#rates,#irs", "금리 구역의 상세 화면 버튼이 다르다"
     assert c["groupHeadUsesSectionTitles"] is True, "버튼 이름이 도착 화면 제목과 다르다"
@@ -3060,12 +3073,35 @@ def test_port_panel_frontier_hover_and_review(probe):
     assert c["srcAfterKeyin"] is True and c["srcShowsCmaFile"] is True, (
         "μ 출처(키인 > CMA 파일 > 과거 평균) 표시가 깨졌다"
     )
+    # 2026-08-23 사용자 지시 — μ 출처는 열이 아니라 키인 칸 아래 주석, 그 자리는 실현 μ
+    assert c["srcIsAnnotationNotColumn"] is True, "μ 출처가 다시 열로 승격됐다"
+    assert c["realizedColShown"] is True and c["realizedMatchesWindowMean"] is True, (
+        "실현 μ(선택 창) 열이 없거나 게시 창 평균과 다른 수를 적는다"
+    )
     assert c["reviewHasRows"] is True and c["reviewShowsRealized"] is True
     assert c["missingWindowWarnVisible"] is True, (
         "10년 창 미충족 경고가 접혔거나 사라졌다 — 경고는 접지 않는다(§7.13)"
     )
     assert c["sumWarnAfterDrift"] is True, "합계≠100 인데 몰래 정규화했거나 침묵했다"
     assert c["inactiveShowsReason"] is True, "비활성 사유가 화면에 없다 — 조용한 대체 금지"
+
+
+def test_port_table_centered_so_headers_match_inputs():
+    """②표는 가운데 정렬 — 열 제목과 키인 칸이 세로로 맞아 보이게(2026-08-23 사용자 지시).
+
+    전역 `tbody td.num` 은 우측 정렬이라, 이 표 한정 재정의가 사라지면 숫자·입력칸이
+    조용히 오른쪽으로 쏠린다(스타일이라 셰이드 프로브는 못 잡는 자리).
+    """
+    css = _css()
+    rule = re.search(r"\.port-table thead th[^{]*\{([^}]*)\}", css)
+    assert rule and "text-align: center" in rule.group(1), (
+        ".port-table 가운데 정렬 규칙이 없다"
+    )
+    assert ".port-table tbody td.num" in rule.group(0).split("{")[0], (
+        "전역 td.num 우측 정렬을 이기려면 .port-table tbody td.num 선택자가 필요하다"
+    )
+    inp = re.search(r"\.port-table input\[type=\"number\"\]\s*\{([^}]*)\}", css)
+    assert inp and "text-align: center" in inp.group(1), "키인 칸 안 글자가 중앙이 아니다"
 
 
 def test_port_panel_longest_window_and_cd_reference(probe):
