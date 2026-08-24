@@ -1292,6 +1292,25 @@ def test_overview_card_links_point_at_real_sections():
             assert sid in ids, f"구역 화면 '{sid}' 가 섹션이 아닙니다"
 
 
+def test_overview_five_cards_per_group_all_alive_on_synth(built):
+    """주식·환율·기타 5장씩(금리 포함 4구역 전부 5장 — 2026-08-23 사용자 지시,
+    국가 중요도 한국 > 미국 > 유럽 > 일본 > 중국) + 카드 키 전수 생존.
+
+    `build_overview` 는 없는 키를 조용히 건너뛰므로, 키 오타는 이 전수 대조가
+    아니면 카드 한 장이 소리 없이 사라지는 것으로만 나타난다.
+    """
+    import process
+    out, _ = built
+    ov = json.loads((out / "overview.json").read_text(encoding="utf-8"))
+    expected = {k for k, *_ in process.OVERVIEW_CARDS}
+    got = {c["key"] for c in ov["cards"]}
+    assert got == expected, f"사라진 카드: {expected - got} / 미등록: {got - expected}"
+    per = {}
+    for c in ov["cards"]:
+        per[c["group"]] = per.get(c["group"], 0) + 1
+    assert per == {"equity": 5, "rate": 5, "fx": 5, "other": 5}, per
+
+
 def test_overview_no_longer_carries_the_risk_scores():
     """현재위험·잠재위험 카드는 개요에서 빠졌다(2026-08-13 사용자 지시 — 리스크에 있는 내용)."""
     js = _app_js()
