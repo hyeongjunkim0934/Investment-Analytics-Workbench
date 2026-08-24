@@ -2237,11 +2237,20 @@ safe("portPanel", () => {
   const savedRaw = shim.localStorage.getItem(P.PORT_LS_KEY);
   r.muInputSavesImmediately = savedRaw != null && JSON.parse(savedRaw).mu["국내채권"] === 4.2;
 
-  /* ③ μ 출처 — 키인 > CMA 파일 > 과거 평균 */
-  r.srcAfterKeyin = Array.from(panel.querySelectorAll("td"))
+  /* ③ μ 출처 — 키인 > CMA 파일 > 과거 평균. 열이 아니라 키인 칸 아래 주석(.port-src)이고
+     (2026-08-23 사용자 지시), 그 자리는 실현 μ(선택 창) 열이 받았다 */
+  r.srcAfterKeyin = Array.from(panel.querySelectorAll(".port-src"))
     .some((n) => n.textContent === "키인");
-  r.srcShowsCmaFile = Array.from(panel.querySelectorAll("td"))
+  r.srcShowsCmaFile = Array.from(panel.querySelectorAll(".port-src"))
     .some((n) => n.textContent === "CMA 파일");
+  r.srcIsAnnotationNotColumn = !Array.from(panel.querySelectorAll("th"))
+    .some((n) => /μ 출처/.test(n.textContent));
+  const pTh = Array.from(panel.querySelectorAll(".port-table th")).map((n) => n.textContent);
+  r.realizedColShown = pTh.some((t) => /^실현 μ %/.test(t));
+  /* 실현 μ 열의 값이 게시 창 평균과 일치하는가 — 국내채권 행(첫 행), 픽스처 pmean[0]=2.0 */
+  const row0 = panel.querySelector(".port-table tbody tr");
+  r.realizedMatchesWindowMean = !!row0
+    && Array.from(row0.querySelectorAll("td")).some((n) => n.textContent === "2.00");
 
   /* ④ 효율적 경계선 — 차트가 실제로 만들어지고 hover 훅이 상세를 적는가.
      recalc 마다 다시 만들므로 **마지막** 인스턴스를 집는다(앞 것의 hover 는 떼어졌다). */

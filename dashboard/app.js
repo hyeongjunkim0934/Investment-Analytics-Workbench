@@ -5311,9 +5311,12 @@ function renderPortPanel(A) {
   const E0 = portEngine(P, st);
   const mixInputs = {}, srcCells = {};
   const table = el("table", { class: "port-table" });
+  /* μ 출처는 열이 아니라 키인 칸 아래 주석(.port-src)이다 — 그 자리에 실현 μ(선택 창)를
+     싣는다(2026-08-23 사용자 지시. 벤치마크 60/40 수익률은 행 단위가 아니라 포트폴리오
+     하나의 수라 행에 넣지 않는다 — 아래 리뷰 카드가 정본). */
   table.append(el("thead", {}, el("tr", {},
-    ...["자산군", "비중 %", "기대수익 μ % (키인)", "μ 출처", `σ % (${portWinLabel(W.key)})`,
-        "10년 참고 μ/σ"].map((h) => el("th", {}, h)))));
+    ...["자산군", "비중 %", "기대수익 μ % (키인)", `실현 μ % (${portWinLabel(W.key)})`,
+        `σ % (${portWinLabel(W.key)})`, "10년 참고 μ/σ"].map((h) => el("th", {}, h)))));
   const tbody = el("tbody");
   P.assets.forEach((a, i) => {
     const wInp = el("input", { type: "number", step: "0.1", min: "0", max: "100",
@@ -5337,8 +5340,8 @@ function renderPortPanel(A) {
       srcCells[a].textContent = E.src[i];
       recalc();
     });
-    const srcCell = el("td", {}, E0.src[i]);
-    srcCells[a] = srcCell;
+    const srcNote = el("span", { class: "port-src" }, E0.src[i]);
+    srcCells[a] = srcNote;
     const r10 = (P.ref10y && P.ref10y.per_asset && P.ref10y.per_asset[a]) || null;
     const cdRef = a === "원화유동성" && !r10 && P.krw_liq_ref ? P.krw_liq_ref : null;
     const refCell = r10 ? `${fmtNum(r10.mean_pct, 1)} / ${fmtNum(r10.vol_pct, 1)}`
@@ -5349,8 +5352,8 @@ function renderPortPanel(A) {
     tbody.append(el("tr", {},
       el("td", {}, a),
       el("td", { class: "num" }, wInp),
-      el("td", { class: "num" }, muInp),
-      srcCell,
+      el("td", { class: "num" }, muInp, srcNote),
+      el("td", { class: "num" }, fmtNum(W.mean_pct[i], 2)),
       el("td", { class: "num" }, fmtNum(W.vol_pct[i], 2)),
       el("td", { class: "num" }, refCell)));
   });
