@@ -408,10 +408,16 @@ OVERVIEW_GROUPS = [
 # 카드를 클릭하면 탭 중에 ACWI 눌러서 나오는 화면"). **전용 화면이 없는 카드는 링크를
 # 비운다** — VIX·VKOSPI·WTI 는 이 대시보드에 자기 화면이 없으므로 없는 링크를 지어내지
 # 않는다(눌러도 아무 일이 없는 카드는 고장으로 읽힌다).
+# 구역당 5장(2026-08-23 사용자 지시), 구역 안 순서는 국가 중요도(한국 > 미국 > 유럽 >
+# 일본 > 중국). 주식 구역의 유럽·일본·중국 **주가지수는 원본 데이터에 없어서** 전세계
+# (ACWI)와 변동성 2종으로 채웠다 — 지수 컬럼이 익스포트에 추가되면 여기서 교체한다
+# (HANDOVER §6 데이터 요청).
 OVERVIEW_CARDS = [
+    ("bb:한국_KOSPI_PR",          "KOSPI",            "price", 1, "",   "equity", ""),
+    ("bb:미국_S&P500_PR",         "S&P 500",          "price", 1, "",   "equity", ""),
     ("idx:ACWI",                 "MSCI ACWI",        "price", 1, "",   "equity", "acwi"),
-    ("bb:미국_변동성지수_VIX",    "VIX",              "level", 1, "",   "equity", ""),
     ("info:VKOSPI",              "VKOSPI",           "level", 1, "",   "equity", ""),
+    ("bb:미국_변동성지수_VIX",    "VIX",              "level", 1, "",   "equity", ""),
     ("info:한국_3y",             "국고 3년",          "rate",  3, "%",  "rate",   "rates"),
     ("info:한국_10y",            "국고 10년",         "rate",  3, "%",  "rate",   "rates"),
     ("info:UST10y",              "미국채 10년",       "rate",  3, "%",  "rate",   "rates"),
@@ -419,8 +425,14 @@ OVERVIEW_CARDS = [
     ("bb:미국_기준금리",          "미국 기준금리",     "rate",  2, "%",  "rate",   "rates"),
     ("info:USDKRW",              "달러/원",           "price", 1, "",   "fx",     "fx"),
     ("bb:달러지수",               "달러지수(DXY)",     "price", 1, "",   "fx",     "fx"),
+    ("info:EURKRW",              "유로/원",           "price", 1, "",   "fx",     "fx"),
+    ("info:KRWJPY",              "원/100엔",          "price", 1, "",   "fx",     "fx"),
+    ("info:USDCNY",              "달러/위안",         "price", 2, "",   "fx",     "fx"),
+    ("bb:한국_CDS_5년물",         "한국 CDS 5년",     "level", 1, "bp", "other",  "credit"),
     ("bb:미국_하이일드_스프레드", "미 HY 스프레드",    "rate",  2, "%p", "other",  "credit"),
+    ("bb:미국_투자등급_스프레드", "미 IG 스프레드",    "rate",  2, "%p", "other",  "credit"),
     ("bb:WTI유가",                "WTI 유가",         "price", 1, "$",  "other",  ""),
+    ("bb:원자재지수",             "원자재(GSCI)",      "price", 1, "",   "other",  ""),
 ]
 
 
