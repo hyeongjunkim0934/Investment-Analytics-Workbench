@@ -149,6 +149,9 @@ def derive_inputs(S: dict, warn=None) -> dict:
     kr3y = g("info:한국_3y")
     kr_card = ((g("info:Card_AA_plus_3y") - kr3y) * 100).dropna()
     fxvol = (usdkrw.pct_change().rolling(20).std() * math.sqrt(252) * 100).dropna()
+    # 환율 수준은 구조적 상승 추세라 확장 백분위가 영구 고위험으로 읽힌다(2026-08-24
+    # 사용자 지시로 교체) — 이격도 규약(200일선, disp_k200 과 동일)으로 추세를 벗긴다.
+    fx_disp = ((usdkrw / usdkrw.rolling(200).mean() - 1) * 100).dropna()
     dd_acwi = (acwi / acwi.cummax() - 1) * 100
     dd_kospi = (kospi / kospi.cummax() - 1) * 100
     us_slope = ((g("info:UST10y") - g("info:UST2y")) * 100).dropna()
@@ -180,6 +183,7 @@ def derive_inputs(S: dict, warn=None) -> dict:
         "kr3y": kr3y,
         "kr_card": kr_card,
         "fxvol": fxvol,
+        "fx_disp": fx_disp,
         "dd_acwi": dd_acwi,
         "dd_kospi": dd_kospi,
         "us_slope": us_slope,
@@ -206,13 +210,13 @@ def factor_specs(D: dict) -> list[dict]:
     """
     (vix, vkospi, dd_acwi, dd_kospi,
      hy, ig, kr_card, cds_kr,
-     cds_jp, cds_de, fxvol, usdkrw,
+     cds_jp, cds_de, fxvol, fx_disp,
      us_slope, kr_slope, disp_k, disp_a,
      disp_k200, disp_a200, unemp_us, sahm_now,
      sahm_fired) = (
         D["vix"], D["vkospi"], D["dd_acwi"], D["dd_kospi"],
         D["hy"], D["ig"], D["kr_card"], D["cds_kr"],
-        D["cds_jp"], D["cds_de"], D["fxvol"], D["usdkrw"],
+        D["cds_jp"], D["cds_de"], D["fxvol"], D["fx_disp"],
         D["us_slope"], D["kr_slope"], D["disp_k"], D["disp_a"],
         D["disp_k200"], D["disp_a200"], D["unemp_us"], D["sahm_now"],
         D["sahm_fired"])
@@ -244,7 +248,11 @@ def factor_specs(D: dict) -> list[dict]:
              sub="원화가 얼마나 불안한가", question="원화 환율이 얼마나 불안정한가",
              tags=["fx"],
              inds=[Indicator("달러/원 20일 변동성(연율)", fxvol, "hi", "{:.1f}", "%"),
-                   Indicator("달러/원 수준", usdkrw, "hi", "{:,.0f}", "원")]),
+                   Indicator("달러/원 / 200일선", fx_disp, "hi", "{:+.1f}", "%",
+                             desc="추세 대비 원화 약세 이격")],
+             note=("수준 지표를 200일선 이격으로 교체(2026-08-24) — 달러/원 수준은 "
+                   "구조적 상승 추세라 이력 백분위가 영구히 고위험으로 읽혔습니다. "
+                   "이격은 추세 대비 급격한 절하만 잡습니다.")),
         dict(key="curve", layer="stress", name="커브",
              sub="장단기 금리가 침체를 가리키나", question="장단기 금리차가 침체를 예고하는가",
              tags=["curve"],
