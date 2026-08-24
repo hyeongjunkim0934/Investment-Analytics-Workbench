@@ -406,8 +406,9 @@ OVERVIEW_GROUPS = [
 #
 # `link` = 그 카드를 누르면 열리는 화면(사용자 지시: "겹치는 지표, 예를들어 개요의 ACWI
 # 카드를 클릭하면 탭 중에 ACWI 눌러서 나오는 화면"). **전용 화면이 없는 카드는 링크를
-# 비운다** — VIX·VKOSPI·WTI 는 이 대시보드에 자기 화면이 없으므로 없는 링크를 지어내지
-# 않는다(눌러도 아무 일이 없는 카드는 고장으로 읽힌다).
+# 비운다** — 없는 링크를 지어내지 않는다. 다만 2026-08-24 사용자 지시("다른 카드들도
+# 전부 다 그렇게")로 무링크 카드는 이제 **상세 오버레이**가 열린다 — build_overview 가
+# hist 를 실어 주고 app.js openOvDetail 이 그린다(무동작 카드는 여전히 금지).
 # 구역당 5장(2026-08-23 사용자 지시), 구역 안 순서는 국가 중요도(한국 > 미국 > 유럽 >
 # 일본 > 중국). 주식 구역의 유럽·일본·중국 **주가지수는 원본 데이터에 없어서** 전세계
 # (ACWI)와 변동성 2종으로 채웠다 — 지수 컬럼이 익스포트에 추가되면 여기서 교체한다
@@ -442,14 +443,21 @@ def build_overview() -> dict:
         s = get(key)
         if s is None:
             continue
-        cards.append({
+        card = {
             "key": key, "label": label, "kind": kind, "unit": unit,
             "group": group, "link": link,
             "value": round(float(s.iloc[-1]), dec),
             "date": s.index[-1].strftime("%Y-%m-%d"),
             "chg": changes(s, kind),
             "spark": spark(s),
-        })
+        }
+        # 전용 화면이 없는 카드는 오버레이 상세가 열린다(2026-08-24 사용자 지시
+        # "전부 다 그렇게") — 그 차트에 쓸 이력을 함께 싣는다(최근 1년 일별 + 이전 주별)
+        if not link:
+            hist = pack(s, daily_years=1)
+            if hist:
+                card["hist"] = hist
+        cards.append(card)
     # 구역은 **카드가 하나라도 살아남은 것만** 내보낸다 — 시리즈가 빠져 텅 빈 구역
     # 제목이 화면에 남으면 "여기 뭔가 있어야 하는데 안 나온다"로 읽힌다.
     live = {c["group"] for c in cards}
@@ -615,9 +623,12 @@ def build_credit() -> dict:
 
 
 def build_fx() -> dict:
+    # 원/100엔·달러/위안은 개요 환율 카드의 링크 도착지가 이 화면이라 함께 그린다
+    # (2026-08-24 — 카드가 가리키는 화면에 그 계열의 차트가 실제로 있어야 한다)
     ts = series_group([
         ("info:USDKRW", "달러/원"), ("info:DXY", "달러지수"),
         ("info:USDJPY", "달러/엔"), ("info:EURKRW", "유로/원"),
+        ("info:KRWJPY", "원/100엔"), ("info:USDCNY", "달러/위안"),
     ])
     # 헤지비용(HP 커브)은 여기서 싣지 않는다 — `hedge.py` 가 `cost_curve`·
     # `cost_hist_curve` 로 싣고 #hedge 화면이 그린다. 같은 값을 두 JSON 에 실으면

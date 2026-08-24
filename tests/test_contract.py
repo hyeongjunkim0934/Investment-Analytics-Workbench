@@ -1309,6 +1309,22 @@ def test_overview_five_cards_per_group_all_alive_on_synth(built):
     for c in ov["cards"]:
         per[c["group"]] = per.get(c["group"], 0) + 1
     assert per == {"equity": 5, "rate": 5, "fx": 5, "other": 5}, per
+    # 2026-08-24 — 전용 화면이 없는 카드만 오버레이용 이력(hist)을 싣는다.
+    # 링크 카드에 실으면 같은 값이 두 파일에 실리는 이중 게시다.
+    for c in ov["cards"]:
+        if c["link"]:
+            assert "hist" not in c, f"{c['key']}: 링크 카드에 hist 가 실렸다"
+        else:
+            h = c.get("hist")
+            assert h and len(h["t"]) == len(h["v"]) >= 100, (
+                f"{c['key']}: 무링크 카드의 오버레이 이력이 없다"
+            )
+    # 환율 카드 5장의 링크 도착지(#fx)에 그 계열 차트가 실제로 있어야 한다
+    fx = json.loads((out / "fx.json").read_text(encoding="utf-8"))
+    fx_labels = {g["label"] for g in fx["ts"]}
+    assert {"원/100엔", "달러/위안"} <= fx_labels, (
+        "개요 환율 카드가 가리키는 화면에 그 계열 차트가 없다"
+    )
 
 
 def test_overview_no_longer_carries_the_risk_scores():

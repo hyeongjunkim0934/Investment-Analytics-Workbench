@@ -2078,6 +2078,19 @@ def test_overview_groups_cards_and_opens_the_detail_screens(probe):
     assert c["overlappingCardIsLink"] is True, "겹치는 지표 카드가 상세 화면으로 안 간다"
     assert c["linkCardHasAriaLabel"] is True, "링크 카드가 어디로 가는지 읽어주지 않는다"
     assert c["cardWithoutScreenIsNotLink"] is True, "전용 화면이 없는 카드를 링크로 만들었다"
+    # 2026-08-24 사용자 지시 — 무링크 카드도 누르면 상세(오버레이 이력 차트)가 나온다
+    assert c["popCardIsButton"] is True, "무링크 카드가 눌리는 상세 버튼이 아니다"
+    assert c["popOpensOverlay"] is True and c["popOverlayChartMade"] is True, (
+        "무링크 카드 오버레이가 안 열리거나 이력 차트가 없다"
+    )
+    assert c["popOverlayHasSixDeltas"] is True, "변화 6구간(1일~1년)이 빠졌다"
+    assert c["popMetaFallsBackToHistRange"] is True, (
+        "카탈로그가 없을 때 표본 메타가 조용히 사라진다 — 이력 범위로 적어야 한다"
+    )
+    assert c["popCloseRemovesOverlay"] is True, "닫기가 오버레이를 제거하지 않는다"
+    assert c["cardWithoutHistStaysPlain"] is True, (
+        "hist 없는 옛 페이로드 카드까지 버튼으로 만들었다 — 눌러도 열 것이 없다"
+    )
     assert c["everyLinkPointsAtRealSection"] is True
     assert c["groupHeadLinks"] == "#rates,#irs", "금리 구역의 상세 화면 버튼이 다르다"
     assert c["groupHeadUsesSectionTitles"] is True, "버튼 이름이 도착 화면 제목과 다르다"

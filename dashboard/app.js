@@ -502,10 +502,22 @@ function renderOverview() {
      눌리게 만들면 눌러도 아무 일이 없어 고장으로 읽힌다. */
   const kpiOf = (c) => {
     const linked = !!c.link;
+    /* 링크 카드는 전용 화면으로, 전용 화면이 없는 카드는 상세 오버레이로 —
+       어느 카드든 누르면 자세한 그래프가 나온다(2026-08-24 사용자 지시).
+       hist 가 없는 옛 페이로드에서는 예전처럼 눌리지 않는 카드로 남는다. */
     const kpi = linked
       ? el("a", { class: "kpi kpi-link", href: `#${c.link}`,
                   "aria-label": `${c.label} — ${SECTION_LABELS[c.link] || c.link} 화면으로` })
+      : c.hist
+      ? el("div", { class: "kpi kpi-pop", role: "button", tabindex: "0",
+                    "aria-label": `${c.label} — 상세 차트 열기` })
       : el("div", { class: "kpi" });
+    if (!linked && c.hist) {
+      kpi.addEventListener("click", () => openOvDetail(c));
+      kpi.addEventListener("keydown", (e) => {
+        if (e && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openOvDetail(c); }
+      });
+    }
     kpi.append(el("div", { class: "kpi-label" },
       el("span", {}, c.label), el("span", { class: "kpi-date" }, c.date)));
     const val = el("div", { class: "kpi-value" }, fmtNum(c.value, String(c.value).includes(".") ? 2 : 0));
@@ -544,6 +556,60 @@ function renderOverview() {
     cat.textContent = "";
     cat.append(sectionLink("catalog", "— 게시 중인 전 시리즈의 출처·기간·관측 수"));
   }
+}
+
+/* 전용 화면이 없는 개요 카드의 상세 오버레이 — 이력 차트 + 변화 6구간 + 표본 메타
+   (2026-08-24 사용자 지시 "다른 카드들도 전부 다 그렇게"). 링크 카드는 종전대로
+   자기 화면으로 간다 — 이 오버레이는 화면이 없는 지표의 자리를 메우는 쪽이다. */
+function openOvDetail(c) {
+  const pal = palette();
+  const back = el("div", { class: "ov-detail-back" });
+  const panel = el("div", { class: "ov-detail-panel", role: "dialog",
+                            "aria-label": `${c.label} 상세` });
+  const closeBtn = el("button", { class: "btn-ghost" }, "닫기");
+  const close = () => { document.removeEventListener("keydown", onKey); back.remove(); };
+  const onKey = (e) => { if (e && e.key === "Escape") close(); };
+  closeBtn.addEventListener("click", close);
+  back.addEventListener("click", (e) => { if (e && e.target === back) close(); });
+  document.addEventListener("keydown", onKey);
+
+  const head = el("div", { class: "ov-detail-head" },
+    el("span", { class: "ov-detail-title" }, c.label),
+    el("span", { class: "ov-detail-value" },
+      fmtNum(c.value, String(c.value).includes(".") ? 2 : 0),
+      c.unit ? el("span", { class: "unit" }, c.unit) : ""),
+    el("span", { class: "kpi-date" }, c.date),
+    closeBtn);
+  panel.append(head);
+
+  const deltas = el("div", { class: "ov-detail-deltas" },
+    ...[["1일", "d1"], ["1주", "w1"], ["1개월", "m1"], ["3개월", "m3"],
+        ["YTD", "ytd"], ["1년", "y1"]].map(([lb, k]) => deltaSpan(lb, c.chg[k], c.kind)));
+  panel.append(deltas);
+
+  const card = el("div", { class: "card" });
+  const box = cardScaffold(card, {
+    title: `${c.label} 이력`, sub: "최근 1년 일별 · 이전 주별",
+    csvName: `${c.label}.csv`,
+    tableFn: tsTableFn([c.label], joinSeries([{ label: c.label, ...c.hist }]), 2),
+  });
+  makeTimeChart(box, {
+    labels: [c.label], colors: [pal.accent],
+    data: joinSeries([{ label: c.label, ...c.hist }]),
+    dec: 2, height: 240, fill: true,
+  });
+  panel.append(card);
+
+  /* 표본 메타는 카탈로그가 정본 — 없으면(카탈로그 로드 실패) 조용히 생략이 아니라
+     이력 범위로 대신 적는다 */
+  const row = ((DATA.catalog || {}).series || []).find((r) => r.key === c.key);
+  panel.append(el("div", { class: "port-note" }, row
+    ? `출처 ${row.source} · 표본 ${row.first} ~ ${row.last} · 관측 ${row.n.toLocaleString("ko-KR")}개`
+    : `표본 ${tsToDate(c.hist.t[0])} ~ ${tsToDate(c.hist.t[c.hist.t.length - 1])}`));
+
+  back.append(panel);
+  document.body.append(back);
+  closeBtn.focus();
 }
 
 function snapshotCard(container, payload, { title, sub, unit, dec }) {
