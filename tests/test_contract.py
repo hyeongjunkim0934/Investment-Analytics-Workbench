@@ -286,6 +286,26 @@ def test_alloc_port_active_end_to_end_on_synth(built):
         assert abs(sig_b - w["bench"]["vol_pct"]) < 1e-2
 
 
+def test_rates_tenor_selector_end_to_end_on_synth(built):
+    """금리 시계열 콤보박스(2026-08-25) — 한국·미국 만기 8종 전부 게시, ts10 폐지."""
+    out, _ = built
+    R = json.loads((out / "rates.json").read_text(encoding="utf-8"))
+    assert "ts10" not in R, "ts10 이 남아 있다 — ts_tenor 와 이중 게시"
+    tt = R["ts_tenor"]
+    assert tt["tenors"] == ["3m", "6m", "1y", "3y", "5y", "10y", "20y", "30y"]
+    codes = {c["code"]: c for c in tt["countries"]}
+    assert {"KR", "US"} <= set(codes)
+    assert codes["KR"]["tenors"] == tt["tenors"], "한국 만기 8종이 전부 실리지 않았다"
+    assert codes["US"]["tenors"] == tt["tenors"], "미국 만기 8종이 전부 실리지 않았다"
+    have = {(s["country"], s["tenor"]) for s in tt["series"]}
+    for c in tt["countries"]:
+        assert {(c["code"], t) for t in c["tenors"]} <= have, (
+            f"{c['code']}: countries.tenors 와 series 가 갈렸다"
+        )
+    for s in tt["series"]:
+        assert len(s["t"]) == len(s["v"]) > 0
+
+
 def test_catalog_has_metadata_only(built):
     """카탈로그는 값 없이 메타데이터만 (공개 범위 규약)."""
     out, _ = built

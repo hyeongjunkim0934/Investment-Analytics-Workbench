@@ -675,12 +675,51 @@ function tsCard(container, group, { title, sub, unit, dec, colorOffset = 0, fill
   makeTimeChart(box, { labels, colors, data, dec, unit, fill, stepped, height });
 }
 
+/* 국채 금리 시계열 — 국가·만기 콤보박스(2026-08-25 사용자 지시). 선택은 보기 상태라
+   저장하지 않고, 나라마다 없는 만기(일본 3m 등)는 목록에서 빠진다. */
+let ratesTenorSel = null;
+
+function renderRatesTenorCard(container, tt) {
+  const st = ratesTenorSel || (ratesTenorSel = { country: "KR", tenor: "10y" });
+  const countries = tt.countries || [];
+  if (!countries.some((c) => c.code === st.country))
+    st.country = (countries[0] || {}).code;
+  const cinfo = countries.find((c) => c.code === st.country) || { label: "", tenors: [] };
+  if (!cinfo.tenors.includes(st.tenor))
+    st.tenor = cinfo.tenors.includes("10y") ? "10y" : cinfo.tenors[0];
+  const g = (tt.series || []).filter(
+    (s) => s.country === st.country && s.tenor === st.tenor);
+
+  const selC = el("select", { "aria-label": "국가 선택" });
+  countries.forEach((c) => selC.append(
+    el("option", { value: c.code, ...(c.code === st.country ? { selected: "" } : {}) },
+      c.label)));
+  const selT = el("select", { "aria-label": "만기 선택" });
+  (tt.tenors || []).filter((t) => cinfo.tenors.includes(t)).forEach((t) => selT.append(
+    el("option", { value: t, ...(t === st.tenor ? { selected: "" } : {}) }, t)));
+  selC.addEventListener("change", () => { st.country = selC.value; renderRates(); });
+  selT.addEventListener("change", () => { st.tenor = selT.value; renderRates(); });
+
+  const labels = g.map((x) => x.label);
+  const data = joinSeries(g);
+  const box = cardScaffold(container, {
+    title: "국채 금리 시계열", sub: `${cinfo.label} ${st.tenor} · %`,
+    controls: el("span", { class: "rates-tenor-ctrl" }, selC, selT),
+    csvName: `국채금리_${cinfo.label}_${st.tenor}.csv`,
+    tableFn: tsTableFn(labels, data, 2),
+  });
+  if (!g.length) box.append(el("div", { class: "chart-empty" }, "데이터 없음"));
+  else makeTimeChart(box, { labels, colors: [palette().series[0]], data, dec: 2, unit: "%" });
+}
+
 function renderRates() {
   const r = DATA.rates || {};
   snapshotCard($("#card-curve"), r.curves || {}, {
     title: "국채 수익률 커브", sub: "최근 · 1개월 전 · 1년 전", unit: "%", dec: 2,
   });
-  tsCard($("#card-ts10"), r.ts10, { title: "국채 10년 금리", sub: "%", unit: "%", dec: 2 });
+  const tt = r.ts_tenor;
+  if (tt && tt.series && tt.series.length) renderRatesTenorCard($("#card-ts10"), tt);
+  else tsCard($("#card-ts10"), r.ts10, { title: "국채 10년 금리", sub: "%", unit: "%", dec: 2 });
   tsCard($("#card-spreads"), r.spreads, { title: "금리 스프레드", sub: "bp", unit: "bp", dec: 0 });
   tsCard($("#card-policy"), r.policy, { title: "기준금리", sub: "%", unit: "%", dec: 2, stepped: true });
 }

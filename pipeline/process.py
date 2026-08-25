@@ -523,10 +523,26 @@ def build_rates() -> dict:
         curves[code] = {"label": cfg["label"], "tenors": tenors, "x": xs,
                         "snaps": snaps}
 
-    ts10 = series_group([
-        ("info:한국_10y", "한국"), ("info:UST10y", "미국"),
-        ("info:JPY10y", "일본"), ("info:GER10y", "독일"),
-    ])
+    # 국가·만기 선택 시계열(2026-08-25 사용자 지시 — 콤보박스). 만기 8개는 사용자
+    # 지정이고, 국가·접두사는 CURVES 설정을 재사용한다. 나라마다 없는 만기가 있으므로
+    # (일본 3m/6m 등) 조용히 건너뛰고 countries[].tenors 로 가용 목록을 게시한다 —
+    # get() 을 쓰면 그 결측이 경고 기준선을 흔든다.
+    TS_TENORS = ["3m", "6m", "1y", "3y", "5y", "10y", "20y", "30y"]
+    tenor_series, tenor_countries = [], []
+    for code, cfg in CURVES.items():
+        avail = []
+        for t in TS_TENORS:
+            entry = SERIES.get(f"{cfg['src']}:{cfg['prefix']}{t}")
+            # 34계열이라 기본 축약(5년 일별)이면 1.4MB — 개요 hist 와 같은 규약
+            # (최근 1년 일별 + 이전 주별)로 줄인다. 금리는 소수 3자리면 충분.
+            p = pack(entry["s"], round_to=3, daily_years=1) if entry else None
+            if p:
+                avail.append(t)
+                tenor_series.append({"country": code, "tenor": t,
+                                     "label": f"{cfg['label']} {t}", **p})
+        if avail:
+            tenor_countries.append({"code": code, "label": cfg["label"], "tenors": avail})
+    ts_tenor = {"tenors": TS_TENORS, "countries": tenor_countries, "series": tenor_series}
     policy = series_group([
         ("info:한국_기준금리", "한국"), ("bb:미국_기준금리", "미국"),
         ("bb:유로_기준금리", "유로"), ("bb:일본_기준금리", "일본"),
@@ -545,7 +561,7 @@ def build_rates() -> dict:
         p = pack(sp, round_to=1)
         if p:
             spreads.append({"label": label, **p})
-    return {"curves": curves, "ts10": ts10, "policy": policy, "spreads": spreads}
+    return {"curves": curves, "ts_tenor": ts_tenor, "policy": policy, "spreads": spreads}
 
 
 IRS_TENORS = ["1y3m", "1y1y", "2y1y", "3y1y", "4y1y", "5y1y", "5y5y", "5y10y"]
