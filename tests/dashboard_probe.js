@@ -76,6 +76,11 @@ secNodes.alloc.append(elem("nav", "alloc-toc"));
 /* 개요 뼈대(§7.9) — 상단 탭이 7개로 줄면서 시장 화면들이 여기로 내려왔다.
    renderOverview 는 구역을 #ov-groups 에 조립하고 카탈로그 입구를 #ov-catalog 에 둔다. */
 secNodes.overview.append(elem("div", "ov-groups"), elem("p", "ov-catalog"));
+/* 리스크 뼈대 — renderRisk 가 $("#risk-…") 로 집는 자리들 (층 맥락·밴드 실증 프로브용) */
+["risk-headline", "risk-chart-card", "risk-howto", "risk-events-mini",
+ "risk-stress-rows", "risk-vuln-rows"].forEach((id) => secNodes.risk.append(elem("div", id)));
+secNodes.risk.append(elem("h3", "risk-stress-title"), elem("h3", "risk-vuln-title"),
+  elem("details", "risk-method"));
 /* 리스크 안의 관계분석 입구 */
 secNodes.risk.append(elem("p", "risk-panel-link"));
 
@@ -197,7 +202,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "SECTION_LABELS", "sectionLink", "estScenario", "estAxisLevels", "estAxisAt", "EST_SCEN", "estMigrateLevels",
   "explainBox", "EXPLAIN_OPEN",
   "renderPortPanel", "portState", "portDefaults", "portMixFromGroups", "portEngine",
-  "portRound01", "projSimplex", "PORT_LS_KEY"];
+  "portRound01", "projSimplex", "PORT_LS_KEY", "openDetail", "deltaTriplet"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -2484,6 +2489,82 @@ safe("infoArchitecture", () => {
   r.labelsCoverEverySection = P.SECTION_IDS.every((id) => !!P.SECTION_LABELS[id]);
 
   P.DATA.overview = OV;
+  return r;
+});
+
+/* ====== 리스크 층 맥락 + 밴드 실증 (2026-08-24 사용자 지시 — 개선 6·3번) =======
+   층 제목의 1·3·12개월 변화와 5년 백분위, 등급바 아래 실증 한 줄, 방법론의 밴드 표,
+   상세 오버레이의 3구간 — 전부 실행으로 확인한다. 옛 페이로드(chg 없음) 폴백 포함. */
+safe("riskContext", () => {
+  const r = {};
+  const hist = { t: [1700000000, 1700604800, 1701209600], v: [40, 45, 50] };
+  const CHG = { m1: -5.4, m3: 2.1, y1: -8.0 };
+  const mkF = (key, layer) => ({
+    key, layer, name: key, sub: "s", question: "q", tags: [],
+    score: 53, grade: "주의", delta: CHG.m1, chg: CHG, hist,
+    indicators: [{ label: "ind", desc: "", value: "1.0", unit: "", pctl: 60,
+                   score: 60, date: "2030-06-27", since: 2001, spark: hist }],
+    steps: ["① x"], weight: 0.5,
+  });
+  const RISK = {
+    asof: "2030-06-27",
+    grade_bands: [[0, 25, "낮음"], [25, 50, "보통"], [50, 75, "주의"], [75, 100, "경계"]],
+    howto: "howto", limits: "limits",
+    layers: {
+      stress: { name: "현재 위험", question: "q", score: 53.5, grade: "주의",
+                delta: CHG.m1, chg: CHG, rank5y: 62, method: "m", hist },
+      vuln: { name: "잠재 위험", question: "q", score: 60.1, grade: "주의",
+              delta: -13.8, chg: { m1: -13.8, m3: null, y1: 4.2 }, rank5y: 88,
+              method: "m", active: 3, total: 5, hist },
+    },
+    weights: { items: [{ key: "vol", name: "변동성", w: 0.3 }], refit: "2030-06-01",
+               floor: 0.08, target: "t", desc: "d" },
+    validation: { window: "2010-01-01 ~ 2030-06-27", n_weeks: 864, crisis_weeks: 138,
+                  metrics: [{ name: "동일가중", ic: 0.5, auc5: 0.6 }] },
+    grade_band_stats: { window: "2010-01-01 ~ 2030-06-27", note: "band-note",
+      rows: [
+        { grade: "낮음", lo: 0, hi: 25, n_weeks: 100, crisis_rate_pct: 3.5, avg_fwd_vol_pct: 9.1 },
+        { grade: "보통", lo: 25, hi: 50, n_weeks: 300, crisis_rate_pct: 9.8, avg_fwd_vol_pct: 12.4 },
+        { grade: "주의", lo: 50, hi: 75, n_weeks: 350, crisis_rate_pct: 18.2, avg_fwd_vol_pct: 16.0 },
+        { grade: "경계", lo: 75, hi: 100, n_weeks: 114, crisis_rate_pct: 41.0, avg_fwd_vol_pct: 24.7 },
+      ] },
+    factors: [mkF("f1", "stress"), mkF("f2", "vuln")],
+  };
+  const prevRisk = P.DATA.risk, prevEvents = P.DATA.events;
+  P.DATA.risk = RISK;
+  P.DATA.events = { events: [] };
+  P.renderSection("risk");
+
+  const st = DOC.getElementById("risk-stress-title").textContent;
+  r.titleHasTriplet = /1개월/.test(st) && /3개월/.test(st) && /1년/.test(st);
+  r.titleHasRank = /최근 5년 백분위 62%/.test(st);
+  const vt = DOC.getElementById("risk-vuln-title").textContent;
+  r.nullHorizonShowsDash = /3개월 –/.test(vt);
+  const hw = DOC.getElementById("risk-howto").textContent;
+  r.bandStatsLineVisible = /구간별 과거 실적/.test(hw) && /경계 41%/.test(hw);
+  const mt = DOC.getElementById("risk-method").textContent;
+  r.methodHasBandTable = /등급 구간의 과거 실적/.test(mt)
+    && /41\.0%/.test(mt) && /24\.7%/.test(mt) && /band-note/.test(mt);
+
+  P.openDetail("f1");
+  const ovTxt = DOC.getElementById("detail-overlay").textContent;
+  r.detailHasTriplet = /1개월/.test(ovTxt) && /3개월/.test(ovTxt) && /1년/.test(ovTxt);
+  P.hideDetail();
+
+  /* 옛 페이로드(chg·rank5y·band_stats 없음) — 조용히 종전 표시로 남고 무너지지 않는다 */
+  delete RISK.layers.stress.chg; delete RISK.layers.stress.rank5y;
+  delete RISK.layers.vuln.chg; delete RISK.layers.vuln.rank5y;
+  delete RISK.grade_band_stats;
+  RISK.factors.forEach((f) => { delete f.chg; });
+  P.renderSection("risk");
+  const st2 = DOC.getElementById("risk-stress-title").textContent;
+  r.legacyNoTriplet = /현재 위험 54점/.test(st2) && !/3개월/.test(st2);
+  P.openDetail("f1");
+  r.legacyDetailFallsBack = /1개월 전 대비/.test(
+    DOC.getElementById("detail-overlay").textContent);
+  P.hideDetail();
+  P.DATA.risk = prevRisk;
+  P.DATA.events = prevEvents;
   return r;
 });
 

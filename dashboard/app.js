@@ -1009,6 +1009,18 @@ function deltaPts(d) {
   return el("span", { class: cls }, `${d > 0 ? "▲" : "▼"} ${fmtNum(Math.abs(d), 0)}p`);
 }
 
+/* 변화 맥락 3구간(1·3·12개월) — 층 제목·요인 상세가 같은 한 벌을 쓴다(2026-08-24).
+   chg 가 없는 옛 페이로드에서는 null 을 돌려주고 호출부가 종전 표시로 남는다. */
+function deltaTriplet(chg) {
+  if (!chg) return null;
+  const wrap = el("span", { class: "delta-triplet" });
+  [["1개월", chg.m1], ["3개월", chg.m3], ["1년", chg.y1]].forEach(([lb, v], i) => {
+    if (i) wrap.append(" · ");
+    wrap.append(`${lb} `, deltaPts(v));
+  });
+  return wrap;
+}
+
 function legendKey(color, text) {
   const s = el("span", {}, "");
   s.append(el("i", { style: `border-color:${color}` }), text);
@@ -1140,6 +1152,13 @@ function renderFactorGroup(titleSel, rowsSel, layerKey, layer, subtitle, r, asof
   const title = $(titleSel);
   title.textContent = "";
   title.append(`${layer.name} ${Math.round(layer.score)}점 `, gradeChip(layer.grade), ` — ${subtitle}`);
+  const trip = deltaTriplet(layer.chg);
+  if (trip) {
+    const ctx = el("span", { class: "layer-ctx" }, trip);
+    if (layer.rank5y != null)
+      ctx.append(` · 최근 5년 백분위 ${Math.round(layer.rank5y)}%`);
+    title.append(ctx);
+  }
   const wrap = $(rowsSel);
   wrap.textContent = "";
   const head = el("div", { class: "frh" });
@@ -1171,6 +1190,22 @@ function buildRiskMethod(r) {
       ...v.metrics.map((m) => el("tr", {}, el("td", {}, m.name),
         el("td", { class: "num" }, String(m.ic)), el("td", { class: "num" }, String(m.auc5)))));
     box.append(vt, el("p", { style: "font-size:11.5px;color:var(--ink-3)" }, v.note));
+  }
+  const gbs = r.grade_band_stats;
+  if (gbs && gbs.rows) {
+    box.append(el("p", {}, el("b", {}, "등급 구간의 과거 실적"), ` — ${gbs.window}`));
+    const bt = el("table", {},
+      el("tr", {}, ...["구간", "주수", "위기주 빈도", "평균 실현변동성"]
+        .map((h, i) => el("th", { class: i ? "num" : "" }, h))),
+      ...gbs.rows.map((b) => el("tr", {},
+        el("td", {}, `${b.grade} (${b.lo}–${b.hi})`),
+        el("td", { class: "num" }, String(b.n_weeks)),
+        el("td", { class: "num" },
+          b.crisis_rate_pct == null ? "–" : `${fmtNum(b.crisis_rate_pct, 1)}%`),
+        el("td", { class: "num" },
+          b.avg_fwd_vol_pct == null ? "–" : `${fmtNum(b.avg_fwd_vol_pct, 1)}%`))));
+    box.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, bt),
+      el("p", { style: "font-size:11.5px;color:var(--ink-3)" }, gbs.note));
   }
   box.append(el("p", {}, el("b", {}, "한계"), ` — ${r.limits}`));
 }
@@ -1217,6 +1252,17 @@ function renderRisk() {
   BANDS.forEach(([lo, hi, c, nm]) =>
     gb.append(el("div", { style: `flex:1;background:${c};color:${bandInk(c)}` }, `${nm} (${lo}–${hi})`)));
   hw.append(gb);
+  const gbs = r.grade_band_stats;
+  if (gbs && gbs.rows) {
+    const line = el("div", { class: "band-stats" },
+      "구간별 과거 실적 — 다음 1개월 −5% 이상 하락 빈도: ");
+    gbs.rows.forEach((b, i) => {
+      if (i) line.append(" · ");
+      line.append(`${b.grade} `,
+        el("b", {}, b.crisis_rate_pct == null ? "–" : `${fmtNum(b.crisis_rate_pct, 0)}%`));
+    });
+    hw.append(line);
+  }
 
   const em = $("#risk-events-mini");
   em.textContent = "";
@@ -1518,7 +1564,10 @@ function openDetail(key) {
   const hl = el("div", { class: "qa" });
   hl.append(el("div", { class: "q" }, `이 요인이 답하는 질문 — ${f.question}`));
   const a = el("div", { class: "a" }, `${f.name} ${Math.round(f.score)}점 `);
-  a.append(gradeChip(f.grade), " ", el("small", {}, "1개월 전 대비 "), deltaPts(f.delta));
+  a.append(gradeChip(f.grade), " ");
+  const trip = deltaTriplet(f.chg);
+  if (trip) a.append(trip);
+  else a.append(el("small", {}, "1개월 전 대비 "), deltaPts(f.delta));
   hl.append(a);
   inner.append(hl);
 

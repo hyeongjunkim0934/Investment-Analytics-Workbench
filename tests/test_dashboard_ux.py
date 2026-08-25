@@ -3086,6 +3086,26 @@ def test_port_panel_frontier_hover_and_review(probe):
     assert c["inactiveShowsReason"] is True, "비활성 사유가 화면에 없다 — 조용한 대체 금지"
 
 
+# ---- 리스크 층 맥락 + 밴드 실증 (2026-08-24 사용자 지시 — 개선 6·3번) ------------
+def test_risk_context_and_band_stats(probe):
+    """층 제목 1·3·12개월 변화 + 5년 백분위, 밴드 실증 한 줄·표, 상세 3구간, 폴백."""
+    c = probe["riskContext"]
+    assert "ERROR" not in c, c.get("ERROR")
+    assert c["titleHasTriplet"] is True, "층 제목에 1·3·12개월 변화가 없다"
+    assert c["titleHasRank"] is True, "층 제목에 최근 5년 백분위가 없다"
+    assert c["nullHorizonShowsDash"] is True, (
+        "이력이 짧아 없는 구간(null)은 – 로 보여야 한다 — 0 으로 지어내면 안 된다"
+    )
+    assert c["bandStatsLineVisible"] is True, (
+        "등급바 아래 구간별 과거 실적 한 줄이 없다 — 밴드에 실증 의미를 주는 자리"
+    )
+    assert c["methodHasBandTable"] is True, "방법론에 밴드 실증 표(주수·위기율·변동성)가 없다"
+    assert c["detailHasTriplet"] is True, "요인 상세 오버레이에 3구간 변화가 없다"
+    assert c["legacyNoTriplet"] is True and c["legacyDetailFallsBack"] is True, (
+        "chg 없는 옛 페이로드에서 무너지거나 새 표기를 지어냈다"
+    )
+
+
 def test_port_table_centered_so_headers_match_inputs():
     """②표는 가운데 정렬 — 열 제목과 키인 칸이 세로로 맞아 보이게(2026-08-23 사용자 지시).
 

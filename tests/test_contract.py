@@ -96,6 +96,24 @@ def test_risk_and_hedge_actually_ran(built):
     risk = json.loads((out / "risk.json").read_text(encoding="utf-8"))
     assert risk, "risk.json 이 비어 있습니다"
 
+    # 2026-08-24 — 층 변화 3구간·5년 백분위·밴드 실증 통계가 실려야 한다
+    for lk in ("stress", "vuln"):
+        layer = risk["layers"][lk]
+        assert set(layer["chg"]) == {"m1", "m3", "y1"}, f"{lk}: chg 3구간이 아니다"
+        assert layer["delta"] == layer["chg"]["m1"], f"{lk}: delta 와 chg.m1 이 갈렸다"
+        assert layer["rank5y"] is None or 0 <= layer["rank5y"] <= 100
+    gbs = risk["grade_band_stats"]
+    assert [r_["grade"] for r_ in gbs["rows"]] == ["낮음", "보통", "주의", "경계"]
+    n_sum = sum(r_["n_weeks"] for r_ in gbs["rows"])
+    assert n_sum == risk["validation"]["n_weeks"], (
+        "밴드 주수 합계가 검증 창과 다르다 — 구간 경계(마지막 밴드 100 포함)가 샜다"
+    )
+    for r_ in gbs["rows"]:
+        assert r_["crisis_rate_pct"] is None or 0 <= r_["crisis_rate_pct"] <= 100
+    for f in risk["factors"]:
+        if f.get("score") is not None:
+            assert f["delta"] == f["chg"]["m1"], f"{f['key']}: 요인 delta·chg 불일치"
+
 
 def test_cma_sample_is_cut_at_mu_asof(built):
     """CMA 표본 종료일(§7.7.16) — μ 키인 기준일에 맞춰 잘렸는가.
