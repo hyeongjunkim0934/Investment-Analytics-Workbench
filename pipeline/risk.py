@@ -36,6 +36,23 @@ EVENT_LOOKBACK_D = 45
 GRADE_BANDS = [(0, 25, "낮음"), (25, 50, "보통"), (50, 75, "주의"), (75, 100, "경계")]
 
 
+def chg_of(weekly: pd.Series, cur: float) -> dict:
+    """현재 점수의 1개월·3개월·1년 전 대비 변화 — 요인·층이 같은 산식을 쓴다."""
+    out = {}
+    for k, days in (("m1", 28), ("m3", 91), ("y1", 365)):
+        prev = weekly[weekly.index <= weekly.index[-1] - timedelta(days=days)]
+        out[k] = round(cur - float(prev.iloc[-1]), 1) if len(prev) else None
+    return out
+
+
+def rank5y(weekly: pd.Series, cur: float) -> float | None:
+    """현재 점수가 최근 5년(260주) 주간 이력에서 백분위 몇 %인지 — 층 맥락 표시용."""
+    w = weekly.dropna().tail(260)
+    if len(w) < 52:
+        return None
+    return round(float((w <= cur).mean() * 100), 0)
+
+
 def grade(score) -> str | None:
     if score is None:
         return None
@@ -149,6 +166,9 @@ def derive_inputs(S: dict, warn=None) -> dict:
     kr3y = g("info:한국_3y")
     kr_card = ((g("info:Card_AA_plus_3y") - kr3y) * 100).dropna()
     fxvol = (usdkrw.pct_change().rolling(20).std() * math.sqrt(252) * 100).dropna()
+    # 환율 수준은 구조적 상승 추세라 확장 백분위가 영구 고위험으로 읽힌다(2026-08-24
+    # 사용자 지시로 교체) — 이격도 규약(200일선, disp_k200 과 동일)으로 추세를 벗긴다.
+    fx_disp = ((usdkrw / usdkrw.rolling(200).mean() - 1) * 100).dropna()
     dd_acwi = (acwi / acwi.cummax() - 1) * 100
     dd_kospi = (kospi / kospi.cummax() - 1) * 100
     us_slope = ((g("info:UST10y") - g("info:UST2y")) * 100).dropna()
@@ -180,6 +200,7 @@ def derive_inputs(S: dict, warn=None) -> dict:
         "kr3y": kr3y,
         "kr_card": kr_card,
         "fxvol": fxvol,
+        "fx_disp": fx_disp,
         "dd_acwi": dd_acwi,
         "dd_kospi": dd_kospi,
         "us_slope": us_slope,
@@ -206,13 +227,13 @@ def factor_specs(D: dict) -> list[dict]:
     """
     (vix, vkospi, dd_acwi, dd_kospi,
      hy, ig, kr_card, cds_kr,
-     cds_jp, cds_de, fxvol, usdkrw,
+     cds_jp, cds_de, fxvol, fx_disp,
      us_slope, kr_slope, disp_k, disp_a,
      disp_k200, disp_a200, unemp_us, sahm_now,
      sahm_fired) = (
         D["vix"], D["vkospi"], D["dd_acwi"], D["dd_kospi"],
         D["hy"], D["ig"], D["kr_card"], D["cds_kr"],
-        D["cds_jp"], D["cds_de"], D["fxvol"], D["usdkrw"],
+        D["cds_jp"], D["cds_de"], D["fxvol"], D["fx_disp"],
         D["us_slope"], D["kr_slope"], D["disp_k"], D["disp_a"],
         D["disp_k200"], D["disp_a200"], D["unemp_us"], D["sahm_now"],
         D["sahm_fired"])
@@ -244,7 +265,11 @@ def factor_specs(D: dict) -> list[dict]:
              sub="원화가 얼마나 불안한가", question="원화 환율이 얼마나 불안정한가",
              tags=["fx"],
              inds=[Indicator("달러/원 20일 변동성(연율)", fxvol, "hi", "{:.1f}", "%"),
-                   Indicator("달러/원 수준", usdkrw, "hi", "{:,.0f}", "원")]),
+                   Indicator("달러/원 / 200일선", fx_disp, "hi", "{:+.1f}", "%",
+                             desc="추세 대비 원화 약세 이격")],
+             note=("수준 지표를 200일선 이격으로 교체(2026-08-24) — 달러/원 수준은 "
+                   "구조적 상승 추세라 이력 백분위가 영구히 고위험으로 읽혔습니다. "
+                   "이격은 추세 대비 급격한 절하만 잡습니다.")),
         dict(key="curve", layer="stress", name="커브",
              sub="장단기 금리가 침체를 가리키나", question="장단기 금리차가 침체를 예고하는가",
              tags=["curve"],
@@ -320,8 +345,7 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
         weekly_by_key[f["key"]] = weekly
         curs = [i.current() for i in inds]
         score = round(float(np.mean([c["score"] for c in curs])), 1)
-        prev = weekly[weekly.index <= weekly.index[-1] - timedelta(days=28)]
-        delta = round(score - float(prev.iloc[-1]), 1) if len(prev) else None
+        f_chg = chg_of(weekly, score)
         steps = [f"{'①②③④⑤'[i]} {step_text(c, ind.mode)}"
                  for i, (c, ind) in enumerate(zip(curs, inds))]
         steps.append(f"요인 점수 = 지표 평균 = {score:.0f}점 → 등급 {grade(score)}")
@@ -329,7 +353,7 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
         factors_out.append(dict(
             key=f["key"], layer=f["layer"], name=f["name"], sub=f["sub"],
             question=f["question"], tags=f["tags"],
-            score=score, grade=grade(score), delta=delta,
+            score=score, grade=grade(score), delta=f_chg["m1"], chg=f_chg,
             hist=pack_series(hist), indicators=curs, steps=steps,
             note=f.get("note")))
 
@@ -388,8 +412,8 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
         comp_ic = comp_eq
 
     stress_cur = round(float(np.array([fmap[k]["score"] for k in stress_keys]) @ cur_w), 1)
-    prev = comp_ic[comp_ic.index <= comp_ic.index[-1] - timedelta(days=28)]
-    stress_delta = round(stress_cur - float(prev.iloc[-1]), 1) if len(prev) else None
+    stress_chg = chg_of(comp_ic, stress_cur)
+    stress_delta = stress_chg["m1"]
 
     # 요인별 가중치 주입 (상세 화면 표기용)
     for k, w in zip(stress_keys, cur_w):
@@ -431,14 +455,37 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
                  "하락 주간을 사전 구분하는 능력(0.5=무작위). 전체 비교는 research/wf_validation.py."),
     }
 
+    # ----- 등급 밴드 실증 통계 (2026-08-24 사용자 지시 — 밴드에 과거 실적의 의미를) -----
+    # 경계값 재설정이 아니다 — 4등분은 그대로 두고(자의성 없음 유지), 각 구간이
+    # 과거에 실제로 무엇을 뜻했는지(다음 1개월 위기 빈도·평균 실현변동성)를 게시한다.
+    # 창·타깃은 위 표본 외 검증과 동일한 것을 재사용한다(새 기준 0개).
+    comp_oos = comp_ic.loc[oos]
+    band_rows = []
+    for lo, hi, nm in GRADE_BANDS:
+        m = (comp_oos >= lo) & ((comp_oos <= hi) if hi >= 100 else (comp_oos < hi))
+        idx = comp_oos[m].index
+        bf = idx.intersection(flag5.index)
+        bt = idx.intersection(tgt.index)
+        band_rows.append({
+            "grade": nm, "lo": lo, "hi": hi, "n_weeks": int(len(idx)),
+            "crisis_rate_pct": round(float(flag5.loc[bf].mean() * 100), 1) if len(bf) else None,
+            "avg_fwd_vol_pct": round(float(tgt.loc[bt].mean()), 1) if len(bt) else None,
+        })
+    grade_band_stats = {
+        "window": validation["window"], "rows": band_rows,
+        "note": ("현재 위험 종합점수가 각 구간에 있던 주(2010~)의 다음 1개월 실적 — "
+                 "위기주 = −5% 이상 하락, 실현변동성 = KOSPI TR·ACWI 평균(연율 %). "
+                 "경계값은 4등분 그대로이며 이 표는 구간의 과거 의미를 보여 주는 참고입니다."),
+    }
+
     # ----- 잠재 위험: 활성 요인 동일가중 -----
     vuln_active = [k for k in vuln_keys]
     VW = pd.DataFrame({k: weekly_by_key[k] for k in vuln_active})
     vuln_weekly = VW.dropna(thresh=2).mean(axis=1)
     vuln_cur = round(float(np.mean([fmap[k]["score"] for k in vuln_active])), 1) if vuln_active else None
-    prev = vuln_weekly[vuln_weekly.index <= vuln_weekly.index[-1] - timedelta(days=28)]
-    vuln_delta = (round(vuln_cur - float(prev.iloc[-1]), 1)
-                  if vuln_cur is not None and len(prev) else None)
+    vuln_chg = (chg_of(vuln_weekly, vuln_cur) if vuln_cur is not None
+                else {"m1": None, "m3": None, "y1": None})
+    vuln_delta = vuln_chg["m1"]
 
     asof = max(s.dropna().index[-1] for s in
                [kospi, acwi, usdkrw, vix, vkospi, hy] if s is not None)
@@ -452,15 +499,19 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
         "layers": {
             "stress": {"name": "현재 위험", "question": "지금 시장이 흔들리고 있는가",
                        "score": stress_cur, "grade": grade(stress_cur), "delta": stress_delta,
+                       "chg": stress_chg, "rank5y": rank5y(comp_ic, stress_cur),
                        "method": "IC가중 + 최소바닥 8% (walk-forward 재학습)",
                        "hist": pack_series(comp_ic.tail(HIST_WEEKS))},
             "vuln": {"name": "잠재 위험", "question": "문제가 터지면 크게 다칠 상태인가",
                      "score": vuln_cur, "grade": grade(vuln_cur), "delta": vuln_delta,
+                     "chg": vuln_chg,
+                     "rank5y": rank5y(vuln_weekly, vuln_cur) if vuln_cur is not None else None,
                      "method": "활성 요인 동일가중",
                      "active": len(vuln_active),
                      "total": len([f for f in FACTORS if f["layer"] == "vuln"]),
                      "hist": pack_series(vuln_weekly.tail(HIST_WEEKS))},
         },
+        "grade_band_stats": grade_band_stats,
         "weights": {
             "items": [{"key": k, "name": fmap[k]["name"], "w": round(float(w), 3)}
                       for k, w in zip(stress_keys, cur_w)],
