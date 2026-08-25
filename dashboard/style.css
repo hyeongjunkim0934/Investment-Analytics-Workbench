@@ -388,6 +388,11 @@ table > tr > th.rowhead { color: var(--ink-2); white-space: normal; }
   padding: 12px 16px; font-size: 12.5px; color: var(--ink-2); line-height: 1.7;
 }
 .howto b { color: var(--ink-1); }
+/* 금리 시계열 국가·만기 콤보박스 (2026-08-25) */
+.rates-tenor-ctrl { display: inline-flex; gap: 6px; margin-left: 8px; }
+.rates-tenor-ctrl select { font-size: 12px; padding: 3px 6px; background: var(--surface);
+  color: var(--ink-1); border: 1px solid var(--border); border-radius: 6px; }
+
 /* 층 제목 옆 변화 맥락(1·3·12개월 + 5년 백분위)과 밴드 실증 한 줄 (2026-08-24) */
 .layer-ctx { font-size: 12px; font-weight: 400; color: var(--ink-2); margin-left: 10px; }
 .delta-triplet { font-variant-numeric: tabular-nums; }

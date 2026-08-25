@@ -76,6 +76,10 @@ secNodes.alloc.append(elem("nav", "alloc-toc"));
 /* 개요 뼈대(§7.9) — 상단 탭이 7개로 줄면서 시장 화면들이 여기로 내려왔다.
    renderOverview 는 구역을 #ov-groups 에 조립하고 카탈로그 입구를 #ov-catalog 에 둔다. */
 secNodes.overview.append(elem("div", "ov-groups"), elem("p", "ov-catalog"));
+/* 금리 뼈대 — renderRates 가 집는 카드 4자리 (ts_tenor 콤보박스 프로브용) */
+["card-curve", "card-ts10", "card-spreads", "card-policy"]
+  .forEach((id) => secNodes.rates.append(elem("div", id)));
+
 /* 리스크 뼈대 — renderRisk 가 $("#risk-…") 로 집는 자리들 (층 맥락·밴드 실증 프로브용) */
 ["risk-headline", "risk-chart-card", "risk-howto", "risk-events-mini",
  "risk-stress-rows", "risk-vuln-rows"].forEach((id) => secNodes.risk.append(elem("div", id)));
@@ -2489,6 +2493,57 @@ safe("infoArchitecture", () => {
   r.labelsCoverEverySection = P.SECTION_IDS.every((id) => !!P.SECTION_LABELS[id]);
 
   P.DATA.overview = OV;
+  return r;
+});
+
+/* ====== 금리 시계열 국가·만기 콤보박스 (2026-08-25 사용자 지시) ================
+   기본 한국·10y, 국가 바꾸면 그 나라 시계열로 다시 그림, 없는 만기는 목록에서 빠짐,
+   옛 페이로드(ts10)에서는 종전 카드로 남는다 — 전부 실행으로 확인. */
+safe("ratesTenor", () => {
+  const r = {};
+  const mk = (country, tenor, label) => ({ country, tenor, label,
+    t: [1700000000, 1700086400, 1700172800], v: [3.0, 3.1, 3.2] });
+  const TT = {
+    tenors: ["3m", "6m", "1y", "3y", "5y", "10y", "20y", "30y"],
+    countries: [
+      { code: "KR", label: "한국", tenors: ["3m", "6m", "1y", "3y", "5y", "10y", "20y", "30y"] },
+      { code: "US", label: "미국", tenors: ["3m", "6m", "1y", "3y", "5y", "10y", "20y", "30y"] },
+      { code: "JP", label: "일본", tenors: ["1y", "10y"] },   // 3m 없음 — 목록 필터 검사용
+    ],
+    series: [mk("KR", "10y", "한국 10y"), mk("KR", "3m", "한국 3m"),
+             mk("US", "10y", "미국 10y"), mk("JP", "10y", "일본 10y")],
+  };
+  const prev = P.DATA.rates;
+  P.DATA.rates = { curves: {}, ts_tenor: TT, spreads: [], policy: [] };
+  shim.UPlotStub.made.length = 0;
+  P.renderSection("rates");
+  const card = DOC.getElementById("card-ts10");
+  const sels = Array.from(card.querySelectorAll("select"));
+  r.twoSelectors = sels.length === 2;
+  const [selC, selT] = sels;
+  r.defaultKr10y = /한국 10y/.test(card.textContent)
+    && selT.querySelectorAll("option").length === 8;
+  r.chartMadeForDefault = shim.UPlotStub.made.some((u) =>
+    u.opts && u.opts.series && u.opts.series.some((s) => s.label === "한국 10y"));
+
+  /* 국가를 미국으로 — 차트가 미국 시계열로 다시 그려진다 */
+  selC.value = "US";
+  selC.dispatchEvent({ type: "change", target: selC });
+  const card2 = DOC.getElementById("card-ts10");
+  r.switchToUs = /미국 10y/.test(card2.textContent);
+  /* 일본은 3m 이 없다 — 만기 목록이 가용분으로 줄어든다 */
+  const selC2 = card2.querySelectorAll("select")[0];
+  selC2.value = "JP";
+  selC2.dispatchEvent({ type: "change", target: selC2 });
+  const selT3 = DOC.getElementById("card-ts10").querySelectorAll("select")[1];
+  r.unavailableTenorFiltered = selT3.querySelectorAll("option").length === 2;
+
+  /* 옛 페이로드(ts_tenor 없음) — 종전 10년 카드로 남는다 */
+  P.DATA.rates = { curves: {}, ts10: [{ label: "한국", t: [1, 2], v: [3, 3.1] }],
+                   spreads: [], policy: [] };
+  P.renderSection("rates");
+  r.legacyTs10Renders = /국채 10년 금리/.test(DOC.getElementById("card-ts10").textContent);
+  P.DATA.rates = prev;
   return r;
 });
 

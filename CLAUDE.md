@@ -49,7 +49,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 440개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 442개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (약 2.5분)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js                 (약 2.5분)
 #   ↑ 하네스가 시간을 다 쓴다(실측) — 최적화를 실제로 여러 번 돌리는 프로브
@@ -151,6 +151,10 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   `IRS_TENORS`/`IRS_COUNTRIES`, `KR_CREDIT_3Y`, `MACRO_DEFS`)와, `build_rates` / `build_irs` /
   `build_credit` / `build_fx` / `build_inflation` 안에 **인라인으로 박힌 `series_group([...])`
   리스트**에 절반씩 흩어져 있다(전수는 `grep -n "series_group(\[" pipeline/process.py`).
+  **`series_group` 을 안 쓰는 게시 경로도 있다** — `build_rates` 의 `ts_tenor`(국채 금리
+  국가·만기 콤보박스, 2026-08-25 — `CURVES` 접두사 × 만기 8종을 조용히 탐색해 있는
+  것만 싣는다. `get()` 대신 `SERIES.get()` 인 이유: 나라마다 없는 만기가 경고 기준선을
+  흔들면 안 된다)와 `build_overview` 의 `hist`(무링크 카드 오버레이 이력)가 그 경우다.
   여기에 더해 `risk.py` 의 `Indicator` `spark` 와 `hedge.py` 의 `cost_hist_usd`·`cost_hist_curve`,
   그리고 **`panel.py` 의 `VARS`** (관계분석용 31개 변수의 주간 수준값 전 구간)도 원본 값을
   그대로 싣는다. `alloc.py` 는 예외적으로 **원본 값을 싣지 않는다**

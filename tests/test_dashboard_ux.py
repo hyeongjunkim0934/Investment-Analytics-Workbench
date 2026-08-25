@@ -3086,6 +3086,22 @@ def test_port_panel_frontier_hover_and_review(probe):
     assert c["inactiveShowsReason"] is True, "비활성 사유가 화면에 없다 — 조용한 대체 금지"
 
 
+# ---- 금리 시계열 국가·만기 콤보박스 (2026-08-25 사용자 지시) ---------------------
+def test_rates_tenor_selector(probe):
+    """콤보박스 2개(국가·만기), 기본 한국 10y, 전환 재렌더, 가용 만기 필터, 폴백."""
+    c = probe["ratesTenor"]
+    assert "ERROR" not in c, c.get("ERROR")
+    assert c["twoSelectors"] is True, "국가·만기 콤보박스 2개가 아니다"
+    assert c["defaultKr10y"] is True and c["chartMadeForDefault"] is True, (
+        "기본 선택(한국 10y)이 차트로 그려지지 않았다"
+    )
+    assert c["switchToUs"] is True, "국가를 미국으로 바꿔도 차트가 안 바뀐다"
+    assert c["unavailableTenorFiltered"] is True, (
+        "그 나라에 없는 만기가 목록에 남아 있다 — 고르면 빈 차트가 된다"
+    )
+    assert c["legacyTs10Renders"] is True, "옛 페이로드(ts10)에서 카드가 사라졌다"
+
+
 # ---- 리스크 층 맥락 + 밴드 실증 (2026-08-24 사용자 지시 — 개선 6·3번) ------------
 def test_risk_context_and_band_stats(probe):
     """층 제목 1·3·12개월 변화 + 5년 백분위, 밴드 실증 한 줄·표, 상세 3구간, 폴백."""
