@@ -2584,11 +2584,26 @@ safe("riskContext", () => {
         { grade: "경계", lo: 75, hi: 100, n_weeks: 114, crisis_rate_pct: 41.0, avg_fwd_vol_pct: 24.7 },
       ] },
     factors: [mkF("f1", "stress"), mkF("f2", "vuln")],
+    kospi10: { label: "KOSPI 10영업일 전 대비 수익률 (주간 최저)",
+               src: "bb:한국_KOSPI_PR", levels: [-10, -16, -25],
+               hist: { t: [1700000000, 1700604800, 1701209600], v: [-2.1, -12.5, 3.0] } },
   };
   const prevRisk = P.DATA.risk, prevEvents = P.DATA.events;
   P.DATA.risk = RISK;
   P.DATA.events = { events: [] };
+  shim.UPlotStub.made.length = 0;
   P.renderSection("risk");
+
+  /* 실제 상황 대조 차트(2026-08-27) — 참고선은 수치만, 의미 문구 없음 */
+  const ccTxt = DOC.getElementById("risk-chart-card").textContent;
+  r.kospi10ChartMade = shim.UPlotStub.made.some((u) =>
+    u.opts && u.opts.series && u.opts.series.some(
+      (s) => /KOSPI 10영업일/.test(s.label || "")));
+  r.kospi10RefLevelsListed = /참고선 -10 · -16 · -25%/.test(ccTxt);
+  r.kospi10RefLinesInOpts = shim.UPlotStub.made.some((u) =>
+    u.opts && u.opts.hooks && u.opts.hooks.draw && u.opts.hooks.draw.length === 1);
+  r.kospi10NoMeaningWords = !/위기임박|위기단계/.test(
+    DOC.getElementById("risk").textContent);
 
   const st = DOC.getElementById("risk-stress-title").textContent;
   r.titleHasTriplet = /1개월/.test(st) && /3개월/.test(st) && /1년/.test(st);
@@ -2610,8 +2625,11 @@ safe("riskContext", () => {
   delete RISK.layers.stress.chg; delete RISK.layers.stress.rank5y;
   delete RISK.layers.vuln.chg; delete RISK.layers.vuln.rank5y;
   delete RISK.grade_band_stats;
+  delete RISK.kospi10;
   RISK.factors.forEach((f) => { delete f.chg; });
   P.renderSection("risk");
+  r.legacyNoKospi10 = !/KOSPI 10영업일/.test(
+    DOC.getElementById("risk-chart-card").textContent);
   const st2 = DOC.getElementById("risk-stress-title").textContent;
   r.legacyNoTriplet = /현재 위험 54점/.test(st2) && !/3개월/.test(st2);
   P.openDetail("f1");

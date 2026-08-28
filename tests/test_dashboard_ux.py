@@ -3120,6 +3120,14 @@ def test_risk_context_and_band_stats(probe):
     assert c["legacyNoTriplet"] is True and c["legacyDetailFallsBack"] is True, (
         "chg 없는 옛 페이로드에서 무너지거나 새 표기를 지어냈다"
     )
+    # 2026-08-27 — 실제 상황 대조 차트(KOSPI 10영업일): 참고선은 수치만, 의미 없음
+    assert c["kospi10ChartMade"] is True, "KOSPI 10영업일 대조 차트가 안 그려졌다"
+    assert c["kospi10RefLevelsListed"] is True, "참고선 수치(−10·−16·−25%)가 안 보인다"
+    assert c["kospi10RefLinesInOpts"] is True, "참고선 draw 훅이 차트에 안 걸렸다"
+    assert c["kospi10NoMeaningWords"] is True, (
+        "경보선의 의미 문구가 화면에 있다 — 수치만 공개하기로 했다(2026-08-27)"
+    )
+    assert c["legacyNoKospi10"] is True, "kospi10 없는 옛 페이로드에서 빈 칸이 남는다"
 
 
 def test_port_table_centered_so_headers_match_inputs():

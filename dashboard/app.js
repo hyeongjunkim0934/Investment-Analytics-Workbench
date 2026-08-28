@@ -313,7 +313,9 @@ function stampLatest(box, cfg) {
 }
 
 function makeTimeChart(box, cfg) {
-  /* cfg: {labels, colors, data, dec, unit, fill, stepped, bars, height} */
+  /* cfg: {labels, colors, data, dec, unit, fill, stepped, bars, height,
+           hlines: [수평 참고선 y값]} — hlines 는 점선으로만 긋고 뜻은 적지 않는다
+     (호출부의 sub 가 값만 나열). y축 범위가 참고선을 항상 포함하도록 넓힌다. */
   const pal = palette();
   const dec = cfg.dec ?? 2;
   const h = cfg.height ?? 260;
@@ -338,16 +340,36 @@ function makeTimeChart(box, cfg) {
     series.push(s);
   });
 
+  const hl = cfg.hlines || [];
   const opts = {
     width: Math.max(280, box.clientWidth),
     height: h,
     tzDate: (ts) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
     cursor: { points: { size: 8 }, y: false },
-    scales: cfg.bars ? { y: { range: (u, mn, mx) => [Math.min(mn, 0), Math.max(mx, 0)] } } : {},
+    scales: cfg.bars ? { y: { range: (u, mn, mx) => [Math.min(mn, 0), Math.max(mx, 0)] } }
+      : hl.length ? { y: { range: (u, mn, mx) =>
+          [Math.min(mn, ...hl), Math.max(mx, 0, ...hl)] } } : {},
     series,
     axes: baseAxes(pal, yFmt, yReFmt),
     legend: { live: true },
   };
+  if (hl.length) {
+    opts.hooks = { draw: [(u) => {
+      const ctx = u.ctx;
+      ctx.save();
+      ctx.strokeStyle = pal.ink3;
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      hl.forEach((v) => {
+        const y = Math.round(u.valToPos(v, "y", true));
+        ctx.beginPath();
+        ctx.moveTo(u.bbox.left, y);
+        ctx.lineTo(u.bbox.left + u.bbox.width, y);
+        ctx.stroke();
+      });
+      ctx.restore();
+    }] };
+  }
 
   const u = new uPlot(opts, cfg.data, box);
   stampLatest(box, cfg);
@@ -1283,6 +1305,22 @@ function renderRisk() {
     { label: "현재 위험", color: pal.series[0], t: sh.t, v: sh.v },
     { label: "잠재 위험", color: pal.series[1], t: vh.t, v: vh.v },
   ] });
+
+  /* 실제 상황 대조 — 같은 시간축 아래 칸(2026-08-27 사용자 지시). 축 단위가 달라
+     (0~100 점수 vs ±%) 한 차트에 겹치지 않는다. 참고선은 점선·수치만 — 뜻은 적지
+     않는다. 옛 페이로드(kospi10 없음)에서는 이 칸이 없던 화면 그대로다. */
+  const k10 = r.kospi10;
+  if (k10 && k10.hist && k10.hist.t && k10.hist.t.length) {
+    const lg2 = el("div", { class: "legendline" });
+    lg2.append(legendKey(pal.series[2], k10.label),
+      el("span", { class: "card-sub" }, `참고선 ${(k10.levels || []).join(" · ")}%`));
+    cc.append(lg2);
+    const kbox = el("div", { class: "chart-box" });
+    cc.append(kbox);
+    makeTimeChart(kbox, { labels: [k10.label], colors: [pal.series[2]],
+      data: [k10.hist.t, k10.hist.v], dec: 1, unit: "%", height: 150,
+      hlines: k10.levels || [] });
+  }
 
   const hw = $("#risk-howto");
   hw.textContent = "";
