@@ -313,9 +313,7 @@ function stampLatest(box, cfg) {
 }
 
 function makeTimeChart(box, cfg) {
-  /* cfg: {labels, colors, data, dec, unit, fill, stepped, bars, height,
-           hlines: [수평 참고선 y값]} — hlines 는 점선으로만 긋고 뜻은 적지 않는다
-     (호출부의 sub 가 값만 나열). y축 범위가 참고선을 항상 포함하도록 넓힌다. */
+  /* cfg: {labels, colors, data, dec, unit, fill, stepped, bars, height} */
   const pal = palette();
   const dec = cfg.dec ?? 2;
   const h = cfg.height ?? 260;
@@ -340,36 +338,16 @@ function makeTimeChart(box, cfg) {
     series.push(s);
   });
 
-  const hl = cfg.hlines || [];
   const opts = {
     width: Math.max(280, box.clientWidth),
     height: h,
     tzDate: (ts) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
     cursor: { points: { size: 8 }, y: false },
-    scales: cfg.bars ? { y: { range: (u, mn, mx) => [Math.min(mn, 0), Math.max(mx, 0)] } }
-      : hl.length ? { y: { range: (u, mn, mx) =>
-          [Math.min(mn, ...hl), Math.max(mx, 0, ...hl)] } } : {},
+    scales: cfg.bars ? { y: { range: (u, mn, mx) => [Math.min(mn, 0), Math.max(mx, 0)] } } : {},
     series,
     axes: baseAxes(pal, yFmt, yReFmt),
     legend: { live: true },
   };
-  if (hl.length) {
-    opts.hooks = { draw: [(u) => {
-      const ctx = u.ctx;
-      ctx.save();
-      ctx.strokeStyle = pal.ink3;
-      ctx.setLineDash([4, 4]);
-      ctx.lineWidth = 1;
-      hl.forEach((v) => {
-        const y = Math.round(u.valToPos(v, "y", true));
-        ctx.beginPath();
-        ctx.moveTo(u.bbox.left, y);
-        ctx.lineTo(u.bbox.left + u.bbox.width, y);
-        ctx.stroke();
-      });
-      ctx.restore();
-    }] };
-  }
 
   const u = new uPlot(opts, cfg.data, box);
   stampLatest(box, cfg);
@@ -1095,23 +1073,40 @@ function withToday(hist, asofTs, cur) {
 }
 
 /* 0~100 고정 스케일 + 등급 밴드 배경 차트 (기간 필터 미적용) */
-function makeBandChart(box, { seriesDefs, height = 300 }) {
+function makeBandChart(box, { seriesDefs, height = 300, extra = null }) {
+  /* extra: {label, color, t, v, levels} — 점수(0~100, 좌축)와 단위가 다른 대조
+     계열(%, 우축)을 **같은 차트**에 겹친다(2026-08-27 사용자 지시). levels 는
+     우축 기준 수평 점선 — 수치만 긋고 뜻은 적지 않는다. */
   const pal = palette();
   const dark = currentTheme() === "dark";
-  const data = joinSeries(seriesDefs);
+  const defs = extra ? [...seriesDefs, extra] : seriesDefs;
+  const data = joinSeries(defs);
   const series = [{ label: "주", value: "{YYYY}-{MM}-{DD}" }];
   seriesDefs.forEach((sd) => series.push({
     label: sd.label, stroke: sd.color, width: 2.5, spanGaps: true,
     points: { show: false },
     value: (u, v) => v == null ? "–" : fmtNum(v, 0) + "점",
   }));
+  if (extra) series.push({
+    label: extra.label, stroke: extra.color, width: 1.5, spanGaps: true,
+    scale: "pct", points: { show: false },
+    value: (u, v) => v == null ? "–" : fmtNum(v, 1) + "%",
+  });
+  const axes = baseAxes(pal, (v) => fmtNum(v, 0));
+  const lv = (extra && extra.levels) || [];
+  if (extra) axes.push({ ...axes[1], scale: "pct", side: 1,
+    values: (u, vs) => vs.map((v) => fmtNum(v, 0) + "%"),
+    grid: { show: false } });
   const opts = {
     width: Math.max(280, box.clientWidth), height,
     tzDate: (ts) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
     cursor: { points: { size: 8 }, y: false },
-    scales: { y: { range: () => [0, 100] } },
+    scales: extra
+      ? { y: { range: () => [0, 100] },
+          pct: { range: (u, mn, mx) => [Math.min(mn, ...lv), Math.max(mx, 0, ...lv)] } }
+      : { y: { range: () => [0, 100] } },
     series,
-    axes: baseAxes(pal, (v) => fmtNum(v, 0)),
+    axes,
     legend: { live: true },
     hooks: {
       drawClear: [(u) => {
@@ -1157,6 +1152,23 @@ function makeBandChart(box, { seriesDefs, height = 300 }) {
       }],
     },
   };
+  if (lv.length) {
+    opts.hooks.draw.push((u) => {
+      const { ctx, bbox } = u;
+      ctx.save();
+      ctx.strokeStyle = pal.ink3;
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      lv.forEach((v) => {
+        const y = Math.round(u.valToPos(v, "pct", true));
+        ctx.beginPath();
+        ctx.moveTo(bbox.left, y);
+        ctx.lineTo(bbox.left + bbox.width, y);
+        ctx.stroke();
+      });
+      ctx.restore();
+    });
+  }
   const u = new uPlot(opts, data, box);
   const ro = new ResizeObserver(() => u.setSize({ width: Math.max(280, box.clientWidth), height }));
   ro.observe(box);
@@ -1300,27 +1312,24 @@ function renderRisk() {
   cc.append(lg);
   const box = el("div", { class: "chart-box" });
   cc.append(box);
-  const sh = withToday(S.hist, asofTs, S.score), vh = withToday(V.hist, asofTs, V.score);
-  makeBandChart(box, { seriesDefs: [
-    { label: "현재 위험", color: pal.series[0], t: sh.t, v: sh.v },
-    { label: "잠재 위험", color: pal.series[1], t: vh.t, v: vh.v },
-  ] });
-
-  /* 실제 상황 대조 — 같은 시간축 아래 칸(2026-08-27 사용자 지시). 축 단위가 달라
-     (0~100 점수 vs ±%) 한 차트에 겹치지 않는다. 참고선은 점선·수치만 — 뜻은 적지
-     않는다. 옛 페이로드(kospi10 없음)에서는 이 칸이 없던 화면 그대로다. */
+  /* 실제 상황 대조 — 같은 차트에 우축(%)으로 겹친다(2026-08-27 사용자 지시
+     "하나의 표에 있어야 비교가 좋다"). 참고선은 점선·수치만 — 뜻은 적지 않는다.
+     옛 페이로드(kospi10 없음)에서는 종전 2계열 차트 그대로다. */
   const k10 = r.kospi10;
-  if (k10 && k10.hist && k10.hist.t && k10.hist.t.length) {
-    const lg2 = el("div", { class: "legendline" });
-    lg2.append(legendKey(pal.series[2], k10.label),
+  const hasK10 = !!(k10 && k10.hist && k10.hist.t && k10.hist.t.length);
+  if (hasK10) {
+    lg.append(legendKey(pal.series[2], `${k10.label} — 우축 %`),
       el("span", { class: "card-sub" }, `참고선 ${(k10.levels || []).join(" · ")}%`));
-    cc.append(lg2);
-    const kbox = el("div", { class: "chart-box" });
-    cc.append(kbox);
-    makeTimeChart(kbox, { labels: [k10.label], colors: [pal.series[2]],
-      data: [k10.hist.t, k10.hist.v], dec: 1, unit: "%", height: 150,
-      hlines: k10.levels || [] });
   }
+  const sh = withToday(S.hist, asofTs, S.score), vh = withToday(V.hist, asofTs, V.score);
+  makeBandChart(box, {
+    seriesDefs: [
+      { label: "현재 위험", color: pal.series[0], t: sh.t, v: sh.v },
+      { label: "잠재 위험", color: pal.series[1], t: vh.t, v: vh.v },
+    ],
+    extra: hasK10 ? { label: k10.label, color: pal.series[2],
+                      t: k10.hist.t, v: k10.hist.v, levels: k10.levels || [] } : null,
+  });
 
   const hw = $("#risk-howto");
   hw.textContent = "";

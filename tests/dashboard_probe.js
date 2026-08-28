@@ -2594,14 +2594,16 @@ safe("riskContext", () => {
   shim.UPlotStub.made.length = 0;
   P.renderSection("risk");
 
-  /* 실제 상황 대조 차트(2026-08-27) — 참고선은 수치만, 의미 문구 없음 */
+  /* 실제 상황 대조(2026-08-27) — 위험 2계열과 **같은 차트**에 우축(%)으로 겹치고,
+     참고선은 pct 축 점선·수치만, 의미 문구 없음 */
   const ccTxt = DOC.getElementById("risk-chart-card").textContent;
-  r.kospi10ChartMade = shim.UPlotStub.made.some((u) =>
-    u.opts && u.opts.series && u.opts.series.some(
-      (s) => /KOSPI 10영업일/.test(s.label || "")));
+  const bandU = shim.UPlotStub.made.find((u) =>
+    u.opts && u.opts.series && u.opts.series.some((s) => s.label === "현재 위험"));
+  r.kospi10ChartMade = !!bandU && bandU.opts.series.some(
+    (s) => /KOSPI 10영업일/.test(s.label || "") && s.scale === "pct");
   r.kospi10RefLevelsListed = /참고선 -10 · -16 · -25%/.test(ccTxt);
-  r.kospi10RefLinesInOpts = shim.UPlotStub.made.some((u) =>
-    u.opts && u.opts.hooks && u.opts.hooks.draw && u.opts.hooks.draw.length === 1);
+  r.kospi10RefLinesInOpts = !!bandU && !!bandU.opts.scales && !!bandU.opts.scales.pct
+    && bandU.opts.hooks.draw.length === 2;
   r.kospi10NoMeaningWords = !/위기임박|위기단계/.test(
     DOC.getElementById("risk").textContent);
 
