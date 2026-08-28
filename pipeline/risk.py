@@ -490,6 +490,17 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
     asof = max(s.dropna().index[-1] for s in
                [kospi, acwi, usdkrw, vix, vkospi, hy] if s is not None)
 
+    # KOSPI 10영업일 전 대비 수익률 — 위험 추이 차트의 실제 상황 대조 축(2026-08-27
+    # 사용자 지시). 주간 **최저**를 싣는 이유: 금요일 스냅숏은 주중에 참고선을 뚫었다
+    # 반등한 주를 놓친다. 참고선 수치(levels)는 게시하되 의미 문구는 싣지 않는다.
+    k10_base, k10_src = S.get("bb:한국_KOSPI_PR"), "bb:한국_KOSPI_PR"
+    if k10_base is None:
+        k10_base, k10_src = kospi, "bb:한국_KOSPI_TR"
+    r10 = (k10_base.dropna().pct_change(10) * 100).dropna()
+    kospi10 = {"label": "KOSPI 10영업일 전 대비 수익률 (주간 최저)",
+               "src": k10_src, "levels": [-10, -16, -25],
+               "hist": pack_series(r10.resample("W-FRI").min().dropna().tail(HIST_WEEKS))}
+
     risk_payload = {
         "asof": asof.strftime("%Y-%m-%d"),
         "grade_bands": [[lo, hi, nm] for lo, hi, nm in GRADE_BANDS],
@@ -512,6 +523,7 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
                      "hist": pack_series(vuln_weekly.tail(HIST_WEEKS))},
         },
         "grade_band_stats": grade_band_stats,
+        "kospi10": kospi10,
         "weights": {
             "items": [{"key": k, "name": fmap[k]["name"], "w": round(float(w), 3)}
                       for k, w in zip(stress_keys, cur_w)],

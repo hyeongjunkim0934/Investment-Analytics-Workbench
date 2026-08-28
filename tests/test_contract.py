@@ -114,6 +114,16 @@ def test_risk_and_hedge_actually_ran(built):
         if f.get("score") is not None:
             assert f["delta"] == f["chg"]["m1"], f"{f['key']}: 요인 delta·chg 불일치"
 
+    # 2026-08-27 — 실제 상황 대조 축(KOSPI 10영업일): 수치만 게시, 의미 문구 없음
+    k10 = risk["kospi10"]
+    assert k10["levels"] == [-10, -16, -25]
+    assert len(k10["hist"]["t"]) == len(k10["hist"]["v"]) > 0
+    assert k10["src"].startswith("bb:한국_KOSPI")
+    for banned in ("위기임박", "위기단계", "경보"):
+        assert banned not in json.dumps(k10, ensure_ascii=False), (
+            f"경보선 의미 문구('{banned}')가 게시물에 실렸다 — 수치만 공개(2026-08-27)"
+        )
+
 
 def test_cma_sample_is_cut_at_mu_asof(built):
     """CMA 표본 종료일(§7.7.16) — μ 키인 기준일에 맞춰 잘렸는가.
