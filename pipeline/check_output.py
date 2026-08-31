@@ -67,7 +67,10 @@ REQUIRED_KEYS = {
               # active:false 블록이 게시돼야 한다 — cma 와 같은 체인 안전장치.
               "port"],
     "risk":  ["asof", "grade_bands", "howto", "layers", "weights",
-              "validation", "factors", "limits"],
+              "validation", "factors", "limits",
+              # regime = 시장 국면 참고 블록(regime.py). 계산이 실패해도
+              # active:false 로 항상 게시된다 — 부재는 wiring 누락이다.
+              "regime"],
     "panel": ["asof", "freq", "t", "risk", "risk_meta", "vars",
               "defaults", "n_weeks", "method"],
     # brief = 브리핑 카드 원고(risk.compose_brief). process.py 가 조립 실패를

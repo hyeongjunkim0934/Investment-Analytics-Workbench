@@ -424,6 +424,23 @@ a.kpi:hover { border-color: var(--baseline); }
 .dl .d-up, .dl .d-down { font-weight: 600; }
 @media (max-width: 760px) { .frh { display: none; } .fr { grid-template-columns: 1fr 80px 60px; } .fr .spark-wrap, .fr .dl, .fr .chev { display: none; } }
 
+/* ---------- 시장 국면 참고 카드 (§5.1 ⓐ — renderRiskRegime) ---------- */
+.regime-rows { display: flex; flex-direction: column; margin-top: 4px; }
+.regime-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  border-top: 1px solid var(--grid); padding: 10px 0; }
+.regime-row:first-child { border-top: 0; }
+.regime-name { min-width: 76px; font-weight: 650; font-size: 13.5px; }
+.regime-src { font-weight: 400; color: var(--ink-3); font-size: 11.5px; }
+.regime-prob { font-size: 20px; font-weight: 700; min-width: 58px; text-align: right;
+  font-variant-numeric: tabular-nums; }
+.regime-spark { width: 110px; }
+.regime-spark svg.spark { width: 110px; height: 28px; }
+.regime-meta { font-size: 12px; color: var(--ink-3); }
+.regime-note { font-size: 12.5px; color: var(--ink-2); }
+.regime-warn { flex-basis: 100%; font-size: 12.5px; font-weight: 600; }
+.regime-scope { font-size: 12px; color: var(--ink-3); margin: 8px 0 0; line-height: 1.6; }
+@media (max-width: 760px) { .regime-meta { flex-basis: 100%; } }
+
 .method { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
   padding: 12px 18px; margin-top: 18px; font-size: 12.5px; color: var(--ink-2); line-height: 1.7; }
 .method summary { cursor: pointer; font-weight: 650; color: var(--ink-1);

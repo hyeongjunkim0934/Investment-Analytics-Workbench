@@ -33,6 +33,7 @@ import estimate
 import hedge
 import panel
 import port
+import regime
 import risk
 # 재수출(re-export): 예전 process.epoch_seconds 를 쓰던 호출부를 그대로 두면서
 # 정의는 common 한 곳만 남긴다. tests/test_formulas.py 가 동일성을 단정한다.
@@ -806,6 +807,17 @@ def main() -> None:
     try:
         risk_payload, events_payload, risk_weekly = risk.build(SERIES, warn)
         payloads["risk.json"] = risk_payload
+        # 시장 국면 참고 블록(regime.py — §5.1 실험 채택분 ⓐ). 참고 표시 전용이라
+        # 실패가 배포를 막지 않게 active:false 로 물러나되 warn 으로 표면화한다.
+        # 키 자체는 항상 실린다 — 부재(wiring 누락)는 게이트 REQUIRED_KEYS 가 잡는다.
+        try:
+            risk_payload["regime"] = regime.build(SERIES, warn)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            warn("regime: 시장 국면 참고 블록 계산 실패 — 비활성으로 게시됩니다")
+            risk_payload["regime"] = {"active": False, "rows": [],
+                                      "note": "계산 실패 — 빌드 로그 확인"}
         # 시장 폭 이벤트를 같은 스트림에 합친다. **risk.py 는 건드리지 않는다** —
         # 규칙의 뜻은 breadth.py 가 알고, 여기서는 합치기만 한다(사용자 제안 2026-08-04).
         # 실패해도 나머지 이벤트는 나가야 하므로 따로 격리한다.
