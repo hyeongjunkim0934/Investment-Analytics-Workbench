@@ -17,6 +17,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 |---|---|
 | `pipeline/process.py` | CLI 진입점. 엑셀 파싱 → 시리즈 저장소(`SERIES`) → 패널 빌더 → JSON 16개 출력 |
 | `pipeline/risk.py` | `build(SERIES, warn)` → `risk.json` + `events.json` + 관계분석용 주간 프레임 (요인 점수·IC가중 합성·이벤트 검출). 브리핑 원고 조립(`compose_brief`)도 여기 — 호출은 `process.py` 가 시장 폭 병합 **뒤**에 한다 |
+| `pipeline/regime.py` | 시장 국면 참고 블록 → `risk.json["regime"]` (2국면 MSM Filtered 확률 — 국면 이질성 검정 통과 3개 시장, HANDOVER §5.1 ⓐ). **등급·경보·이벤트 미반영** — 참고 표시 전용. numpy 만(고정 의존성 3개 불변). 계산이 실패해도 `active:false` 로 항상 게시(체인 안전장치 — 게이트 `REQUIRED_KEYS["risk"]` 의 `regime`) |
 | `pipeline/hedge.py` | `build(SERIES, warn)` → `hedge.json` (7통화 헤지 매트릭스·백테스트·시뮬레이터 공분산·`ust_merit` 미국채 투자 메리트 모니터 §7.7.14 — 헤지 후 UST = UST10y + 스왑레이트, 시리즈 없으면 `active:false` 게시) |
 | `pipeline/alloc.py` | `build(SERIES, warn)` → `alloc.json` (자산배분 원천 10개 공분산·현재 금리·동일 샤프 앵커·블록 부트스트랩 사전계산. **원본 수익률 미게시** — 공분산·평균·분위수만) |
 | `pipeline/bm.py` | 자산군 전략 벤치마크(BM) 파서 + `build_cma(SERIES, warn)` → `alloc.json.cma` (자본시장가정 사전계산 — §7.7 재설계의 데이터층). **원본 수준·수익률 미게시** — 창별 연환산 σ·상관·공분산·과거 평균과 표본 메타만. BM 파일이 없어도 `active:false` 블록을 항상 게시한다(체인 안전장치) |
@@ -49,7 +50,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 442개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 444개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (약 2.5분)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js                 (약 2.5분)
 #   ↑ 하네스가 시간을 다 쓴다(실측) — 최적화를 실제로 여러 번 돌리는 프로브
@@ -165,6 +166,15 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   상수 `FLOOR`/`EMBARGO_W`/`REFIT_EVERY_W`. 등급 밴드는 `GRADE_BANDS`.
   이 둘은 `risk.build()` 안에 있던 것을 밖으로 뺀 것이다 — `research/wf_validation.py` 가
   **같은 정의를 import** 해 쓰기 위해서다. 요인을 고치면 배포 코드와 검증 하네스가 함께 바뀐다.
+- **시장 국면 참고 카드 = `regime.py` 가 정본이다** (→ `risk.json["regime"]`, §5.1 ⓐ
+  2026-08-31). 시장 3개(`MARKETS`)는 국면 이질성 검정 통과분으로 고정 — 목록 변경은
+  연구 하네스(`research/regime_layer.py`) 재실험 후 사용자 합의가 선행한다. 게시
+  확률은 Filtered 이고 **검정 라벨만 Smoothed** 다(국면 분류는 모형 진단이라 사후
+  판정이 맞는 자리 — 게시 확률에 쓰면 look-ahead). 파라미터는 전체 표본 1회 추정이라
+  이력 구간에 사후성이 남는다 — `param_note` 가 그 사실을 나르고 화면
+  (`renderRiskRegime`)이 접지 않고 적는다(§7.13 — scope_note·검정 미달 ⚠ 도 같다).
+  **등급·경보·λ 에 연결하지 말 것** — 같은 실험이 그 대체를 기각했다(HANDOVER §5.1).
+  화면은 받은 것을 표시만 한다 — 거기서 문턱·판정을 만들지 말 것.
 - **이벤트 규칙**은 두 곳이다. 시계열 기반(급변 2.5σ·백분위·커브·삼 룰·데이터 지연)은
   `risk.py` 의 `detect_events()`, **시장 폭**(`시장폭` 카테고리)은 `breadth.py` 의
   `detect_events()` 다. 후자는 **이력이 필요 없다** — 같은 날 안에서 두 수를 비교하는

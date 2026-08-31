@@ -3135,6 +3135,32 @@ def test_risk_context_and_band_stats(probe):
     assert c["legacyNoKospi10"] is True, "kospi10 없는 옛 페이로드에서 빈 칸이 남는다"
 
 
+# ---- 시장 국면 참고 카드 (§5.1 ⓐ — 2026-08-31) --------------------------------
+def test_risk_regime_reference_card(probe):
+    """참고 전용 계약 실행 확인 — 표시·주의 노출·해설 접힘·비활성 사유·옛 페이로드."""
+    c = probe["riskRegime"]
+    assert "ERROR" not in c, c.get("ERROR")
+    assert c["cardShown"] is True and c["threeRowsRendered"] is True, "3개 시장 행이 안 그려진다"
+    assert c["probVisible"] is True, "고변동 국면 확률 숫자가 안 보인다"
+    assert c["refOnlyNoteVisible"] is True, (
+        "「반영되지 않음」 반영 범위 문구가 접혔거나 사라졌다 — 참고 전용 계약의 핵심"
+    )
+    assert c["paramNoteVisible"] is True, (
+        "파라미터 사후성 주의가 접혔거나 사라졌다 — §7.13 사유·주의는 기본 노출"
+    )
+    assert c["warnShownOnFailedTest"] is True, (
+        "검정 미달(p≥0.05) 시장에 ⚠ 가 없다 — 근거 약화를 숨기면 안 된다"
+    )
+    assert c["noWarnOnPassedTest"] is True, "통과 시장에 미달 ⚠ 가 잘못 붙었다"
+    assert c["inactiveRowShowsReason"] is True, "비활성 행 사유가 안 보인다(조용한 대체 금지)"
+    assert c["methodFoldedByDefault"] is True, (
+        "방법론 해설이 기본 노출이다 — 해설은 explainBox 로 접는 것이 기본값(§7.13)"
+    )
+    assert c["noMeaningWords"] is True, "경보 의미 문구가 리스크 화면에 있다"
+    assert c["blockInactiveShowsReason"] is True, "블록 비활성 사유가 안 보인다"
+    assert c["legacyHidesCard"] is True, "regime 없는 옛 페이로드에서 빈 카드가 남는다"
+
+
 def test_port_table_centered_so_headers_match_inputs():
     """②표는 가운데 정렬 — 열 제목과 키인 칸이 세로로 맞아 보이게(2026-08-23 사용자 지시).
 

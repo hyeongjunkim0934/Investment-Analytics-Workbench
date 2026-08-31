@@ -125,6 +125,34 @@ def test_risk_and_hedge_actually_ran(built):
         )
 
 
+def test_regime_reference_block(built):
+    """시장 국면 참고 블록(§5.1 ⓐ, regime.py) — 구조·범위·미반영 계약.
+
+    합성 픽스처는 세 시장 키를 전부 가지므로 세 행 모두 active 여야 한다.
+    참고 전용이 계약이므로 반영 범위 문구·파라미터 사후성 주의가 실려야 하고,
+    경보 의미 문구 금지(2026-08-27 규약)는 이 블록에도 적용된다.
+    """
+    out, _ = built
+    risk = json.loads((out / "risk.json").read_text(encoding="utf-8"))
+    import regime as regime_mod
+    g = risk["regime"]
+    assert g["active"] is True
+    assert [r_["name"] for r_ in g["rows"]] == [m[0] for m in regime_mod.MARKETS]
+    for r_ in g["rows"]:
+        assert r_["active"] is True, f"{r_['name']}: {r_.get('note')}"
+        assert 0 <= r_["prob"] <= 100
+        assert len(r_["hist"]["t"]) == len(r_["hist"]["v"]) > 0
+        assert all(v is None or 0 <= v <= 100 for v in r_["hist"]["v"])
+        assert r_["sig"][1] >= r_["sig"][0], "라벨 고정(1=고변동)이 깨졌다"
+        assert r_["ttest_p"] is None or 0 <= r_["ttest_p"] <= 1
+    assert "반영되지 않" in g["scope_note"], "참고 전용(미반영) 문구가 빠졌다"
+    assert "전체 표본" in g["param_note"], "파라미터 사후성 주의가 빠졌다"
+    for banned in ("위기임박", "위기단계", "경보"):
+        assert banned not in json.dumps(g, ensure_ascii=False), (
+            f"경보 의미 문구('{banned}')가 국면 블록에 실렸다"
+        )
+
+
 def test_cma_sample_is_cut_at_mu_asof(built):
     """CMA 표본 종료일(§7.7.16) — μ 키인 기준일에 맞춰 잘렸는가.
 

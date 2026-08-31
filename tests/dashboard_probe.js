@@ -82,7 +82,8 @@ secNodes.overview.append(elem("div", "ov-groups"), elem("p", "ov-catalog"));
 
 /* 리스크 뼈대 — renderRisk 가 $("#risk-…") 로 집는 자리들 (층 맥락·밴드 실증 프로브용) */
 ["risk-headline", "risk-chart-card", "risk-howto", "risk-events-mini",
- "risk-stress-rows", "risk-vuln-rows"].forEach((id) => secNodes.risk.append(elem("div", id)));
+ "risk-stress-rows", "risk-vuln-rows",
+ "risk-regime-card"].forEach((id) => secNodes.risk.append(elem("div", id)));
 secNodes.risk.append(elem("h3", "risk-stress-title"), elem("h3", "risk-vuln-title"),
   elem("details", "risk-method"));
 /* 리스크 안의 관계분석 입구 */
@@ -3946,6 +3947,76 @@ safe("explainFold", () => {
   r.fallbackReasonVisible = /probe-접힘검사/.test(visText(DOC.getElementById("alloc")));
   P.DATA.alloc = CMA_ALLOC;
   P.renderSection("alloc");
+  return r;
+});
+
+/* ====== 시장 국면 참고 카드 (§5.1 ⓐ — renderRiskRegime) =======================
+   참고 전용 계약을 실행으로 잰다: 3행 렌더·확률 표시, 반영 범위/사후성 주의는
+   접히지 않고(visText — §7.13 사유·주의 기본 노출), 방법론 해설만 explain 으로
+   접힌다. 검정 미달 ⚠ 과 비활성 행 사유도 보여야 한다. 옛 페이로드(regime 없음)는
+   카드 없이 조용히 넘어간다. */
+safe("riskRegime", () => {
+  const r = {};
+  const hist = { t: [1700000000, 1700604800, 1701209600], v: [10, 40, 72] };
+  const CHG = { m1: -5.4, m3: 2.1, y1: -8.0 };
+  const base = {
+    asof: "2030-06-27",
+    grade_bands: [[0, 25, "낮음"], [25, 50, "보통"], [50, 75, "주의"], [75, 100, "경계"]],
+    howto: "howto", limits: "limits",
+    layers: {
+      stress: { name: "현재 위험", question: "q", score: 53.5, grade: "주의",
+                delta: CHG.m1, chg: CHG, rank5y: 62, method: "m", hist },
+      vuln: { name: "잠재 위험", question: "q", score: 60.1, grade: "주의",
+              delta: CHG.m1, chg: CHG, rank5y: 88, method: "m", active: 3, total: 5, hist },
+    },
+    weights: { items: [{ key: "vol", name: "변동성", w: 0.3 }], refit: "2030-06-01",
+               floor: 0.08, target: "t", desc: "d" },
+    validation: { window: "2010-01-01 ~ 2030-06-27", n_weeks: 864, crisis_weeks: 138,
+                  metrics: [{ name: "동일가중", ic: 0.5, auc5: 0.6 }] },
+    factors: [],
+    regime: {
+      active: true, asof: "2030-06-27", label: "시장 국면 (참고)",
+      scope_note: "참고 표시 전용 — 점수·등급·이벤트에 반영되지 않습니다.",
+      param_note: "파라미터는 전체 표본으로 추정합니다 — 과거 구간은 사후 재계산입니다.",
+      method: "주간 수익률의 2국면 마코프 전환 모형.",
+      rows: [
+        { name: "해외주식", src: "S&P500 TR", active: true, asof: "2030-06-27",
+          prob: 72.4, mu: [19.5, -13.9], sig: [10.9, 28.3], p_stay: [0.977, 0.933],
+          ttest_p: 0.0014, hist },
+        { name: "채권", src: "미국 종합채권 지수", active: true, asof: "2030-06-27",
+          prob: 18.3, mu: [5.0, -0.5], sig: [3.0, 6.3], p_stay: [0.987, 0.964],
+          ttest_p: 0.31, hist },
+        { name: "원자재", src: "S&P GSCI TR", active: false,
+          note: "주간 표본 12주 — 최소 260주 미달" },
+      ],
+    },
+  };
+  const prevRisk = P.DATA.risk, prevEvents = P.DATA.events;
+  P.DATA.risk = base; P.DATA.events = { events: [] };
+  P.EXPLAIN_OPEN.clear();
+  P.renderSection("risk");
+  const card = DOC.getElementById("risk-regime-card");
+  const vis = visText(card), all = card.textContent;
+  r.cardShown = card.hidden !== true;
+  r.threeRowsRendered = /해외주식/.test(vis) && /채권/.test(vis) && /원자재/.test(vis);
+  r.probVisible = /72%/.test(vis) && /18%/.test(vis);
+  r.refOnlyNoteVisible = /반영되지 않습니다/.test(vis);
+  r.paramNoteVisible = /사후 재계산/.test(vis);
+  r.warnShownOnFailedTest = /검정 미달\(p=0\.31\)/.test(vis);
+  r.noWarnOnPassedTest = !/p=0\.0014\) — 참고 가치/.test(vis);
+  r.inactiveRowShowsReason = /최소 260주 미달/.test(vis);
+  r.methodFoldedByDefault = !/마코프 전환 모형/.test(vis) && /마코프 전환 모형/.test(all);
+  r.noMeaningWords = !/위기임박|위기단계/.test(DOC.getElementById("risk").textContent);
+  /* 블록 전체 비활성 — 사유가 보인다(조용한 대체 금지) */
+  base.regime = { active: false, rows: [], note: "probe-국면실패사유" };
+  P.renderSection("risk");
+  r.blockInactiveShowsReason =
+    /probe-국면실패사유/.test(visText(DOC.getElementById("risk-regime-card")));
+  /* 옛 페이로드 — 카드 숨김, 나머지 리스크 화면은 그대로 렌더 */
+  delete base.regime;
+  P.renderSection("risk");
+  r.legacyHidesCard = DOC.getElementById("risk-regime-card").hidden === true;
+  P.DATA.risk = prevRisk; P.DATA.events = prevEvents;
   return r;
 });
 

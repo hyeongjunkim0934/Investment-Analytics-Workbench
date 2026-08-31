@@ -1365,6 +1365,7 @@ function renderRisk() {
 
   renderFactorGroup("#risk-stress-title", "#risk-stress-rows", "stress", S, "무엇이 흔들리고 있나", r, asofTs);
   renderFactorGroup("#risk-vuln-title", "#risk-vuln-rows", "vuln", V, "무엇이 쌓여 있나", r, asofTs);
+  renderRiskRegime(r);
   buildRiskMethod(r);
   /* 관계분석은 리스크 안의 입구가 되었다(2026-08-13 사용자 지시 — 상단 탭에서 내려옴).
      화면 자체는 그대로이므로 여기서는 들어가는 자리만 만든다. */
@@ -1374,6 +1375,60 @@ function renderRisk() {
     pl.append(sectionLink("panel",
       "— 위험 지표와 시장 변수의 상관·교차상관·회귀"));
   }
+}
+
+/* ── 시장 국면 참고 카드 (§5.1 2026-08-31 실험 채택분 ⓐ — regime.py 가 정본).
+   등급·경보에 반영되지 않는 참고 표시다. scope_note/param_note 는 반영 범위와
+   사후성 주의라 접지 않고(§7.13 — 사유·주의는 기본 노출), 방법론 해설만
+   explainBox 로 접는다. 검정 미달 ⚠ 도 접지 않는다. 시장 목록·검정은 파이프라인이
+   정하고 여기서는 받은 것을 표시만 한다 — 여기서 문턱·판정을 만들지 말 것. */
+function renderRiskRegime(r) {
+  const box = $("#risk-regime-card");
+  if (!box) return;
+  const g = r.regime;
+  box.textContent = "";
+  if (!g) { box.hidden = true; return; }   // 옛 페이로드 — 카드 없이 (게이트가 신규 부재를 막는다)
+  box.hidden = false;
+  box.append(el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, g.label || "시장 국면 (참고)"),
+    el("span", { class: "card-sub" }, g.asof ? `기준일 ${g.asof} · 고변동 국면 확률` : "")));
+  if (!g.active) {
+    box.append(el("div", { class: "chart-empty" },
+      g.note || "시장 국면 데이터를 계산하지 못했습니다 — 빌드 로그를 확인하세요."));
+    return;
+  }
+  const wrap = el("div", { class: "regime-rows" });
+  (g.rows || []).forEach((m) => {
+    const row = el("div", { class: "regime-row" });
+    row.append(el("div", { class: "regime-name" }, m.name,
+      el("div", { class: "regime-src" }, m.src || "")));
+    if (!m.active) {
+      row.append(el("div", { class: "regime-note" }, m.note || "데이터 없음"));
+      wrap.append(row);
+      return;
+    }
+    row.append(el("div", { class: "regime-prob" + (m.prob >= 50 ? " d-up" : "") },
+      `${fmtNum(m.prob, 0)}%`));
+    row.append(el("div", { class: "regime-spark" }, sparkSVG(m.hist, palette().accent)));
+    row.append(el("div", { class: "regime-meta" },
+      `연 σ 저변동 ${fmtNum(m.sig[0], 1)}% ↔ 고변동 ${fmtNum(m.sig[1], 1)}% · 관측 ${m.asof}`));
+    /* 데이터 갱신으로 검정이 미달로 돌아선 시장은 ⚠ 를 단다 — 목록은 파이프라인
+       상수라 조용히 안 바뀌고, 화면은 근거 약화를 숨기지 않는다. */
+    if (m.ttest_p != null && m.ttest_p >= 0.05) {
+      row.append(el("div", { class: "regime-warn d-up" },
+        `⚠ 국면 이질성 검정 미달(p=${m.ttest_p}) — 참고 가치가 제한적입니다`));
+    }
+    wrap.append(row);
+  });
+  box.append(wrap);
+  if (g.scope_note) box.append(el("p", { class: "regime-scope" }, g.scope_note));
+  if (g.param_note) box.append(el("p", { class: "regime-scope" }, g.param_note));
+  box.append(explainBox("risk-regime",
+    el("p", {}, g.method || ""),
+    el("p", {}, "숫자는 「지금이 고변동 국면일 확률」입니다 — 100% 에 가까울수록 해당 시장이 이미 "
+      + "폭풍 국면에 있다는 뜻이고, 폭락을 몇 주 먼저 맞히는 예측치가 아닙니다. 경고가 잘못 울리는 "
+      + "빈도를 맞춘 비교(연구 하네스 regime_layer.py)에서 현행 위험 점수를 대체할 근거가 없어 "
+      + "참고로만 둡니다.")));
 }
 
 /* ---------------- 이벤트 타임라인 ---------------- */
