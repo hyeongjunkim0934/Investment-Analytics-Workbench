@@ -1791,8 +1791,30 @@ def test_alloc_toc_navigates_without_touching_the_hash(probe):
     """
     c = probe["allocToc"]
     assert c["renderErrors"] == 0
-    assert c["tocButtonCount"] == 5      # 시뮬레이터·포트폴리오 구성·요약·설정·참고치
+    assert c["tocButtonCount"] == 6      # 시뮬레이터·포트폴리오 구성·요약·설정·참고치·통합 프로세스
     assert c["tocClicksSafe"] is True
+
+
+def test_risk_to_optimization_process_card(probe):
+    """리스크 → 최적화 통합 프로세스(§7.16) — 월말 점수 → λ → 월별 λ-MVO 스택.
+
+    합계 100 유지 · 점수↑(λ↑)가 위험을 늘리지 않음(σ*(λ) 단조) · 참고 표시 계약
+    (등급·경보·λ 키인 자동 반영 없음 — §5.1 ⓑ 미채택 유지) · 층·매핑 토글 즉시 저장 ·
+    hist_m 부재/프록시 층에서 보류 사유(조용한 대체 금지)를 실행으로 확인한다.
+    """
+    c = probe["allocRiskProc"]
+    assert c["renderErrors"] == 0
+    assert c["cardRendered"] is True
+    assert c["pathCount"] == 14, "스택 밴드 7 + 경계 6 + 점수선 1 이 아니다"
+    assert c["tableMonths"] == 8
+    assert c["sumsTo100"] is True, "월별 최적 비중 합계가 100 이 아니다"
+    assert c["higherRiskScoreLowersSigma"] is True
+    assert c["saysReferenceOnly"] is True, "참고 표시 문구(자동 반영 없음)가 없다"
+    assert c["lambdaKeyinUntouched"] is True, "카드가 λ 키인을 건드렸다 — λ 소유권 위반"
+    assert c["layerToggleWorks"] is True and c["layerToggleSaved"] is True
+    assert c["mapToggleShowsFormula"] is True
+    assert c["missingHistMExplains"] is True
+    assert c["proxyLayerExplains"] is True
 
 
 # ---- 재점검(2026-08-11) 수정 — 축 부재·소독·정직 문구 (실행해서 확인) --------

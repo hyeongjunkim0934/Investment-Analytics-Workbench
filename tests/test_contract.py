@@ -102,6 +102,10 @@ def test_risk_and_hedge_actually_ran(built):
         assert set(layer["chg"]) == {"m1", "m3", "y1"}, f"{lk}: chg 3구간이 아니다"
         assert layer["delta"] == layer["chg"]["m1"], f"{lk}: delta 와 chg.m1 이 갈렸다"
         assert layer["rank5y"] is None or 0 <= layer["rank5y"] <= 100
+        # 2026-09-01 §7.16 — 통합 프로세스 카드의 재료: 월말 점수 전 구간(hist_m)
+        hm = layer["hist_m"]
+        assert len(hm["t"]) == len(hm["v"]) > 0, f"{lk}: hist_m 이 비었다"
+        assert all(v is None or 0 <= v <= 100 for v in hm["v"]), f"{lk}: hist_m 값역 위반"
     gbs = risk["grade_band_stats"]
     assert [r_["grade"] for r_ in gbs["rows"]] == ["낮음", "보통", "주의", "경계"]
     n_sum = sum(r_["n_weeks"] for r_ in gbs["rows"])

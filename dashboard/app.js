@@ -4667,6 +4667,186 @@ function allocFeasibility(E) {
   return probs;
 }
 
+/* ---- 리스크 → 최적화 통합 프로세스 (§7.16 — 2026-09-01 사용자 지시) --------------
+   리스크 모듈의 월말 점수(risk.json layers.*.hist_m — 전 구간)를 λ 로 환산해 매월
+   λ-효용 MVO 를 다시 풀고, 그 비중 경로를 누적 100% 스택으로 그린다. 연구 하네스
+   `pipeline/research/risk_lambda_alloc.py`(HANDOVER §5.1 실험)의 메커니즘을 화면으로
+   옮긴 것 — **참고 표시 전용**이다: 등급·경보·이벤트·λ 키인 어디에도 자동 반영되지
+   않는다(§5.1 ⓑ 미채택 유지). λ 앵커는 사용자의 화면 λ 다(점수 50 = 백분위 중앙 ↔
+   화면 λ — λ 소유권 §7.7.12 유지, 새 권장값 없음). μ·Σ 는 현재 설정 고정이라
+   백테스트가 아니고 화면이 그 사실을 적는다. 반복 1200회는 3000회 대비 최대
+   0.006%p(실측 — 표시 0.1%p 단위 아래)라 근사가 아니라 동일 해다. */
+const RP_ITERS = 1200;
+function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
+  card.textContent = "";
+  const title = "리스크 → 최적화 통합 프로세스 — 월별 λ-MVO 비중 경로";
+  const bail = (why) => {
+    card.append(el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, `${title} — 보류`)),
+      el("div", { class: "card-sub" }, why));
+  };
+  if (E.layer !== "cma") return bail("벤치마크 층 전용 — 위험 원천을 기관 벤치마크(CMA)로 두면 계산됩니다.");
+  if (infeas && infeas.length) return bail("제약 모순으로 보류 — 수기 입력에서 밴드·상한을 확인하십시오.");
+  const R = DATA.risk;
+  const L = R && R.layers && R.layers[st.rp_layer];
+  const hm = L && L.hist_m;
+  if (!hm || !Array.isArray(hm.t) || hm.t.length < 2) {
+    return bail("리스크 점수 월별 이력(hist_m)이 없습니다 — 파이프라인 갱신 후 자동으로 복구됩니다.");
+  }
+
+  /* 점수 → λ — 앵커는 사용자의 화면 λ (점수 50 ↔ 화면 λ). 로그 = 등급 한 칸(25점)당
+     ×10 (연구 하네스 매핑 ②) / 선형 = 점수/50 (매핑 ① — 실험상 λ≲2.5 구간은 코너
+     고정이라 경로가 평평할 수 있고, 그 자체가 정보다). */
+  const lamBase = +st.mvo_lambda || 1;
+  const lamOf = st.rp_map === "lin"
+    ? (s) => lamBase * Math.max(s, 0) / 50
+    : (s) => lamBase * Math.pow(10, (s - 50) / 25);
+
+  const months = [];
+  for (let i = 0; i < hm.t.length; i++) {
+    if (hm.v[i] == null || !isFinite(+hm.v[i])) continue;
+    months.push({ t: hm.t[i], s: +hm.v[i], lam: lamOf(+hm.v[i]) });
+  }
+  if (months.length < 2) return bail("리스크 점수 월별 이력이 부족합니다.");
+  const { V } = E;
+  const keys = V.keys;
+  const cache = new Map();
+  months.forEach((m) => {
+    const ck = m.lam.toPrecision(6);
+    if (!cache.has(ck)) cache.set(ck, E.optimizeUtilAt(V.mu, V.C, m.lam, 1, RP_ITERS));
+    m.w = cache.get(ck);
+  });
+
+  /* 컨트롤 — 층·매핑은 관측 설정(즉시 저장, src 와 같은 규약) */
+  const seg = (pairs, key) => {
+    const s = el("div", { class: "seg", role: "group" });
+    pairs.forEach(([label, v]) => s.append(el("button", {
+      class: st[key] === v ? "active" : "",
+      onclick: () => { st[key] = v; allocSaveState(st); rerender(); },
+    }, label)));
+    return s;
+  };
+  const controls = el("span", { style: "display:inline-flex;gap:10px;flex-wrap:wrap;align-items:center" },
+    seg([["현재 위험", "stress"], ["잠재 위험", "vuln"]], "rp_layer"),
+    seg([["로그 — 등급 한 칸당 ×10", "log"], ["선형 — 점수/50", "lin"]], "rp_map"));
+
+  const mLabel = (t) => tsToDate(t).slice(0, 7);
+  const box = cardScaffold(card, {
+    title,
+    sub: `${L.name} 점수(월말) → λ → 최적 배분 · ${mLabel(months[0].t)}~${mLabel(months[months.length - 1].t)} (${months.length}개월)`,
+    csvName: "리스크λ배분경로.csv",
+    controls,
+    tableFn: (cap = 400, raw = false) => {
+      const rows = [];
+      for (let i = months.length - 1; i >= 0 && rows.length < cap; i--) {
+        const m = months[i];
+        rows.push([mLabel(m.t), fmtNum(m.s, 1),
+          m.lam < 0.1 ? m.lam.toFixed(3) : fmtNum(m.lam, 2),
+          ...m.w.map((x) => raw ? x * 100 : fmtNum(x * 100, 1))]);
+      }
+      return { headers: ["월", "점수", "λ", ...keys.map(allocShortK)], rows,
+               note: cap < months.length ? `최근 ${Math.min(cap, months.length)}개월만 표시 — 전체는 CSV.` : null };
+    },
+  });
+
+  /* ---- 누적 100% 스택 SVG + 점수 스트립 (연구 아티팩트와 같은 기하) ---- */
+  const NS = "http://www.w3.org/2000/svg";
+  const mk = (tag, at, parent) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in at) {
+      if (k === "fill" || k === "stroke") n.style[k] = at[k];   // var() 는 style 로만 받는다
+      else n.setAttribute(k, at[k]);
+    }
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  const W = 1000, padL = 40, padR = 14, topH = 64, gapH = 20, mainH = 250, padB = 22;
+  const Ht = topH + gapH + mainH + padB;
+  const n = months.length;
+  const svg = mk("svg", { viewBox: `0 0 ${W} ${Ht}`, style: "display:block;width:100%;height:auto" }, null);
+  const X = (i) => padL + (W - padL - padR) * (n === 1 ? 0.5 : i / (n - 1));
+  const Ys = (v) => topH - (topH - 12) * (v / 100);
+  const Y = (v) => topH + gapH + mainH - mainH * (v / 100);
+  [0, 25, 50, 75, 100].forEach((g) => {
+    mk("line", { x1: padL, x2: W - padR, y1: Ys(g), y2: Ys(g), stroke: pal.grid, "stroke-width": 1 }, svg);
+    mk("line", { x1: padL, x2: W - padR, y1: Y(g), y2: Y(g), stroke: pal.grid, "stroke-width": 1 }, svg);
+    mk("text", { x: padL - 5, y: Y(g) + 3.5, "text-anchor": "end", "font-size": 10, fill: pal.ink3 }, svg)
+      .textContent = g;
+  });
+  [25, 50, 75].forEach((g) => {
+    mk("text", { x: padL - 5, y: Ys(g) + 3.5, "text-anchor": "end", "font-size": 9.5, fill: pal.ink3 }, svg)
+      .textContent = g;
+  });
+  const sPath = months.map((m, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Ys(m.s).toFixed(1)}`).join("");
+  mk("path", { d: sPath, fill: "none", stroke: pal.ink2, "stroke-width": 2,
+    "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+  mk("text", { x: padL, y: 9, "font-size": 10.5, fill: pal.ink2, "font-weight": 600 }, svg)
+    .textContent = `${L.name} 점수 (월말 · 0~100)`;
+  const cum = months.map((m) => {
+    const c = [0]; let s = 0;
+    for (let j = 0; j < keys.length; j++) { s += m.w[j]; c.push(s * 100); }
+    return c;
+  });
+  for (let j = 0; j < keys.length; j++) {
+    let up = "", dn = "";
+    for (let i = 0; i < n; i++) up += `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(cum[i][j + 1]).toFixed(1)}`;
+    for (let i = n - 1; i >= 0; i--) dn += `L${X(i).toFixed(1)},${Y(cum[i][j]).toFixed(1)}`;
+    mk("path", { d: up + dn + "Z", fill: pal.series[j % pal.series.length] }, svg);
+  }
+  /* 밴드 경계 2px 표면 간격 — 테두리 대신 흰 여백이 가른다 */
+  for (let j = 1; j < keys.length; j++) {
+    let d = "";
+    for (let i = 0; i < n; i++) d += `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(cum[i][j]).toFixed(1)}`;
+    mk("path", { d, fill: "none", stroke: pal.surface, "stroke-width": 2 }, svg);
+  }
+  let lastYr = "";
+  const sparse = (months[months.length - 1].t - months[0].t) / 31557600 > 12;
+  months.forEach((m, i) => {
+    const yr = tsToDate(m.t).slice(0, 4);
+    if (yr === lastYr) return;
+    lastYr = yr;
+    if (sparse && +yr % 2 !== 0) return;
+    mk("line", { x1: X(i), x2: X(i), y1: Y(0), y2: Y(0) + 4, stroke: pal.baseline, "stroke-width": 1 }, svg);
+    mk("text", { x: X(i), y: Y(0) + 15, "text-anchor": "middle", "font-size": 10, fill: pal.ink3 }, svg)
+      .textContent = yr;
+  });
+  mk("line", { x1: padL, x2: W - padR, y1: Y(0), y2: Y(0), stroke: pal.baseline, "stroke-width": 1 }, svg);
+  const cross = mk("line", { y1: 12, y2: Y(0), stroke: pal.baseline, "stroke-width": 1, opacity: 0 }, svg);
+  box.append(svg);
+
+  /* 판독 줄 — 기본은 최근 월, 올리면 그 월(툴팁이 아니라 고정 줄 — 표가 전체 대체 경로) */
+  const legend = el("div", { class: "sim8-legend" },
+    ...keys.map((k, i) => el("span", {},
+      el("i", { class: "sim-dot", style: `background:${pal.series[i % pal.series.length]}` }), ` ${allocShortK(k)}`)));
+  const hover = el("div", { class: "rp-hover" });
+  const readout = (i) => {
+    const m = months[i];
+    hover.textContent = `${mLabel(m.t)} · 점수 ${fmtNum(m.s, 1)} → λ ` +
+      (m.lam < 0.1 ? m.lam.toFixed(3) : fmtNum(m.lam, 2)) + " → " +
+      keys.map((k, j) => `${allocShortK(k)} ${fmtNum(m.w[j] * 100, 1)}`).join(" · ");
+  };
+  const hit = mk("rect", { x: padL, y: 0, width: W - padL - padR, height: Ht, fill: "transparent" }, svg);
+  hit.addEventListener("pointermove", (ev) => {
+    const r = svg.getBoundingClientRect();
+    if (!r.width) return;
+    const fx = (ev.clientX - r.left) / r.width * W;
+    const i = Math.max(0, Math.min(n - 1, Math.round((fx - padL) / (W - padL - padR) * (n - 1))));
+    cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i));
+    cross.setAttribute("opacity", 1);
+    readout(i);
+  });
+  hit.addEventListener("pointerleave", () => { cross.setAttribute("opacity", 0); readout(n - 1); });
+  readout(n - 1);
+  card.append(legend, hover,
+    el("div", { class: "card-sub", style: "margin-top:4px" },
+      el("b", {}, st.rp_map === "lin"
+        ? `λ = 화면 λ(${fmtNum(lamBase, 2)}) × 점수/50`
+        : `λ = 화면 λ(${fmtNum(lamBase, 2)}) × 10^((점수−50)/25)`),
+      " — 점수 50 ↔ 화면 λ · μ·Σ·밴드 = 현재 설정 고정(백테스트 아님) · ",
+      el("b", {}, "참고 표시 — 등급·경보·λ 키인에 자동 반영 없음"),
+      " · 마지막 달 = 월중"));
+}
+
 
 /* ---- 시뮬레이터(§7.7.8) 보조 — 합계 유지 재분배 + 도넛 차트 ----------------
    재분배는 순수 함수로 뺀다(프로브가 손계산 대조). 「합계 100% 유지」는 사용자가
@@ -4900,6 +5080,8 @@ function allocDefaults(A) {
     /* 시변·창 민감도 카드 — λ-효용 MVO. λ=1 소수 단위(2026-08-11 사용자 지정,
        2026-08-12 부터 시뮬레이터에서 선택). tv_len 은 롤링 길이(년) — null = 게시된 것 중 최장. */
     mvo_lambda: 1, tv_mode: "roll", tv_len: null,
+    /* 통합 프로세스 카드(§7.16) — 관측 설정이라 즉시 저장(src·cma_win 과 같은 규약) */
+    rp_layer: "stress", rp_map: "log",
     /* 시뮬레이터(§7.7.8) — 자산군별 위험 키인(연 %, 대체투자 두 분류 제외 5키).
        null = 벤치마크 실측. **상관은 항상 벤치마크 실측 ρ 를 유지**하고 σ 만
        갈아끼운다(키인 σ × 실측 ρ — 표준 CMA 관행). 그래야 특성 카드·효율선·시변이
@@ -4937,6 +5119,8 @@ function allocState(A) {
   if (st.src !== "proxy" && st.src !== "cma") st.src = "cma";
   if (!isFinite(+st.mvo_lambda) || +st.mvo_lambda <= 0) st.mvo_lambda = 1;
   if (st.tv_mode !== "win" && st.tv_mode !== "roll") st.tv_mode = "roll";
+  if (st.rp_layer !== "stress" && st.rp_layer !== "vuln") st.rp_layer = "stress";
+  if (st.rp_map !== "log" && st.rp_map !== "lin") st.rp_map = "log";
   if (!st.alt_map || typeof st.alt_map !== "object") st.alt_map = d.alt_map;
   if (st.alt_map.mode !== "bm" && st.alt_map.mode !== "factor") st.alt_map.mode = "factor";
   /* §7.7.9 이관 — 구 저장분의 단일 「대체투자」 매핑(w_eq/w_bd)은 북 전체용이라
@@ -5546,9 +5730,11 @@ function renderAlloc() {
      섹션 안 앵커로 쓰면 마을로 튕긴다 — 버튼 + scrollIntoView 로만 움직인다. */
   const toc = $("#alloc-toc");
   toc.textContent = "";
-  /* 투자선·시변·특성·자산군 표·방법론 구역은 2026-08-31 사용자 지시로 제거 */
+  /* 투자선·시변·특성·자산군 표·방법론 구역은 2026-08-31 사용자 지시로 제거.
+     통합 프로세스는 2026-09-01 사용자 지시로 추가(§7.16). */
   [["시뮬레이터", "#alloc-sim-panel"], ["포트폴리오 구성", "#alloc-port-panel"],
-   ["요약", "#alloc-summary"], ["설정", "#alloc-controls"], ["참고치", "#alloc-cards"]]
+   ["요약", "#alloc-summary"], ["설정", "#alloc-controls"], ["참고치", "#alloc-cards"],
+   ["통합 프로세스", "#alloc-risk-proc"]]
     .forEach(([label, sel]) => {
       toc.append(el("button", { type: "button", onclick: () => {
         const n = $(sel);
@@ -6440,6 +6626,12 @@ function renderAlloc() {
           totDiffers
             ? el("span", {}, "총 환노출 − Xe = 매핑 대체투자 몫(「대체투자 환헤지 비율」이 움직임). ")
             : ""));
+    }
+
+    /* ----- 통합 프로세스 (§7.16) — 드래그 중(recalc(false))에는 다시 계산하지 않는다.
+       시변 카드와 같은 이유로 타이머 밖 동기 렌더(셰이드 프로브가 타이머를 흘리지 않음). */
+    if (withCharts) {
+      renderAllocRiskProc($("#alloc-risk-proc"), E, st, pal, () => recalc(true), infeas);
     }
   }
   recalc(true);
