@@ -1775,105 +1775,46 @@ def test_cma_screen_shows_layer_mapping_and_provenance(probe):
     assert c["controlsShowSource"] is True
     assert c["controlsShowMapping"] is True
     assert c["controlsShowPerClassMapping"] is True, "매핑 콘솔에 지분형/대출형 분류가 없다"
-    assert c["tableShowsMappingTag"] is True
+    # 자산군 표·방법론 카드는 2026-08-31 사용자 지시로 제거 — §7.7.19 환 기준
+    # 문구는 시뮬레이터 σ 키인 설명이 나른다(프로브가 재조준).
     assert c["methodShowsFxBasis"] is True
-    assert c["methodShowsExcluded"] is True
+    assert c["methodDroppedWrongFxClaim"] is True
     assert c["headlineShowsLayer"] is True
 
 
-def test_tv_lambda_utility_optimizer_is_sane(probe):
-    """λ-효용 MVO — 단조성·목적함수 검산·같은 표본 = 같은 해.
-
-    λ↑ 면 위험·기대수익이 함께 줄어야 하고(위험회피), λ=1 해는 λ=1 효용에서
-    다른 해보다 낮지 않아야 하며, 같은 행렬에는 같은 답이 나와야 한다.
-    """
-    c = probe["cmaTv"]
-    assert c["lambdaMonotoneRisk"] is True
-    assert c["lambdaMonotoneReturn"] is True
-    assert c["lambda1SolutionHasHigherUtility"] is True
-    assert c["sameMatrixSameSolution"] is True
-
-
-def test_tv_weights_respond_to_risk_structure_not_bands(probe):
-    """시변의 요점 — σ 가 커진 자산의 비중이 실제로 줄어야 한다.
-
-    단 밴드에 붙은 자산은 표본이 바뀌어도 못 움직인다 — 방향성은 내부해가 되는 λ 에서
-    잰다. 이 구분이 없으면 "시변인데 왜 안 움직이나"를 코드 결함으로 오진한다. 프로브는
-    μ 를 앵커 폴백으로 고정해 잰다 — 검사 대상은 최적화기의 성질이지 μ 디폴트 숫자가
-    아니다(§7.7.10).
-
-    **「λ=1 이면 국내주식이 상한 10% 에 붙는다」를 못박지 않는다** — 그건 성질이 아니라
-    그때의 μ·Σ 가 만든 상태이고, §7.7.20 에서 대체투자 환헤지가 행렬을 바꾸자 **롤링
-    표본 쪽에서** 풀렸다(기본 행렬은 그대로 0.10 이고 롤링만 내부해가 됐다 — 옛 검사는
-    둘 다 붙어 있다고 전제했다가 빨간불이 났고 코드는 멀쩡했다). 프로브는 밴드를 눌러
-    **붙는 상태를 구성한 뒤** 재고, 자연 상태의 두 값은 진단으로만 싣는다.
-    """
-    c = probe["cmaTv"]
-    assert c["bandPinnedAtLowLambda"] is True
-    assert c["riskierAssetGetsLess"] is True
-
-
-def test_tv_card_renders_and_states_what_is_frozen(probe):
-    """시변·창 민감도 카드 — 롤링 차트·창 표가 렌더되고, 고정된 입력(μ·제약·매핑·
-    헤지)과 ①②와 다른 목적함수임을 화면이 스스로 밝힌다. 프록시 층에서는 안내문."""
-    c = probe["cmaTv"]
-    assert c["renderErrors"] == 0
-    assert c["rollCardRendered"] is True
-    assert c["saysInputsAreFrozen"] is True
-    assert c["saysThirdObjective"] is True
-    assert c["winModeRendersTable"] is True
-    assert c["proxyLayerShowsGuidance"] is True
-
-
-def test_char_metrics_match_hand_calc(probe):
-    """포트폴리오 특성 — 샤프·E[MDD]·ρ(포트,자산)·상관 대각·분산비를 손계산과 대조.
-
-    E[MDD] 상수 √(π/2)=1.2533 은 무추세 브라운 운동의 표준 결과이지 조정 모수가
-    아니다. 분산비는 한 자산 몰빵에서 정확히 1 이어야 한다(분산효과 0 의 정의).
-    """
-    c = probe["allocChar"]
-    assert c["sharpeHand"] is True
-    assert c["emddHand"] is True
-    assert c["rhoHand"] is True and c["rhoBounded"] is True
-    assert c["corrDiagOnes"] is True
-    assert c["drAtLeastOne"] is True
-    assert c["drOneWhenConcentrated"] is True
-
-
-def test_char_card_renders_with_honest_mdd_labels(probe):
-    """특성 카드 — 샤프·분산비·효율 갭·상관 행렬이 렌더되고, MDD 는 정직하게 나뉜다.
-
-    포트폴리오 MDD 는 [모형](실측 경로는 원본 미게시 계약상 불가), 자산별은 실측,
-    매핑된 대체투자는 원지수 실측이 대표하지 않으므로 **비운다**.
-    """
-    c = probe["allocChar"]
-    assert c["renderErrors"] == 0
-    assert c["cardRendered"] is True
-    assert c["mddLabeledAsModel"] is True
-    assert c["showsEfficiencyGap"] is True
-    assert c["hasCorrMatrix"] is True
-    assert c["mappedAltRowCount"] == 2, "자산군 표에 대체투자 두 분류가 없다"
-    assert c["mappedAltMddBlank"] is True
-
-
 def test_alloc_toc_navigates_without_touching_the_hash(probe):
-    """컨텐츠 탭 — 버튼 10개가 있고 눌러도 죽지 않는다.
+    """컨텐츠 탭 — 버튼 5개가 있고 눌러도 죽지 않는다.
 
+    투자선·시변·특성·자산군 표·방법론 구역은 2026-08-31 사용자 지시로 제거됐다.
     해시 앵커(href="#…")를 쓰면 섹션 라우팅 축과 충돌해 마을로 튕긴다 — 버튼 +
     scrollIntoView 여야 한다. index.html 쪽 검사는 계약 테스트(id 대조)가 맡는다.
     """
-    c = probe["allocChar"]
-    assert c["tocButtonCount"] == 10     # 시뮬레이터가 첫 항목 (§7.7.8) + 포트폴리오 구성 (§7.14)
+    c = probe["allocToc"]
+    assert c["renderErrors"] == 0
+    assert c["tocButtonCount"] == 6      # 시뮬레이터·포트폴리오 구성·요약·설정·참고치·통합 프로세스
     assert c["tocClicksSafe"] is True
 
 
-def test_char_emdd_is_geometric_and_bounded(probe):
-    """E[MDD] 는 기하 정합형 1−e^(−√(π/2)·σ√T) — 라벨("기하브라운")과 산식이 일치하고
-    100% 상한이 구조적으로 지켜진다. 재점검 몬테카를로: 원식(1.2533·σ√T)은 주식
-    몰빵+장기 표본에서 −100% 를 넘는 불가능한 낙폭을 표시했다."""
-    c = probe["allocChar"]
-    assert c["emddHand"] is True
-    assert c["emddBelow100"] is True
+def test_risk_to_optimization_process_card(probe):
+    """리스크 → 최적화 통합 프로세스(§7.16) — 월말 점수 → λ → 월별 λ-MVO 스택.
+
+    합계 100 유지 · 점수↑(λ↑)가 위험을 늘리지 않음(σ*(λ) 단조) · 참고 표시 계약
+    (등급·경보·λ 키인 자동 반영 없음 — §5.1 ⓑ 미채택 유지) · 층·매핑 토글 즉시 저장 ·
+    hist_m 부재/프록시 층에서 보류 사유(조용한 대체 금지)를 실행으로 확인한다.
+    """
+    c = probe["allocRiskProc"]
+    assert c["renderErrors"] == 0
+    assert c["cardRendered"] is True
+    assert c["pathCount"] == 14, "스택 밴드 7 + 경계 6 + 점수선 1 이 아니다"
+    assert c["tableMonths"] == 8
+    assert c["sumsTo100"] is True, "월별 최적 비중 합계가 100 이 아니다"
+    assert c["higherRiskScoreLowersSigma"] is True
+    assert c["saysReferenceOnly"] is True, "참고 표시 문구(자동 반영 없음)가 없다"
+    assert c["lambdaKeyinUntouched"] is True, "카드가 λ 키인을 건드렸다 — λ 소유권 위반"
+    assert c["layerToggleWorks"] is True and c["layerToggleSaved"] is True
+    assert c["mapToggleShowsFormula"] is True
+    assert c["missingHistMExplains"] is True
+    assert c["proxyLayerExplains"] is True
 
 
 # ---- 재점검(2026-08-11) 수정 — 축 부재·소독·정직 문구 (실행해서 확인) --------
@@ -1888,7 +1829,6 @@ def test_audit_no_fx_axis_means_no_hedge_reference(probe):
     assert c["noFxSummaryExplains"] is True
     assert c["noFxNoHedgeColumn"] is True
     assert c["noFxLeverExplains"] is True
-    assert c["noFxSrcTagHonest"] is True, "출처 태그가 없는 환노출을 계속 주장한다"
     assert c["noFxRenderErrors"] == 0
 
 
@@ -1916,7 +1856,6 @@ def test_audit_honesty_badges(probe):
     """매핑 가중 합≠100 배지 · 목표 μ 도달 불가 문구 · 복구 시 고장 배너 제거."""
     c = probe["cmaAudit"]
     assert c["sumBadgeShown"] is True
-    assert c["gapUnreachableFlagged"] is True, "밴드 밖 배분에서 효율 갭이 '같은 기대수익'이라 거짓말한다"
     assert c["bannerClearedAfterRecovery"] is True
 
 

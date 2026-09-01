@@ -69,8 +69,8 @@ secNodes.alloc.append(elem("nav", "alloc-toc"));
 ["alloc-port-panel",
  "alloc-sim-panel",
  "alloc-headline", "alloc-summary", "alloc-controls", "alloc-cards", "alloc-levers",
- "alloc-frontier-card", "alloc-path-card", "alloc-tv-card", "alloc-char-card",
- "alloc-table-card", "alloc-inputs-box", "alloc-method"]
+ "alloc-risk-proc",
+ ]
   .forEach((id) => secNodes.alloc.append(elem("div", id)));
 
 /* 개요 뼈대(§7.9) — 상단 탭이 7개로 줄면서 시장 화면들이 여기로 내려왔다.
@@ -200,7 +200,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "RENDERERS", "renderAll", "renderSection", "renderACWI",
   "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
   "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256",
-  "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil", "allocCharStats",
+  "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil",
   "allocRedistribute", "allocIsAlt", "allocLambdaForSigma", "allocJointOpt", "allocCcyHedgeRows",
   "allocXeBinds", "allocXeBindNotes", "allocXeRange", "openAllocDetail",
   "estEngine", "estDayCount", "estIndexYtd", "EST_ASSETS",
@@ -1311,8 +1311,8 @@ safe("hedgeLeverText", () => {
   r.rendered = txt.length > 0;
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
   r.mentionsXe = /총 미헤지 환노출/.test(txt);
-  r.saysRiskIsOneAxis = /헤지비율 2개가 아니라/.test(txt);
-  r.saysTiesAreEqual = /위험이 정확히 같습니다/.test(txt);
+  r.saysRiskIsOneAxis = /총 미헤지 환노출 Xe 하나/.test(txt);   /* 2026-08-31 키워드 축약 */
+  r.saysTiesAreEqual = /같은 Xe = 같은 위험/.test(txt);
   r.labelsPairAsRepresentative = /대표점/.test(txt);
   /* 되살아나면 안 되는 옛 문구 */
   r.noFlatnessThreshold = !/사실상 평평합니다/.test(txt);
@@ -1375,7 +1375,7 @@ safe("durationGap", () => {
   const cards = DOC.getElementById("alloc-cards").textContent;
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
   r.cardShown = /ALM 듀레이션 갭/.test(cards);
-  r.saysNotAConstraint = /최적화 제약이 아니라 결과 표시입니다/.test(cards);
+  r.saysNotAConstraint = /제약이 아니라 결과 표시/.test(cards);
   r.showsReferenceGaps = /① 참고치/.test(cards);
   /* 옛 저장 상태(신규 키 없음)로도 죽지 않는가 */
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, h_bond: 90 }));
@@ -1676,15 +1676,13 @@ safe("cmaLayer", () => {
   r.controlsShowSource = /위험 원천/.test(ctlTxt) && /기관 벤치마크/.test(ctlTxt);
   r.controlsShowMapping = /대체투자 위험/.test(ctlTxt) && /디스무딩/.test(ctlTxt);
   r.controlsShowPerClassMapping = /지분형/.test(ctlTxt) && /대출형/.test(ctlTxt);
-  r.tableShowsMappingTag = /\[매핑\]/.test(DOC.getElementById("alloc-table-card").textContent);
-  const mthTxt = DOC.getElementById("alloc-method").textContent;
-  /* 환 기준은 **계열마다 다르다**는 사실이 방법론에 적혀야 한다(§7.7.19). 예전 문구
-     「해외 벤치마크는 환노출 제거 기준」은 해외주식에 대해 틀렸고, 그 오진이 환노출
-     이중계상으로 이어졌다 — 문구가 되살아나면 두 번째 검사가 걸린다. */
-  r.methodShowsFxBasis = /계열마다 다릅니다/.test(mthTxt)
-    && /해외채권은 환헤지 반영/.test(mthTxt) && /해외주식은 미헤지/.test(mthTxt);
-  r.methodDroppedWrongFxClaim = !/환노출 제거 기준/.test(mthTxt);
-  r.methodShowsExcluded = /장부가 금융상품/.test(mthTxt) && /제외/.test(mthTxt);
+  /* 환 기준은 **계열마다 다르다**는 사실(§7.7.19)은 방법론·자산군 표 제거
+     (2026-08-31 사용자 지시) 후 시뮬레이터 σ 키인 설명이 나른다 — 문구가 사라지면
+     여기서 걸린다. 예전 문구 「환노출 제거 기준」의 부활도 계속 잡는다. */
+  const simTxt = DOC.getElementById("alloc-sim-panel").textContent;
+  r.methodShowsFxBasis = /환 기준은 계열마다 다름/.test(simTxt)
+    && /해외채권 = 헤지 후/.test(simTxt) && /해외주식 = 환노출 포함/.test(simTxt);
+  r.methodDroppedWrongFxClaim = !/환노출 제거 기준/.test(simTxt);
   r.headlineShowsLayer = /기관 벤치마크/.test(DOC.getElementById("alloc-headline").textContent);
   /* 구 저장분(view:"acct")이 남아 있어도 — 단일 요약이 그대로 나오고 죽지 않는다 */
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, view: "acct" }));
@@ -1702,155 +1700,90 @@ safe("cmaLayer", () => {
   return r;
 });
 
-/* ====== P20-c. 시변·창 민감도 — λ-효용 MVO (§7.7 1-2c 후속, 2026-08-11) ======
-   표본(롤링 시점·고정 창)을 바꿔 가며 같은 λ-MVO 를 풀어 배분 경로를 보여주는
-   카드. ① λ 단조성(위험회피↑ → 위험↓) ② 방향성(σ 두 배인 자산의 비중 감소)
-   ③ 롤링 종점 = 고정 창 (같은 표본 → 같은 해) ④ 화면 렌더를 실행으로 잰다. */
-safe("cmaTv", () => {
+/* ====== P20-d. 자산배분 목차 =================================================
+   시변·특성·자산군 표·방법론 카드는 2026-08-31 사용자 지시로 제거 — 남은 구역
+   이동용 목차(해시 아님 — 라우팅 축과 분리)만 검사한다. */
+safe("allocToc", () => {
   const r = {};
   shim.localStorage.removeItem("iaw-alloc");
-  const E = P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC));
-  const cm = CMA_ALLOC.cma;
-  const opt = (M, lam) => {
-    const B = E.buildFrom(M, 0.9, 0.9);
-    return { B, w: E.optimizeUtil(B.mu, B.C, lam, 2000) };
-  };
-  const sig = (B, w) => E.sigmaW(w, B.C);
-  const M = cm.windows[1].cov;
-  const { B: B1, w: w1 } = opt(M, 1);
-  const { w: wHi } = opt(M, 50);
-
-  /* ① 위험회피 단조 — λ 50 은 λ 1 보다 위험이 낮고 기대수익도 낮다 */
-  r.lambdaMonotoneRisk = sig(B1, wHi) <= sig(B1, w1) + 1e-9;
-  const mdot = (mu, w) => w.reduce((s, wi, i) => s + wi * mu[i], 0);
-  r.lambdaMonotoneReturn = mdot(B1.mu, wHi) <= mdot(B1.mu, w1) + 1e-9;
-  /* λ=1 해가 고위험회피 해보다 효용(소수 단위)이 낮지 않다 — 목적함수 검산 */
-  const util = (B, w, lam) => mdot(B.mu, w) / 100
-    - lam / 2 * w.reduce((s, wi, i) => s + wi * B.C[i].reduce((t, c, j) => t + c * w[j], 0), 0) / 1e4;
-  r.lambda1SolutionHasHigherUtility = util(B1, w1, 1) >= util(B1, wHi, 1) - 1e-9;
-
-  /* ② 방향성 — 국내주식 σ 가 두 배인 롤링 시점에서는 국내주식 비중이 준다.
-     이 두 검사는 μ 지형이 만드는 기하(상한 붙음/내부해)를 전제하므로, μ 를 앵커
-     폴백(mu_over 비움)으로 고정해 잰다 — 2026-08-12 부터 기본 μ 가 사용자 지정
-     CMA 수치라 기본 상태의 λ 지형이 달라졌기 때문이다(검사 대상은 최적화기의
-     성질이지 디폴트 숫자가 아니다). λ=1 에서는 이 자산이 밴드 상한(10%)에 붙어
-     σ 가 변해도 못 움직인다 — 방향성은 내부해가 되는 λ=15 로 잰다(같은 목적함수
-     족·같은 코드 경로). */
-  const Ean = P.allocEngine(CMA_ALLOC, { ...P.allocDefaults(CMA_ALLOC), mu_over: {} });
-  const optAn = (M2, lam) => {
-    const B = Ean.buildFrom(M2, 0.9, 0.9);
-    return { B, w: Ean.optimizeUtil(B.mu, B.C, lam, 2000) };
-  };
-  const iEq = P.ALLOC_ECON.indexOf("국내주식");
-  /* **「λ=1 이면 국내주식이 상한 10% 에 붙는다」를 픽스처로 못박지 말 것.**
-     그 상태는 μ·Σ 가 바뀌면 따라 움직인다 — §7.7.20 에서 대체투자 환헤지가 들어와
-     행렬이 바뀌자 **롤링 표본 쪽에서** 풀렸다(기본 행렬은 여전히 0.10 에 붙어 있고
-     롤링 tv[0].cov[0] 만 내부해가 됐다). 옛 검사는 두 표본 모두 붙어 있다고 전제해
-     그 순간 빨간불이 됐지만 코드는 멀쩡했다. 검사하려는 성질은 「밴드에 **붙은**
-     자산은 σ 가 변해도 못 움직인다」이므로, 밴드를 눌러 **확실히 붙는 상태를
-     구성한 뒤** 잰다(자의적 픽스처가 아니라 성질의 구성이다). 자연 상태의 두 값은
-     진단용으로 함께 싣는다 — 다음에 또 움직이면 어느 쪽인지 바로 보인다. */
-  const dAn = P.allocDefaults(CMA_ALLOC);
-  const Epin = P.allocEngine(CMA_ALLOC, { ...dAn, mu_over: {},
-    bands: { ...dAn.bands, 국내주식: [0, 2] } });
-  const optPin = (M2, lam) => {
-    const B = Epin.buildFrom(M2, 0.9, 0.9);
-    return Epin.optimizeUtil(B.mu, B.C, lam, 2000);
-  };
-  const wPinA = optPin(M, 1), wPinB = optPin(cm.tv[0].cov[0], 1);
-  r.bandPinnedAtLowLambda =
-    Math.abs(wPinA[iEq] - 0.02) < 5e-3 && Math.abs(wPinB[iEq] - wPinA[iEq]) < 5e-3;
-  const { w: w1an } = optAn(M, 1);
-  const { w: w2at1 } = optAn(cm.tv[0].cov[0], 1);
-  r.natEqAtLambda1 = +w1an[iEq].toFixed(4);        // 진단 — 단언하지 않는다
-  r.natEqAtLambda1Tv = +w2at1[iEq].toFixed(4);     // 같음
-  const { w: wA15 } = optAn(M, 15);
-  const { w: wB15 } = optAn(cm.tv[0].cov[0], 15);
-  r.riskierAssetGetsLess = wB15[iEq] < wA15[iEq] - 1e-3;
-
-  /* ③ 롤링 종점 = 고정 창(같은 표본·같은 결정 알고리즘 → 같은 해) — 단, 프로브
-     픽스처의 고정 "1"창과 tv 종점은 같은 행렬을 공유하므로 여기서 성립해야 한다 */
-  const { w: wEnd } = opt(cm.tv[0].cov[2], 1);
-  const { w: wAll } = opt(cm.windows[1].cov, 1);
-  r.sameMatrixSameSolution = wEnd.every((x, i) => Math.abs(x - wAll[i]) < 1e-12);
-
-  /* ④ 화면 — 롤링 차트 카드와 창 민감도 표가 실제로 렌더된다 */
   P.DATA.alloc = CMA_ALLOC;
-  shim.localStorage.removeItem("iaw-alloc");
   P.renderSection("alloc");
-  const tvBox = DOC.getElementById("alloc-tv-card");
-  const txt = tvBox ? tvBox.textContent : "";
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  r.rollCardRendered = /시간 경로/.test(txt) && /λ/.test(txt);
-  r.saysInputsAreFrozen = /현재 설정으로 고정/.test(txt);
-  r.saysThirdObjective = /①②/.test(txt);
-  /* 창 민감도 모드 — 저장 상태로 전환해 표가 나오는지 */
-  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, tv_mode: "win" }));
-  P.renderSection("alloc");
-  const txt2 = DOC.getElementById("alloc-tv-card").textContent;
-  r.winModeRendersTable = /창 민감도/.test(txt2) && /전체/.test(txt2);
-  /* 프록시 층에서는 카드가 안내문으로 물러난다 */
-  P.DATA.alloc = ALLOC_FIXTURE;
-  shim.localStorage.removeItem("iaw-alloc");
-  P.renderSection("alloc");
-  r.proxyLayerShowsGuidance = /벤치마크 층 전용/.test(DOC.getElementById("alloc-tv-card").textContent);
-  shim.localStorage.removeItem("iaw-alloc");
-  return r;
-});
-
-/* ====== P20-d. 포트폴리오 특성 + 목차 (2026-08-11 사용자 지시) ==============
-   비중을 바꿀 때 샤프·분산비·상관·MDD·효율 갭이 함께 움직이는 카드와, 긴 화면의
-   구역 이동용 목차(해시 아님 — 라우팅 축과 분리). 지표는 손계산과 대조한다. */
-safe("allocChar", () => {
-  const r = {};
-  shim.localStorage.removeItem("iaw-alloc");
-  const E = P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC));
-  const w = E.w0;
-  const cs = P.allocCharStats(E, w);
-
-  /* ① 손계산 대조 — 샤프·E[MDD]·ρ(포트,자산)·상관 대각 */
-  const rf = CMA_ALLOC.rates.kr3m.v;
-  r.sharpeHand = Math.abs(cs.sharpe - (cs.mu - rf) / cs.sig) < 1e-12;
-  /* 기하 정합형(재점검 정정): E[%MDD] = 1 − e^(−√(π/2)·σ_dec·√T) — 100% 상한 내장 */
-  r.emddHand = Math.abs(cs.emdd - (1 - Math.exp(-1.2533 * (cs.sig / 100) * Math.sqrt(cs.T))) * 100) < 1e-12;
-  r.emddBelow100 = cs.emdd < 100;
-  const Cw = E.V.C.map((row) => row.reduce((s, c, j) => s + c * w[j], 0));
-  const i0 = 0;
-  r.rhoHand = Math.abs(cs.rho[i0] - Cw[i0] / (cs.sig * cs.sigs[i0])) < 1e-12;
-  r.rhoBounded = cs.rho.every((x) => x == null || (x >= -1 - 1e-9 && x <= 1 + 1e-9));
-  r.corrDiagOnes = cs.corr.every((row, i) => Math.abs(row[i] - 1) < 1e-9);
-  r.drAtLeastOne = cs.dr >= 1 - 1e-9;
-
-  /* ② 분산비가 실제로 「분산」을 재나 — 한 자산 몰빵이면 DR = 1 */
-  const wOne = w.map((_, i) => (i === 0 ? 1 : 0));
-  r.drOneWhenConcentrated = Math.abs(P.allocCharStats(E, wOne).dr - 1) < 1e-9;
-
-  /* ③ 화면 — 카드·목차가 렌더되고, 매핑된 대체투자의 실측 MDD 칸은 비운다 */
-  P.DATA.alloc = CMA_ALLOC;
-  shim.localStorage.removeItem("iaw-alloc");
-  P.renderSection("alloc");
-  const box = DOC.getElementById("alloc-char-card");
-  const txt = box ? box.textContent : "";
-  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  r.cardRendered = /포트폴리오 특성/.test(txt) && /샤프/.test(txt) && /분산비/.test(txt);
-  r.mddLabeledAsModel = /\[모형\]/.test(txt) && /기하브라운/.test(txt);
-  r.showsEfficiencyGap = /효율 갭|투자선 위에 있습니다/.test(txt);
-  r.hasCorrMatrix = /상관 행렬/.test(txt);
-  /* 매핑 자산의 실측 MDD 는 원지수가 대표하지 않으므로 비워야 한다 — 두 분류 모두.
-     상관 행렬 표의 행도 "대체투자"를 담으므로 5칸짜리(자산군 표) 행만 고른다. */
-  const rows = [...box.querySelectorAll("table tr")];
-  const altRows = rows.filter((tr) => tr.children.length === 5
-    && /대체투자/.test(tr.children[0].textContent));
-  r.mappedAltRowCount = altRows.length;
-  r.mappedAltMddBlank = altRows.length === 2
-    && altRows.every((tr) => /–/.test(tr.children[3].textContent));
-  /* 목차 — 버튼이 있고, 눌러도 죽지 않는다(scrollIntoView 가드) */
   const toc = DOC.getElementById("alloc-toc");
   const btns = toc ? [...toc.querySelectorAll("button")] : [];
   r.tocButtonCount = btns.length;
   let clickOk = true;
-  try { btns.forEach((b) => b.onclick && b.onclick()); } catch (e) { clickOk = false; }
+  try { btns.forEach((b) => b.click()); } catch (e) { clickOk = false; }
   r.tocClicksSafe = clickOk;
+  shim.localStorage.removeItem("iaw-alloc");
+  return r;
+});
+
+/* ====== P20-f. 리스크 → 최적화 통합 프로세스 (§7.16 — 2026-09-01 사용자 지시) ====
+   risk.json 의 월말 점수(hist_m) → λ(화면 λ 앵커) → 월별 λ-MVO → 누적 100% 스택.
+   ① 합계 100 유지 ② 점수↑ → λ↑ → 위험↓(단조) ③ 참고 표시 계약(자동 반영 없음 문구,
+   화면 λ 불변) ④ 층·매핑 토글 ⑤ hist_m 부재·프록시 층의 보류 사유를 실행으로 잰다. */
+safe("allocRiskProc", () => {
+  const r = {};
+  shim.localStorage.removeItem("iaw-alloc");
+  const prevRisk = P.DATA.risk;
+  const RISK_M = { layers: {
+    stress: { name: "현재 위험", hist_m: {
+      t: [1580428800, 1583020800, 1585699200, 1588291200, 1590969600, 1593561600, 1596240000, 1598918400],
+      v: [20.0, 35.5, 50.0, 62.3, 78.1, 90.4, 55.0, 41.2] } },
+    vuln: { name: "잠재 위험", hist_m: {
+      t: [1580428800, 1583020800, 1585699200, 1588291200, 1590969600, 1593561600, 1596240000, 1598918400],
+      v: [30.0, 30.5, 44.0, 51.0, 60.2, 70.9, 66.0, 58.8] } },
+  } };
+  P.DATA.risk = RISK_M;
+  P.DATA.alloc = CMA_ALLOC;
+  P.renderSection("alloc");
+  const boxEl = () => DOC.getElementById("alloc-risk-proc");
+  let txt = boxEl().textContent;
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  r.cardRendered = /통합 프로세스/.test(txt) && /λ-MVO/.test(txt) && /현재 위험 점수/.test(txt);
+  /* 스택 기하 — 밴드 7 + 경계 6 + 점수선 1 = path 14개 */
+  r.pathCount = boxEl().querySelectorAll("svg path").length;
+  /* 표 버튼 → 각 월의 비중 7칸 합계 = 100 (0.1 반올림 오차 허용) */
+  const tbtn = [...boxEl().querySelectorAll("button")].find((b) => b.textContent === "표");
+  if (tbtn) tbtn.click();
+  const rows = [...boxEl().querySelectorAll(".chart-table tbody tr")];
+  r.tableMonths = rows.length;
+  r.sumsTo100 = rows.length > 0 && rows.every((tr) => {
+    const cells = [...tr.children].slice(3).map((td) => parseFloat(td.textContent));
+    const sum = cells.reduce((a, b) => a + b, 0);
+    return Math.abs(sum - 100) < 0.35;
+  });
+  /* 메커니즘 — 점수 90 의 λ 최적해는 점수 20 보다 위험이 크지 않다(σ*(λ) 단조) */
+  const E = P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC));
+  const lam = (sc) => Math.pow(10, (sc - 50) / 25);
+  const wLo = E.optimizeUtilAt(E.V.mu, E.V.C, lam(20), 1, 1200);
+  const wHi = E.optimizeUtilAt(E.V.mu, E.V.C, lam(90), 1, 1200);
+  r.higherRiskScoreLowersSigma =
+    E.sigmaW(wHi, E.V.C) <= E.sigmaW(wLo, E.V.C) + 1e-9;
+  /* 참고 표시 계약 — 자동 반영 없음 문구 + 화면 λ 불변(λ 키인을 건드리지 않는다) */
+  r.saysReferenceOnly = /자동 반영 없음/.test(txt);
+  r.lambdaKeyinUntouched = +P.allocState(CMA_ALLOC).mvo_lambda === 1;
+  /* 층·매핑 토글 — 즉시 저장(관측 설정 규약) + 재렌더 */
+  const segBtn = (label) => [...boxEl().querySelectorAll(".seg button")]
+    .find((b) => b.textContent === label);
+  segBtn("잠재 위험").click();
+  txt = boxEl().textContent;
+  r.layerToggleWorks = /잠재 위험 점수/.test(txt);
+  r.layerToggleSaved = P.allocState(CMA_ALLOC).rp_layer === "vuln";
+  segBtn("선형 — 점수/50").click();
+  r.mapToggleShowsFormula = /점수\/50/.test(boxEl().textContent);
+  /* 보류 사유 — hist_m 부재 / 프록시 층 (조용한 대체 금지) */
+  P.DATA.risk = { layers: {} };
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  r.missingHistMExplains = /hist_m/.test(boxEl().textContent) && /보류/.test(boxEl().textContent);
+  P.DATA.risk = RISK_M;
+  P.DATA.alloc = ALLOC_FIXTURE;   // CMA 없는 픽스처 → 프록시 층
+  P.renderSection("alloc");
+  r.proxyLayerExplains = /벤치마크 층 전용/.test(boxEl().textContent);
+  P.DATA.alloc = CMA_ALLOC;
+  P.DATA.risk = prevRisk;
   shim.localStorage.removeItem("iaw-alloc");
   return r;
 });
@@ -1891,7 +1824,6 @@ safe("cmaAudit", () => {
   r.noFxSummaryExplains = /헤지 참고치가 없습니다/.test(sumTxt) && /_fx/.test(sumTxt);
   r.noFxNoHedgeColumn = !/헤지 채권\/주식/.test(sumTxt);
   r.noFxLeverExplains = /무력합니다/.test(DOC.getElementById("alloc-levers").textContent);
-  r.noFxSrcTagHonest = !/\+환노출/.test(DOC.getElementById("alloc-table-card").textContent);
   r.noFxRenderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
 
   /* ② _alt 부재 + 팩터 모드 — 잔차 미가산을 화면이 밝힌다 */
@@ -1934,14 +1866,6 @@ safe("cmaAudit", () => {
     alt_map: { mode: "factor", eq_we: 200, eq_wb: 0, dt_we: 0, dt_wb: 100 } }));
   P.renderSection("alloc");
   r.sumBadgeShown = /⚠ 합 200%/.test(DOC.getElementById("alloc-controls").textContent);
-
-  /* ⑥ 효율 갭 정직성 — 현재 배분이 밴드 밖이라 목표 μ 도달 불가면 그렇다고 적는다 */
-  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
-    mix_acct: { "장부가 국내채권": 5, "시가 국내채권": 5, "장부가 해외채권": 5,
-      "시가 해외채권": 5, 국내주식: 5, 해외주식: 65,
-      "대체투자(지분형)": 4, "대체투자(대출형)": 1, 단기자금: 5 } }));
-  P.renderSection("alloc");
-  r.gapUnreachableFlagged = /도달 불가/.test(DOC.getElementById("alloc-char-card").textContent);
 
   /* ⑧ §7.7.9 이관 — 구 저장분(단일 「대체투자」 키·구 매핑)이 분할 축으로 옮겨지고
      합계가 보존되며, 렌더가 죽지 않는다. 대체투자 20 은 구 예시값(15)이 아니어서
@@ -2112,7 +2036,7 @@ safe("simPanel", () => {
   const ptxt = panel.textContent;
   r.hasOptCard = /① 최적 포트폴리오/.test(ptxt);
   r.hasSimCard = /② 지금 시뮬레이션/.test(ptxt);
-  r.statesCorrPolicy = /상관은 벤치마크 실측/.test(ptxt);
+  r.statesCorrPolicy = /상관 = 벤치마크 실측/.test(ptxt);
   /* 도넛이 각자 자기 카드의 열(sim8-col) 안에 있다 — 카드 아래 중앙 배치의 구조 검증.
      최적 열: 최적 카드 + 「최적 포트폴리오 비중」 도넛 / 시뮬 열: 시뮬 카드 + 「시뮬레이션 비중」. */
   const cols9 = [...panel.querySelectorAll(".sim8-col")];

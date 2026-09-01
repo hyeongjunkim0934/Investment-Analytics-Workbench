@@ -1077,3 +1077,4 @@ a.kpi-link .kpi-label > span:first-child::after {
 @media (max-width: 900px) { .port-two { grid-template-columns: 1fr; } }
 .port-sub-card { padding: 12px 14px; }
 .port-hover { font-size: 12.5px; color: var(--ink-2); margin-top: 6px; min-height: 18px; }
+.rp-hover { font-size: 12px; color: var(--ink-2); margin-top: 6px; min-height: 18px; font-variant-numeric: tabular-nums; }
