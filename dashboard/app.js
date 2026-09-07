@@ -2295,15 +2295,16 @@ function paintVillageNotes(frame) {
    코드로 그린 리본(2b7d29c)은 "허접"했다. 그림은 자산 파일이고 **제목 글씨는 굽지
    않는다** — 두루마리 면 위에 SVG 텍스트로 얹어 마을 라벨과 같은 글꼴(body 스택 상속)을
    쓰고 확대·번역·글꼴 변경에도 살아 있다(assets/README.md 「이미지에 글자 굽지 말 것」).
-   TEXT 의 좌표는 키잉본 캔버스(721×568) 기준 실측값 — 두루마리 필기면 중심과 그 면의
-   기울기 약 5°. 흔들림은 CSS(`.vb-sway`)이고 reduced-motion 이면 CSS 가 세운다
+   TEXT 의 좌표는 키잉본 캔버스(721×568) 기준 실측값 — 축을 따라 밝은 필기면이 이어지는
+   구간(x 0.12~0.85)의 중심과 그 면의 기울기 8°. 글씨가 왼쪽에 쏠려 보이면 폭(len)이 아니라
+   **중심(x)** 이 왼쪽에 있는 것이다 — 필기면은 올빼미 발치 오른쪽으로도 계속 이어진다. 흔들림은 CSS(`.vb-sway`)이고 reduced-motion 이면 CSS 가 세운다
    (JS 분기 없음 — 정지 이미지는 그 자체로 무모션이다). 위치·폭은 겹침을 피해 고른 값
    (오른쪽 끝 24% < 여관 안내판 24.3%). */
 const VILLAGE_BANNER = {
   x: 5, y: 2.5, w: 19, title: "Korea Post Village",
   src: "assets/village-banner.webp",
   vb: [721, 568],                                   // 키잉본 캔버스(= 이미지 종횡비)
-  text: { x: 255, y: 396, len: 340, size: 38, rot: 8 },
+  text: { x: 349, y: 409, len: 500, size: 52, rot: 8 },
 };
 
 function villageBannerSvg() {
@@ -2314,8 +2315,8 @@ function villageBannerSvg() {
     + `lengthAdjust="spacingAndGlyphs" font-size="${x.size}" font-weight="800" letter-spacing=".5"`;
   return `<svg viewBox="0 0 ${vw} ${vh}" role="img" aria-label="${t}">
   <g transform="rotate(${x.rot} ${x.x} ${x.y})">
-    <text ${common} y="${x.y + 2}" fill="#7a5024" opacity=".28">${t}</text>
-    <text ${common} fill="#5b3a1f" stroke="#fdf6e6" stroke-width="2.4"
+    <text ${common} y="${x.y + 3}" fill="#7a5024" opacity=".28">${t}</text>
+    <text ${common} fill="#5b3a1f" stroke="#fdf6e6" stroke-width="3.2"
           stroke-linejoin="round" paint-order="stroke">${t}</text>
   </g>
 </svg>`;
