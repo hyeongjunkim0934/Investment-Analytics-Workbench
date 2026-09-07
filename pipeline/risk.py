@@ -508,11 +508,16 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
                   "수준인지(백분위)를 나타냅니다. 0 = 가장 안전했던 수준, 100 = 가장 위험했던 수준, "
                   "50 = 딱 중간. 등급은 점수를 4등분한 것입니다."),
         "layers": {
+            # hist_m = 월말(각 달 마지막 주간 관측) 점수 **전 구간** — 자산배분 탭
+            # 「리스크 → 최적화 통합 프로세스」 카드(2026-09-01 사용자 지시)가 브라우저에서
+            # 월별 λ-MVO 경로를 계산하는 재료다. hist(주간)가 이미 공개하는 합성 점수의
+            # 표본 주기·구간만 다른 파생 통계라 공개 범위 성격은 같다(원본 값 아님).
             "stress": {"name": "현재 위험", "question": "지금 시장이 흔들리고 있는가",
                        "score": stress_cur, "grade": grade(stress_cur), "delta": stress_delta,
                        "chg": stress_chg, "rank5y": rank5y(comp_ic, stress_cur),
                        "method": "IC가중 + 최소바닥 8% (walk-forward 재학습)",
-                       "hist": pack_series(comp_ic.tail(HIST_WEEKS))},
+                       "hist": pack_series(comp_ic.tail(HIST_WEEKS)),
+                       "hist_m": pack_series(comp_ic.resample("ME").last().dropna())},
             "vuln": {"name": "잠재 위험", "question": "문제가 터지면 크게 다칠 상태인가",
                      "score": vuln_cur, "grade": grade(vuln_cur), "delta": vuln_delta,
                      "chg": vuln_chg,
@@ -520,7 +525,8 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
                      "method": "활성 요인 동일가중",
                      "active": len(vuln_active),
                      "total": len([f for f in FACTORS if f["layer"] == "vuln"]),
-                     "hist": pack_series(vuln_weekly.tail(HIST_WEEKS))},
+                     "hist": pack_series(vuln_weekly.tail(HIST_WEEKS)),
+                     "hist_m": pack_series(vuln_weekly.resample("ME").last().dropna())},
         },
         "grade_band_stats": grade_band_stats,
         "kospi10": kospi10,

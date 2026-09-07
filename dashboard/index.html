@@ -50,8 +50,10 @@
     <nav class="nav" id="nav">
       <!-- 순서는 사용자 지정(2026-08-11): 마을·개요·리스크 다음에 자산배분·환헤지 —
            자산배분 포트폴리오 최적화가 이 대시보드의 중심 기능이라 앞으로 뺐다. -->
-      <!-- 상단 탭은 **7개만** (2026-08-13 사용자 지시 — "덜 중요한 애들이 메인 탭에 있어").
-           내려온 화면들은 사라진 게 아니라 부모 화면 안의 입구로 옮겨졌다:
+      <!-- 상단 탭은 **6개만** — 2026-08-13 사용자 지시("덜 중요한 애들이 메인 탭에 있어")로
+           7개가 되었고, 2026-09-07 사용자 지시로 「수익률 추정」이 제거되어 6개가 됐다
+           (그 화면은 내려온 것이 아니라 **삭제**다 — 섹션·렌더러·마을 입구 전부 없앴다).
+           나머지 내려온 화면들은 사라진 게 아니라 부모 화면 안의 입구로 옮겨졌다:
              · 금리·IRS·크레딧·FX·물가·ACWI·매크로 → 개요 (구역별 카드 + 화면 버튼)
              · 관계분석 → 리스크
              · 카탈로그 → 개요 맨 아래 버튼
@@ -60,7 +62,6 @@
       <a href="#overview">개요</a>
       <a href="#events">이벤트</a>
       <a href="#risk">리스크</a>
-      <a href="#estimate">수익률 추정</a>
       <a href="#alloc">자산배분</a>
       <a href="#hedge">환헤지</a>
     </nav>
@@ -182,28 +183,6 @@
     <details class="method" id="hedge-method"></details>
   </section>
 
-  <!-- 수익률 추정 (§7.8·§7.10·§7.11) — 자산군별 규모·기준일 수익률·듀레이션을 넣으면
-       포트폴리오의 연초이후 수익률이 나오고, 추정일과 시장 6축 변화를 넣으면 그 날의
-       수익률까지 **같은 표 한 행에 나란히** 나온다(§7.11 — 2026-08-13 사용자 지시).
-       기준일 수익률은 이미 연환산된 값을 넣는다(주식 제외) — 화면이 다시 곱하지 않는다.
-       입력값은 브라우저 localStorage 에만 남는다(공개 저장소에 기관 수치 금지). -->
-  <section id="estimate" class="section">
-    <h2>수익률 추정</h2>
-    <!-- 답 먼저 — 기준일·추정일 수익률과 차이. 그 아래가 조작이고 그 아래가 표다. -->
-    <div class="card" id="est-summary" style="padding:12px 16px"></div>
-    <div class="howto" id="est-controls"></div>
-    <!-- §7.12 (2026-08-13 사용자 지시) — 자산군·규모·수익률 입력이 **가장 먼저** 오고,
-         그 오른쪽에 같은 모양으로 추정일 블록이 붙는다. 시장지표 카드는 그 **밑**이다. -->
-    <div class="card" id="est-table-card" style="margin-top:10px"></div>
-    <div class="card" id="est-market-card" style="margin-top:10px"></div>
-    <div class="card" id="est-scenario-result" style="margin-top:10px"></div>
-    <div class="card" id="est-contrib-card" style="margin-top:10px"></div>
-    <!-- 출처·부재는 접이식으로 내려간다(§7.12) — 지우지는 않는다. ACWI 가 PR 이라는
-         사실과 미국채 부재 사유는 숫자의 뜻을 바꾸므로 화면에서 닿을 수 있어야 한다. -->
-    <div class="howto" id="est-sources"></div>
-    <details class="method" id="est-method"></details>
-  </section>
-
   <section id="alloc" class="section">
     <h2>자산배분</h2>
     <!-- 컨텐츠 탭 — 긴 화면의 구역 이동. 해시 앵커가 아니라 버튼(라우팅 축과 분리) -->
@@ -220,17 +199,10 @@
     <div class="howto" id="alloc-controls"></div>
     <div class="cards" id="alloc-cards"></div>
     <div class="howto" id="alloc-levers"></div>
-    <div class="grid-2">
-      <div class="card" id="alloc-frontier-card"></div>
-      <div class="card" id="alloc-path-card"></div>
-    </div>
-    <!-- 시변(롤링)·창 민감도 — λ-효용 MVO 로 표본을 바꿔 가며 최적 배분을 재계산 -->
-    <div class="card" id="alloc-tv-card" style="margin-top:14px"></div>
-    <!-- 포트폴리오 특성 — 비중 조정과 함께 즉시 갱신 (샤프·분산비·MDD·상관) -->
-    <div class="card" id="alloc-char-card" style="margin-top:14px"></div>
-    <div class="card" id="alloc-table-card" style="margin-top:14px"></div>
-    <div class="howto" id="alloc-inputs-box" style="margin-top:14px"></div>
-    <details class="method" id="alloc-method"></details>
+    <!-- 투자선·이행 경로·시변·특성·자산군 표·출처 상자·방법론 카드는 2026-08-31
+         사용자 지시로 제거. 아래 통합 프로세스 카드는 2026-09-01 사용자 지시 —
+         리스크 점수(월말) → λ 환산 → 월별 λ-MVO 비중 경로(누적 100%)를 화면이 계산 -->
+    <div class="card" id="alloc-risk-proc" style="margin-top:14px"></div>
   </section>
 
   <section id="rates" class="section">

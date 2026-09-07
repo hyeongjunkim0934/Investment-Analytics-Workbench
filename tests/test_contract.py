@@ -40,10 +40,11 @@ def _app_js_files() -> list[str]:
     return re.findall(r'["\']([A-Za-z_]+)["\']', m.group(1))
 
 
-def test_contract_is_sixteen():
-    # §7.8 에서 estimate.json 이 더해져 15 → 16 이 되었다.
-    assert len(check_output.EXPECTED) == 16
-    assert len(set(check_output.EXPECTED)) == 16
+def test_contract_is_fifteen():
+    # §7.8 에서 estimate.json 이 더해져 15 → 16 이 되었다가, §7.17(2026-09-07)이
+    # 수익률 추정 화면과 파이프라인을 함께 지우면서 **다시 15** 가 되었다.
+    assert len(check_output.EXPECTED) == 15
+    assert len(set(check_output.EXPECTED)) == 15
 
 
 def test_app_js_files_match_contract():
@@ -76,11 +77,11 @@ def built(synth_dir, tmp_path_factory):
     return out, r
 
 
-def test_pipeline_writes_exactly_sixteen(built):
+def test_pipeline_writes_exactly_fifteen(built):
     out, r = built
     written = sorted(p.stem for p in out.glob("*.json"))
     assert written == sorted(check_output.EXPECTED), r.stdout[-2000:]
-    assert r.stdout.count("wrote ") == 16
+    assert r.stdout.count("wrote ") == 15
 
 
 def test_risk_and_hedge_actually_ran(built):
@@ -102,6 +103,10 @@ def test_risk_and_hedge_actually_ran(built):
         assert set(layer["chg"]) == {"m1", "m3", "y1"}, f"{lk}: chg 3구간이 아니다"
         assert layer["delta"] == layer["chg"]["m1"], f"{lk}: delta 와 chg.m1 이 갈렸다"
         assert layer["rank5y"] is None or 0 <= layer["rank5y"] <= 100
+        # 2026-09-01 §7.16 — 통합 프로세스 카드의 재료: 월말 점수 전 구간(hist_m)
+        hm = layer["hist_m"]
+        assert len(hm["t"]) == len(hm["v"]) > 0, f"{lk}: hist_m 이 비었다"
+        assert all(v is None or 0 <= v <= 100 for v in hm["v"]), f"{lk}: hist_m 값역 위반"
     gbs = risk["grade_band_stats"]
     assert [r_["grade"] for r_ in gbs["rows"]] == ["낮음", "보통", "주의", "경계"]
     n_sum = sum(r_["n_weeks"] for r_ in gbs["rows"])
@@ -531,7 +536,7 @@ def test_process_globals_are_not_leaked_by_tests():
 
 
 # --------------------------------------------------------------------------
-# 마을(홈) 내비게이션 계약 — 구역이 15개 섹션을 빠짐없이·중복 없이 덮는가.
+# 마을(홈) 내비게이션 계약 — 구역이 14개 섹션을 빠짐없이·중복 없이 덮는가.
 # 지도 이미지는 글자가 없고 라벨을 코드가 얹으므로, 이 대응이 깨지면 화면에서
 # 도달 불가능한 섹션이 조용히 생긴다. 사람 눈으로는 안 보이는 종류의 결함이다.
 # --------------------------------------------------------------------------
@@ -596,9 +601,9 @@ def _village_targets() -> set[str]:
 
 
 def test_village_zones_cover_every_section():
-    """마을에서 15개 섹션 전부에 도달할 수 있어야 한다."""
+    """마을에서 14개 섹션 전부에 도달할 수 있어야 한다."""
     ids = set(re.findall(r'<section id="([a-z]+)" class="section">', _index_html()))
-    assert len(ids) == 15, f"섹션 수가 15가 아닙니다: {sorted(ids)}"
+    assert len(ids) == 14, f"섹션 수가 14가 아닙니다: {sorted(ids)}"
     missing = ids - _village_targets()
     assert not missing, f"마을에서 도달할 수 없는 섹션: {sorted(missing)}"
 
@@ -978,7 +983,7 @@ def _renderer_map() -> dict[str, str]:
 
 
 def test_every_section_has_a_renderer():
-    """SECTION_IDS 의 15개가 전부 RENDERERS 에 있어야 한다.
+    """SECTION_IDS 의 14개가 전부 RENDERERS 에 있어야 한다.
 
     빠뜨리면 그 섹션은 **아무 오류 없이 영영 비어 있다** — 클릭해서 들어가야만
     보이는 구조라 눈으로 알아채기까지 오래 걸린다.
@@ -988,7 +993,7 @@ def test_every_section_has_a_renderer():
     r = _renderer_map()
     assert set(ids) - set(r) == set(), f"렌더러가 없는 섹션: {sorted(set(ids) - set(r))}"
     assert set(r) - set(ids) == set(), f"섹션에 없는 렌더러: {sorted(set(r) - set(ids))}"
-    assert len(ids) == 15
+    assert len(ids) == 14
 
 
 def test_renderers_named_in_the_map_actually_exist():
@@ -1292,10 +1297,10 @@ def test_built_brief_covers_its_own_events(built):
 
 
 # --------------------------------------------------------------------------
-# 정보구조 (§7.9) — 상단 탭 7개, 나머지는 부모 화면 안의 입구로
+# 정보구조 (§7.9) — 상단 탭 6개, 나머지는 부모 화면 안의 입구로
 # --------------------------------------------------------------------------
 
-EXPECTED_TABS = ["village", "overview", "events", "risk", "estimate", "alloc", "hedge"]
+EXPECTED_TABS = ["village", "overview", "events", "risk", "alloc", "hedge"]
 
 
 def _nav_hrefs() -> list[str]:
@@ -1304,11 +1309,12 @@ def _nav_hrefs() -> list[str]:
     return re.findall(r'href="#([a-z]+)"', block.group(1))
 
 
-def test_top_tabs_are_exactly_the_seven_the_user_asked_for():
-    """상단 탭은 마을·개요·이벤트·리스크·수익률 추정·자산배분·환헤지 **7개뿐**.
+def test_top_tabs_are_exactly_the_six_the_user_asked_for():
+    """상단 탭은 마을·개요·이벤트·리스크·자산배분·환헤지 **6개뿐**.
 
-    2026-08-13 사용자 지시("덜 중요한 애들이 메인 탭에 있어"). 탭을 다시 늘리려면
-    사용자와 합의해야 한다 — 여기가 그 합의를 지키는 자리다.
+    2026-08-13 사용자 지시("덜 중요한 애들이 메인 탭에 있어")로 7개가 됐고,
+    2026-09-07 지시로 「수익률 추정」이 제거되어 6개다(§7.17 — 탭에서 내린 것이
+    아니라 화면 자체를 지웠다). 탭을 다시 늘리려면 사용자와 합의해야 한다.
     """
     assert _nav_hrefs() == EXPECTED_TABS, f"상단 탭이 바뀌었습니다: {_nav_hrefs()}"
 
@@ -1416,7 +1422,7 @@ def test_json_contract_count_matches_docs():
 
     코드 세 곳(process.payloads · app.js FILES · check_output.EXPECTED)은 위의 계약
     테스트들이 서로 대조하지만, **넷째 자리는 다른 저장소**라 아무도 안 보고 있었다 —
-    estimate.json 을 추가할 때(15→16) 세 곳만 고치고 `../Data/CLAUDE.md` 는 15 로 남아
+    estimate.json 을 더할 때(15→16) 세 곳만 고치고 `../Data/CLAUDE.md` 는 15 로 남아
     실측으로 걸렸다. 문서가 다음 세션의 유일한 지도라는 이 절의 전제 그대로, 기계로
     확인 가능한 수는 기계가 잠근다.
 
@@ -1427,7 +1433,7 @@ def test_json_contract_count_matches_docs():
                       (ROOT / "pipeline" / "check_output.py")
                       .read_text(encoding="utf-8"), re.S).group(1)
     n = len(re.findall(r'"([a-z_]+)"', block))
-    assert n >= 16, f"EXPECTED 파싱이 이상합니다 — {n}개"
+    assert n >= 15, f"EXPECTED 파싱이 이상합니다 — {n}개"
     # 이 저장소 문서의 「JSON N개」 문장 전수
     for name, txt in _docs().items():
         for claimed in re.findall(r"JSON\s+(\d+)개", txt):
