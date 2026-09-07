@@ -667,6 +667,27 @@ def test_village_fx_respects_reduced_motion():
     )
 
 
+def test_village_notes_never_take_clicks_and_stop_under_reduced_motion():
+    """건물 안내판(§7.18)은 마을 층의 모션 규약 셋을 그대로 진다: ① 클릭을 가로채지
+    않는다(pointer-events:none) ② reduced-motion 이면 티커가 선다 ③ 그 규칙은
+    `.village-fx` 를 첫 자리에 둔 기존 블록 **안**에 있어야 한다(위 검사가 첫 규칙을 본다).
+    """
+    css = (ROOT / "dashboard" / "style.css").read_text(encoding="utf-8")
+    note = re.search(r"\.vz-note\s*\{([^}]*)\}", css)
+    assert note and "pointer-events: none" in note.group(1), "안내판이 클릭을 가로챌 수 있다"
+    # 시트에는 reduced-motion 블록이 둘이다(스킵 링크 한 줄짜리 + 마을 층) — .village-fx 로
+    # 시작하는 마을 층 블록을 집는다.
+    block = re.search(r"@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.village-fx(.*?)\n\}", css, re.S)
+    assert block, "마을 층 reduced-motion 블록을 찾지 못했습니다"
+    assert re.search(r"\.vz-note-track\s*\{\s*animation:\s*none", block.group(1)), (
+        "reduced-motion 에서 안내판 티커를 세우는 규칙이 없습니다")
+    assert "paintVillageNotes" in _fn("renderVillage"), "renderVillage 가 안내판을 그리지 않습니다"
+    # 안내판 계산은 요약표와 같은 함수(allocRefModel)라야 한다 — 인라인 재계산 금지
+    assert "allocRefModel(" in _fn("villageNoteAllocHedge"), "안내판이 allocRefModel 을 쓰지 않습니다"
+    assert "allocRefModel(" in _app_js().split("function recalc(withCharts)")[1].split("\n  }\n")[0], (
+        "요약표(recalc)가 allocRefModel 을 쓰지 않습니다 — 두 참고치가 갈립니다")
+
+
 def test_village_fx_people_paths_all_exist():
     """행인의 mpath 가 가리키는 도로 id 가 전부 실재해야 한다.
 

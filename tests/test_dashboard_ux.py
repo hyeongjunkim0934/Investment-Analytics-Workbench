@@ -2492,7 +2492,9 @@ def test_every_css_variable_and_class_actually_exists():
     # ① 미정의 CSS 변수 — 한 줄 `:root { --a: x; --b: y }` 도 잡히게 앵커를 두지 않는다
     defined = set(re.findall(r"(--[\w-]+)\s*:", css))
     used = set(re.findall(r"var\(\s*(--[\w-]+)", css))
-    runtime_injected = {"--village-img"}          # app.js 가 setProperty 로 넣는다
+    # app.js 가 런타임에 넣는 변수 — setProperty(--village-img) 와 안내판 상자별 인라인
+    # style(--vz-note-dur: 티커 속도, 글 길이 비례 — paintVillageNotes §7.18)
+    runtime_injected = {"--village-img", "--vz-note-dur"}
     for name in sorted(runtime_injected):
         assert name in js, f"{name} 을 런타임 주입 예외로 뒀는데 app.js 에 없습니다"
     missing = sorted(used - defined - runtime_injected)
@@ -2716,3 +2718,45 @@ def test_port_panel_longest_window_and_cd_reference(probe):
     assert c["cdRefTooltipHasOverlap"] is True, (
         "CD 참고 툴팁에 참고 전용·실ETF 겹침 검증치가 없다"
     )
+
+
+# --------------------------------------------------------------------------
+# 마을 안내판 (§7.18) — 건물 옆 반투명 티커
+# --------------------------------------------------------------------------
+
+def test_village_notes_carry_existing_outputs_verbatim(probe):
+    """안내판은 새 숫자를 만들지 않는다 — 점수·등급·변화는 risk.json 그대로,
+    브리핑은 원고 첫 줄 + 다음 3문장을 원문 그대로(맺음말은 제외)."""
+    v = probe["villageNotes"]
+    assert v["count"] == 4 and v["countAfterRerender"] == 4, "안내판이 4개가 아니거나 재렌더에 중복된다"
+    assert v["zonesExist"] is True, f"실재하지 않는 구역에 붙은 안내판: {v['zones']}"
+    assert v["hotspotsStillThere"] is True, "안내판을 그리며 핫스팟이 사라졌다"
+    assert v["riskShowsScores"] is True, "위험 점수·등급·변화가 risk.json 과 다르다"
+    assert v["riskShowsRegimeWarn"] is True, "국면 확률 또는 검정 미달 ⚠ 가 빠졌다"
+    assert v["eventsVerbatim"] is True, "브리핑 원고를 원문 그대로 옮기지 않는다"
+    assert v["eventsSkipsClosing"] is True, "브리핑 맺음말까지 티커에 실렸다"
+
+
+def test_village_notes_are_reference_only_with_no_action_verbs(probe):
+    """참고 표시 전용 — 동사(늘림/줄임/매수/매도) 없이 차이만 적고, 클릭은 건물 몫이다."""
+    v = probe["villageNotes"]
+    assert v["saysReference"] is True, "「참고 · 기준일 · 자동 반영 없음」 머리말이 없다"
+    assert v["noVerbs"] is True, "안내판에 행동 동사가 있다 — 참고 표시 규약 위반"
+    assert v["notesNotClickable"] is True, "안내판이 버튼·링크를 품고 있다(클릭은 건물 몫)"
+
+
+def test_village_notes_share_the_alloc_summary_computation(probe):
+    """곳간·교역소 안내판의 수는 자산배분 요약표 「참고치 − 현재」 행과 **문자 단위로**
+    같아야 한다 — 따로 계산하면 화면에 서로 다른 두 참고치가 생긴다(allocRefModel 한 벌)."""
+    v = probe["villageNotes"]
+    assert v["allocKeys"] == 7, f"요약표 자산군 수가 7이 아니다: {v['allocKeys']}"
+    assert v["allocDiffsMatchSummary"] is True, "곳간 안내판의 배분 차이가 요약표와 다르다"
+    assert v["allocMuSigMatchSummary"] is True, "곳간 안내판의 수익·위험 차이가 요약표와 다르다"
+    assert v["hedgeXeMatchesSummary"] is True, "교역소 안내판의 Xe 차이가 요약표와 다르다"
+    assert v["hedgeShowsBasis"] is True, "저장값/기본값 기준을 적지 않는다"
+    assert v["saveInvalidates"] is True, "저장 뒤에도 안내판이 옛 값을 보여 준다(캐시 무효화 실패)"
+
+
+def test_village_notes_explain_missing_payloads(probe):
+    """risk/events 가 없으면 그 상자만 사유를 적고 곳간은 그대로 산다(allSettled 규약)."""
+    assert probe["villageNotes"]["missingExplains"] is True

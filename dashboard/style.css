@@ -807,6 +807,28 @@ details.explain[open] > summary { color: var(--ink-2); }
 }
 .vz-menu a:hover { background: var(--page); }
 
+/* ---- 건물 안내판 — 반투명 상자 안에서 글이 흐르는 티커 (§7.18) ----
+   클릭은 전부 핫스팟 몫(pointer-events:none). 상자 배경은 낮·밤 지도 모두에서 읽히는
+   어두운 반투명이고 글자는 .vz-label 과 같은 할로 규약을 쓴다. 폭·위치는 app.js 가
+   비율 좌표로 준다(paintVillageNotes). 티커 속도는 --vz-note-dur(글 길이 비례). */
+.vz-note {
+  position: absolute; z-index: 15; pointer-events: none;
+  padding: 5px 10px; border-radius: 8px;
+  background: rgba(24, 18, 10, .58); border: 1px solid rgba(255, 246, 230, .18);
+  color: #fbf7ef; font-size: 12px; font-weight: 600; line-height: 1.35;
+  overflow: hidden; white-space: nowrap;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .7), 0 0 6px rgba(0, 0, 0, .6);
+  backdrop-filter: blur(2px);
+}
+.vz-note-above { transform: translate(-50%, calc(-100% - 44px)); }
+.vz-note-below { transform: translate(-50%, 36px); }
+:root[data-scene="night"] .vz-note { background: rgba(8, 12, 18, .64); border-color: rgba(205, 228, 255, .22); }
+/* 트랙에 같은 글을 두 번 넣고 절반만큼 밀어 이음새 없이 돈다 */
+.vz-note-track { display: inline-block; animation: vz-note-scroll var(--vz-note-dur, 30s) linear infinite; }
+.vz-note-text { display: inline-block; padding-right: 3em; }
+@keyframes vz-note-scroll { to { transform: translateX(-50%); } }
+.village-frame.vz-enter .vz-note { opacity: 0; transition: opacity .18s; }
+
 /* 지도가 없거나 좁은 화면일 때의 대체 목록 — 접근성 겸용 */
 .village-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .village-list a {
@@ -875,6 +897,10 @@ details.explain[open] > summary { color: var(--ink-2); }
      주의: 이 규칙은 반드시 `.village-fx` 뒤에 둘 것 —
      test_village_fx_respects_reduced_motion 이 블록 첫 규칙을 정규식으로 본다. */
   html { scroll-behavior: auto; }
+  /* 건물 안내판(§7.18): 티커를 세우고 글을 접어 정적으로 보인다. 복제본은 감춘다. */
+  .vz-note-track { animation: none; }
+  .vz-note { white-space: normal; }
+  .vz-note-text + .vz-note-text { display: none; }
 }
 
 /* ---- 건물 입장 연출 — 클릭한 건물로 빨려 들어가듯 확대 후 화면 전환 ---- */

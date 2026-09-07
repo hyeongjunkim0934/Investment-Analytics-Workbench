@@ -2139,12 +2139,151 @@ function enterZone(z, targetHash) {
   }, 520);
 }
 
+
+/* ══ 마을 안내판 — 건물 옆 반투명 티커 (§7.18, 2026-09-07 사용자 지시) ═══════════════
+   「오늘의 판단 재료」를 별도 화면이나 띠로 두지 않고(사용자: "마을은 그냥 마을만"),
+   각 건물 옆 반투명 상자 안에서 글씨가 흐르게 한다. 종탑=위험·국면, 여관=이벤트
+   브리핑, 곳간=참고치−현재 배분, 교역소=헤지·환노출.
+
+   규약 — 전부 **기존 산출물**이고 새 숫자는 없다:
+   · 참고 표시 전용: 동사(늘림/줄임/매수/매도) 없이 **차이만** 적는다. 등급·경보·λ·배분에
+     자동 반영 없음 — 프로브 `villageNotes` 가 동사 부재를 정규식으로 고정한다.
+   · 배분·헤지 차이는 `allocRefModel` 한 벌 — 자산배분 화면의 요약표와 **문자 단위로 같은
+     수**다(프로브가 대조). 기준은 마지막 **저장값**(없으면 기본값·미저장이라 적는다).
+   · 페이로드가 없으면 그 상자만 사유를 적는다(allSettled 규약 — 조용한 대체 금지).
+   · 클릭은 전부 건물 몫 — CSS 가 pointer-events 를 끈다. prefers-reduced-motion 이면
+     티커가 서고 글이 접혀 정적으로 보인다(CSS).
+   · 계산은 renderAll·저장 뒤에만 다시 한다(캐시). 15초 장면 순환의 renderVillage 는
+     그린 것을 다시 붙일 뿐 최적화를 다시 돌리지 않는다. */
+
+const VILLAGE_NOTE_SEP = "  ◆  ";
+let VILLAGE_NOTE_CACHE = null;
+function villageNotesInvalidate() { VILLAGE_NOTE_CACHE = null; }
+
+/* 요약표(#alloc-summary)와 **같은 문자열**이 나오게 같은 산식을 쓴다 — 자산 차이는 원식
+   그대로, μ·σ·Xe 는 요약표의 z2 처럼 반올림해 0 이 되는 값을 부호 없이 0 으로 적는다. */
+const signed = (v, dec, zeroGuard = false) => {
+  const x = zeroGuard && Math.abs(v) < 0.5 * Math.pow(10, -dec) ? 0 : v;
+  return `${x > 0 ? "+" : ""}${fmtNum(x, dec)}`;
+};
+
+function villageNoteRisk() {
+  const R = DATA.risk;
+  if (!R || !R.layers) return ["리스크 데이터 없음 — 종탑에서 확인"];
+  const L = (k, nm) => {
+    const x = R.layers[k];
+    if (!x) return `${nm} 없음`;
+    const c = x.chg || {};
+    return `${nm} ${Math.round(x.score)} ${x.grade}` +
+      (c.m1 != null ? ` (1M ${signed(c.m1, 1)}` : "") +
+      (c.m3 != null ? ` · 3M ${signed(c.m3, 1)}` : "") +
+      (x.rank5y != null ? ` · 5년 백분위 ${fmtNum(x.rank5y, 0)}%` : "") + (c.m1 != null ? ")" : "");
+  };
+  const segs = [`참고 · 기준일 ${R.asof} · 자동 반영 없음`, L("stress", "현재 위험"), L("vuln", "잠재 위험")];
+  const rg = R.regime;
+  if (rg && rg.active && rg.rows && rg.rows.length) {
+    segs.push("국면(참고) " + rg.rows.map((r) =>
+      `${r.name} 고변동 ${fmtNum(r.prob, 0)}%${r.ttest_p != null && r.ttest_p > 0.05 ? " ⚠검정 미달" : ""}`).join(" · "));
+  } else if (rg) {
+    segs.push("국면 카드 비활성 — 사유는 리스크 화면");
+  }
+  return segs;
+}
+
+function villageNoteEvents() {
+  const E = DATA.events;
+  if (!E) return ["이벤트 데이터 없음 — 여관에서 확인"];
+  const b = Array.isArray(E.brief) ? E.brief : [];
+  /* 브리핑 원고(compose_brief)가 이미 경계·주의를 앞세운다 — 새 선별 규칙 없이
+     요약줄 + 다음 3문장을 **원문 그대로** 흘린다(맺음말은 화면 몫). */
+  if (!b.length) return [(E.events || []).length ? `이벤트 ${E.events.length}건 — 브리핑 원고 없음` : "검출된 이벤트 없음"];
+  return [b[0], ...b.slice(1, 4)];
+}
+
+/* 배분·헤지 — 요약표와 같은 allocRefModel 결과에서 문장을 만든다. 둘을 한 번에
+   계산해 두 상자가 나눠 쓴다(최적화를 두 번 돌리지 않는다). */
+function villageNoteAllocHedge() {
+  const A = DATA.alloc;
+  const none = (why) => ({ alloc: [why], hedge: [why] });
+  if (!A || !A.sets || !A.sets.length) return none("자산배분 데이터 없음");
+  const st = allocState(A);
+  const E = allocEngine(A, st);
+  const M = allocRefModel(A, st, E);
+  const basis = `${st.saved ? "저장값" : "기본값·미저장"} · λ ${st.mvo_lambda} · ${E.layer === "cma" ? "CMA 층" : "프록시 층"}` +
+    (E.layerNote ? ` — ${E.layerNote}` : "");
+  const alloc = [`참고치 − 현재 (${basis})`];
+  if (!M.doOpt) {
+    alloc.push("제약 모순으로 참고치 보류 — 자산배분 화면의 경고 카드 참조");
+  } else {
+    M.V.keys.forEach((k, i) => alloc.push(`${k} ${signed((M.wKeep[i] - M.w0[i]) * 100, 1)}`));
+    alloc.push(`수익 ${signed(M.muKeep - M.muCur, 2, true)}%p · 위험 ${signed(M.sigKeep - M.sigCur, 2, true)}%p`);
+  }
+  const hedge = [`참고 · ${st.saved ? "저장값" : "기본값·미저장"} 기준`];
+  if (!M.hq) {
+    hedge.push(M.doOpt ? "헤지 참고치 없음 — 환율 축 부재(모든 헤지비율 동점)" : "제약 모순으로 헤지 참고치 보류");
+  } else {
+    const hq = M.hq;
+    const pairTxt = hq.pair ? `${fmtNum(hq.pair[0] * 100, 0)}/${fmtNum(hq.pair[1] * 100, 0)}%` : "밴드 내 불가";
+    hedge.push(`헤지 채권/주식 현재 ${st.h_bond}/${st.h_eq}% vs 대표점 ${pairTxt}`);
+    hedge.push(`미헤지 환노출 Xe 현재 ${fmtNum(hq.xeCur * 100, 2)}% vs 참고 ${fmtNum(hq.xeBand * 100, 2)}% (${signed((hq.xeBand - hq.xeCur) * 100, 2, true)}%p)`);
+    allocXeBindNotes(hq.binds).forEach((sn) => hedge.push(`⚠ ${sn}`));
+    hedge.push("같은 Xe = 같은 위험 · 두 부분해(동시 최적해 아님)");
+  }
+  return { alloc, hedge };
+}
+
+/* 어느 건물에 무엇을 붙이나. side: 상자를 건물 위(above)·아래(below) 어디에 두나 —
+   종탑과 교역소가 세로로 가까워 교역소만 아래에 둔다(겹침 방지). */
+const VILLAGE_NOTES = [
+  { zone: "belltower", side: "above", build: () => villageNoteRisk() },
+  { zone: "inn", side: "above", build: () => villageNoteEvents() },
+  { zone: "granary", side: "above", build: (ah) => ah.alloc },
+  { zone: "trading", side: "below", build: (ah) => ah.hedge },
+];
+
+function villageNotesModel() {
+  if (VILLAGE_NOTE_CACHE) return VILLAGE_NOTE_CACHE;
+  let ah;
+  try { ah = villageNoteAllocHedge(); }
+  catch (e) { console.error("village note (alloc/hedge) failed", e); ah = { alloc: ["안내판 오류 — 콘솔 확인"], hedge: ["안내판 오류 — 콘솔 확인"] }; }
+  VILLAGE_NOTE_CACHE = VILLAGE_NOTES.map((n) => {
+    let segs;
+    try { segs = n.build(ah); }
+    catch (e) { console.error(`village note (${n.zone}) failed`, e); segs = ["안내판 오류 — 콘솔 확인"]; }
+    return { zone: n.zone, side: n.side, text: segs.join(VILLAGE_NOTE_SEP) };
+  });
+  return VILLAGE_NOTE_CACHE;
+}
+
+/* 상자 폭은 지도의 32% — 건물 x 에 중심을 맞추되 지도 밖으로 나가지 않게 가둔다. */
+const VILLAGE_NOTE_W = 32;
+function paintVillageNotes(frame) {
+  frame.querySelectorAll(".vz-note").forEach((n) => n.remove());
+  const zones = Object.fromEntries(VILLAGE_ZONES.map((z) => [z.key, z]));
+  villageNotesModel().forEach((n) => {
+    const z = zones[n.zone];
+    if (!z) return;
+    const cx = Math.min(Math.max(z.x, VILLAGE_NOTE_W / 2 + 1), 99 - VILLAGE_NOTE_W / 2);
+    /* 티커 속도는 글 길이에 비례 — 초당 5자 안팎. 임의 상수가 아니라 읽는 속도다. */
+    const dur = Math.max(12, Math.round(n.text.length * 0.2));
+    const box = el("div", {
+      class: `vz-note vz-note-${n.side}`, "data-zone": n.zone, role: "note",
+      "aria-label": `${z.name} 안내판: ${n.text}`,
+      style: `left:${cx}%;top:${z.y}%;width:${VILLAGE_NOTE_W}%;--vz-note-dur:${dur}s`,
+    },
+      el("div", { class: "vz-note-track" },
+        el("span", { class: "vz-note-text" }, n.text),
+        el("span", { class: "vz-note-text", "aria-hidden": "true" }, n.text)));
+    frame.append(box);
+  });
+}
+
 function renderVillage() {
   const img = $("#village-map");
   const frame = $("#village-frame");
   document.documentElement.style.setProperty("--village-img", `url("${villageImgUrl()}")`);
 
-  frame.querySelectorAll(".vz, .vz-menu").forEach((n) => n.remove());
+  frame.querySelectorAll(".vz, .vz-menu, .vz-note").forEach((n) => n.remove());
   img.hidden = false;
   $("#village-missing").hidden = true;
   let tried = 0;
@@ -2160,7 +2299,7 @@ function renderVillage() {
        겹쳐 얹히고, 지도가 없는 마당에 클릭할 건물도 없다. 아래 대체 목록이 그 역할을
        그대로 대신한다. */
     img.hidden = true;
-    frame.querySelectorAll(".vz, .vz-menu, .village-fx, .village-video").forEach((n) => n.remove());
+    frame.querySelectorAll(".vz, .vz-menu, .vz-note, .village-fx, .village-video").forEach((n) => n.remove());
     frame.classList.remove("has-video");
     $("#village-missing").hidden = false;
   };
@@ -2205,6 +2344,7 @@ function renderVillage() {
     });
     frame.append(btn);
   });
+  paintVillageNotes(frame);   // 건물 안내판(§7.18) — 핫스팟 뒤에 붙여도 클릭은 CSS 가 통과시킨다
   /* 빈 곳을 누르면 열린 하위 메뉴를 닫는다. renderVillage() 는 테마 전환·마을 복귀 때마다
      다시 도므로 리스너는 한 번만 붙인다(안 그러면 호출 수만큼 쌓인다). */
   if (!frame.dataset.bound) {
@@ -5284,6 +5424,7 @@ function allocCcySum(st, sleeve) {
 
 function allocSaveState(st) {
   try { localStorage.setItem(ALLOC_LS_KEY, JSON.stringify({ ...st, saved: true })); } catch {}
+  villageNotesInvalidate();          // 저장값이 바뀌면 마을 안내판의 「참고치 − 현재」도 바뀐다
 }
 
 /* CMA 층의 출처 태그 — 위험은 벤치마크 직접 관측. 기대수익을 키인했으면 그 사실이
@@ -5707,6 +5848,56 @@ function renderPortPanel(A) {
       `σ ${fmtNum(rb10.vol_pct, 2)}% · MDD ${fmtNum(rb10.mdd_pct, 2)}%`));
   }
   recalc();
+}
+
+/* ── 참고치 한 벌 — 「그래서 얼마인데?」의 답을 만드는 계산 (§7.18 에서 추출) ──────────
+   renderAlloc 의 recalc 안에 인라인이던 것을 함수로 뺐다. 요약표(#alloc-summary)·레버
+   문단·마을 안내판이 **같은 결과 객체**를 나눠 쓴다 — 따로 계산하면 언젠가 어긋난 두
+   "참고치"가 화면에 공존하게 된다(헤지 참고치를 `hq` 한 벌로 묶은 것과 같은 이유).
+   E 를 밖에서 받는 이유: recalc 는 E 를 만든 직후 시뮬레이터를 먼저 그리고 나서 최적화를
+   돌린다 — 그 순서를 바꾸지 않으려고 엔진 생성은 호출자 몫으로 남겼다. */
+function allocRefModel(A, st, E) {
+  const { V, w0 } = E;
+  const sigCur = E.sigmaW(w0, V.C);
+  const muCur = amDot(V.mu, w0);
+  const se = E.seOf(sigCur);
+  const target = st.target_ret != null ? st.target_ret : muCur;
+  /* 실행 불가능한 밴드·그룹 한도 — 최적화를 돌리지 않고 명시적으로 알린다 */
+  const infeas = allocFeasibility(E);
+  const doOpt = infeas.length === 0;
+  const wMin = doOpt ? E.optimize(V.mu, V.C, null) : null;
+  const wKeep = doOpt ? E.optimize(V.mu, V.C, target) : null;
+  const sigMin = doOpt ? E.sigmaW(wMin, V.C) : 0, muMin = doOpt ? amDot(V.mu, wMin) : 0;
+  const sigKeep = doOpt ? E.sigmaW(wKeep, V.C) : 0, muKeep = doOpt ? amDot(V.mu, wKeep) : 0;
+  const turnover = doOpt ? w0.reduce((a, w, i) => a + Math.abs(wKeep[i] - w), 0) / 2 * 100 : 0;
+
+  /* 헤지 참고치(위험 최소 Xe·대표점) — 요약과 레버 문단이 **같은 계산 한 벌**을 쓴다.
+     두 곳에서 따로 계산하면 언젠가 어긋난 두 "최적"이 화면에 공존하게 된다.
+     경제 관점 전용(xeQuad 가드) — 회계 관점 최적화(CMA)에서는 배분 참고치만 낸다.
+     환율 축이 없는 표본(fxLive=false)에서도 내지 않는다 — 모든 헤지비율이 동점이라
+     한 점을 적으면 임의 선택이 된다(재점검 발견). */
+  let hq = null;
+  if (doOpt && E.fxLive) {
+    const q = E.xeQuad();
+    const hbnds = allocHBands(st);
+    const [xeLo, xeHi] = allocXeRange(E, hbnds);
+    const xeFree = E.xeStar(null, null, q);
+    const xeBand = E.xeStar(xeLo, xeHi, q);
+    hq = {
+      q, hbnds, xeLo, xeHi, xeFree, xeBand,
+      xeCur: E.xeOf(st.h_bond / 100, st.h_eq / 100),
+      sBand: E.sigmaXe(xeBand, q),
+      pair: E.hedgePairForXe(xeBand, [st.h_bond / 100, st.h_eq / 100], hbnds),
+      /* §7.7.17 — 여기도 ① 최적 카드와 **같은 판정·같은 문장**을 쓴다. 예전에는
+         `|xeBand − xeFree| > 1e-9` 라는 분리 이전의 단일 플래그였고, 그래서 밴드가
+         중립이어도 「헤지 밴드가 물고 있습니다」가 이 표에 나갔다(실제 게시 페이로드로
+         재현). 요약표는 「그래서 얼마인데?」의 답 자리라 여기의 오귀인이 가장 비싸다.
+         해외자산 비중 합은 `E.xeOf(0, 0)` = w채 + w주 (헤지 0% 일 때의 노출). */
+      binds: allocXeBinds(E.xeOf(0, 0), xeLo, xeHi, xeFree),
+    };
+  }
+  return { E, V, w0, sigCur, muCur, se, target, infeas, doOpt,
+           wMin, wKeep, sigMin, muMin, sigKeep, muKeep, turnover, hq };
 }
 
 function renderAlloc() {
@@ -6408,47 +6599,13 @@ function renderAlloc() {
 
   function recalc(withCharts) {
     const E = allocEngine(A, st);
-    const { V, w0 } = E;
-    const sigCur = E.sigmaW(w0, V.C);
-    const muCur = amDot(V.mu, w0);
-    const se = E.seOf(sigCur);
-    const target = st.target_ret != null ? st.target_ret : muCur;
     /* 시뮬레이터(§7.7.8) — 우주가 하나(시가 7축 §7.7.11)라 같은 엔진을 그대로 쓴다 */
     if (simDyn) simDyn(E, withCharts);
-    /* 실행 불가능한 밴드·그룹 한도 — 최적화를 돌리지 않고 명시적으로 알린다 */
-    const infeas = allocFeasibility(E);
-    const doOpt = infeas.length === 0;
-    const wMin = doOpt ? E.optimize(V.mu, V.C, null) : null;
-    const wKeep = doOpt ? E.optimize(V.mu, V.C, target) : null;
-    const sigMin = doOpt ? E.sigmaW(wMin, V.C) : 0, muMin = doOpt ? amDot(V.mu, wMin) : 0;
-    const sigKeep = doOpt ? E.sigmaW(wKeep, V.C) : 0, muKeep = doOpt ? amDot(V.mu, wKeep) : 0;
-    const turnover = doOpt ? w0.reduce((a, w, i) => a + Math.abs(wKeep[i] - w), 0) / 2 * 100 : 0;
-
-    /* 헤지 참고치(위험 최소 Xe·대표점) — 요약과 레버 문단이 **같은 계산 한 벌**을 쓴다.
-       두 곳에서 따로 계산하면 언젠가 어긋난 두 "최적"이 화면에 공존하게 된다.
-       경제 관점 전용(xeQuad 가드) — 회계 관점 최적화(CMA)에서는 배분 참고치만 낸다.
-       환율 축이 없는 표본(fxLive=false)에서도 내지 않는다 — 모든 헤지비율이 동점이라
-       한 점을 적으면 임의 선택이 된다(재점검 발견). */
-    let hq = null;
-    if (doOpt && E.fxLive) {
-      const q = E.xeQuad();
-      const hbnds = allocHBands(st);
-      const [xeLo, xeHi] = allocXeRange(E, hbnds);
-      const xeFree = E.xeStar(null, null, q);
-      const xeBand = E.xeStar(xeLo, xeHi, q);
-      hq = {
-        q, hbnds, xeLo, xeHi, xeFree, xeBand,
-        xeCur: E.xeOf(st.h_bond / 100, st.h_eq / 100),
-        sBand: E.sigmaXe(xeBand, q),
-        pair: E.hedgePairForXe(xeBand, [st.h_bond / 100, st.h_eq / 100], hbnds),
-        /* §7.7.17 — 여기도 ① 최적 카드와 **같은 판정·같은 문장**을 쓴다. 예전에는
-           `|xeBand − xeFree| > 1e-9` 라는 분리 이전의 단일 플래그였고, 그래서 밴드가
-           중립이어도 「헤지 밴드가 물고 있습니다」가 이 표에 나갔다(실제 게시 페이로드로
-           재현). 요약표는 「그래서 얼마인데?」의 답 자리라 여기의 오귀인이 가장 비싸다.
-           해외자산 비중 합은 `E.xeOf(0, 0)` = w채 + w주 (헤지 0% 일 때의 노출). */
-        binds: allocXeBinds(E.xeOf(0, 0), xeLo, xeHi, xeFree),
-      };
-    }
+    /* 참고치·헤지 참고치 계산은 `allocRefModel` 한 벌 — 요약표·레버 문단·마을 안내판
+       (§7.18)이 전부 이 결과를 나눠 쓴다. 여기서 다시 계산하지 말 것. */
+    const M = allocRefModel(A, st, E);
+    const { V, w0, sigCur, muCur, se, target, infeas, doOpt,
+            wMin, wKeep, sigMin, muMin, sigKeep, muKeep, turnover, hq } = M;
 
     /* ----- 요약 — 「그래서 얼마인데?」의 답 한 표 (기능 1) ----- */
     const sumBox = $("#alloc-summary");
@@ -7229,6 +7386,7 @@ function renderSection(id) {
 }
 
 function renderAll() {
+  villageNotesInvalidate();          // 안내판은 렌더 한 벌마다 한 번만 다시 계산한다(§7.18)
   destroyAllCharts();
   overlayCharts = [];
   registry.length = 0;
