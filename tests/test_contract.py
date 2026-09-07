@@ -42,6 +42,9 @@ def _app_js_files() -> list[str]:
 
 def test_contract_is_sixteen():
     # §7.8 에서 estimate.json 이 더해져 15 → 16 이 되었다.
+    # §7.17(2026-09-07)이 수익률 추정 **화면**을 지웠지만 계약은 16 그대로다 —
+    # 파이프라인은 그대로 두었기 때문이다(읽는 화면이 없는 estimate.json 이 계속
+    # 나간다). 파이프라인까지 지우려면 네 곳을 함께 고칠 것(app.js FILES 주석 참조).
     assert len(check_output.EXPECTED) == 16
     assert len(set(check_output.EXPECTED)) == 16
 
@@ -535,7 +538,7 @@ def test_process_globals_are_not_leaked_by_tests():
 
 
 # --------------------------------------------------------------------------
-# 마을(홈) 내비게이션 계약 — 구역이 15개 섹션을 빠짐없이·중복 없이 덮는가.
+# 마을(홈) 내비게이션 계약 — 구역이 14개 섹션을 빠짐없이·중복 없이 덮는가.
 # 지도 이미지는 글자가 없고 라벨을 코드가 얹으므로, 이 대응이 깨지면 화면에서
 # 도달 불가능한 섹션이 조용히 생긴다. 사람 눈으로는 안 보이는 종류의 결함이다.
 # --------------------------------------------------------------------------
@@ -600,9 +603,9 @@ def _village_targets() -> set[str]:
 
 
 def test_village_zones_cover_every_section():
-    """마을에서 15개 섹션 전부에 도달할 수 있어야 한다."""
+    """마을에서 14개 섹션 전부에 도달할 수 있어야 한다."""
     ids = set(re.findall(r'<section id="([a-z]+)" class="section">', _index_html()))
-    assert len(ids) == 15, f"섹션 수가 15가 아닙니다: {sorted(ids)}"
+    assert len(ids) == 14, f"섹션 수가 14가 아닙니다: {sorted(ids)}"
     missing = ids - _village_targets()
     assert not missing, f"마을에서 도달할 수 없는 섹션: {sorted(missing)}"
 
@@ -933,6 +936,15 @@ PUBLISH_ONLY_KEYS = {
     ("alloc", "anchor_ref"): "동일 샤프 앵커의 기준(자국통화)·값. 방법론 재현용 게시물",
     ("alloc", "checks"):     "자기검증 결과. 값이 사라지면 검증 없이 배포된 것과 같다",
     ("risk", "grade_bands"): "등급 밴드 정본(app.js 는 자체 BANDS 상수를 쓴다 — 3중 진실이 남아 있다)",
+    # ↓ §7.17(2026-09-07) — 수익률 추정 **화면**을 지우면서 이 네 키를 읽던 코드가 통째로
+    # 사라졌다. 파이프라인(`estimate.py`)과 JSON 계약 16 은 그대로 두었으므로 게이트는
+    # 계속 이 키들을 지킨다. **이것은 게시 전용이 아니라 소비자가 없는 계약이다** —
+    # 위 셋과 성격이 다르니 같은 줄로 읽지 말 것. 파이프라인까지 걷어내기로 하면 이 네
+    # 줄과 REQUIRED_KEYS["estimate"] 가 함께 사라진다(사용자 결정 대기).
+    ("estimate", "indices"):     "읽는 화면 없음 — §7.17 로 표시층 제거, 파이프라인은 유지",
+    ("estimate", "unavailable"): "읽는 화면 없음 — §7.17 로 표시층 제거, 파이프라인은 유지",
+    ("estimate", "annualize"):   "읽는 화면 없음 — §7.17 로 표시층 제거, 파이프라인은 유지",
+    ("estimate", "scenario"):    "읽는 화면 없음 — §7.17 로 표시층 제거, 파이프라인은 유지",
 }
 
 
@@ -982,7 +994,7 @@ def _renderer_map() -> dict[str, str]:
 
 
 def test_every_section_has_a_renderer():
-    """SECTION_IDS 의 15개가 전부 RENDERERS 에 있어야 한다.
+    """SECTION_IDS 의 14개가 전부 RENDERERS 에 있어야 한다.
 
     빠뜨리면 그 섹션은 **아무 오류 없이 영영 비어 있다** — 클릭해서 들어가야만
     보이는 구조라 눈으로 알아채기까지 오래 걸린다.
@@ -992,7 +1004,7 @@ def test_every_section_has_a_renderer():
     r = _renderer_map()
     assert set(ids) - set(r) == set(), f"렌더러가 없는 섹션: {sorted(set(ids) - set(r))}"
     assert set(r) - set(ids) == set(), f"섹션에 없는 렌더러: {sorted(set(r) - set(ids))}"
-    assert len(ids) == 15
+    assert len(ids) == 14
 
 
 def test_renderers_named_in_the_map_actually_exist():
@@ -1296,10 +1308,10 @@ def test_built_brief_covers_its_own_events(built):
 
 
 # --------------------------------------------------------------------------
-# 정보구조 (§7.9) — 상단 탭 7개, 나머지는 부모 화면 안의 입구로
+# 정보구조 (§7.9) — 상단 탭 6개, 나머지는 부모 화면 안의 입구로
 # --------------------------------------------------------------------------
 
-EXPECTED_TABS = ["village", "overview", "events", "risk", "estimate", "alloc", "hedge"]
+EXPECTED_TABS = ["village", "overview", "events", "risk", "alloc", "hedge"]
 
 
 def _nav_hrefs() -> list[str]:
@@ -1308,11 +1320,12 @@ def _nav_hrefs() -> list[str]:
     return re.findall(r'href="#([a-z]+)"', block.group(1))
 
 
-def test_top_tabs_are_exactly_the_seven_the_user_asked_for():
-    """상단 탭은 마을·개요·이벤트·리스크·수익률 추정·자산배분·환헤지 **7개뿐**.
+def test_top_tabs_are_exactly_the_six_the_user_asked_for():
+    """상단 탭은 마을·개요·이벤트·리스크·자산배분·환헤지 **6개뿐**.
 
-    2026-08-13 사용자 지시("덜 중요한 애들이 메인 탭에 있어"). 탭을 다시 늘리려면
-    사용자와 합의해야 한다 — 여기가 그 합의를 지키는 자리다.
+    2026-08-13 사용자 지시("덜 중요한 애들이 메인 탭에 있어")로 7개가 됐고,
+    2026-09-07 지시로 「수익률 추정」이 제거되어 6개다(§7.17 — 탭에서 내린 것이
+    아니라 화면 자체를 지웠다). 탭을 다시 늘리려면 사용자와 합의해야 한다.
     """
     assert _nav_hrefs() == EXPECTED_TABS, f"상단 탭이 바뀌었습니다: {_nav_hrefs()}"
 

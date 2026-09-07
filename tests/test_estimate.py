@@ -2,7 +2,9 @@
 """수익률 추정 데이터층 계약 (`pipeline/estimate.py`, §7.8).
 
 이 모듈은 **수익률을 계산하지 않는다** — 계산은 전부 사용자 입력에 달려 있어 브라우저가
-한다(그쪽은 `tests/test_dashboard_ux.py` 가 실행으로 본다). 여기서 지키는 것은 셋이다:
+했다. **그 화면은 §7.17(2026-09-07 사용자 지시)로 삭제됐고 파이프라인만 남았다** — 즉
+지금 `estimate.json` 은 읽는 화면이 없는 게시물이다(JSON 계약 16 을 흔들지 않으려고
+남겼다. HANDOVER §7.17). 아래 검사는 그 게시물이 계속 정합한지를 지킨다:
 
 1. **연말 앵커가 축약 전 원본에서 나오는가.** YTD 의 분모라 여기가 어긋나면 그 해의
    모든 수익률이 함께 틀린다 — 그런데 값만 봐서는 알 수 없는 종류의 오류다.
@@ -192,26 +194,12 @@ def test_payload_is_json_serialisable_and_carries_no_raw_leak_beyond_indices():
 
 
 # --------------------------------------------------------------------------
-# 화면과의 이름 계약
+# 기준일 규약
+#
+# 여기 있던 `EST_ASSETS`/`EST_SCEN` 대조 두 건은 §7.17(2026-09-07)로 수익률 추정
+# **화면**이 사라지면서 함께 걷어냈다 — 대조할 상대가 app.js 에 없다. 파이프라인의
+# `INDICES`/`ROW_MODES` 자체 검사는 아래·위에 그대로 남아 있다.
 # --------------------------------------------------------------------------
-
-def test_index_asset_names_exist_in_the_dashboard_asset_list():
-    """`INDICES[].asset` 은 `app.js` 의 `EST_ASSETS` 이름과 **문자 단위로** 같아야 한다.
-
-    다르면 화면이 그 행을 못 찾아 자동 채움이 **조용히** 사라진다(오류가 나지 않는다).
-    """
-    import re
-    from pathlib import Path
-    js = (Path(__file__).resolve().parents[1] / "dashboard" / "app.js").read_text(encoding="utf-8")
-    block = re.search(r"const EST_ASSETS = \[(.*?)\n\];", js, re.S)
-    assert block, "app.js 에서 EST_ASSETS 를 찾지 못했습니다"
-    names = re.findall(r'key:\s*"([^"]+)"', block.group(1))
-    assert len(names) == 11, f"자산군이 11개가 아닙니다: {names}"
-    for spec in estimate.INDICES:
-        assert spec["asset"] in names, f"{spec['asset']} 이 EST_ASSETS 에 없습니다"
-    for u in estimate.UNAVAILABLE:
-        for a in u["assets"]:
-            assert a in names, f"부재 선언의 {a} 이 EST_ASSETS 에 없습니다"
 
 
 def test_default_asof_is_where_every_index_reaches_not_the_furthest():
@@ -308,26 +296,6 @@ def test_row_modes_match_the_assets_the_user_named():
     # 페이로드로 나가야 화면이 적을 수 있다
     assert estimate.SCENARIO_MODEL["row_modes"] is estimate.ROW_MODES
 
-
-def test_row_modes_cover_exactly_the_dashboard_assets():
-    """`ROW_MODES` 의 이름이 `app.js` 의 `EST_ASSETS` 와 **문자 단위로** 같아야 한다.
-
-    어긋나면 화면이 그 자산군의 사유를 못 찾아 오류 없이 조용히 빈칸이 된다 —
-    `INDICES[].asset` 대조와 같은 이유의 검사다(§7.8 에서 이미 한 번 겪었다).
-    """
-    js = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
-    block = re.search(r"const EST_ASSETS = \[(.*?)\n\];", js, re.S)
-    assert block, "app.js 에서 EST_ASSETS 를 찾지 못했습니다"
-    names = re.findall(r'key:\s*"([^"]+)"', block.group(1))
-    assert names, "EST_ASSETS 에서 자산군 이름을 뽑지 못했습니다"
-    assert [r["asset"] for r in estimate.ROW_MODES] == names, (
-        "ROW_MODES 와 EST_ASSETS 의 자산군 이름·순서가 다릅니다")
-    # 실행 매핑(EST_SCEN)의 mode 도 같은 표를 따라야 한다
-    scen = re.search(r"const EST_SCEN = \{(.*?)\n\};", js, re.S)
-    assert scen, "app.js 에서 EST_SCEN 을 찾지 못했습니다"
-    pairs = re.findall(r'"([^"]+)":\s*\{\s*mode:\s*"(calc|carry)"', scen.group(1))
-    assert dict(pairs) == {r["asset"]: r["mode"] for r in estimate.ROW_MODES}, (
-        "EST_SCEN 의 mode 가 ROW_MODES 와 다릅니다 — 설명과 실제 동작이 갈립니다")
 
 
 def test_hedge_band_is_published_without_an_institutional_default():

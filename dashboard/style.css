@@ -958,53 +958,7 @@ details.explain[open] > summary { color: var(--ink-2); }
    (2026-08-12 실측 사고: 대체투자 두 분류가 옛 저장분 때문에 같은 μ 로 굳어 있었다) */
 .keyed-off-default { border-color: var(--accent, var(--ink-3)); }
 
-/* ── 수익률 추정 (§7.8) ─────────────────────────────────────────────────
-   자동 채움 중인 수익률 칸. 회색이지만 **장식이 아니라 계산에 실제로 들어가는 값**
-   이다(자산배분 σ placeholder 와 같은 성격이라 같은 위계로 둔다). 색만으로 구분하지
-   않도록 출처 열에 「자동 · <지수명>」이라는 글자가 함께 나간다(WCAG 1.4.1). */
-.est-auto { color: var(--ink-3); font-style: italic; }
-/* 입력이 많은 표라 셀 여백을 조금 줄인다 — app.js 가 DOM 으로 조립하는 표에는
-   tbody 가 없으므로 `table > tr > td` 벌이 함께 있어야 한다(CLAUDE.md 「함정」). */
-.est-table td, .est-table th { padding: 5px 7px; }
-.est-table input { font-size: 12.5px; padding: 2px 5px; }
-/* 기준일 블록 ‖ 추정일 블록 경계 (§7.11 — 한 행에 나란히 두면서 생긴 자리).
-   **색이 아니라 선으로만** 가른다 — 배경색으로 칠하면 d-up/d-down 부호색과 겹쳐
-   두 신호가 서로를 죽인다. 두 벌을 두는 이유는 위 주석과 같다(tbody 없음). */
-.est-table th.est-sep, .est-table td.est-sep { border-left: 1px solid var(--border); }
-.est-table > tr > th.est-sep, .est-table > tr > td.est-sep { border-left: 1px solid var(--border); }
-/* 메모 열만 접히게 한다. 전역 `table > tr > td` 가 nowrap 이라 "장부가 — 원가법이라
-   가격효과 없음" 한 줄이 14열짜리 표를 카드 밖으로 밀어낸다(실측: 오른쪽 끝이 잘렸다).
-   숫자 칸은 nowrap 이어야 읽히므로 **이 열만** 푼다. */
-.est-table td.est-memo, .est-table > tr > td.est-memo {
-  white-space: normal; max-width: 168px; line-height: 1.35;
-}
-/* ── 헤지비율 고르기 (§7.12) ────────────────────────────────────────────────
-   해외자산은 자산군 이름 자체가 버튼이다. **버튼처럼 보여야 한다** — 눌리는 자리를
-   평범한 글자로 두면 사용자가 클릭할 생각을 못 한다(그러면 헤지비율이 영영 미입력이고
-   환효과·스왑 MTM 이 계속 비어 있다). */
-.est-name-btn {
-  background: none; border: 0; padding: 0; font: inherit; color: inherit;
-  cursor: pointer; text-align: left; border-bottom: 1px dashed var(--ink-3);
-}
-.est-name-btn:hover { color: var(--accent, var(--ink-1)); }
-.est-hedge-tag { font-size: 10.5px; color: var(--ink-3); white-space: nowrap; }
-/* `[hidden]` 이 아니라 실제 오버레이다 — `.gate` 에서 겪은 함정을 피해 display 를
-   클래스에 두고 여는 쪽이 append/remove 로 통제한다(CLAUDE.md 「함정」). */
-.est-hedge-back {
-  position: fixed; inset: 0; z-index: 60; display: flex;
-  align-items: center; justify-content: center;
-  background: rgba(0, 0, 0, .5); padding: 16px;
-}
-/* **카드면 토큰은 `--surface` 다 — `--card` 는 이 저장소에 없다.** 없는 변수를 쓰면
-   `background` 가 통째로 무효가 되어 패널이 투명해지고 글자가 아래 표와 겹쳐 읽을 수
-   없게 된다(실브라우저에서만 드러났다 — CSS 는 오류를 내지 않는다). */
-.est-hedge-panel {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-  padding: 14px 16px; width: min(420px, 100%);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
-}
-
-/* ── 개요 구역 (2026-08-13 — 상단 탭 7개로 축소하며 시장 화면들이 개요로 내려왔다) ──
+/* ── 개요 구역 (2026-08-13 — 상단 탭 축소로 시장 화면들이 개요로 내려왔다) ──
    구역 = 주식 · 금리 · 환율 · 기타. 각 구역 머리에 그 구역의 상세 화면 버튼이 붙는다. */
 .ov-group { margin-top: 22px; }
 .ov-group:first-child { margin-top: 6px; }
