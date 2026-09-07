@@ -146,3 +146,38 @@
 - 언덕 위 탑은 **밤에만 서서히 나타난다** — 원본 영상의 연출이라 그대로 두었고, 클릭
   대상이 아니다. 옛 지도의 성채·망루는 이 지도에 없어서 리스크→종탑(교회), 이벤트→여관으로
   재배정했다.
+
+## 두루마리 배너 — `village-banner.webm` / `village-banner.webp` (§7.19, 2026-09-07)
+
+사용자 제공 「Korea Post Village」 플러터 영상(4초 · 1536×1024 · H.264 · 회색 배경 rgb(242,242,242))을
+지도 **좌상단 하늘**(`app.js` `VILLAGE_BANNER` = x 5% · y 3% · 폭 19%)에 띄운다. 크기·위치는 겹침을
+피해 고른 값이다 — 폭 19% 면 두루마리 오른쪽 끝이 x≈22.5% 라 여관 안내판(x 24.3%~)과 닿지 않고
+관천대·구름을 가리지 않는다. 회색 배경은 지도 위에 얹을 수 없어 **투명으로 키잉**했다.
+
+| 파일 | 역할 | 용량 |
+|---|---|---|
+| `village-banner.webm` | VP9 **알파** 루프(768×512 · 30fps · 4초 · crf 34) — 정본 | 440,635B |
+| `village-banner.webp` | 첫 프레임 키잉 정지본 — 항상 깔리고, 영상이 못 뜨면(Safari 등 VP9 알파 미지원·reduced-motion) 이것만 보인다 | 56,106B |
+
+- **무이음 루프다** — 원본 첫↔끝 프레임 MAD 0.92 로 인접 프레임 평균 0.72 와 같은 수준(위 루프의
+  판정 기준선과 같은 방법). 그대로 `loop` 한다. 팔린드롬·크로스페이드 불필요.
+- **키잉 규칙**: 「밝고(luma>185) 무채색(chroma<14)」인 픽셀만 배경으로 본다. 양피지는 따뜻해
+  chroma 가 크고 글씨·부엉이 윤곽은 어두워 남으며, 중립 회색 드롭섀도는 함께 사라진다(지도 위에
+  떠 있는 게 자연스럽다). 반투명 가장자리는 배경 기여분을 되돌려(un-premultiply) 회색 테두리를
+  없앴다. 프레임 0 기준 투명 48.6% · 반투명 0.2%.
+- 재생성 레시피(numpy + ffmpeg — `imageio-ffmpeg` 바이너리로 충분하다):
+  ```python
+  # ffmpeg -i src.mp4 -vf scale=768:512 -f rawvideo -pix_fmt rgb24 frames.rgb
+  lum = (r+g+b)/3; chroma = max(|r-b|,|r-g|,|g-b|)
+  kb = clip((lum-185)/35,0,1) * clip((14-chroma)/8,0,1);  alpha = 255*(1-kb)
+  rgb = (rgb - 242*(1-alpha/255)) / max(alpha/255, 1e-3)   # 반투명 픽셀만
+  ```
+  ```bash
+  ffmpeg -f rawvideo -pix_fmt rgba -s 768x512 -r 30 -i frames.rgba -an \
+    -c:v libvpx-vp9 -pix_fmt yuva420p -b:v 0 -crf 34 -row-mt 1 village-banner.webm
+  ffmpeg -f rawvideo -pix_fmt rgba -s 768x512 -i f0.rgba -frames:v 1 -c:v libwebp -q:v 82 village-banner.webp
+  ```
+- 용량 계약은 루프와 같다(파일당 1.5MB 미만 — 계약 테스트). 지도 구도가 바뀌어도 이 배너는
+  지도와 무관한 별도 레이어라 다시 만들 필요가 없다 — 위치 상수만 옮기면 된다.
+- **이 배너의 「Korea Post」는 마을 이름 글자이지 우정사업본부 공식 마크(제비 CI)가 아니다** —
+  위 「넣지 말 것」의 공식 마크 금지는 그대로 유효하다.

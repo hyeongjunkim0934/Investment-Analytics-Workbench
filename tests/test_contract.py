@@ -688,6 +688,29 @@ def test_village_notes_never_take_clicks_and_stop_under_reduced_motion():
         "요약표(recalc)가 allocRefModel 을 쓰지 않습니다 — 두 참고치가 갈립니다")
 
 
+def test_village_banner_assets_and_motion_rules():
+    """두루마리 배너(§7.19)의 자산·모션 계약: webm(EBML)+webp(RIFF/WEBP) 실재, 파일당 1.5MB 미만
+    (루프와 같은 상한 — LFS 아님), 클릭 통과, reduced-motion 에서 영상 미마운트(JS)+숨김(CSS)."""
+    assets = ROOT / "dashboard" / "assets"
+    webm, webp = assets / "village-banner.webm", assets / "village-banner.webp"
+    assert webm.is_file() and webp.is_file(), "배너 자산(webm+webp)이 없습니다"
+    assert webm.read_bytes()[:4] == b"\x1a\x45\xdf\xa3", "village-banner.webm 이 webm(EBML)이 아닙니다"
+    head = webp.read_bytes()[:12]
+    assert head[:4] == b"RIFF" and head[8:12] == b"WEBP", "village-banner.webp 가 webp 가 아닙니다"
+    for f in (webm, webp):
+        assert 10_000 < f.stat().st_size < 1_500_000, f"{f.name} 용량이 계약 밖입니다"
+    js = _app_js()
+    assert '"assets/village-banner"' in js, "app.js 가 배너 자산을 가리키지 않습니다"
+    assert "prefers-reduced-motion" in _fn("mountVillageBanner"), "배너가 reduced-motion 을 확인하지 않습니다"
+    assert "mountVillageBanner(" in _fn("renderVillage"), "renderVillage 가 배너를 마운트하지 않습니다"
+    css = (ROOT / "dashboard" / "style.css").read_text(encoding="utf-8")
+    m = re.search(r"\.village-banner\s*\{([^}]*)\}", css)
+    assert m and "pointer-events: none" in m.group(1), "배너가 클릭을 가로챌 수 있다"
+    block = re.search(r"@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.village-fx(.*?)\n\}", css, re.S)
+    assert block and re.search(r"\.village-banner video\s*\{[^}]*display:\s*none", block.group(1)), (
+        "reduced-motion 에서 배너 영상을 숨기는 규칙이 없습니다")
+
+
 def test_village_fx_people_paths_all_exist():
     """행인의 mpath 가 가리키는 도로 id 가 전부 실재해야 한다.
 

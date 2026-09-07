@@ -49,7 +49,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 409개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 411개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (약 2.5분)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js                 (약 2.5분)
 #   ↑ 하네스가 시간을 다 쓴다(실측) — 최적화를 실제로 여러 번 돌리는 프로브
@@ -462,9 +462,21 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   계산은 `renderAll`·`allocSaveState` 뒤에만 다시 한다(`VILLAGE_NOTE_CACHE`) — 15초
   장면 순환의 `renderVillage` 는 캐시를 다시 붙일 뿐 최적화를 돌리지 않는다.
   클릭은 전부 건물 몫(`.vz-note{pointer-events:none}`), reduced-motion 이면 티커가 서고
-  글이 접혀 정적으로 보인다(기존 reduced-motion 블록 **끝**에 두었다 — `.village-fx` 가
+  글이 펼쳐져 정적으로 보인다(기존 reduced-motion 블록 **끝**에 두었다 — `.village-fx` 가
   첫 규칙이어야 하는 계약 테스트 때문). 좁은 화면(≤720px)은 지도째 숨기므로 안내판도
   함께 사라진다 — 대체 목록이 그 역할을 한다.
+  **상자는 4.6줄 높이 고정이고 글은 줄 단위로 위로 흐른다**(2026-09-07 2차 지시 "4~5줄,
+  위로, 조금 천천히"). 속도는 렌더된 트랙 높이 ÷ `VILLAGE_NOTE_PX_PER_S`(11px/s — 한 줄
+  1.5초쯤)로 붙인 뒤에 재고, 레이아웃이 없는 셰이드는 글 길이로 근사한다. 위·아래는
+  마스크로 흐려 잘린 줄이 튀지 않는다. 폭 28%, `VILLAGE_NOTES[].dx` 로 건물별 가로 밀기
+  (여관 +7 — 배너와 겹침 방지).
+- **두루마리 배너 = `mountVillageBanner`·`VILLAGE_BANNER`(§7.19, 2026-09-07 사용자 제공
+  영상).** 지도 좌상단 하늘 x 5%·y 3%·폭 19% — 겹침을 피해 고른 값(두루마리 오른쪽 끝
+  ≈22.5% < 여관 안내판 24.3%). 정지 `village-banner.webp` 는 항상 깔리고 알파
+  `village-banner.webm` 은 재생이 시작되면 페이드인 — VP9 알파를 못 읽는 브라우저는 정지본만
+  본다. reduced-motion 이면 JS 가 영상을 마운트하지 않고 CSS 가 한 번 더 숨긴다. 클릭 통과.
+  키잉·인코딩 레시피와 용량 계약(파일당 1.5MB)은 `dashboard/assets/README.md`. **원본 mp4 는
+  커밋하지 않는다**(2.7MB·회색 배경 — 키잉본만).
 - **정의되지 않은 CSS 이름은 조용히 무효가 된다 — 회귀 테스트가 있다.**
   카드면 토큰은 `--surface` 다(`--card` 는 **없다**). 없는 변수를 쓰면 선언이 통째로
   무효라 오버레이가 투명해지고 글자가 아래 내용과 겹친다(실측 §7.12). 버튼 클래스도

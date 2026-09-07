@@ -2236,7 +2236,7 @@ function villageNoteAllocHedge() {
    종탑과 교역소가 세로로 가까워 교역소만 아래에 둔다(겹침 방지). */
 const VILLAGE_NOTES = [
   { zone: "belltower", side: "above", build: () => villageNoteRisk() },
-  { zone: "inn", side: "above", build: () => villageNoteEvents() },
+  { zone: "inn", side: "above", dx: 7, build: () => villageNoteEvents() },   // 배너(좌상단 §7.19)와 겹침 방지
   { zone: "granary", side: "above", build: (ah) => ah.alloc },
   { zone: "trading", side: "below", build: (ah) => ah.hedge },
 ];
@@ -2250,32 +2250,77 @@ function villageNotesModel() {
     let segs;
     try { segs = n.build(ah); }
     catch (e) { console.error(`village note (${n.zone}) failed`, e); segs = ["안내판 오류 — 콘솔 확인"]; }
-    return { zone: n.zone, side: n.side, text: segs.join(VILLAGE_NOTE_SEP) };
+    return { zone: n.zone, side: n.side, lines: segs, text: segs.join(VILLAGE_NOTE_SEP) };
   });
   return VILLAGE_NOTE_CACHE;
 }
 
-/* 상자 폭은 지도의 32% — 건물 x 에 중심을 맞추되 지도 밖으로 나가지 않게 가둔다. */
-const VILLAGE_NOTE_W = 32;
+/* 상자 폭은 지도의 28% — 건물 x 에 중심을 맞추되 지도 밖으로 나가지 않게 가둔다.
+   높이는 CSS 가 4~5줄로 고정하고(2026-09-07 2차 지시), 글은 줄 단위로 **위로** 흐른다.
+   속도는 렌더된 높이에서 잰다: 초당 VILLAGE_NOTE_PX_PER_S px — 한 줄(약 16px)이 1.5초쯤
+   걸리는 읽는 속도다(사용자 "조금만 천천히"). 레이아웃이 없는 셰이드에서는 글 길이로
+   근사한다. dx 는 겹침을 피하려는 건물별 가로 밀기(지도 % 단위). */
+const VILLAGE_NOTE_W = 28;
+const VILLAGE_NOTE_PX_PER_S = 11;
 function paintVillageNotes(frame) {
   frame.querySelectorAll(".vz-note").forEach((n) => n.remove());
   const zones = Object.fromEntries(VILLAGE_ZONES.map((z) => [z.key, z]));
+  const cfg = Object.fromEntries(VILLAGE_NOTES.map((n) => [n.zone, n]));
   villageNotesModel().forEach((n) => {
     const z = zones[n.zone];
     if (!z) return;
-    const cx = Math.min(Math.max(z.x, VILLAGE_NOTE_W / 2 + 1), 99 - VILLAGE_NOTE_W / 2);
-    /* 티커 속도는 글 길이에 비례 — 초당 5자 안팎. 임의 상수가 아니라 읽는 속도다. */
-    const dur = Math.max(12, Math.round(n.text.length * 0.2));
+    const dx = (cfg[n.zone] && cfg[n.zone].dx) || 0;
+    const cx = Math.min(Math.max(z.x + dx, VILLAGE_NOTE_W / 2 + 1), 99 - VILLAGE_NOTE_W / 2);
+    const copy = (hidden) => el("div", hidden ? { class: "vz-note-text", "aria-hidden": "true" } : { class: "vz-note-text" },
+      ...n.lines.map((ln) => el("div", { class: "vz-note-line" }, ln)));
+    const track = el("div", { class: "vz-note-track" }, copy(false), copy(true));
     const box = el("div", {
       class: `vz-note vz-note-${n.side}`, "data-zone": n.zone, role: "note",
       "aria-label": `${z.name} 안내판: ${n.text}`,
-      style: `left:${cx}%;top:${z.y}%;width:${VILLAGE_NOTE_W}%;--vz-note-dur:${dur}s`,
-    },
-      el("div", { class: "vz-note-track" },
-        el("span", { class: "vz-note-text" }, n.text),
-        el("span", { class: "vz-note-text", "aria-hidden": "true" }, n.text)));
+      /* --vz-note-top: reduced-motion 에서 펼쳐진 상자가 지도 밖으로 나가지 않게 CSS 가 상한을 계산한다 */
+      style: `left:${cx}%;top:${z.y}%;width:${VILLAGE_NOTE_W}%;--vz-note-top:${z.y}`,
+    }, track);
     frame.append(box);
+    /* 붙인 뒤에 재야 높이가 나온다. 복제본을 뺀 절반이 한 바퀴 거리다. */
+    const half = (track.scrollHeight || 0) / 2;
+    const dur = half > 0 ? Math.max(20, Math.round(half / VILLAGE_NOTE_PX_PER_S))
+                         : Math.max(20, Math.round(n.text.length * 0.3));
+    if (box.style && box.style.setProperty) box.style.setProperty("--vz-note-dur", `${dur}s`);
   });
+}
+
+/* ══ 마을 배너 — 「Korea Post Village」 두루마리 (§7.19, 2026-09-07 사용자 제공 영상) ═══
+   사용자가 준 4초 플러터 영상(1536×1024, 회색 배경)을 배경 키잉해 VP9 알파 webm 으로
+   만들고(레시피는 assets/README.md), 지도 좌상단 하늘에 띄운다. 크기·위치는 겹침을 피해
+   고른 값이다 — 폭 19% 면 두루마리 오른쪽 끝이 x≈22.5% 라 여관 안내판(dx 7 → 24.3%~)과
+   닿지 않고, 관천대·구름 어느 것도 가리지 않는다.
+   · 정지 webp(첫 프레임 키잉본)가 항상 깔리고, 영상은 재생이 실제로 시작되면 그 위에
+     페이드인한다 — VP9 알파를 못 읽는 브라우저(Safari)는 정지 배너만 본다.
+   · reduced-motion 이면 영상을 마운트하지 않는다(JS) + CSS 이중 차단. 클릭은 통과.
+   · 원본 4초는 첫↔끝 프레임 차이 0.92 로 인접 프레임(0.72)과 같은 수준 — 무이음 루프라
+     그대로 loop 한다(마을 루프의 이음새 판정 기준선과 같은 방법으로 실측). */
+const VILLAGE_BANNER = { base: "assets/village-banner", x: 5, y: 3, w: 19 };
+
+function mountVillageBanner(frame) {
+  if (!frame) return;
+  let box = frame.querySelector(".village-banner");
+  if (!box) {
+    box = el("div", { class: "village-banner", "aria-hidden": "true",
+      style: `left:${VILLAGE_BANNER.x}%;top:${VILLAGE_BANNER.y}%;width:${VILLAGE_BANNER.w}%` },
+      el("img", { src: `${VILLAGE_BANNER.base}.webp`, alt: "", draggable: "false" }));
+    frame.append(box);
+  }
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;   // 정지 배너만
+  let v = box.querySelector("video");
+  if (v) { v.play().catch(() => {}); return; }                            // 멱등 — 돌아오면 다시 재생
+  v = document.createElement("video");
+  v.muted = true; v.loop = true; v.playsInline = true; v.preload = "auto";
+  v.setAttribute("muted", ""); v.setAttribute("playsinline", ""); v.setAttribute("aria-hidden", "true");
+  v.addEventListener("error", () => v.remove());                          // 못 읽으면 정지 배너로
+  v.addEventListener("playing", () => requestAnimationFrame(() => v.classList.add("is-on")));
+  v.src = `${VILLAGE_BANNER.base}.webm`;
+  box.append(v);
+  v.play().catch((e) => { if (e && e.name === "NotAllowedError") v.remove(); });
 }
 
 function renderVillage() {
@@ -2299,7 +2344,7 @@ function renderVillage() {
        겹쳐 얹히고, 지도가 없는 마당에 클릭할 건물도 없다. 아래 대체 목록이 그 역할을
        그대로 대신한다. */
     img.hidden = true;
-    frame.querySelectorAll(".vz, .vz-menu, .vz-note, .village-fx, .village-video").forEach((n) => n.remove());
+    frame.querySelectorAll(".vz, .vz-menu, .vz-note, .village-fx, .village-video, .village-banner").forEach((n) => n.remove());
     frame.classList.remove("has-video");
     $("#village-missing").hidden = false;
   };
@@ -2309,6 +2354,7 @@ function renderVillage() {
      load 이벤트를 다시 안 줄 수 있고, 마을로 돌아올 때마다 루프가 다시 돌아야 한다
      (routeView 가 떠날 때 pause 해 둔다). 마운트는 멱등이라 중복 호출이 안전하다. */
   mountVillageVideo(frame);
+  mountVillageBanner(frame);   // 두루마리 배너(§7.19) — 멱등
   /* 같은 이유로 폴백 SVG 도 캐시 경로에서 한 번 더 챙긴다 — 이미 붙어 있으면
      buildVillageFx 가 즉시 반환한다(멱등). 영상이 뜨면 어차피 .has-video 가 가린다. */
   if (img.complete && img.naturalWidth) { buildVillageFx(frame); preloadSceneVideos(); }

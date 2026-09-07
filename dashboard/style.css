@@ -813,21 +813,37 @@ details.explain[open] > summary { color: var(--ink-2); }
    비율 좌표로 준다(paintVillageNotes). 티커 속도는 --vz-note-dur(글 길이 비례). */
 .vz-note {
   position: absolute; z-index: 15; pointer-events: none;
-  padding: 5px 10px; border-radius: 8px;
+  padding: 6px 10px; border-radius: 8px;
   background: rgba(24, 18, 10, .58); border: 1px solid rgba(255, 246, 230, .18);
-  color: #fbf7ef; font-size: 12px; font-weight: 600; line-height: 1.35;
-  overflow: hidden; white-space: nowrap;
+  color: #fbf7ef; font-size: 12px; font-weight: 600; line-height: 1.4;
+  /* 4.6줄 높이 — 글이 아래에서 위로 흐른다(2026-09-07 2차 지시 "4~5줄, 위로") */
+  height: calc(1.4em * 4.6 + 12px); overflow: hidden; white-space: normal;
   text-shadow: 0 1px 0 rgba(0, 0, 0, .7), 0 0 6px rgba(0, 0, 0, .6);
   backdrop-filter: blur(2px);
+  -webkit-mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent);
+  mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent);
 }
 .vz-note-above { transform: translate(-50%, calc(-100% - 44px)); }
 .vz-note-below { transform: translate(-50%, 36px); }
 :root[data-scene="night"] .vz-note { background: rgba(8, 12, 18, .64); border-color: rgba(205, 228, 255, .22); }
-/* 트랙에 같은 글을 두 번 넣고 절반만큼 밀어 이음새 없이 돈다 */
-.vz-note-track { display: inline-block; animation: vz-note-scroll var(--vz-note-dur, 30s) linear infinite; }
-.vz-note-text { display: inline-block; padding-right: 3em; }
-@keyframes vz-note-scroll { to { transform: translateX(-50%); } }
+/* 트랙에 같은 글을 두 벌 세로로 쌓고 절반만큼 올려 이음새 없이 돈다 */
+.vz-note-track { animation: vz-note-scroll var(--vz-note-dur, 40s) linear infinite; }
+.vz-note-text { display: block; padding-bottom: 1.4em; }
+.vz-note-line { margin: 0 0 .35em; }
+.vz-note-line:last-child { margin-bottom: 0; }
+@keyframes vz-note-scroll { to { transform: translateY(-50%); } }
 .village-frame.vz-enter .vz-note { opacity: 0; transition: opacity .18s; }
+
+/* ---- 두루마리 배너 (§7.19) — 좌상단 하늘. 정지 webp 위에 알파 webm 이 페이드인 ----
+   클릭은 통과(pointer-events:none). 밤에는 살짝 어둡게 — 양피지가 달빛 아래 있는 느낌. */
+.village-banner {
+  position: absolute; z-index: 12; pointer-events: none;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, .35));
+}
+.village-banner img, .village-banner video { display: block; width: 100%; height: auto; }
+.village-banner video { position: absolute; inset: 0; opacity: 0; transition: opacity .4s ease; }
+.village-banner video.is-on { opacity: 1; }
+:root[data-scene="night"] .village-banner { filter: brightness(.82) drop-shadow(0 4px 10px rgba(0, 0, 0, .5)); }
 
 /* 지도가 없거나 좁은 화면일 때의 대체 목록 — 접근성 겸용 */
 .village-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
@@ -899,8 +915,14 @@ details.explain[open] > summary { color: var(--ink-2); }
   html { scroll-behavior: auto; }
   /* 건물 안내판(§7.18): 티커를 세우고 글을 접어 정적으로 보인다. 복제본은 감춘다. */
   .vz-note-track { animation: none; }
-  .vz-note { white-space: normal; }
+  .vz-note { height: auto; -webkit-mask-image: none; mask-image: none; }
   .vz-note-text + .vz-note-text { display: none; }
+  /* 펼쳐진 상자가 지도 밖으로 나가지 않게 — 위 상자는 건물 위 여백, 아래 상자는 건물 아래
+     여백을 상한으로(--vz-note-top = 건물 y%, app.js). 넘치면 꼬리가 잘린다(머리가 아니라). */
+  .vz-note-above { max-height: calc(var(--vz-note-top, 50) * 1% - 48px); }
+  .vz-note-below { max-height: calc((100 - var(--vz-note-top, 50)) * 1% - 40px); }
+  /* 두루마리 배너(§7.19): 영상은 JS 가 마운트하지 않지만 CSS 로 한 번 더 막는다 */
+  .village-banner video { display: none !important; }
 }
 
 /* ---- 건물 입장 연출 — 클릭한 건물로 빨려 들어가듯 확대 후 화면 전환 ---- */

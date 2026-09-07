@@ -3263,6 +3263,35 @@ safe("villageNotes", () => {
   return r;
 });
 
+/* ====== 두루마리 배너 (§7.19) — 정지본은 항상, 영상은 모션 허용 때만, 재렌더에 중복 없이 ===== */
+safe("villageBanner", () => {
+  const r = {};
+  const frame = DOC.getElementById("village-frame");
+  frame.clientWidth = 800;
+  const prevReduced = REDUCED;
+  REDUCED = false;
+  P.renderVillage();
+  const banners = () => frame.querySelectorAll(".village-banner");
+  r.count = banners().length;
+  const b = banners()[0];
+  r.hasStill = !!(b && b.querySelector("img") && /village-banner\.webp$/.test(b.querySelector("img").getAttribute("src") || ""));
+  r.hasVideoWhenMotionAllowed = !!(b && b.querySelector("video"));
+  r.videoSrcIsWebm = !!(b && b.querySelector("video") && /village-banner\.webm$/.test(b.querySelector("video").src || ""));
+  r.positioned = !!(b && /left:5%/.test(b.getAttribute("style") || "") && /width:19%/.test(b.getAttribute("style") || ""));
+  P.renderVillage();
+  r.countAfterRerender = banners().length;
+  r.videosAfterRerender = frame.querySelectorAll(".village-banner video").length;
+  /* 모션 축소 — 정지본만 */
+  frame.querySelectorAll(".village-banner").forEach((n) => n.remove());
+  REDUCED = true;
+  P.renderVillage();
+  r.countUnderReducedMotion = banners().length;
+  r.noVideoUnderReducedMotion = frame.querySelectorAll(".village-banner video").length === 0;
+  REDUCED = prevReduced;
+  frame.querySelectorAll(".village-banner").forEach((n) => n.remove());
+  return r;
+});
+
 safe("riskRegime", () => {
   const r = {};
   const hist = { t: [1700000000, 1700604800, 1701209600], v: [10, 40, 72] };

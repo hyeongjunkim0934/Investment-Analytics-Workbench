@@ -2494,7 +2494,7 @@ def test_every_css_variable_and_class_actually_exists():
     used = set(re.findall(r"var\(\s*(--[\w-]+)", css))
     # app.js 가 런타임에 넣는 변수 — setProperty(--village-img) 와 안내판 상자별 인라인
     # style(--vz-note-dur: 티커 속도, 글 길이 비례 — paintVillageNotes §7.18)
-    runtime_injected = {"--village-img", "--vz-note-dur"}
+    runtime_injected = {"--village-img", "--vz-note-dur", "--vz-note-top"}
     for name in sorted(runtime_injected):
         assert name in js, f"{name} 을 런타임 주입 예외로 뒀는데 app.js 에 없습니다"
     missing = sorted(used - defined - runtime_injected)
@@ -2760,3 +2760,16 @@ def test_village_notes_share_the_alloc_summary_computation(probe):
 def test_village_notes_explain_missing_payloads(probe):
     """risk/events 가 없으면 그 상자만 사유를 적고 곳간은 그대로 산다(allSettled 규약)."""
     assert probe["villageNotes"]["missingExplains"] is True
+
+
+def test_village_banner_mounts_once_and_respects_reduced_motion(probe):
+    """두루마리 배너(§7.19): 정지 webp 는 항상, 알파 webm 은 모션이 허용될 때만 그 위에.
+    마을 재렌더(장면 순환)에 중복 마운트되지 않고, 위치는 VILLAGE_BANNER 상수대로."""
+    v = probe["villageBanner"]
+    assert v["count"] == 1 and v["countAfterRerender"] == 1, "배너가 없거나 재렌더에 중복된다"
+    assert v["hasStill"] is True, "정지 배너(webp)가 없다"
+    assert v["hasVideoWhenMotionAllowed"] is True and v["videoSrcIsWebm"] is True
+    assert v["videosAfterRerender"] == 1, "재렌더에 video 가 중복 마운트된다"
+    assert v["positioned"] is True, "배너 위치·폭이 VILLAGE_BANNER 상수와 다르다"
+    assert v["countUnderReducedMotion"] == 1 and v["noVideoUnderReducedMotion"] is True, (
+        "모션 축소에서 영상이 마운트된다")
