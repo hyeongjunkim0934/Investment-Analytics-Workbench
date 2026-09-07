@@ -19,7 +19,7 @@
 - **작업 방식**: 방향 논의 → 실데이터 시안 → 승인 → 구현 → 적대적 검증 → 배포
   (**이 순서를 건너뛰지 말 것.** 이유는 §2)
 - **작업 시작 전 3분**: `git fetch` 후 리베이스(다른 세션이 같은 브랜치에 머지한다) →
-  `python -m pytest`(422개 통과가 정상) → `CLAUDE.md` 로 코드 구조 확인.
+  `python -m pytest`(404개 통과가 정상) → `CLAUDE.md` 로 코드 구조 확인.
 
 ---
 
@@ -2375,7 +2375,7 @@ CSS 는 오타에 오류를 내지 않아 테스트도 프로브도 못 잡는�
 적는다 ④ 층(현재/잠재)·매핑은 관측 설정이라 즉시 저장(`rp_layer`/`rp_map`)
 ⑤ CMA 층 전용·hist_m 부재 시 보류 사유 명시(조용한 대체 금지).
 검증: 프로브 `allocRiskProc` 13측정(합계 100·σ*(λ) 단조·토글·보류 사유) +
-e2e `hist_m` 계약, 당시 총 439개였다(→ §7.17 이후 422개 통과).
+e2e `hist_m` 계약, 당시 총 439개였다(→ §7.17 이후 404개 통과).
 
 ### 7.17 수익률 추정 화면 제거 (2026-09-07 사용자 지시)
 
@@ -2388,29 +2388,27 @@ e2e `hist_m` 계약, 당시 총 439개였다(→ §7.17 이후 422개 통과).
 `renderEstimate`·`openEstHedge`·`EST_ASSETS`/`EST_SCEN`/`EST_HEDGE_BAND` 등 전부) ·
 `.est-*` CSS 11규칙 · 프로브 3블록(`estimateCalc`·`estimateScenario`·
 `estimateTwoBlocks`)과 `EST_FIXTURE` · UX 테스트 15건 · `test_estimate.py` 의
-app.js 대조 2건. 섹션 15 → **14개**, 테스트 439 → **422개**.
+app.js 대조 2건. 섹션 15 → **14개**.
+
+**같은 날 2차 지시 「파이프라인도 불필요하면 지워버려」로 데이터층까지 걷어냈다** —
+`pipeline/estimate.py`·`tests/test_estimate.py` 삭제, `process.payloads`·`app.js FILES`·
+`check_output.EXPECTED`·게이트 `REQUIRED_KEYS`·비공개 `../Data/CLAUDE.md` 의 계약 수까지
+**네 곳을 함께** 고쳐 **JSON 계약 16 → 15**. 테스트 439 → **404개**.
 
 **따라 움직인 것 (부작용 점검 결과)**:
 ① **마을 「곳간」이 메뉴 구역 → 직행 구역이 됐다** — 자산배분·수익률 추정 두 화면을
    묶어 둔 자리였는데(§7.8 에서 핫스팟 좌표를 지어내지 않으려고 메뉴로 만든 것)
    남은 항목이 하나라 `target: "alloc"` 으로 되돌렸다. 항목 하나짜리 메뉴는 한 번 더
    누르게 할 뿐이다. 마을 계약 테스트(구역이 전 섹션을 덮는가)는 그대로 통과한다.
-② **JSON 계약은 16 그대로다 — `estimate.json` 은 계속 게시된다.** 파이프라인
-   (`pipeline/estimate.py`)·`payloads`·`FILES`·`EXPECTED`·게이트 `REQUIRED_KEYS`
-   전부 무변경이라, 지금 상태는 **읽는 화면이 없는 게시물**이다. §7.15 의 `cma.tv`
-   와 같은 선택(재도입 여지·게이트 불변·revert 한 번이면 복구)이지만 그때와 달리
-   **페이로드 전체가 소비자 없음**이라는 점은 다르다.
-③ 그래서 `test_required_keys_are_keys_the_dashboard_actually_reads` 가 estimate 의
-   네 키(`indices`·`unavailable`·`annualize`·`scenario`)에서 정확히 걸렸다 —
-   설계대로 작동한 가드다. `PUBLISH_ONLY_KEYS` 에 **「게시 전용이 아니라 소비자가
-   없는 계약」이라고 성격을 구분해 적고** 등록했다. `active`·`axes` 는 다른 페이로드가
-   같은 이름을 써서 통과한 것이지 읽히는 것이 아니다.
-
-**남은 결정 (사용자 몫)**: 파이프라인까지 걷어내 JSON 계약을 15 로 내릴지. 그러려면
-네 곳(`process.payloads` · `app.js FILES` · `check_output.EXPECTED` · **비공개
-`../Data/CLAUDE.md` 의 「JSON N개」**)을 함께 고치고 `pipeline/estimate.py`·
-`tests/test_estimate.py` 를 지워야 한다 — 비공개 저장소를 함께 건드리는 변경이라
-표시층 제거와 같은 커밋에 넣지 않았다.
+② **1차 커밋에서는 JSON 계약을 16 으로 두고 파이프라인을 남겼다가, 2차 지시로
+   15 로 내렸다.** 그 중간 상태에서 `test_required_keys_are_keys_the_dashboard_actually_reads`
+   가 estimate 의 네 키(`indices`·`unavailable`·`annualize`·`scenario`)에서 정확히
+   걸렸다 — **화면이 안 읽는 키를 게이트가 지키고 있다**는 것을 기계가 알려준 자리다
+   (설계대로 작동한 가드). 파이프라인을 지우면서 그 예외 등록도 함께 걷어냈다.
+   `active`·`axes` 는 다른 페이로드가 같은 이름을 써서 통과했던 것이지 읽히던 것이 아니다.
+③ **비공개 Data 저장소도 함께 고쳤다** — `../Data/CLAUDE.md` 가 적고 있던 옛 계약 수 세 자리.
+   이 넷째 자리는 `test_json_contract_count_matches_docs` 가 로컬 체크아웃이 있을 때만
+   대조한다(CI 에는 없어 skip) — 즉 **CI 는 이 어긋남을 못 잡는다.**
 
 ## 8. 그 다음 — 모델 랩 (기능 4)
 
@@ -2429,12 +2427,12 @@ app.js 대조 2건. 섹션 15 → **14개**, 테스트 439 → **422개**.
 
 ## 9. 알아두면 시간 아끼는 것들
 
-- **테스트가 있다** (다른 세션이 추가, 현재 422개 통과 / 약 6분). `python -m pytest` —
+- **테스트가 있다** (다른 세션이 추가, 현재 404개 통과 / 약 6분). `python -m pytest` —
   합성 픽스처(`tests/synth.py`)로 돌아서 **비공개 데이터 없이 실행된다.**
   코드를 고치면 이걸 먼저 돌릴 것. CI도 `test → build(+게이트) → deploy` 순서다.
 - **배포 게이트가 있다** (`pipeline/check_output.py`). `process.py` 는 risk/hedge 실패를
   try/except 로 삼키고 exit 0 으로 끝나므로, 이 게이트가 없으면 섹션이 빠진 대시보드가
-  초록불로 배포된다. JSON 16개 계약은 세 곳(`process.payloads`·`app.js FILES`·
+  초록불로 배포된다. JSON 15개 계약은 세 곳(`process.payloads`·`app.js FILES`·
   `check_output.EXPECTED`)에 적혀 있고 `tests/test_contract.py` 가 불일치를 잡는다.
 - **요인 정의는 `risk.derive_inputs()` + `risk.factor_specs()`** 로 모듈 수준에 나와 있다.
   `research/wf_validation.py` 가 **같은 정의를 import** 하므로, 요인을 고치면 배포 코드와

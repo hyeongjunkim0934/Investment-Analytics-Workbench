@@ -37,7 +37,7 @@ from pathlib import Path
 # process.py 의 payloads 딕셔너리 = dashboard/app.js 의 FILES 상수 = 이 목록.
 # 셋 중 하나만 고치면 안 된다.
 EXPECTED = [
-    "meta", "overview", "risk", "events", "panel", "hedge", "alloc", "estimate",
+    "meta", "overview", "risk", "events", "panel", "hedge", "alloc",
     "rates", "irs", "credit", "fx", "inflation", "acwi", "macro", "catalog",
 ]
 META_FIELDS = ["built_at_utc", "last_observation", "series_count", "files", "warnings"]
@@ -76,13 +76,6 @@ REQUIRED_KEYS = {
     # brief = 브리핑 카드 원고(risk.compose_brief). process.py 가 조립 실패를
     # warn 으로 삼키고 exit 0 하므로, 빠진 채 초록 배포되는 것을 여기서 막는다.
     "events": ["asof", "lookback_days", "events", "catalog", "brief"],
-    # 수익률 추정(§7.8) 자동 채움 지수. 시리즈가 하나도 없어도 active:false 로
-    # 게시된다 — `unavailable`/`annualize` 는 **부재 상태에서도** 화면이 「왜 수기인가」와
-    # 연환산 규약을 적는 데 쓰이므로 두 키는 언제나 있어야 한다.
-    "estimate": ["active", "indices", "unavailable", "annualize",
-                 # axes/scenario = 추정일 시나리오(§7.10). 축이 하나도 없어도 빈 배열로
-                 # 나가야 하고, scenario 는 화면이 산식을 적는 정본이라 부재를 막는다.
-                 "axes", "scenario"],
 }
 # 배열 페이로드의 **행 스키마** — 행 하나만 봐도 개명·누락이 드러난다.
 # 경로에 `.` 을 쓰면 중첩 배열도 지목할 수 있다(`boot.rows`).

@@ -15,14 +15,13 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 
 | 경로 | 역할 |
 |---|---|
-| `pipeline/process.py` | CLI 진입점. 엑셀 파싱 → 시리즈 저장소(`SERIES`) → 패널 빌더 → JSON 16개 출력 |
+| `pipeline/process.py` | CLI 진입점. 엑셀 파싱 → 시리즈 저장소(`SERIES`) → 패널 빌더 → JSON 15개 출력 |
 | `pipeline/risk.py` | `build(SERIES, warn)` → `risk.json` + `events.json` + 관계분석용 주간 프레임 (요인 점수·IC가중 합성·이벤트 검출). 브리핑 원고 조립(`compose_brief`)도 여기 — 호출은 `process.py` 가 시장 폭 병합 **뒤**에 한다 |
 | `pipeline/regime.py` | 시장 국면 참고 블록 → `risk.json["regime"]` (2국면 MSM Filtered 확률 — 국면 이질성 검정 통과 3개 시장, HANDOVER §5.1 ⓐ). **등급·경보·이벤트 미반영** — 참고 표시 전용. numpy 만(고정 의존성 3개 불변). 계산이 실패해도 `active:false` 로 항상 게시(체인 안전장치 — 게이트 `REQUIRED_KEYS["risk"]` 의 `regime`) |
 | `pipeline/hedge.py` | `build(SERIES, warn)` → `hedge.json` (7통화 헤지 매트릭스·백테스트·시뮬레이터 공분산·`ust_merit` 미국채 투자 메리트 모니터 §7.7.14 — 헤지 후 UST = UST10y + 스왑레이트, 시리즈 없으면 `active:false` 게시) |
 | `pipeline/alloc.py` | `build(SERIES, warn)` → `alloc.json` (자산배분 원천 10개 공분산·현재 금리·동일 샤프 앵커·블록 부트스트랩 사전계산. **원본 수익률 미게시** — 공분산·평균·분위수만) |
 | `pipeline/bm.py` | 자산군 전략 벤치마크(BM) 파서 + `build_cma(SERIES, warn)` → `alloc.json.cma` (자본시장가정 사전계산 — §7.7 재설계의 데이터층). **원본 수준·수익률 미게시** — 창별 연환산 σ·상관·공분산·과거 평균과 표본 메타만. BM 파일이 없어도 `active:false` 블록을 항상 게시한다(체인 안전장치) |
 | `pipeline/port.py` | 포트폴리오 구성(신규 7자산군 §7.14) → `alloc.json.port` (프록시 통계 — 창별 μ·σ·상관·공분산·MDD·60/40 벤치, KRW 미헤지 환산, 월말 표본. **달러유동성 컬럼은 벤더가 이미 원화 환산** — 재환산 금지, 판정 근거는 `usd_liq_check` 로 매 빌드 게시). Data 저장소 `port_cma.json` 이 있으면 CMA 키인 디폴트로 실어 게시(비유한·범위 밖 값은 경고 후 드롭. **게시는 최종 수치 `{asof, mu_pct}` 뿐** — 빌딩블록·산출 과정 필드는 파일에 있어도 읽지 않는다, 2026-08-22 공개 경계). 프록시가 없어도 `active:false` 항상 게시(체인 안전장치). 대체투자 프록시는 **S&P GSCI TR CME**(2026-08-22 사용자 확정 — 스팟 아님). 원화유동성 표본(2022-04~)이 짧아 **10년 공통 창은 아직 미충족** — 경고 게시, 표본이 쌓이면 자동 개방. 기본 창 = **최장 공통 표본(all)**, 원화유동성 10년 참고 빈자리는 CD(AAA) 3M 적립 지수 수치를 `krw_liq_ref` 로 **참고 전용** 게시(공통 행렬 미포함) |
-| `pipeline/estimate.py` | `build(SERIES, warn)` → `estimate.json`. **이 게시물을 읽는 화면은 없다** — 수익률 추정 화면이 §7.17(2026-09-07)로 삭제됐고 JSON 계약 16 을 지키려 파이프라인만 남겼다. KOSPI TR·ACWI 일별 + **축약 전 원본에서 뽑은 연말 앵커** + 미국채 부재 사유. 지수가 없어도 `active:false` 로 항상 게시 |
 | `pipeline/panel.py` | `build(SERIES, risk_weekly, warn)` → `panel.json` (관계분석용 주간 정렬 패널. 공개 변수는 `VARS` 화이트리스트로만 통제) |
 | `pipeline/breadth.py` | 미국 증시 데일리 리포트 → **집계 지표만** (`us:*` 12개). 파일 하나 = 관측 하루라 이력은 날짜별 파일이 쌓여야 생긴다. **종목 단위(티커·회사명·현재가)는 한 줄도 읽지 않는다** — 공개 저장소이므로 그 계약이 값 정확도만큼 중요하고, `tests/test_breadth.py` 가 상세 시트를 일부러 넣고 유출이 없는지 확인한다 |
 | `pipeline/common.py` | 공용 산식 한 벌 — `epoch_seconds`/`pack_values`/`spearman`/`auc`. 위 넷과 연구 하네스가 전부 여기서 가져온다 |
@@ -50,7 +49,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 422개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 404개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (약 2.5분)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js                 (약 2.5분)
 #   ↑ 하네스가 시간을 다 쓴다(실측) — 최적화를 실제로 여러 번 돌리는 프로브
@@ -73,9 +72,9 @@ cd _site && python -m http.server 8000     # http://localhost:8000
 python pipeline/research/wf_validation.py --data-dir ../Data
 ```
 
-- 파이프라인 정상 출력: 약 **40~55초**(자산배분 표본 재추출 사전계산 포함), exit 0, `parsed N series from M files` 뒤에 `wrote …` **16줄**
+- 파이프라인 정상 출력: 약 **40~55초**(자산배분 표본 재추출 사전계산 포함), exit 0, `parsed N series from M files` 뒤에 `wrote …` **15줄**
   (합계 약 2.2MB), 마지막 줄 `N warning(s) — see meta.json`.
-- **16은 코드가 정한 수**(아래 JSON 계약)라 달라지면 그 자체가 버그다. 반대로 `N`·`M`·경고 건수는
+- **15는 코드가 정한 수**(아래 JSON 계약)라 달라지면 그 자체가 버그다. 반대로 `N`·`M`·경고 건수는
   `--data-dir` 의 엑셀에서 오는 수라 데이터를 갱신하면 정상적으로 바뀐다 — 현재 `../Data` 기준선은
   **483 시리즈 / 8 파일 / 경고 14건**(duplicate column 12건 = `data_bb (3).xlsx` 5건 +
   `data_bb_대체투자.xlsx` 7건, + 파일 간 병합 고지 1건, + port 창 미충족 고지 1건 — 원화유동성
@@ -91,8 +90,8 @@ python pipeline/research/wf_validation.py --data-dir ../Data
 
 ## 출력 JSON 계약
 
-`process.py` 의 `payloads` 딕셔너리와 `dashboard/app.js` 의 `FILES` 상수가 **같은 16개**로 1:1 대응한다:
-`meta` `overview` `risk` `events` `panel` `hedge` `alloc` `estimate` `rates` `irs` `credit` `fx` `inflation` `acwi` `macro` `catalog`.
+`process.py` 의 `payloads` 딕셔너리와 `dashboard/app.js` 의 `FILES` 상수가 **같은 15개**로 1:1 대응한다:
+`meta` `overview` `risk` `events` `panel` `hedge` `alloc` `rates` `irs` `credit` `fx` `inflation` `acwi` `macro` `catalog`.
 JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 
 - 대시보드는 `fetch("data/<이름>.json")` 상대경로로 읽는다 → `--out` 은 항상 `index.html` 옆 `data/` 여야 하고,
@@ -446,12 +445,11 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   `openEstHedge` 등 약 1,190줄·`.est-*` CSS·프로브 3블록·UX 테스트 15건. 산식 규약
   (연환산·주식 제외·부호·누적 잇기)은 그 코드와 함께 사라졌으므로 이 문서에서도 내렸다 —
   필요하면 HANDOVER §7.8·§7.10~§7.12 와 해당 커밋에 남아 있다.
-  **파이프라인 `pipeline/estimate.py` 와 `estimate.json` 은 그대로 게시된다** — JSON
-  계약 16 을 흔들지 않기 위해서다(§7.15 의 `cma.tv` 와 같은 선택). 즉 지금
-  `estimate.json` 은 **읽는 화면이 없는 게시물**이고, 게이트가 지키는 네 키는
-  `tests/test_contract.py` 의 `PUBLISH_ONLY_KEYS` 에 「소비자 없음」으로 등록돼 있다.
-  파이프라인까지 걷어내려면 네 곳(`payloads`·`FILES`·`EXPECTED`·비공개
-  `../Data/CLAUDE.md` 의 「JSON N개」)을 함께 고쳐야 한다(HANDOVER §7.17 — 사용자 결정 대기).
+  **파이프라인도 함께 지웠다**(같은 날 2차 지시 「파이프라인도 불필요하면 지워버려」) —
+  `pipeline/estimate.py`·`tests/test_estimate.py` 삭제, `payloads`·`FILES`·`EXPECTED`·
+  게이트 `REQUIRED_KEYS` 에서 제거, 비공개 `../Data/CLAUDE.md` 의 「JSON N개」까지
+  **네 곳을 함께** 고쳐 **JSON 계약이 16 → 15** 가 됐다. §7.15 의 `cma.tv` 와 달리
+  재도입 여지를 남기지 않은 선택이며, 되살리려면 해당 커밋 revert 가 가장 빠르다.
 - **정의되지 않은 CSS 이름은 조용히 무효가 된다 — 회귀 테스트가 있다.**
   카드면 토큰은 `--surface` 다(`--card` 는 **없다**). 없는 변수를 쓰면 선언이 통째로
   무효라 오버레이가 투명해지고 글자가 아래 내용과 겹친다(실측 §7.12). 버튼 클래스도
@@ -466,12 +464,13 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 - `wf_validation.py` 는 `process.load_data_dir()` + `risk.derive_inputs`/`risk.factor_specs` +
   `risk` 의 상수 + `common.spearman`/`common.auc` 를 import 한다. 이 파일이 스스로 정하는 것은
   **평가 설계**(가중 방식·타깃·표본 외 구간)뿐이다.
-- **JSON 16개 계약은 네 곳에 적혀 있다**: 코드 세 곳(`process.py` 의 `payloads`,
+- **JSON 15개 계약은 네 곳에 적혀 있다**: 코드 세 곳(`process.py` 의 `payloads`,
   `dashboard/app.js` 의 `FILES`, `pipeline/check_output.py` 의 `EXPECTED`)과 **비공개
   `../Data/CLAUDE.md` 의 「JSON N개」 문장**이다. 코드 세 곳은 `tests/test_contract.py` 가
   서로 대조하고, Data 쪽은 같은 파일의 `test_json_contract_count_matches_docs` 가
-  `../Data` 체크아웃이 있을 때만 대조한다(CI 에는 없어 skip) — estimate.json 을 추가할 때
-  Data 쪽만 15 로 남아 실측으로 걸린 자리다. 넷 중 하나만 고치면 잡힌다.
+  `../Data` 체크아웃이 있을 때만 대조한다(CI 에는 없어 skip) — estimate.json 을 더할 때
+  Data 쪽만 15 로 남아 실측으로 걸린 자리다(§7.17 로 그 JSON 이 사라져 도로 15 다).
+  넷 중 하나만 고치면 잡힌다.
 - **상단 탭은 6개뿐이다(§7.9 — 2026-08-13 사용자 지시로 7개, §7.17 로 6개).** 마을·개요·
   이벤트·리스크·자산배분·환헤지. 나머지 8개 화면은 **사라진 게 아니라 부모 화면 안의
   입구로 내려왔다** — 금리·IRS·크레딧·FX·물가·ACWI·매크로는 개요 구역으로, 관계분석은
@@ -548,7 +547,7 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   확인할 때는 `newPage({ locale: 'en-US' })` 를 줄 것 — 코드 결함으로 오진하기 쉽다.
 - **테스트는 합성 픽스처로만 돈다.** `tests/synth.py` 가 만드는 워크북에는 벤더 값이 한 톨도 없다 —
   공개 저장소이므로 `../Data` 의 값이나 그 파생물을 픽스처로 커밋하지 말 것. 실데이터 회귀는 여전히
-  파이프라인을 완주시켜 시리즈 수·JSON 16개·경고 건수를 변경 전과 비교하는 방식으로 한다.
+  파이프라인을 완주시켜 시리즈 수·JSON 15개·경고 건수를 변경 전과 비교하는 방식으로 한다.
 - **기본 브랜치는 아직 기계 생성 세션명**(`claude/data-repo-dashboard-automation-cj8y59`)이다.
   `main` 으로의 rename 은 **아직 하지 않았다** — GitHub 웹 Settings 작업이라 사람이 해야 한다.
   `build-dashboard.yml` 의 `push:` 트리거는 `[main, master, "claude/…cj8y59"]` 세 이름을 모두 담고

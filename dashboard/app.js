@@ -32,14 +32,12 @@ function destroyAllCharts() {
   uplots = [];
 }
 
-/* JSON 계약 16개 — `process.py` 의 payloads · `check_output.py` 의 EXPECTED 와
-   문자 단위로 같아야 한다(계약 테스트 + 배포 게이트가 셋을 대조한다).
-   **`estimate` 는 읽는 화면이 없는데도 남아 있다** — §7.17(2026-09-07 사용자 지시)이
-   수익률 추정 **표시층만** 걷어냈고 파이프라인은 그대로 두었기 때문이다. 여기서만
-   빼면 세 곳이 갈려 배포 게이트가 막는다. 파이프라인까지 지우려면 네 곳
-   (payloads·FILES·EXPECTED·비공개 Data 저장소 CLAUDE.md 의 「JSON N개」)을 함께 고칠 것. */
+/* JSON 계약 15개 — `process.py` 의 payloads · `check_output.py` 의 EXPECTED 와
+   문자 단위로 같아야 한다(계약 테스트 + 배포 게이트가 셋을 대조한다). 하나만 고치면
+   배포 게이트가 막는다 — 비공개 Data 저장소 CLAUDE.md 의 「JSON N개」까지 네 곳이다.
+   (§7.17 로 `estimate` 가 빠져 16 → 15 가 됐다.) */
 const FILES = ["meta", "overview", "risk", "events", "panel", "hedge", "alloc",
-               "estimate", "rates", "irs", "credit", "fx", "inflation", "acwi",
+               "rates", "irs", "credit", "fx", "inflation", "acwi",
                "macro", "catalog"];
 
 /* ---------------- theme & palette ---------------- */

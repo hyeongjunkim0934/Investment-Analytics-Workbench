@@ -40,13 +40,11 @@ def _app_js_files() -> list[str]:
     return re.findall(r'["\']([A-Za-z_]+)["\']', m.group(1))
 
 
-def test_contract_is_sixteen():
-    # §7.8 에서 estimate.json 이 더해져 15 → 16 이 되었다.
-    # §7.17(2026-09-07)이 수익률 추정 **화면**을 지웠지만 계약은 16 그대로다 —
-    # 파이프라인은 그대로 두었기 때문이다(읽는 화면이 없는 estimate.json 이 계속
-    # 나간다). 파이프라인까지 지우려면 네 곳을 함께 고칠 것(app.js FILES 주석 참조).
-    assert len(check_output.EXPECTED) == 16
-    assert len(set(check_output.EXPECTED)) == 16
+def test_contract_is_fifteen():
+    # §7.8 에서 estimate.json 이 더해져 15 → 16 이 되었다가, §7.17(2026-09-07)이
+    # 수익률 추정 화면과 파이프라인을 함께 지우면서 **다시 15** 가 되었다.
+    assert len(check_output.EXPECTED) == 15
+    assert len(set(check_output.EXPECTED)) == 15
 
 
 def test_app_js_files_match_contract():
@@ -79,11 +77,11 @@ def built(synth_dir, tmp_path_factory):
     return out, r
 
 
-def test_pipeline_writes_exactly_sixteen(built):
+def test_pipeline_writes_exactly_fifteen(built):
     out, r = built
     written = sorted(p.stem for p in out.glob("*.json"))
     assert written == sorted(check_output.EXPECTED), r.stdout[-2000:]
-    assert r.stdout.count("wrote ") == 16
+    assert r.stdout.count("wrote ") == 15
 
 
 def test_risk_and_hedge_actually_ran(built):
@@ -936,15 +934,6 @@ PUBLISH_ONLY_KEYS = {
     ("alloc", "anchor_ref"): "동일 샤프 앵커의 기준(자국통화)·값. 방법론 재현용 게시물",
     ("alloc", "checks"):     "자기검증 결과. 값이 사라지면 검증 없이 배포된 것과 같다",
     ("risk", "grade_bands"): "등급 밴드 정본(app.js 는 자체 BANDS 상수를 쓴다 — 3중 진실이 남아 있다)",
-    # ↓ §7.17(2026-09-07) — 수익률 추정 **화면**을 지우면서 이 네 키를 읽던 코드가 통째로
-    # 사라졌다. 파이프라인(`estimate.py`)과 JSON 계약 16 은 그대로 두었으므로 게이트는
-    # 계속 이 키들을 지킨다. **이것은 게시 전용이 아니라 소비자가 없는 계약이다** —
-    # 위 셋과 성격이 다르니 같은 줄로 읽지 말 것. 파이프라인까지 걷어내기로 하면 이 네
-    # 줄과 REQUIRED_KEYS["estimate"] 가 함께 사라진다(사용자 결정 대기).
-    ("estimate", "indices"):     "읽는 화면 없음 — §7.17 로 표시층 제거, 파이프라인은 유지",
-    ("estimate", "unavailable"): "읽는 화면 없음 — §7.17 로 표시층 제거, 파이프라인은 유지",
-    ("estimate", "annualize"):   "읽는 화면 없음 — §7.17 로 표시층 제거, 파이프라인은 유지",
-    ("estimate", "scenario"):    "읽는 화면 없음 — §7.17 로 표시층 제거, 파이프라인은 유지",
 }
 
 
@@ -1433,7 +1422,7 @@ def test_json_contract_count_matches_docs():
 
     코드 세 곳(process.payloads · app.js FILES · check_output.EXPECTED)은 위의 계약
     테스트들이 서로 대조하지만, **넷째 자리는 다른 저장소**라 아무도 안 보고 있었다 —
-    estimate.json 을 추가할 때(15→16) 세 곳만 고치고 `../Data/CLAUDE.md` 는 15 로 남아
+    estimate.json 을 더할 때(15→16) 세 곳만 고치고 `../Data/CLAUDE.md` 는 15 로 남아
     실측으로 걸렸다. 문서가 다음 세션의 유일한 지도라는 이 절의 전제 그대로, 기계로
     확인 가능한 수는 기계가 잠근다.
 
@@ -1444,7 +1433,7 @@ def test_json_contract_count_matches_docs():
                       (ROOT / "pipeline" / "check_output.py")
                       .read_text(encoding="utf-8"), re.S).group(1)
     n = len(re.findall(r'"([a-z_]+)"', block))
-    assert n >= 16, f"EXPECTED 파싱이 이상합니다 — {n}개"
+    assert n >= 15, f"EXPECTED 파싱이 이상합니다 — {n}개"
     # 이 저장소 문서의 「JSON N개」 문장 전수
     for name, txt in _docs().items():
         for claimed in re.findall(r"JSON\s+(\d+)개", txt):
