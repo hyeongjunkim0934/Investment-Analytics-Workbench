@@ -3263,8 +3263,8 @@ safe("villageNotes", () => {
   return r;
 });
 
-/* ====== 리본 배너 (§7.19) — 코드가 그리는 SVG 한 장, 재렌더에 중복 없이, 영상·이미지·외부 참조 0 =====
-   셰이드는 innerHTML 을 파싱하지 않으므로 마크업 문자열로 잰다(villageFxMarkup 과 같은 방식). */
+/* ====== 두루마리 배너 (§7.19) — 그림 한 장 + 그 위에 얹는 살아 있는 제목 =====
+   셰이드는 innerHTML 을 파싱하지 않으므로 제목은 마크업 문자열로 잰다(villageFxMarkup 과 같은 방식). */
 safe("villageBanner", () => {
   const r = {};
   const frame = DOC.getElementById("village-frame");
@@ -3275,22 +3275,28 @@ safe("villageBanner", () => {
   const banners = () => frame.querySelectorAll(".village-banner");
   r.count = banners().length;
   const b = banners()[0];
-  const html = String((b && b.innerHTML) || "");
-  r.isSvg = /^\s*<svg\b/.test(html) && (html.match(/<svg\b/g) || []).length === 1;
-  r.titleInMarkup = html.includes(">" + P.VILLAGE_BANNER.title + "<");
-  r.noMedia = !/<(video|img|image|iframe|object)\b/.test(html);
-  r.noExternalRef = !/(https?:)?\/\/|url\((?!#)/.test(html) && !/\bsrc=/.test(html);
-  r.swayGroup = /<g class="vb-sway">/.test(html);
+  const imgs = b ? b.querySelectorAll("img") : [];
+  r.imgCount = imgs.length;
+  r.imgSrcIsAsset = !!(imgs[0] && imgs[0].getAttribute("src") === P.VILLAGE_BANNER.src);
+  r.imgAltEmpty = !!(imgs[0] && imgs[0].getAttribute("alt") === "");
+  const cap = b && b.querySelector(".vb-cap");
+  const html = String((cap && cap.innerHTML) || "");
+  r.capIsSvg = /^\s*<svg\b/.test(html);
+  /* 제목은 이미지에 굽지 않고 <text> 로 얹는다 — 굽으면 이 검사가 빈다 */
+  r.titleIsLiveText = new RegExp("<text[^>]*>" + P.VILLAGE_BANNER.title + "</text>").test(html);
+  r.noMedia = !/<(video|iframe|object)\b/.test(html);
+  r.swayWraps = !!(b && b.querySelector(".vb-sway img") && b.querySelector(".vb-sway .vb-cap"));
   r.ariaHidden = !!(b && b.getAttribute("aria-hidden") === "true");
   r.positioned = !!(b && /left:5%/.test(b.getAttribute("style") || "") && /width:19%/.test(b.getAttribute("style") || ""));
   P.renderVillage();
   r.countAfterRerender = banners().length;
-  /* 모션 축소 — JS 분기가 없어야 한다(정적 SVG 는 그 자체로 무모션, 흔들림은 CSS 가 세운다) */
+  r.imgsAfterRerender = frame.querySelectorAll(".village-banner img").length;
+  /* 모션 축소 — JS 분기가 없어야 한다(정지 그림은 그 자체로 무모션, 흔들림은 CSS 가 세운다) */
   frame.querySelectorAll(".village-banner").forEach((n) => n.remove());
   REDUCED = true;
   P.renderVillage();
   r.countUnderReducedMotion = banners().length;
-  r.sameMarkupUnderReducedMotion = String(banners()[0].innerHTML) === html;
+  r.sameCapUnderReducedMotion = String(banners()[0].querySelector(".vb-cap").innerHTML) === html;
   REDUCED = prevReduced;
   frame.querySelectorAll(".village-banner").forEach((n) => n.remove());
   return r;

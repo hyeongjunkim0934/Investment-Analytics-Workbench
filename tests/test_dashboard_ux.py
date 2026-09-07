@@ -2762,17 +2762,20 @@ def test_village_notes_explain_missing_payloads(probe):
     assert probe["villageNotes"]["missingExplains"] is True
 
 
-def test_village_banner_is_one_code_drawn_svg(probe):
-    """리본 배너(§7.19): 코드가 그리는 SVG 한 장 — 영상·이미지·외부 참조 0, 제목은 VILLAGE_BANNER.title.
-    마을 재렌더(장면 순환)에 중복 마운트되지 않고, 위치는 상수대로, reduced-motion 에도 같은 마크업
-    (흔들림은 CSS 가 세운다 — JS 분기 없음)."""
+def test_village_banner_mounts_once_with_live_title(probe):
+    """두루마리 배너(§7.19): 그림(webp) 한 장 + 그 위에 **살아 있는** 제목 텍스트.
+    제목을 이미지에 구우면 titleIsLiveText 가 빈다(assets/README.md 「글자 굽지 말 것」).
+    마을 재렌더(장면 순환)에 중복 마운트되지 않고, 위치는 VILLAGE_BANNER 상수대로,
+    reduced-motion 에도 같은 마크업(흔들림은 CSS 가 세운다 — JS 분기 없음)."""
     v = probe["villageBanner"]
     assert v["count"] == 1 and v["countAfterRerender"] == 1, "배너가 없거나 재렌더에 중복된다"
-    assert v["isSvg"] is True, "배너가 SVG 한 장이 아니다"
-    assert v["titleInMarkup"] is True, "배너 제목이 VILLAGE_BANNER.title 과 다르다"
-    assert v["noMedia"] is True, "배너에 video/img 가 다시 들어갔다 — 톤 불일치로 걷어낸 자산이다"
-    assert v["noExternalRef"] is True, "배너가 외부 자원을 가리킨다(외부 요청 0 규약)"
-    assert v["swayGroup"] is True, "흔들림 그룹(.vb-sway)이 없다 — reduced-motion CSS 가 세울 대상이 없다"
-    assert v["ariaHidden"] is True and v["positioned"] is True, "aria-hidden 또는 VILLAGE_BANNER 위치·폭이 다르다"
-    assert v["countUnderReducedMotion"] == 1 and v["sameMarkupUnderReducedMotion"] is True, (
+    assert v["imgCount"] == 1 and v["imgsAfterRerender"] == 1, "그림이 없거나 재렌더에 중복된다"
+    assert v["imgSrcIsAsset"] is True, "배너 그림이 VILLAGE_BANNER.src 가 아니다"
+    assert v["imgAltEmpty"] is True, "장식 그림인데 alt 가 비어 있지 않다"
+    assert v["capIsSvg"] is True and v["titleIsLiveText"] is True, (
+        "제목이 살아 있는 SVG 텍스트가 아니다 — 이미지에 구웠는지 확인할 것")
+    assert v["noMedia"] is True, "배너에 video 가 들어갔다"
+    assert v["swayWraps"] is True, "그림과 제목이 같은 흔들림 래퍼(.vb-sway) 안에 있지 않다"
+    assert v["ariaHidden"] is True and v["positioned"] is True, "aria-hidden 또는 위치·폭이 상수와 다르다"
+    assert v["countUnderReducedMotion"] == 1 and v["sameCapUnderReducedMotion"] is True, (
         "모션 축소에서 배너가 사라지거나 다른 마크업이 된다")

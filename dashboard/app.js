@@ -2289,44 +2289,34 @@ function paintVillageNotes(frame) {
   });
 }
 
-/* ══ 마을 배너 — 「Korea Post Village」 리본 (§7.19, 2026-09-07) ═══════════════════
-   처음엔 사용자 제공 플러터 영상(블랙레터 양피지)을 키잉해 얹었는데 "마을은 귀여운데
-   배너가 너무 심각하다"는 지적으로 **코드가 그리는 리본**으로 바꿨다(이전 키잉본은
-   e660b01 에 남아 있다). 글꼴은 지정하지 않고 body 스택을 상속해 마을 라벨과 같은
-   글꼴이 되고, 할로도 라벨과 같은 「밝은 외곽선」 규약이다. 색은 지도에서 땄다(크림
-   리본·벽돌색 글씨·나무색 외곽선·잎 초록 꼬리). ✉ 는 관문 엠블럼과 같은 글리프.
-   외부 요청 0 — 파일도, 폰트도 없이 SVG 한 장이라 밤에는 CSS 필터로 살짝 어두워지고
-   reduced-motion 이면 CSS 가 흔들림을 세운다(JS 분기 없음 — 정적 SVG 는 그 자체로
-   무모션이라 마운트 여부를 가를 이유가 없다). 셰이드는 innerHTML 을 파싱하지 않으므로
-   프로브는 마크업 문자열을 본다(마을 효과 레이어 `villageFxMarkup` 과 같은 방식).
-   위치·폭은 겹침을 피해 고른 값(리본 오른쪽 끝 ≈22.5% < 여관 안내판 24.3%). */
-const VILLAGE_BANNER = { x: 5, y: 3, w: 19, title: "Korea Post Village" };
+/* ══ 마을 배너 — 우편 올빼미 두루마리 (§7.19, 2026-09-07) ═══════════════════════════
+   사용자 제공 수채 일러스트(올빼미가 편지를 물고 두루마리 위에 앉은 그림)를 흰 배경만
+   키잉해 얹는다. 앞선 두 판은 버렸다 — 플러터 영상(e660b01)은 화풍이 너무 심각했고,
+   코드로 그린 리본(2b7d29c)은 "허접"했다. 그림은 자산 파일이고 **제목 글씨는 굽지
+   않는다** — 두루마리 면 위에 SVG 텍스트로 얹어 마을 라벨과 같은 글꼴(body 스택 상속)을
+   쓰고 확대·번역·글꼴 변경에도 살아 있다(assets/README.md 「이미지에 글자 굽지 말 것」).
+   TEXT 의 좌표는 키잉본 캔버스(721×568) 기준 실측값 — 두루마리 필기면 중심과 그 면의
+   기울기 약 5°. 흔들림은 CSS(`.vb-sway`)이고 reduced-motion 이면 CSS 가 세운다
+   (JS 분기 없음 — 정지 이미지는 그 자체로 무모션이다). 위치·폭은 겹침을 피해 고른 값
+   (오른쪽 끝 24% < 여관 안내판 24.3%). */
+const VILLAGE_BANNER = {
+  x: 5, y: 2.5, w: 19, title: "Korea Post Village",
+  src: "assets/village-banner.webp",
+  vb: [721, 568],                                   // 키잉본 캔버스(= 이미지 종횡비)
+  text: { x: 255, y: 396, len: 340, size: 38, rot: 8 },
+};
 
 function villageBannerSvg() {
   const t = VILLAGE_BANNER.title;
-  return `<svg viewBox="0 0 440 128" role="img" aria-label="${t}">
-  <defs>
-    <linearGradient id="vb-body" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#fbf0d6"/><stop offset="1" stop-color="#ecd8a8"/>
-    </linearGradient>
-  </defs>
-  <g class="vb-sway">
-    <!-- 리본 꼬리(잎 초록) -->
-    <path d="M44 46 L10 40 L24 66 L10 92 L44 86 Z" fill="#7fae5a" stroke="#4e6e34" stroke-width="4" stroke-linejoin="round"/>
-    <path d="M396 46 L430 40 L416 66 L430 92 L396 86 Z" fill="#7fae5a" stroke="#4e6e34" stroke-width="4" stroke-linejoin="round"/>
-    <!-- 리본 본체 — 살짝 휜 크림색 판 -->
-    <path d="M34 38 Q220 22 406 38 Q412 66 406 94 Q220 110 34 94 Q28 66 34 38 Z"
-          fill="url(#vb-body)" stroke="#7a4b2a" stroke-width="5" stroke-linejoin="round"/>
-    <path d="M46 46 Q220 33 394 46" fill="none" stroke="#fff9ea" stroke-width="3" stroke-linecap="round" opacity=".9"/>
-    <!-- 봉투 배지 — 관문 엠블럼과 같은 글리프. 제목은 배지 오른쪽에서 시작(실측 폭 263/28px) -->
-    <circle cx="62" cy="66" r="18" fill="#fff9ea" stroke="#7a4b2a" stroke-width="4"/>
-    <text x="62" y="73" text-anchor="middle" font-size="20" fill="#b0523a">✉</text>
-    <!-- 제목 — 글꼴은 지정하지 않는다(body 스택을 상속 = 마을 라벨과 같은 글꼴), 스티커 외곽선(paint-order).
-         textLength 로 폭을 280 에 고정: 기기 글꼴이 달라도(실측 Segoe 263 · DejaVu 307 @28px) 배지(~80)·
-         본체 끝(406)에 닿지 않는다 -->
-    <text x="246" y="76" text-anchor="middle" textLength="280" lengthAdjust="spacingAndGlyphs"
-          font-size="28" font-weight="800" letter-spacing="1" fill="#b0523a"
-          stroke="#fff9ea" stroke-width="6" stroke-linejoin="round" paint-order="stroke">${t}</text>
+  const [vw, vh] = VILLAGE_BANNER.vb;
+  const x = VILLAGE_BANNER.text;
+  const common = `x="${x.x}" y="${x.y}" text-anchor="middle" textLength="${x.len}" `
+    + `lengthAdjust="spacingAndGlyphs" font-size="${x.size}" font-weight="800" letter-spacing=".5"`;
+  return `<svg viewBox="0 0 ${vw} ${vh}" role="img" aria-label="${t}">
+  <g transform="rotate(${x.rot} ${x.x} ${x.y})">
+    <text ${common} y="${x.y + 2}" fill="#7a5024" opacity=".28">${t}</text>
+    <text ${common} fill="#5b3a1f" stroke="#fdf6e6" stroke-width="2.4"
+          stroke-linejoin="round" paint-order="stroke">${t}</text>
   </g>
 </svg>`;
 }
@@ -2336,7 +2326,12 @@ function mountVillageBanner(frame) {
   if (frame.querySelector(".village-banner")) return;                    // 멱등
   const box = el("div", { class: "village-banner", "aria-hidden": "true",
     style: `left:${VILLAGE_BANNER.x}%;top:${VILLAGE_BANNER.y}%;width:${VILLAGE_BANNER.w}%` });
-  box.innerHTML = villageBannerSvg();
+  const sway = el("div", { class: "vb-sway" });
+  sway.append(el("img", { src: VILLAGE_BANNER.src, alt: "", draggable: "false" }));
+  const cap = el("div", { class: "vb-cap" });
+  cap.innerHTML = villageBannerSvg();                                    // 제목은 살아 있는 텍스트
+  sway.append(cap);
+  box.append(sway);
   frame.append(box);
 }
 

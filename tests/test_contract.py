@@ -688,29 +688,34 @@ def test_village_notes_never_take_clicks_and_stop_under_reduced_motion():
         "요약표(recalc)가 allocRefModel 을 쓰지 않습니다 — 두 참고치가 갈립니다")
 
 
-def test_village_banner_is_code_drawn_and_motion_rules():
-    """리본 배너(§7.19)의 계약: 자산 파일 없음(키잉 영상은 톤 불일치로 e660b01 뒤 제거 — 되돌리지 말 것),
-    SVG 마크업은 외부 참조 0, 글꼴 미지정(body 스택 상속 = 마을 라벨과 같은 글꼴), 클릭 통과,
-    흔들림 keyframes 실재 + reduced-motion 에서 정지(CSS)."""
+def test_village_banner_asset_and_live_title():
+    """두루마리 배너(§7.19)의 계약: 그림은 webp 자산 하나(영상 아님 — 톤 불일치로 e660b01 뒤 폐기),
+    1.5MB 미만(루프와 같은 상한), **제목은 이미지에 굽지 않고** SVG 텍스트로 얹으며 글꼴을 지정하지
+    않는다(body 스택 상속 = 마을 라벨과 같은 글꼴), 클릭 통과, 흔들림은 CSS 이고 reduced-motion 에서 선다."""
     assets = ROOT / "dashboard" / "assets"
-    for name in ("village-banner.webm", "village-banner.webp", "village-banner.mp4"):
-        assert not (assets / name).exists(), f"{name} 이 되살아났습니다 — 배너는 코드가 그립니다"
+    webp = assets / "village-banner.webp"
+    assert webp.is_file(), "배너 그림(village-banner.webp)이 없습니다"
+    head = webp.read_bytes()[:12]
+    assert head[:4] == b"RIFF" and head[8:12] == b"WEBP", "village-banner.webp 가 webp 가 아닙니다"
+    assert 10_000 < webp.stat().st_size < 1_500_000, "배너 그림 용량이 계약 밖입니다"
+    for name in ("village-banner.webm", "village-banner.mp4"):
+        assert not (assets / name).exists(), f"{name} 이 되살아났습니다 — 배너는 정지 그림입니다"
     js = _app_js()
-    assert "assets/village-banner" not in js, "app.js 가 배너 자산 파일을 가리킵니다"
+    assert '"assets/village-banner.webp"' in js, "app.js 가 배너 그림을 가리키지 않습니다"
     svg_fn = _fn("villageBannerSvg")
-    assert "<svg" in svg_fn and "${t}" in svg_fn, "villageBannerSvg 가 SVG 를 만들지 않습니다"
-    assert not re.search(r"https?://|\bsrc=|url\((?!#)", svg_fn), "배너 SVG 가 외부 자원을 가리킵니다"
-    assert "font-family" not in svg_fn, "배너 SVG 가 글꼴을 따로 지정합니다 — 마을 라벨과 어긋납니다"
-    assert 'class="vb-sway"' in svg_fn, "흔들림 그룹(.vb-sway)이 없습니다"
-    assert "villageBannerSvg()" in _fn("mountVillageBanner"), "mountVillageBanner 가 villageBannerSvg 를 쓰지 않습니다"
-    assert "prefers-reduced-motion" not in _fn("mountVillageBanner"), (
-        "배너 마운트가 reduced-motion 으로 갈립니다 — 정적 SVG 는 항상 붙고 흔들림만 CSS 가 세웁니다")
+    assert "<text" in svg_fn and "${t}" in svg_fn, "제목이 살아 있는 SVG 텍스트가 아닙니다(이미지에 굽지 말 것)"
+    assert "font-family" not in svg_fn, "배너 제목이 글꼴을 따로 지정합니다 — 마을 라벨과 어긋납니다"
+    mount = _fn("mountVillageBanner")
+    assert "villageBannerSvg()" in mount and "VILLAGE_BANNER.src" in mount, (
+        "mountVillageBanner 가 그림과 제목을 함께 붙이지 않습니다")
+    assert "prefers-reduced-motion" not in mount, (
+        "배너 마운트가 reduced-motion 으로 갈립니다 — 정지 그림은 항상 붙고 흔들림만 CSS 가 세웁니다")
     assert "mountVillageBanner(" in _fn("renderVillage"), "renderVillage 가 배너를 마운트하지 않습니다"
     css = (ROOT / "dashboard" / "style.css").read_text(encoding="utf-8")
     m = re.search(r"\.village-banner\s*\{([^}]*)\}", css)
     assert m and "pointer-events: none" in m.group(1), "배너가 클릭을 가로챌 수 있다"
     assert re.search(r"\.village-banner text\s*\{[^}]*font-family:\s*inherit", css), "배너 글꼴이 body 를 상속하지 않습니다"
-    assert re.search(r"@keyframes vb-sway", css) and re.search(r"\.village-banner \.vb-sway\s*\{[^}]*animation:\s*vb-sway", css)
+    assert re.search(r"@keyframes vb-sway", css) and re.search(r"\.village-banner \.vb-sway\s*\{[^}]*animation:\s*vb-sway", css, re.S)
     block = re.search(r"@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.village-fx(.*?)\n\}", css, re.S)
     assert block and re.search(r"\.village-banner \.vb-sway\s*\{[^}]*animation:\s*none", block.group(1)), (
         "reduced-motion 에서 배너 흔들림을 세우는 규칙이 없습니다")
