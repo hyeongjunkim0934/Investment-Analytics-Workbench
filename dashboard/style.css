@@ -834,16 +834,18 @@ details.explain[open] > summary { color: var(--ink-2); }
 @keyframes vz-note-scroll { to { transform: translateY(-50%); } }
 .village-frame.vz-enter .vz-note { opacity: 0; transition: opacity .18s; }
 
-/* ---- 두루마리 배너 (§7.19) — 좌상단 하늘. 정지 webp 위에 알파 webm 이 페이드인 ----
-   클릭은 통과(pointer-events:none). 밤에는 살짝 어둡게 — 양피지가 달빛 아래 있는 느낌. */
+/* ---- 리본 배너 (§7.19) — 좌상단 하늘. 코드가 그리는 SVG 한 장, 살랑이는 흔들림 ----
+   클릭은 통과(pointer-events:none). 밤에는 살짝 어둡게. 흔들림은 위 가운데를 축으로
+   ±1.6° — reduced-motion 이면 선다(아래 블록). */
 .village-banner {
   position: absolute; z-index: 12; pointer-events: none;
-  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, .35));
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, .28));
 }
-.village-banner img, .village-banner video { display: block; width: 100%; height: auto; }
-.village-banner video { position: absolute; inset: 0; opacity: 0; transition: opacity .4s ease; }
-.village-banner video.is-on { opacity: 1; }
-:root[data-scene="night"] .village-banner { filter: brightness(.82) drop-shadow(0 4px 10px rgba(0, 0, 0, .5)); }
+.village-banner svg { display: block; width: 100%; height: auto; overflow: visible; }
+.village-banner text { font-family: inherit; }   /* 마을 라벨과 같은 글꼴(body 스택) */
+.village-banner .vb-sway { transform-origin: 220px 30px; animation: vb-sway 4.2s ease-in-out infinite; }
+@keyframes vb-sway { 0%, 100% { transform: rotate(-1.6deg); } 50% { transform: rotate(1.6deg); } }
+:root[data-scene="night"] .village-banner { filter: brightness(.84) drop-shadow(0 4px 8px rgba(0, 0, 0, .5)); }
 
 /* 지도가 없거나 좁은 화면일 때의 대체 목록 — 접근성 겸용 */
 .village-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
@@ -921,8 +923,8 @@ details.explain[open] > summary { color: var(--ink-2); }
      여백을 상한으로(--vz-note-top = 건물 y%, app.js). 넘치면 꼬리가 잘린다(머리가 아니라). */
   .vz-note-above { max-height: calc(var(--vz-note-top, 50) * 1% - 48px); }
   .vz-note-below { max-height: calc((100 - var(--vz-note-top, 50)) * 1% - 40px); }
-  /* 두루마리 배너(§7.19): 영상은 JS 가 마운트하지 않지만 CSS 로 한 번 더 막는다 */
-  .village-banner video { display: none !important; }
+  /* 리본 배너(§7.19): 흔들림을 세운다 */
+  .village-banner .vb-sway { animation: none; }
 }
 
 /* ---- 건물 입장 연출 — 클릭한 건물로 빨려 들어가듯 확대 후 화면 전환 ---- */

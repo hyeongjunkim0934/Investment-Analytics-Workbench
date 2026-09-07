@@ -189,7 +189,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "cardScaffold", "el", "registry", "DATA", "BANDS", "SECTION_IDS", "palette",
   "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY",
   "SCENE_CYCLE_MS", "sceneCycleAllowed", "restartSceneCycle", "stopSceneCycle",
-  "renderVillage", "allocSaveState", "villageNotesInvalidate", "allocRefModel", "VILLAGE_NOTES", "VILLAGE_ZONES",
+  "renderVillage", "allocSaveState", "villageNotesInvalidate", "allocRefModel", "VILLAGE_NOTES", "VILLAGE_ZONES", "VILLAGE_BANNER",
   "currentScene", "currentTheme", "syncThemeButton",
   "RENDERERS", "renderAll", "renderSection", "renderACWI",
   "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
@@ -3263,7 +3263,8 @@ safe("villageNotes", () => {
   return r;
 });
 
-/* ====== 두루마리 배너 (§7.19) — 정지본은 항상, 영상은 모션 허용 때만, 재렌더에 중복 없이 ===== */
+/* ====== 리본 배너 (§7.19) — 코드가 그리는 SVG 한 장, 재렌더에 중복 없이, 영상·이미지·외부 참조 0 =====
+   셰이드는 innerHTML 을 파싱하지 않으므로 마크업 문자열로 잰다(villageFxMarkup 과 같은 방식). */
 safe("villageBanner", () => {
   const r = {};
   const frame = DOC.getElementById("village-frame");
@@ -3274,19 +3275,22 @@ safe("villageBanner", () => {
   const banners = () => frame.querySelectorAll(".village-banner");
   r.count = banners().length;
   const b = banners()[0];
-  r.hasStill = !!(b && b.querySelector("img") && /village-banner\.webp$/.test(b.querySelector("img").getAttribute("src") || ""));
-  r.hasVideoWhenMotionAllowed = !!(b && b.querySelector("video"));
-  r.videoSrcIsWebm = !!(b && b.querySelector("video") && /village-banner\.webm$/.test(b.querySelector("video").src || ""));
+  const html = String((b && b.innerHTML) || "");
+  r.isSvg = /^\s*<svg\b/.test(html) && (html.match(/<svg\b/g) || []).length === 1;
+  r.titleInMarkup = html.includes(">" + P.VILLAGE_BANNER.title + "<");
+  r.noMedia = !/<(video|img|image|iframe|object)\b/.test(html);
+  r.noExternalRef = !/(https?:)?\/\/|url\((?!#)/.test(html) && !/\bsrc=/.test(html);
+  r.swayGroup = /<g class="vb-sway">/.test(html);
+  r.ariaHidden = !!(b && b.getAttribute("aria-hidden") === "true");
   r.positioned = !!(b && /left:5%/.test(b.getAttribute("style") || "") && /width:19%/.test(b.getAttribute("style") || ""));
   P.renderVillage();
   r.countAfterRerender = banners().length;
-  r.videosAfterRerender = frame.querySelectorAll(".village-banner video").length;
-  /* 모션 축소 — 정지본만 */
+  /* 모션 축소 — JS 분기가 없어야 한다(정적 SVG 는 그 자체로 무모션, 흔들림은 CSS 가 세운다) */
   frame.querySelectorAll(".village-banner").forEach((n) => n.remove());
   REDUCED = true;
   P.renderVillage();
   r.countUnderReducedMotion = banners().length;
-  r.noVideoUnderReducedMotion = frame.querySelectorAll(".village-banner video").length === 0;
+  r.sameMarkupUnderReducedMotion = String(banners()[0].innerHTML) === html;
   REDUCED = prevReduced;
   frame.querySelectorAll(".village-banner").forEach((n) => n.remove());
   return r;

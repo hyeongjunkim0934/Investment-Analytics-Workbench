@@ -2289,38 +2289,55 @@ function paintVillageNotes(frame) {
   });
 }
 
-/* ══ 마을 배너 — 「Korea Post Village」 두루마리 (§7.19, 2026-09-07 사용자 제공 영상) ═══
-   사용자가 준 4초 플러터 영상(1536×1024, 회색 배경)을 배경 키잉해 VP9 알파 webm 으로
-   만들고(레시피는 assets/README.md), 지도 좌상단 하늘에 띄운다. 크기·위치는 겹침을 피해
-   고른 값이다 — 폭 19% 면 두루마리 오른쪽 끝이 x≈22.5% 라 여관 안내판(dx 7 → 24.3%~)과
-   닿지 않고, 관천대·구름 어느 것도 가리지 않는다.
-   · 정지 webp(첫 프레임 키잉본)가 항상 깔리고, 영상은 재생이 실제로 시작되면 그 위에
-     페이드인한다 — VP9 알파를 못 읽는 브라우저(Safari)는 정지 배너만 본다.
-   · reduced-motion 이면 영상을 마운트하지 않는다(JS) + CSS 이중 차단. 클릭은 통과.
-   · 원본 4초는 첫↔끝 프레임 차이 0.92 로 인접 프레임(0.72)과 같은 수준 — 무이음 루프라
-     그대로 loop 한다(마을 루프의 이음새 판정 기준선과 같은 방법으로 실측). */
-const VILLAGE_BANNER = { base: "assets/village-banner", x: 5, y: 3, w: 19 };
+/* ══ 마을 배너 — 「Korea Post Village」 리본 (§7.19, 2026-09-07) ═══════════════════
+   처음엔 사용자 제공 플러터 영상(블랙레터 양피지)을 키잉해 얹었는데 "마을은 귀여운데
+   배너가 너무 심각하다"는 지적으로 **코드가 그리는 리본**으로 바꿨다(이전 키잉본은
+   e660b01 에 남아 있다). 글꼴은 지정하지 않고 body 스택을 상속해 마을 라벨과 같은
+   글꼴이 되고, 할로도 라벨과 같은 「밝은 외곽선」 규약이다. 색은 지도에서 땄다(크림
+   리본·벽돌색 글씨·나무색 외곽선·잎 초록 꼬리). ✉ 는 관문 엠블럼과 같은 글리프.
+   외부 요청 0 — 파일도, 폰트도 없이 SVG 한 장이라 밤에는 CSS 필터로 살짝 어두워지고
+   reduced-motion 이면 CSS 가 흔들림을 세운다(JS 분기 없음 — 정적 SVG 는 그 자체로
+   무모션이라 마운트 여부를 가를 이유가 없다). 셰이드는 innerHTML 을 파싱하지 않으므로
+   프로브는 마크업 문자열을 본다(마을 효과 레이어 `villageFxMarkup` 과 같은 방식).
+   위치·폭은 겹침을 피해 고른 값(리본 오른쪽 끝 ≈22.5% < 여관 안내판 24.3%). */
+const VILLAGE_BANNER = { x: 5, y: 3, w: 19, title: "Korea Post Village" };
+
+function villageBannerSvg() {
+  const t = VILLAGE_BANNER.title;
+  return `<svg viewBox="0 0 440 128" role="img" aria-label="${t}">
+  <defs>
+    <linearGradient id="vb-body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbf0d6"/><stop offset="1" stop-color="#ecd8a8"/>
+    </linearGradient>
+  </defs>
+  <g class="vb-sway">
+    <!-- 리본 꼬리(잎 초록) -->
+    <path d="M44 46 L10 40 L24 66 L10 92 L44 86 Z" fill="#7fae5a" stroke="#4e6e34" stroke-width="4" stroke-linejoin="round"/>
+    <path d="M396 46 L430 40 L416 66 L430 92 L396 86 Z" fill="#7fae5a" stroke="#4e6e34" stroke-width="4" stroke-linejoin="round"/>
+    <!-- 리본 본체 — 살짝 휜 크림색 판 -->
+    <path d="M34 38 Q220 22 406 38 Q412 66 406 94 Q220 110 34 94 Q28 66 34 38 Z"
+          fill="url(#vb-body)" stroke="#7a4b2a" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M46 46 Q220 33 394 46" fill="none" stroke="#fff9ea" stroke-width="3" stroke-linecap="round" opacity=".9"/>
+    <!-- 봉투 배지 — 관문 엠블럼과 같은 글리프. 제목은 배지 오른쪽에서 시작(실측 폭 263/28px) -->
+    <circle cx="62" cy="66" r="18" fill="#fff9ea" stroke="#7a4b2a" stroke-width="4"/>
+    <text x="62" y="73" text-anchor="middle" font-size="20" fill="#b0523a">✉</text>
+    <!-- 제목 — 글꼴은 지정하지 않는다(body 스택을 상속 = 마을 라벨과 같은 글꼴), 스티커 외곽선(paint-order).
+         textLength 로 폭을 280 에 고정: 기기 글꼴이 달라도(실측 Segoe 263 · DejaVu 307 @28px) 배지(~80)·
+         본체 끝(406)에 닿지 않는다 -->
+    <text x="246" y="76" text-anchor="middle" textLength="280" lengthAdjust="spacingAndGlyphs"
+          font-size="28" font-weight="800" letter-spacing="1" fill="#b0523a"
+          stroke="#fff9ea" stroke-width="6" stroke-linejoin="round" paint-order="stroke">${t}</text>
+  </g>
+</svg>`;
+}
 
 function mountVillageBanner(frame) {
   if (!frame) return;
-  let box = frame.querySelector(".village-banner");
-  if (!box) {
-    box = el("div", { class: "village-banner", "aria-hidden": "true",
-      style: `left:${VILLAGE_BANNER.x}%;top:${VILLAGE_BANNER.y}%;width:${VILLAGE_BANNER.w}%` },
-      el("img", { src: `${VILLAGE_BANNER.base}.webp`, alt: "", draggable: "false" }));
-    frame.append(box);
-  }
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;   // 정지 배너만
-  let v = box.querySelector("video");
-  if (v) { v.play().catch(() => {}); return; }                            // 멱등 — 돌아오면 다시 재생
-  v = document.createElement("video");
-  v.muted = true; v.loop = true; v.playsInline = true; v.preload = "auto";
-  v.setAttribute("muted", ""); v.setAttribute("playsinline", ""); v.setAttribute("aria-hidden", "true");
-  v.addEventListener("error", () => v.remove());                          // 못 읽으면 정지 배너로
-  v.addEventListener("playing", () => requestAnimationFrame(() => v.classList.add("is-on")));
-  v.src = `${VILLAGE_BANNER.base}.webm`;
-  box.append(v);
-  v.play().catch((e) => { if (e && e.name === "NotAllowedError") v.remove(); });
+  if (frame.querySelector(".village-banner")) return;                    // 멱등
+  const box = el("div", { class: "village-banner", "aria-hidden": "true",
+    style: `left:${VILLAGE_BANNER.x}%;top:${VILLAGE_BANNER.y}%;width:${VILLAGE_BANNER.w}%` });
+  box.innerHTML = villageBannerSvg();
+  frame.append(box);
 }
 
 function renderVillage() {
