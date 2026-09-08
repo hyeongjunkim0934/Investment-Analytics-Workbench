@@ -3263,8 +3263,8 @@ safe("villageNotes", () => {
   return r;
 });
 
-/* ====== 두루마리 배너 (§7.19) — 그림 한 장 + 그 위에 얹는 살아 있는 제목 =====
-   셰이드는 innerHTML 을 파싱하지 않으므로 제목은 마크업 문자열로 잰다(villageFxMarkup 과 같은 방식). */
+/* ====== 두루마리 배너 (§7.19) — 두 층 그림 + 살아 있는 제목 + 바람 필터, 재렌더에 중복 없이 =====
+   셰이드는 innerHTML 을 파싱하지 않으므로 마크업 문자열로 잰다(villageFxMarkup 과 같은 방식). */
 safe("villageBanner", () => {
   const r = {};
   const frame = DOC.getElementById("village-frame");
@@ -3275,30 +3275,35 @@ safe("villageBanner", () => {
   const banners = () => frame.querySelectorAll(".village-banner");
   r.count = banners().length;
   const b = banners()[0];
-  const imgs = b ? b.querySelectorAll("img") : [];
-  r.imgCount = imgs.length;
-  r.imgSrcIsAsset = !!(imgs[0] && imgs[0].getAttribute("src") === P.VILLAGE_BANNER.src);
-  r.imgAltEmpty = !!(imgs[0] && imgs[0].getAttribute("alt") === "");
-  const cap = b && b.querySelector(".vb-cap");
-  const html = String((cap && cap.innerHTML) || "");
-  r.capIsSvg = /^\s*<svg\b/.test(html);
-  /* 제목은 이미지에 굽지 않고 <text>/<textPath> 로 얹는다 — 굽으면 이 검사가 빈다 */
-  r.titleIsLiveText = html.includes(">" + P.VILLAGE_BANNER.title + "<") && /<text\b/.test(html);
-  /* 면 중심선을 타는 경로가 있어야 한다(직선 baseline 으로 되돌리면 글씨가 면 위로 뜬다) */
+  const art = b && b.querySelector(".vb-sway .vb-art");
+  const html = String((art && art.innerHTML) || "");
+  const B = P.VILLAGE_BANNER;
+  r.artIsSvg = /^\s*<svg\b/.test(html) && (html.match(/<svg\b/g) || []).length === 1;
+  /* 두 층: 두루마리는 바람 그룹 안, 올빼미는 그 밖(가만히) */
+  const cloth = (html.match(/<g class="vb-cloth"[^>]*>([\s\S]*?)<\/g>\s*<image/) || [])[1] || "";
+  r.scrollLayerInCloth = cloth.includes(`<image href="${B.src.scroll}"`);
+  r.owlLayerOutsideCloth = html.includes(`<image href="${B.src.owl}"`) && !cloth.includes(B.src.owl);
+  r.twoImagesOnly = (html.match(/<image\b/g) || []).length === 2;
+  /* 제목은 이미지에 굽지 않고 <text>/<textPath> 로, 그것도 바람 그룹 **안**에 — 천과 같이 일렁여야 한다 */
+  r.titleIsLiveText = html.includes(">" + B.title + "<") && /<text\b/.test(html);
+  r.titleInCloth = cloth.includes(">" + B.title + "<");
   r.titleRidesPath = /<path id="vb-line"/.test(html) && /<textPath[^>]*href="#vb-line"/.test(html);
-  r.noMedia = !/<(video|iframe|object)\b/.test(html);
-  r.swayWraps = !!(b && b.querySelector(".vb-sway img") && b.querySelector(".vb-sway .vb-cap"));
+  /* 바람 = feTurbulence → feDisplacementMap, 주파수는 SMIL 로 숨쉰다 */
+  r.windFilter = /<g class="vb-cloth" filter="url\(#vb-wind\)"/.test(html)
+    && /<feTurbulence[^>]*>[\s\S]*<animate attributeName="baseFrequency"[^>]*repeatCount="indefinite"/.test(html)
+    && /<feDisplacementMap[^>]*in2="n"/.test(html);
+  r.noMedia = !/<(video|img|iframe|object)\b/.test(html);
+  r.noExternalRef = !/https?:\/\//.test(html);
   r.ariaHidden = !!(b && b.getAttribute("aria-hidden") === "true");
   r.positioned = !!(b && /left:5%/.test(b.getAttribute("style") || "") && /width:19%/.test(b.getAttribute("style") || ""));
   P.renderVillage();
   r.countAfterRerender = banners().length;
-  r.imgsAfterRerender = frame.querySelectorAll(".village-banner img").length;
-  /* 모션 축소 — JS 분기가 없어야 한다(정지 그림은 그 자체로 무모션, 흔들림은 CSS 가 세운다) */
+  /* 모션 축소 — JS 분기가 없어야 한다(바람·흔들림은 CSS 가 세운다) */
   frame.querySelectorAll(".village-banner").forEach((n) => n.remove());
   REDUCED = true;
   P.renderVillage();
   r.countUnderReducedMotion = banners().length;
-  r.sameCapUnderReducedMotion = String(banners()[0].querySelector(".vb-cap").innerHTML) === html;
+  r.sameMarkupUnderReducedMotion = String(banners()[0].querySelector(".vb-art").innerHTML) === html;
   REDUCED = prevReduced;
   frame.querySelectorAll(".village-banner").forEach((n) => n.remove());
   return r;

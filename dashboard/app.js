@@ -2289,20 +2289,27 @@ function paintVillageNotes(frame) {
   });
 }
 
-/* ══ 마을 배너 — 우편 올빼미 두루마리 (§7.19, 2026-09-07) ═══════════════════════════
+/* ══ 마을 배너 — 우편 올빼미 두루마리 (§7.19, 2026-09-07 → 09-08 바람) ═══════════════
    사용자 제공 수채 일러스트(올빼미가 편지를 물고 두루마리 위에 앉은 그림)를 흰 배경만
    키잉해 얹는다. 앞선 두 판은 버렸다 — 플러터 영상(e660b01)은 화풍이 너무 심각했고,
-   코드로 그린 리본(2b7d29c)은 "허접"했다. 그림은 자산 파일이고 **제목 글씨는 굽지
-   않는다** — 두루마리 면 위에 SVG 텍스트로 얹어 마을 라벨과 같은 글꼴(body 스택 상속)을
-   쓰고 확대·번역·글꼴 변경에도 살아 있다(assets/README.md 「이미지에 글자 굽지 말 것」).
+   코드로 그린 리본(2b7d29c)은 "허접"했다. **제목 글씨는 굽지 않는다** — 두루마리 면 위에
+   SVG 텍스트로 얹어 마을 라벨과 같은 글꼴(body 스택 상속)을 쓴다(assets/README.md
+   「이미지에 글자 굽지 말 것」).
+   **바람(2026-09-08 사용자 지시 "구름·사람처럼 살랑거리게")**: 영상이 아니라 SVG 변위
+   필터다 — feTurbulence 노이즈를 feDisplacementMap 으로 천에 먹여 일렁이게 하고, 노이즈
+   주파수를 SMIL 로 천천히 숨쉬게 해 물결이 흐른다. 제목도 같은 그룹 안이라 천과 함께
+   일렁인다(글씨가 가만히 있으면 천에 쓴 글씨가 아니다). 그림은 **두 층**이다 — 두루마리
+   층만 일렁이고 올빼미 층은 위에 가만히 앉는다(올빼미까지 일렁이면 싸구려 효과가 된다).
+   두 층은 키잉본을 「두루마리와 닿는 경계」로 가른 것이고 8px 겹침 띠를 올빼미 층에 두어
+   변위로 벌어지는 틈을 덮는다. SMIL 은 reduced-motion 을 스스로 존중하지 않으므로 CSS 가
+   `.vb-cloth{filter:none}` 으로 필터째 끄고 흔들림(`.vb-sway`)도 세운다 — JS 분기 없음.
    TEXT 의 좌표는 키잉본 캔버스(721×568) 기준 실측값이다 — 필기면은 올빼미 발치 오른쪽으로도
    이어지므로(x 0.115~0.855) 글씨가 왼쪽에 쏠려 보이면 폭이 아니라 경로가 짧은 것이고,
-   글씨가 면 위쪽으로 뜨면 경로가 직선인 것이다(면 중심선은 곡선 — 아래 text.d). 흔들림은 CSS(`.vb-sway`)이고 reduced-motion 이면 CSS 가 세운다
-   (JS 분기 없음 — 정지 이미지는 그 자체로 무모션이다). 위치·폭은 겹침을 피해 고른 값
-   (오른쪽 끝 24% < 여관 안내판 24.3%). */
+   글씨가 면 위쪽으로 뜨면 경로가 직선인 것이다(면 중심선은 곡선 — 아래 text.d).
+   위치·폭은 겹침을 피해 고른 값(오른쪽 끝 24% < 여관 안내판 24.3%). */
 const VILLAGE_BANNER = {
   x: 5, y: 2.5, w: 19, title: "Korea Post Village",
-  src: "assets/village-banner.webp",
+  src: { scroll: "assets/village-banner-scroll.webp", owl: "assets/village-banner-owl.webp" },
   vb: [721, 568],                                   // 키잉본 캔버스(= 이미지 종횡비)
   /* 제목은 **양피지 필기면의 세로 중심선**을 타는 경로에 얹는다. 직선(8°)으로 두면 면이
      오른쪽으로 더 처지는 만큼 글씨가 위로 떠서 「Village」가 면 위쪽에 걸린다(실측 32px).
@@ -2312,20 +2319,39 @@ const VILLAGE_BANNER = {
      (기울기 11.2°·처짐 5px — 거의 직선이다. 크게 휘면 잘못 잰 것이다).
      그림을 갈면 이 경로를 다시 재야 한다. */
   text: { d: "M 83 372 Q 350 436 616 478", len: 500, size: 52 },
+  /* 바람: 노이즈 기본 주파수(x y)와 그 숨쉬기 폭, 변위 크기(캔버스 단위 — 표시 폭 235px
+     에서 ±2.6px), 한 호흡 길이. 주파수를 키우면 잔물결, 변위를 키우면 펄럭임이 된다. */
+  wind: { freq: [0.008, 0.02], breathe: 1.35, scale: 16, period: 7 },
 };
 
 function villageBannerSvg() {
   const t = VILLAGE_BANNER.title;
   const [vw, vh] = VILLAGE_BANNER.vb;
   const x = VILLAGE_BANNER.text;
+  const wd = VILLAGE_BANNER.wind;
+  const f0 = `${wd.freq[0]} ${wd.freq[1]}`;
+  const f1 = `${+(wd.freq[0] * wd.breathe).toFixed(4)} ${+(wd.freq[1] * wd.breathe).toFixed(4)}`;
   const run = `<textPath href="#vb-line" startOffset="50%" textLength="${x.len}" `
     + `lengthAdjust="spacingAndGlyphs">${t}</textPath>`;
   const common = `text-anchor="middle" font-size="${x.size}" font-weight="800" letter-spacing=".5"`;
   return `<svg viewBox="0 0 ${vw} ${vh}" role="img" aria-label="${t}">
-  <defs><path id="vb-line" d="${x.d}"/></defs>
-  <g transform="translate(0,3)"><text ${common} fill="#7a5024" opacity=".28">${run}</text></g>
-  <text ${common} fill="#5b3a1f" stroke="#fdf6e6" stroke-width="3.2"
-        stroke-linejoin="round" paint-order="stroke">${run}</text>
+  <defs>
+    <path id="vb-line" d="${x.d}"/>
+    <filter id="vb-wind" x="-6%" y="-6%" width="112%" height="112%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="${f0}" numOctaves="2" seed="3" result="n">
+        <animate attributeName="baseFrequency" dur="${wd.period}s" repeatCount="indefinite"
+                 values="${f0};${f1};${f0}" calcMode="spline" keySplines=".45 0 .55 1;.45 0 .55 1"/>
+      </feTurbulence>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="${wd.scale}" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+  <g class="vb-cloth" filter="url(#vb-wind)">
+    <image href="${VILLAGE_BANNER.src.scroll}" width="${vw}" height="${vh}"/>
+    <g transform="translate(0,3)"><text ${common} fill="#7a5024" opacity=".28">${run}</text></g>
+    <text ${common} fill="#5b3a1f" stroke="#fdf6e6" stroke-width="3.2"
+          stroke-linejoin="round" paint-order="stroke">${run}</text>
+  </g>
+  <image href="${VILLAGE_BANNER.src.owl}" width="${vw}" height="${vh}"/>
 </svg>`;
 }
 
@@ -2335,10 +2361,9 @@ function mountVillageBanner(frame) {
   const box = el("div", { class: "village-banner", "aria-hidden": "true",
     style: `left:${VILLAGE_BANNER.x}%;top:${VILLAGE_BANNER.y}%;width:${VILLAGE_BANNER.w}%` });
   const sway = el("div", { class: "vb-sway" });
-  sway.append(el("img", { src: VILLAGE_BANNER.src, alt: "", draggable: "false" }));
-  const cap = el("div", { class: "vb-cap" });
-  cap.innerHTML = villageBannerSvg();                                    // 제목은 살아 있는 텍스트
-  sway.append(cap);
+  const art = el("div", { class: "vb-art" });
+  art.innerHTML = villageBannerSvg();                   // 두 층 그림 + 살아 있는 제목 + 바람 필터
+  sway.append(art);
   box.append(sway);
   frame.append(box);
 }

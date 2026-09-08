@@ -834,7 +834,7 @@ details.explain[open] > summary { color: var(--ink-2); }
 @keyframes vz-note-scroll { to { transform: translateY(-50%); } }
 .village-frame.vz-enter .vz-note { opacity: 0; transition: opacity .18s; }
 
-/* ---- 우편 올빼미 두루마리 배너 (§7.19) — 좌상단 하늘. 그림(webp) + 그 위에 얹는 제목 ----
+/* ---- 우편 올빼미 두루마리 배너 (§7.19) — 좌상단 하늘. 두 층 그림(webp) + 제목 + 바람 필터 ----
    클릭은 통과(pointer-events:none). 제목은 이미지에 굽지 않고 SVG 텍스트로 겹쳐 그리므로
    글꼴은 본문 스택을 상속한다(마을 라벨과 같은 글꼴). 흔들림은 매단 축(위 가운데) 기준
    ±1.4° — reduced-motion 이면 선다(아래 블록). 밤에는 살짝 어둡게. */
@@ -846,9 +846,10 @@ details.explain[open] > summary { color: var(--ink-2); }
   position: relative; display: block;
   transform-origin: 50% 8%; animation: vb-sway 5s ease-in-out infinite;
 }
-.village-banner img { display: block; width: 100%; height: auto; user-select: none; }
-.village-banner .vb-cap { position: absolute; inset: 0; }
-.village-banner .vb-cap svg { display: block; width: 100%; height: auto; }
+.village-banner .vb-art svg { display: block; width: 100%; height: auto; overflow: visible; }
+/* 바람 필터는 SVG 안 presentation attribute(filter="url(#vb-wind)")로 붙는다 — CSS 로 끌 수
+   있게 클래스 훅만 둔다(아래 reduced-motion 블록이 filter:none 으로 덮는다). */
+.village-banner .vb-cloth { will-change: filter; }
 .village-banner text { font-family: inherit; }   /* 마을 라벨과 같은 글꼴(body 스택) */
 @keyframes vb-sway { 0%, 100% { transform: rotate(-1.4deg); } 50% { transform: rotate(1.4deg); } }
 :root[data-scene="night"] .village-banner { filter: brightness(.86) drop-shadow(0 5px 10px rgba(0, 0, 0, .5)); }
@@ -929,8 +930,10 @@ details.explain[open] > summary { color: var(--ink-2); }
      여백을 상한으로(--vz-note-top = 건물 y%, app.js). 넘치면 꼬리가 잘린다(머리가 아니라). */
   .vz-note-above { max-height: calc(var(--vz-note-top, 50) * 1% - 48px); }
   .vz-note-below { max-height: calc((100 - var(--vz-note-top, 50)) * 1% - 40px); }
-  /* 두루마리 배너(§7.19): 흔들림을 세운다 */
+  /* 두루마리 배너(§7.19): 흔들림을 세우고 바람 필터를 끈다 — SMIL 은 reduced-motion 을
+     스스로 존중하지 않으므로 필터째 떼는 것이 유일한 방법이다(마을 효과 레이어와 같은 이유). */
   .village-banner .vb-sway { animation: none; }
+  .village-banner .vb-cloth { filter: none; }
 }
 
 /* ---- 건물 입장 연출 — 클릭한 건물로 빨려 들어가듯 확대 후 화면 전환 ---- */

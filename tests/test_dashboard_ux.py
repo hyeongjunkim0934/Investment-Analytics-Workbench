@@ -2763,21 +2763,22 @@ def test_village_notes_explain_missing_payloads(probe):
 
 
 def test_village_banner_mounts_once_with_live_title(probe):
-    """두루마리 배너(§7.19): 그림(webp) 한 장 + 그 위에 **살아 있는** 제목 텍스트.
-    제목을 이미지에 구우면 titleIsLiveText 가 빈다(assets/README.md 「글자 굽지 말 것」).
-    마을 재렌더(장면 순환)에 중복 마운트되지 않고, 위치는 VILLAGE_BANNER 상수대로,
-    reduced-motion 에도 같은 마크업(흔들림은 CSS 가 세운다 — JS 분기 없음)."""
+    """두루마리 배너(§7.19): 두 층 그림(webp) + **살아 있는** 제목 + 바람 필터.
+    두루마리 층과 제목은 바람 그룹 안에서 함께 일렁이고 올빼미 층은 밖에서 가만히 있다.
+    제목을 이미지에 구우면 titleIsLiveText 가, 직선 baseline 으로 되돌리면 titleRidesPath 가 빈다.
+    재렌더(장면 순환)에 중복 마운트되지 않고, reduced-motion 에도 같은 마크업(JS 분기 없음 —
+    바람·흔들림은 CSS 가 세운다)."""
     v = probe["villageBanner"]
     assert v["count"] == 1 and v["countAfterRerender"] == 1, "배너가 없거나 재렌더에 중복된다"
-    assert v["imgCount"] == 1 and v["imgsAfterRerender"] == 1, "그림이 없거나 재렌더에 중복된다"
-    assert v["imgSrcIsAsset"] is True, "배너 그림이 VILLAGE_BANNER.src 가 아니다"
-    assert v["imgAltEmpty"] is True, "장식 그림인데 alt 가 비어 있지 않다"
-    assert v["capIsSvg"] is True and v["titleIsLiveText"] is True, (
-        "제목이 살아 있는 SVG 텍스트가 아니다 — 이미지에 구웠는지 확인할 것")
+    assert v["artIsSvg"] is True, "배너가 SVG 한 장이 아니다"
+    assert v["twoImagesOnly"] is True and v["scrollLayerInCloth"] is True and v["owlLayerOutsideCloth"] is True, (
+        "두루마리 층은 바람 그룹 안, 올빼미 층은 밖이어야 한다(올빼미까지 일렁이면 안 된다)")
+    assert v["titleIsLiveText"] is True and v["titleInCloth"] is True, (
+        "제목이 살아 있는 SVG 텍스트로 바람 그룹 안에 있어야 한다 — 이미지에 구웠거나 밖에 있다")
     assert v["titleRidesPath"] is True, (
         "제목이 면 중심선 경로(vb-line)를 타지 않는다 — 직선 baseline 이면 글씨가 면 위로 뜬다")
-    assert v["noMedia"] is True, "배너에 video 가 들어갔다"
-    assert v["swayWraps"] is True, "그림과 제목이 같은 흔들림 래퍼(.vb-sway) 안에 있지 않다"
-    assert v["ariaHidden"] is True and v["positioned"] is True, "aria-hidden 또는 위치·폭이 상수와 다르다"
-    assert v["countUnderReducedMotion"] == 1 and v["sameCapUnderReducedMotion"] is True, (
+    assert v["windFilter"] is True, "바람 필터(feTurbulence→feDisplacementMap + SMIL 숨쉬기)가 없다"
+    assert v["noMedia"] is True and v["noExternalRef"] is True, "배너에 video/img 또는 외부 참조가 들어갔다"
+    assert v["ariaHidden"] is True and v["positioned"] is True, "aria-hidden 또는 VILLAGE_BANNER 위치·폭이 다르다"
+    assert v["countUnderReducedMotion"] == 1 and v["sameMarkupUnderReducedMotion"] is True, (
         "모션 축소에서 배너가 사라지거나 다른 마크업이 된다")
