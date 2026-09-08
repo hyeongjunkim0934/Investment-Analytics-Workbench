@@ -704,6 +704,8 @@ def test_village_banner_asset_and_live_title():
     assert '"assets/village-banner.webp"' in js, "app.js 가 배너 그림을 가리키지 않습니다"
     svg_fn = _fn("villageBannerSvg")
     assert "<text" in svg_fn and "${t}" in svg_fn, "제목이 살아 있는 SVG 텍스트가 아닙니다(이미지에 굽지 말 것)"
+    assert 'id="vb-line"' in svg_fn and "textPath" in svg_fn, (
+        "제목이 면 중심선 경로를 타지 않습니다 — 직선 baseline 은 오른쪽에서 면 위로 뜹니다")
     assert "font-family" not in svg_fn, "배너 제목이 글꼴을 따로 지정합니다 — 마을 라벨과 어긋납니다"
     mount = _fn("mountVillageBanner")
     assert "villageBannerSvg()" in mount and "VILLAGE_BANNER.src" in mount, (

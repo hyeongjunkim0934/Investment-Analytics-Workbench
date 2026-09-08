@@ -2774,6 +2774,8 @@ def test_village_banner_mounts_once_with_live_title(probe):
     assert v["imgAltEmpty"] is True, "장식 그림인데 alt 가 비어 있지 않다"
     assert v["capIsSvg"] is True and v["titleIsLiveText"] is True, (
         "제목이 살아 있는 SVG 텍스트가 아니다 — 이미지에 구웠는지 확인할 것")
+    assert v["titleRidesPath"] is True, (
+        "제목이 면 중심선 경로(vb-line)를 타지 않는다 — 직선 baseline 이면 글씨가 면 위로 뜬다")
     assert v["noMedia"] is True, "배너에 video 가 들어갔다"
     assert v["swayWraps"] is True, "그림과 제목이 같은 흔들림 래퍼(.vb-sway) 안에 있지 않다"
     assert v["ariaHidden"] is True and v["positioned"] is True, "aria-hidden 또는 위치·폭이 상수와 다르다"

@@ -3282,8 +3282,10 @@ safe("villageBanner", () => {
   const cap = b && b.querySelector(".vb-cap");
   const html = String((cap && cap.innerHTML) || "");
   r.capIsSvg = /^\s*<svg\b/.test(html);
-  /* 제목은 이미지에 굽지 않고 <text> 로 얹는다 — 굽으면 이 검사가 빈다 */
-  r.titleIsLiveText = new RegExp("<text[^>]*>" + P.VILLAGE_BANNER.title + "</text>").test(html);
+  /* 제목은 이미지에 굽지 않고 <text>/<textPath> 로 얹는다 — 굽으면 이 검사가 빈다 */
+  r.titleIsLiveText = html.includes(">" + P.VILLAGE_BANNER.title + "<") && /<text\b/.test(html);
+  /* 면 중심선을 타는 경로가 있어야 한다(직선 baseline 으로 되돌리면 글씨가 면 위로 뜬다) */
+  r.titleRidesPath = /<path id="vb-line"/.test(html) && /<textPath[^>]*href="#vb-line"/.test(html);
   r.noMedia = !/<(video|iframe|object)\b/.test(html);
   r.swayWraps = !!(b && b.querySelector(".vb-sway img") && b.querySelector(".vb-sway .vb-cap"));
   r.ariaHidden = !!(b && b.getAttribute("aria-hidden") === "true");
