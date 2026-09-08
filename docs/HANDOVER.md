@@ -19,7 +19,7 @@
 - **작업 방식**: 방향 논의 → 실데이터 시안 → 승인 → 구현 → 적대적 검증 → 배포
   (**이 순서를 건너뛰지 말 것.** 이유는 §2)
 - **작업 시작 전 3분**: `git fetch` 후 리베이스(다른 세션이 같은 브랜치에 머지한다) →
-  `python -m pytest`(411개 통과가 정상) → `CLAUDE.md` 로 코드 구조 확인.
+  `python -m pytest`(412개 통과가 정상) → `CLAUDE.md` 로 코드 구조 확인.
 
 ---
 
@@ -2375,7 +2375,7 @@ CSS 는 오타에 오류를 내지 않아 테스트도 프로브도 못 잡는�
 적는다 ④ 층(현재/잠재)·매핑은 관측 설정이라 즉시 저장(`rp_layer`/`rp_map`)
 ⑤ CMA 층 전용·hist_m 부재 시 보류 사유 명시(조용한 대체 금지).
 검증: 프로브 `allocRiskProc` 13측정(합계 100·σ*(λ) 단조·토글·보류 사유) +
-e2e `hist_m` 계약, 당시 총 439개였다(→ §7.17 이후 404개, §7.18 이후 409개, §7.19 이후 411개 통과).
+e2e `hist_m` 계약, 당시 총 439개였다(→ §7.17 이후 404개, §7.18 이후 409개, §7.19 이후 411개, 2026-09-08 안내판 머리 이후 412개 통과).
 
 ### 7.17 수익률 추정 화면 제거 (2026-09-07 사용자 지시)
 
@@ -2495,6 +2495,21 @@ feTurbulence(fractalNoise 0.008/0.02, 2옥타브) → feDisplacementMap(scale 16
 올빼미 층 0. reduced-motion 은 CSS 가 필터째 끄고 흔들림도 세운다(SMIL 은 스스로 서지 않음 —
 계약 테스트 추가). 프로브 `windFilter`·`scrollLayerInCloth`·`owlLayerOutsideCloth`·`titleInCloth`.
 
+**2026-09-08 (2) — 제목 깨짐 수리 + 안내판 머리.** 사용자: "글씨가 화질이 너무 안좋은건지
+깨져서 보인다" + "반투명 글자 상자에 제목이 있으면 좋겠어 — 어떤 내용들이 나오는건지".
+① 원인은 변위 필터였다 — 제목이 필터 그룹 안에 있어 글자가 픽셀 단위로 재샘플링됐다(전후
+크롭 비교로 확인: 획이 비틀리고 가장자리가 울퉁불퉁). 제목을 필터 밖으로 빼고 경로 d 를 SMIL
+로 흔들어(±6px·7초) 천과 함께 움직이게 했다. **CSS `d` 애니메이션을 먼저 시도했으나 Chromium
+에서 textPath 가 따라오지 않았다**(computed d 는 변하는데 `getStartPositionOfChar` 는 그대로)
+— SMIL 로 바꾸니 글리프 좌표가 움직인다. SMIL 은 reduced-motion 을 모르므로 마운트가 설정을
+읽어 `<animate>` 를 빼도록 했다(배너의 유일한 JS 분기, `data-motion` 으로 재마운트). 프로브
+`titleInCloth` → `titleOutsideCloth`·`pathWobbles`·`noSmilUnderReducedMotion`·
+`remountedOnMotionChange`. ② 안내판: `VILLAGE_NOTES[].title` 을 흐르지 않는 머리
+`.vz-note-head` 로 붙이고, 마스크·4.6줄 높이를 상자에서 흐르는 창 `.vz-note-scroll` 로
+옮겼다(상자에 두면 머리까지 흐려진다). 제목: 리스크 점수 · 시장 국면 / 이벤트 브리핑 /
+자산배분 — 참고치 vs 현재 / 환헤지 · 미헤지 환노출(명사구 — 동사 금지 규약 그대로). UX 테스트
++1(412).
+
 ## 8. 그 다음 — 모델 랩 (기능 4)
 
 - 모델을 **표준 인터페이스**로 정의: "입력 = t시점까지의 데이터 → 출력 = 특정 변수의 k개월 후 전망".
@@ -2512,7 +2527,7 @@ feTurbulence(fractalNoise 0.008/0.02, 2옥타브) → feDisplacementMap(scale 16
 
 ## 9. 알아두면 시간 아끼는 것들
 
-- **테스트가 있다** (다른 세션이 추가, 현재 411개 통과 / 약 6분). `python -m pytest` —
+- **테스트가 있다** (다른 세션이 추가, 현재 412개 통과 / 약 6분). `python -m pytest` —
   합성 픽스처(`tests/synth.py`)로 돌아서 **비공개 데이터 없이 실행된다.**
   코드를 고치면 이걸 먼저 돌릴 것. CI도 `test → build(+게이트) → deploy` 순서다.
 - **배포 게이트가 있다** (`pipeline/check_output.py`). `process.py` 는 risk/hedge 실패를

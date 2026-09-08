@@ -813,13 +813,22 @@ details.explain[open] > summary { color: var(--ink-2); }
    비율 좌표로 준다(paintVillageNotes). 티커 속도는 --vz-note-dur(글 길이 비례). */
 .vz-note {
   position: absolute; z-index: 15; pointer-events: none;
-  padding: 6px 10px; border-radius: 8px;
+  padding: 5px 10px 6px; border-radius: 8px;
   background: rgba(24, 18, 10, .58); border: 1px solid rgba(255, 246, 230, .18);
   color: #fbf7ef; font-size: 12px; font-weight: 600; line-height: 1.4;
-  /* 4.6줄 높이 — 글이 아래에서 위로 흐른다(2026-09-07 2차 지시 "4~5줄, 위로") */
-  height: calc(1.4em * 4.6 + 12px); overflow: hidden; white-space: normal;
+  overflow: hidden; white-space: normal;
   text-shadow: 0 1px 0 rgba(0, 0, 0, .7), 0 0 6px rgba(0, 0, 0, .6);
   backdrop-filter: blur(2px);
+}
+/* 머리 = 상자 내용의 제목(2026-09-08). 흐르지 않고 마스크 밖에 있다. */
+.vz-note-head {
+  font-size: 10.5px; font-weight: 800; letter-spacing: .03em; opacity: .9;
+  padding-bottom: 3px; margin-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 246, 230, .22);
+}
+/* 흐르는 창 — 4.6줄 높이(2026-09-07 2차 지시 "4~5줄, 위로"), 위아래는 마스크로 흐린다 */
+.vz-note-scroll {
+  height: calc(1.4em * 4.6); overflow: hidden;
   -webkit-mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent);
   mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent);
 }
@@ -924,7 +933,7 @@ details.explain[open] > summary { color: var(--ink-2); }
   html { scroll-behavior: auto; }
   /* 건물 안내판(§7.18): 티커를 세우고 글을 접어 정적으로 보인다. 복제본은 감춘다. */
   .vz-note-track { animation: none; }
-  .vz-note { height: auto; -webkit-mask-image: none; mask-image: none; }
+  .vz-note-scroll { height: auto; -webkit-mask-image: none; mask-image: none; }
   .vz-note-text + .vz-note-text { display: none; }
   /* 펼쳐진 상자가 지도 밖으로 나가지 않게 — 위 상자는 건물 위 여백, 아래 상자는 건물 아래
      여백을 상한으로(--vz-note-top = 건물 y%, app.js). 넘치면 꼬리가 잘린다(머리가 아니라). */

@@ -681,6 +681,9 @@ def test_village_notes_never_take_clicks_and_stop_under_reduced_motion():
     assert block, "마을 층 reduced-motion 블록을 찾지 못했습니다"
     assert re.search(r"\.vz-note-track\s*\{\s*animation:\s*none", block.group(1)), (
         "reduced-motion 에서 안내판 티커를 세우는 규칙이 없습니다")
+    assert re.search(r"\.vz-note-scroll\s*\{[^}]*mask-image:\s*none", block.group(1)), (
+        "reduced-motion 에서 흐르는 창의 마스크를 걷는 규칙이 없습니다(글이 잘려 보입니다)")
+    assert re.search(r"\.vz-note-head\s*\{", css), "안내판 머리(.vz-note-head) 스타일이 없습니다"
     assert "paintVillageNotes" in _fn("renderVillage"), "renderVillage 가 안내판을 그리지 않습니다"
     # 안내판 계산은 요약표와 같은 함수(allocRefModel)라야 한다 — 인라인 재계산 금지
     assert "allocRefModel(" in _fn("villageNoteAllocHedge"), "안내판이 allocRefModel 을 쓰지 않습니다"
@@ -712,11 +715,12 @@ def test_village_banner_asset_and_live_title():
     assert "font-family" not in svg_fn, "배너 제목이 글꼴을 따로 지정합니다 — 마을 라벨과 어긋납니다"
     assert "<feTurbulence" in svg_fn and "<feDisplacementMap" in svg_fn and 'attributeName="baseFrequency"' in svg_fn, (
         "바람 필터(feTurbulence→feDisplacementMap, SMIL 숨쉬기)가 없습니다")
+    assert 'attributeName="d"' in svg_fn, "글씨 경로 흔들림(SMIL d)이 없습니다 — CSS d 는 textPath 를 못 움직입니다"
     assert not re.search(r"https?://|\bsrc=", svg_fn), "배너 SVG 가 외부 자원을 가리킵니다"
     mount = _fn("mountVillageBanner")
-    assert "villageBannerSvg()" in mount, "mountVillageBanner 가 villageBannerSvg 를 쓰지 않습니다"
-    assert "prefers-reduced-motion" not in mount, (
-        "배너 마운트가 reduced-motion 으로 갈립니다 — 항상 붙고 바람·흔들림만 CSS 가 세웁니다")
+    assert "villageBannerSvg(motion)" in mount and "prefers-reduced-motion" in mount, (
+        "SMIL 은 reduced-motion 을 스스로 존중하지 않습니다 — 마운트가 설정을 읽어 <animate> 를 빼야 합니다")
+    assert "data-motion" in mount, "모션 설정이 바뀌면 다시 붙도록 data-motion 을 남겨야 합니다"
     assert "mountVillageBanner(" in _fn("renderVillage"), "renderVillage 가 배너를 마운트하지 않습니다"
     css = (ROOT / "dashboard" / "style.css").read_text(encoding="utf-8")
     m = re.search(r"\.village-banner\s*\{([^}]*)\}", css)

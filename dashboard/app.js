@@ -2234,11 +2234,13 @@ function villageNoteAllocHedge() {
 
 /* 어느 건물에 무엇을 붙이나. side: 상자를 건물 위(above)·아래(below) 어디에 두나 —
    종탑과 교역소가 세로로 가까워 교역소만 아래에 둔다(겹침 방지). */
+/* title = 상자 머리에 고정되는 제목(2026-09-08 사용자 "이게 어떤 내용들이 나오는건지") — 글은
+   그 아래 창에서 흐르고 제목은 흐르지 않는다. 명사구만(참고 표시 규약 — 동사 금지는 본문과 같다). */
 const VILLAGE_NOTES = [
-  { zone: "belltower", side: "above", build: () => villageNoteRisk() },
-  { zone: "inn", side: "above", dx: 7, build: () => villageNoteEvents() },   // 배너(좌상단 §7.19)와 겹침 방지
-  { zone: "granary", side: "above", build: (ah) => ah.alloc },
-  { zone: "trading", side: "below", build: (ah) => ah.hedge },
+  { zone: "belltower", side: "above", title: "리스크 점수 · 시장 국면", build: () => villageNoteRisk() },
+  { zone: "inn", side: "above", dx: 7, title: "이벤트 브리핑", build: () => villageNoteEvents() },   // 배너(좌상단 §7.19)와 겹침 방지
+  { zone: "granary", side: "above", title: "자산배분 — 참고치 vs 현재", build: (ah) => ah.alloc },
+  { zone: "trading", side: "below", title: "환헤지 · 미헤지 환노출", build: (ah) => ah.hedge },
 ];
 
 function villageNotesModel() {
@@ -2250,7 +2252,7 @@ function villageNotesModel() {
     let segs;
     try { segs = n.build(ah); }
     catch (e) { console.error(`village note (${n.zone}) failed`, e); segs = ["안내판 오류 — 콘솔 확인"]; }
-    return { zone: n.zone, side: n.side, lines: segs, text: segs.join(VILLAGE_NOTE_SEP) };
+    return { zone: n.zone, side: n.side, title: n.title, lines: segs, text: segs.join(VILLAGE_NOTE_SEP) };
   });
   return VILLAGE_NOTE_CACHE;
 }
@@ -2274,12 +2276,15 @@ function paintVillageNotes(frame) {
     const copy = (hidden) => el("div", hidden ? { class: "vz-note-text", "aria-hidden": "true" } : { class: "vz-note-text" },
       ...n.lines.map((ln) => el("div", { class: "vz-note-line" }, ln)));
     const track = el("div", { class: "vz-note-track" }, copy(false), copy(true));
+    /* 머리(제목)는 흐르지 않고, 글은 아래 창(.vz-note-scroll — 마스크·높이가 여기 붙는다)에서 흐른다 */
+    const head = el("div", { class: "vz-note-head" }, n.title);
+    const scroll = el("div", { class: "vz-note-scroll" }, track);
     const box = el("div", {
       class: `vz-note vz-note-${n.side}`, "data-zone": n.zone, role: "note",
-      "aria-label": `${z.name} 안내판: ${n.text}`,
+      "aria-label": `${z.name} 안내판 — ${n.title}: ${n.text}`,
       /* --vz-note-top: reduced-motion 에서 펼쳐진 상자가 지도 밖으로 나가지 않게 CSS 가 상한을 계산한다 */
       style: `left:${cx}%;top:${z.y}%;width:${VILLAGE_NOTE_W}%;--vz-note-top:${z.y}`,
-    }, track);
+    }, head, scroll);
     frame.append(box);
     /* 붙인 뒤에 재야 높이가 나온다. 복제본을 뺀 절반이 한 바퀴 거리다. */
     const half = (track.scrollHeight || 0) / 2;
@@ -2297,12 +2302,14 @@ function paintVillageNotes(frame) {
    「이미지에 글자 굽지 말 것」).
    **바람(2026-09-08 사용자 지시 "구름·사람처럼 살랑거리게")**: 영상이 아니라 SVG 변위
    필터다 — feTurbulence 노이즈를 feDisplacementMap 으로 천에 먹여 일렁이게 하고, 노이즈
-   주파수를 SMIL 로 천천히 숨쉬게 해 물결이 흐른다. 제목도 같은 그룹 안이라 천과 함께
-   일렁인다(글씨가 가만히 있으면 천에 쓴 글씨가 아니다). 그림은 **두 층**이다 — 두루마리
+   주파수를 SMIL 로 천천히 숨쉬게 해 물결이 흐른다. **제목은 필터 밖**이다 — 필터에
+   넣었더니 글자가 픽셀 단위로 재샘플링돼 깨져 보였다(2026-09-08 사용자 지적). 대신 글씨가
+   타는 경로 d 를 CSS 로 흔들어 천과 함께 움직이는 느낌을 내고 글자는 벡터로 선명하다. 그림은 **두 층**이다 — 두루마리
    층만 일렁이고 올빼미 층은 위에 가만히 앉는다(올빼미까지 일렁이면 싸구려 효과가 된다).
    두 층은 키잉본을 「두루마리와 닿는 경계」로 가른 것이고 8px 겹침 띠를 올빼미 층에 두어
-   변위로 벌어지는 틈을 덮는다. SMIL 은 reduced-motion 을 스스로 존중하지 않으므로 CSS 가
-   `.vb-cloth{filter:none}` 으로 필터째 끄고 흔들림(`.vb-sway`)도 세운다 — JS 분기 없음.
+   변위로 벌어지는 틈을 덮는다. SMIL 은 reduced-motion 을 스스로 존중하지 않으므로 모션
+   축소면 <animate> 를 넣지 않고(mountVillageBanner 의 유일한 분기 — 설정이 바뀌면 다시
+   붙인다), CSS 가 `.vb-cloth{filter:none}`·흔들림 정지로 한 번 더 막는다.
    TEXT 의 좌표는 키잉본 캔버스(721×568) 기준 실측값이다 — 필기면은 올빼미 발치 오른쪽으로도
    이어지므로(x 0.115~0.855) 글씨가 왼쪽에 쏠려 보이면 폭이 아니라 경로가 짧은 것이고,
    글씨가 면 위쪽으로 뜨면 경로가 직선인 것이다(면 중심선은 곡선 — 아래 text.d).
@@ -2321,48 +2328,67 @@ const VILLAGE_BANNER = {
   text: { d: "M 83 372 Q 350 436 616 478", len: 500, size: 52 },
   /* 바람: 노이즈 기본 주파수(x y)와 그 숨쉬기 폭, 변위 크기(캔버스 단위 — 표시 폭 235px
      에서 ±2.6px), 한 호흡 길이. 주파수를 키우면 잔물결, 변위를 키우면 펄럭임이 된다. */
-  wind: { freq: [0.008, 0.02], breathe: 1.35, scale: 16, period: 7 },
+  wind: { freq: [0.008, 0.02], breathe: 1.35, scale: 16, period: 7, wave: 6 },   // wave = 글씨 경로 흔들림(캔버스 px)
 };
 
-function villageBannerSvg() {
+function villageBannerSvg(animate = true) {
   const t = VILLAGE_BANNER.title;
   const [vw, vh] = VILLAGE_BANNER.vb;
   const x = VILLAGE_BANNER.text;
   const wd = VILLAGE_BANNER.wind;
   const f0 = `${wd.freq[0]} ${wd.freq[1]}`;
   const f1 = `${+(wd.freq[0] * wd.breathe).toFixed(4)} ${+(wd.freq[1] * wd.breathe).toFixed(4)}`;
+  /* 제목은 변위 필터 **밖**에 둔다 — 필터는 글자를 픽셀 단위로 재샘플링해 가장자리가 계단
+     지고(2026-09-08 사용자 "글씨가 깨져 보인다") 폰트 힌팅도 잃는다. 대신 글씨가 타는 경로
+     d 를 SMIL 로 살짝 흔들어(끝점 ±, 제어점 ∓ — 기울기와 휨이 번갈아 바뀐다) 천과 함께
+     움직이는 느낌을 내고, 글자는 벡터라 어느 순간에도 선명하다. CSS `d` 애니메이션은 쓰지
+     않는다 — Chromium 에서 textPath 가 CSS 로 바뀐 d 를 따라 다시 배치되지 않는다(실측:
+     computed d 는 변하는데 getStartPositionOfChar 는 그대로). 경로 변형은 text.d 에서
+     계산하므로 경로를 다시 재도 여기는 손댈 것이 없다. */
+  const n = x.d.match(/-?\d+(?:\.\d+)?/g).map(Number);          // M x0 y0 Q cx cy x1 y1
+  const dv = (a, b, c) => `M ${n[0]} ${n[1] + a} Q ${n[2]} ${n[3] + b} ${n[4]} ${n[5] + c}`;
+  const wv = wd.wave;
+  const d1 = dv(+wv * 0.6, -wv, +wv * 0.4), d2 = dv(-wv * 0.4, +wv, -wv * 0.6);
+  /* SMIL 은 prefers-reduced-motion 을 스스로 존중하지 않는다 → 모션 축소면 <animate> 를
+     아예 넣지 않는다(mountVillageBanner 가 판정). CSS 의 filter:none·animation:none 은
+     그 위의 이중 차단이다(마을 영상 레이어와 같은 규약). */
+  const smilD = animate ? `<animate attributeName="d" dur="${wd.period}s" repeatCount="indefinite"
+      values="${x.d};${d1};${d2};${x.d}" calcMode="spline"
+      keySplines=".45 0 .55 1;.45 0 .55 1;.45 0 .55 1"/>` : "";
+  const smilF = animate ? `<animate attributeName="baseFrequency" dur="${wd.period}s" repeatCount="indefinite"
+                 values="${f0};${f1};${f0}" calcMode="spline" keySplines=".45 0 .55 1;.45 0 .55 1"/>` : "";
   const run = `<textPath href="#vb-line" startOffset="50%" textLength="${x.len}" `
     + `lengthAdjust="spacingAndGlyphs">${t}</textPath>`;
   const common = `text-anchor="middle" font-size="${x.size}" font-weight="800" letter-spacing=".5"`;
   return `<svg viewBox="0 0 ${vw} ${vh}" role="img" aria-label="${t}">
   <defs>
-    <path id="vb-line" d="${x.d}"/>
+    <path id="vb-line" d="${x.d}">${smilD}</path>
     <filter id="vb-wind" x="-6%" y="-6%" width="112%" height="112%" color-interpolation-filters="sRGB">
-      <feTurbulence type="fractalNoise" baseFrequency="${f0}" numOctaves="2" seed="3" result="n">
-        <animate attributeName="baseFrequency" dur="${wd.period}s" repeatCount="indefinite"
-                 values="${f0};${f1};${f0}" calcMode="spline" keySplines=".45 0 .55 1;.45 0 .55 1"/>
-      </feTurbulence>
+      <feTurbulence type="fractalNoise" baseFrequency="${f0}" numOctaves="2" seed="3" result="n">${smilF}</feTurbulence>
       <feDisplacementMap in="SourceGraphic" in2="n" scale="${wd.scale}" xChannelSelector="R" yChannelSelector="G"/>
     </filter>
   </defs>
   <g class="vb-cloth" filter="url(#vb-wind)">
     <image href="${VILLAGE_BANNER.src.scroll}" width="${vw}" height="${vh}"/>
-    <g transform="translate(0,3)"><text ${common} fill="#7a5024" opacity=".28">${run}</text></g>
-    <text ${common} fill="#5b3a1f" stroke="#fdf6e6" stroke-width="3.2"
-          stroke-linejoin="round" paint-order="stroke">${run}</text>
   </g>
+  <g transform="translate(0,3)"><text ${common} fill="#7a5024" opacity=".28">${run}</text></g>
+  <text ${common} fill="#5b3a1f" stroke="#fdf6e6" stroke-width="3.2"
+        stroke-linejoin="round" paint-order="stroke">${run}</text>
   <image href="${VILLAGE_BANNER.src.owl}" width="${vw}" height="${vh}"/>
 </svg>`;
 }
 
 function mountVillageBanner(frame) {
   if (!frame) return;
-  if (frame.querySelector(".village-banner")) return;                    // 멱등
-  const box = el("div", { class: "village-banner", "aria-hidden": "true",
+  const motion = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const have = frame.querySelector(".village-banner");
+  if (have && have.getAttribute("data-motion") === String(motion)) return;   // 멱등
+  if (have) have.remove();                                                   // 모션 설정이 바뀌면 다시 붙인다
+  const box = el("div", { class: "village-banner", "aria-hidden": "true", "data-motion": String(motion),
     style: `left:${VILLAGE_BANNER.x}%;top:${VILLAGE_BANNER.y}%;width:${VILLAGE_BANNER.w}%` });
   const sway = el("div", { class: "vb-sway" });
   const art = el("div", { class: "vb-art" });
-  art.innerHTML = villageBannerSvg();                   // 두 층 그림 + 살아 있는 제목 + 바람 필터
+  art.innerHTML = villageBannerSvg(motion);             // 두 층 그림 + 살아 있는 제목 + 바람(모션 허용 때만 SMIL)
   sway.append(art);
   box.append(sway);
   frame.append(box);
@@ -7583,7 +7609,10 @@ function bindTheme() {
 
   /* 탭이 백그라운드로 가면 영상 디코드·타이머를 멈추고, 돌아오면 다시 건다. */
   document.addEventListener("visibilitychange", restartSceneCycle);
-  matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", restartSceneCycle);
+  matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", () => {
+    restartSceneCycle();
+    renderVillage();                       // 배너의 SMIL 유무가 이 설정을 따른다(mountVillageBanner)
+  });
   syncThemeButton();
 }
 

@@ -159,9 +159,12 @@ x≈24% 라 여관 안내판(x 24.3%~)과 닿지 않는다(실브라우저 실�
 | `village-banner-owl.webp` | 올빼미 층 — 필터 밖에서 가만히 앉는다. 두루마리와 닿는 경계 아래 8px 겹침 띠를 품어 변위로 벌어지는 틈을 덮는다 | 25,122B |
 
 - **바람은 영상이 아니다.** `app.js` `villageBannerSvg()` 의 SVG 필터 `#vb-wind`(feTurbulence →
-  feDisplacementMap, 주파수 SMIL 숨쉬기)가 두루마리 층 + 제목을 일렁이게 한다. 손잡이는
-  `VILLAGE_BANNER.wind`(freq·breathe·scale·period). 영상으로 만들면 제목을 굽거나 제목만 가만히
-  있게 되므로 하지 않는다. SMIL 은 reduced-motion 을 스스로 존중하지 않아 CSS 가 필터째 끈다.
+  feDisplacementMap, 주파수 SMIL 숨쉬기)가 **두루마리 층만** 일렁이게 한다. 제목은 필터 밖이다 —
+  필터에 넣으면 글자가 픽셀 단위로 재샘플링돼 깨져 보인다(2026-09-08 사용자 지적, 실측 전후 비교).
+  제목은 경로 d 를 SMIL 로 흔들어(`wind.wave`) 천과 함께 움직인다. 손잡이는
+  `VILLAGE_BANNER.wind`(freq·breathe·scale·period·wave). 영상으로 만들면 제목을 굽거나 제목만
+  가만히 있게 되므로 하지 않는다. SMIL 은 reduced-motion 을 스스로 존중하지 않아 마운트가 설정을
+  읽어 `<animate>` 를 빼고, CSS 가 필터째 한 번 더 끈다.
 - **두 층 나누기**(그림을 갈면 다시): 열마다 「가장 아래 불투명 구간의 상단」이 올빼미/두루마리
   경계(seam)다 — 붙어 있는 열은 이웃에서 보간하고 31열 평활. 올빼미 층 = seam+8 위, 두루마리 층 =
   seam−2 아래(왼쪽 x<0.53 은 두루마리뿐). 겹침 0.6%.

@@ -2763,22 +2763,33 @@ def test_village_notes_explain_missing_payloads(probe):
 
 
 def test_village_banner_mounts_once_with_live_title(probe):
-    """두루마리 배너(§7.19): 두 층 그림(webp) + **살아 있는** 제목 + 바람 필터.
-    두루마리 층과 제목은 바람 그룹 안에서 함께 일렁이고 올빼미 층은 밖에서 가만히 있다.
-    제목을 이미지에 구우면 titleIsLiveText 가, 직선 baseline 으로 되돌리면 titleRidesPath 가 빈다.
-    재렌더(장면 순환)에 중복 마운트되지 않고, reduced-motion 에도 같은 마크업(JS 분기 없음 —
-    바람·흔들림은 CSS 가 세운다)."""
+    """두루마리 배너(§7.19): 두 층 그림(webp) + 바람 필터 + **필터 밖의** 살아 있는 제목.
+    두루마리 층만 바람 그룹 안에서 일렁이고 올빼미 층·제목은 밖이다(필터는 글자를 깨뜨린다 —
+    제목은 경로 d 를 SMIL 로 흔들어 함께 움직인다). 제목을 이미지에 구우면 titleIsLiveText 가,
+    직선 baseline 으로 되돌리면 titleRidesPath 가 빈다. 재렌더(장면 순환)에 중복 마운트되지
+    않고, reduced-motion 이면 <animate> 없이 다시 붙는다(SMIL 은 스스로 서지 않는다)."""
     v = probe["villageBanner"]
-    assert v["count"] == 1 and v["countAfterRerender"] == 1, "배너가 없거나 재렌더에 중복된다"
+    assert v["count"] == 1 and v["countAfterRerender"] == 1 and v["sameNodeAfterRerender"] is True, (
+        "배너가 없거나 재렌더에 중복·재생성된다")
     assert v["artIsSvg"] is True, "배너가 SVG 한 장이 아니다"
     assert v["twoImagesOnly"] is True and v["scrollLayerInCloth"] is True and v["owlLayerOutsideCloth"] is True, (
         "두루마리 층은 바람 그룹 안, 올빼미 층은 밖이어야 한다(올빼미까지 일렁이면 안 된다)")
-    assert v["titleIsLiveText"] is True and v["titleInCloth"] is True, (
-        "제목이 살아 있는 SVG 텍스트로 바람 그룹 안에 있어야 한다 — 이미지에 구웠거나 밖에 있다")
-    assert v["titleRidesPath"] is True, (
-        "제목이 면 중심선 경로(vb-line)를 타지 않는다 — 직선 baseline 이면 글씨가 면 위로 뜬다")
+    assert v["titleIsLiveText"] is True and v["titleOutsideCloth"] is True, (
+        "제목은 살아 있는 SVG 텍스트로 바람 필터 **밖**에 있어야 한다 — 필터 안이면 글자가 깨진다")
+    assert v["titleRidesPath"] is True and v["pathWobbles"] is True, (
+        "제목이 면 중심선 경로(vb-line)를 타고 그 경로가 SMIL 로 흔들려야 한다")
     assert v["windFilter"] is True, "바람 필터(feTurbulence→feDisplacementMap + SMIL 숨쉬기)가 없다"
     assert v["noMedia"] is True and v["noExternalRef"] is True, "배너에 video/img 또는 외부 참조가 들어갔다"
     assert v["ariaHidden"] is True and v["positioned"] is True, "aria-hidden 또는 VILLAGE_BANNER 위치·폭이 다르다"
-    assert v["countUnderReducedMotion"] == 1 and v["sameMarkupUnderReducedMotion"] is True, (
-        "모션 축소에서 배너가 사라지거나 다른 마크업이 된다")
+    assert v["countUnderReducedMotion"] == 1 and v["remountedOnMotionChange"] is True, (
+        "모션 설정이 바뀌면 배너가 한 개로 다시 붙어야 한다")
+    assert v["noSmilUnderReducedMotion"] is True and v["stillWholeUnderReducedMotion"] is True, (
+        "모션 축소에서는 <animate> 없이(정지) 그림 두 층과 제목이 그대로 붙어야 한다")
+
+
+def test_village_notes_have_fixed_titles(probe):
+    """안내판 머리(2026-09-08 사용자 "이게 어떤 내용들이 나오는건지"): 상자마다 VILLAGE_NOTES 의
+    title 이 흐르지 않는 머리에 붙고, 글은 그 아래 창에서 흐른다. 제목은 명사구·서로 다르다."""
+    v = probe["villageNotes"]
+    assert v["headsMatchConfig"] is True, "안내판 머리가 없거나 VILLAGE_NOTES.title 과 다르거나 흐르는 창 안에 있다"
+    assert v["headsAreNounPhrases"] is True and v["headsDistinct"] is True, "안내판 제목은 동사 없는 명사구, 서로 달라야 한다"

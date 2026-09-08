@@ -49,7 +49,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 pip install -r pipeline/requirements.txt
 pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 
-# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 411개.
+# 테스트 (합성 픽스처 — ../Data 없이 돈다, 약 4분). 현재 412개.
 #   대시보드 동작 검사만 따로:  python -m pytest tests/test_dashboard_ux.py   (약 2.5분)
 #   하네스 단독 실행(디버깅용): node tests/dashboard_probe.js                 (약 2.5분)
 #   ↑ 하네스가 시간을 다 쓴다(실측) — 최적화를 실제로 여러 번 돌리는 프로브
@@ -469,20 +469,30 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   위로, 조금 천천히"). 속도는 렌더된 트랙 높이 ÷ `VILLAGE_NOTE_PX_PER_S`(11px/s — 한 줄
   1.5초쯤)로 붙인 뒤에 재고, 레이아웃이 없는 셰이드는 글 길이로 근사한다. 위·아래는
   마스크로 흐려 잘린 줄이 튀지 않는다. 폭 28%, `VILLAGE_NOTES[].dx` 로 건물별 가로 밀기
-  (여관 +7 — 배너와 겹침 방지).
+  (여관 +7 — 배너와 겹침 방지). **상자 머리에 제목이 고정된다**(2026-09-08 사용자 "이게 어떤
+  내용들이 나오는건지") — `VILLAGE_NOTES[].title`(명사구만, 프로브 `headsAreNounPhrases`)이
+  `.vz-note-head` 에 붙고 흐르지 않는다. 마스크·4.6줄 높이는 상자가 아니라 그 아래 창
+  `.vz-note-scroll` 에 붙는다(상자에 붙이면 머리까지 흐려진다). reduced-motion 블록도 창 기준.
 - **두루마리 배너 = `mountVillageBanner`·`villageBannerSvg`·`VILLAGE_BANNER`(§7.19, 2026-09-07).**
   사용자 제공 수채 일러스트(편지 문 올빼미 + 두루마리)를 흰 배경만 키잉한 **두 층**
   `assets/village-banner-scroll.webp`·`-owl.webp` 를 지도 좌상단 하늘 x 5%·y 2.5%·폭 19% 에
   얹는다(오른쪽 끝 24% < 여관 안내판 24.3% — 실측). **바람은 영상이 아니라 SVG 변위 필터다**
   (2026-09-08 사용자 지시 "구름·사람처럼 살랑거리게"): `villageBannerSvg()` 의 `#vb-wind` =
   feTurbulence → feDisplacementMap, 노이즈 주파수를 SMIL 로 숨쉬게 해 물결이 흐른다
-  (`VILLAGE_BANNER.wind` — freq·breathe·scale·period 넷이 손잡이). 두루마리 층과 **제목**이
-  같은 `.vb-cloth` 그룹 안에서 함께 일렁이고 올빼미 층은 그룹 밖에서 가만히 있다(올빼미까지
-  일렁이면 싸구려 효과 — 프로브 `owlLayerOutsideCloth` 가 고정). 층은 키잉본을 「두루마리와
-  닿는 경계」로 가른 것이고 올빼미 층에 8px 겹침 띠를 두어 변위로 벌어지는 틈을 덮는다.
-  **SMIL 은 reduced-motion 을 스스로 존중하지 않는다** — CSS 가 `.vb-cloth{filter:none}` 으로
-  필터째 끄고 흔들림도 세운다(계약 테스트 있음). 실측(사용자 설정 기본값): 천 영역 프레임 간
-  평균차 11/255·화소 17% 이동, 올빼미 층 0.
+  (`VILLAGE_BANNER.wind` — freq·breathe·scale·period·wave 다섯이 손잡이). 필터 그룹
+  `.vb-cloth` 안에는 **두루마리 층만** 있다 — 올빼미 층은 밖에서 가만히(올빼미까지 일렁이면
+  싸구려 효과 — 프로브 `owlLayerOutsideCloth`), **제목도 밖**이다(필터는 글자를 픽셀 단위로
+  재샘플링해 깨뜨린다 — 2026-09-08 사용자 "글씨가 깨져 보인다", 프로브 `titleOutsideCloth`).
+  제목은 대신 **경로 d 를 SMIL 로 흔들어** 천과 함께 움직인다(`wave` 캔버스 px — 프로브
+  `pathWobbles`). **CSS `d` 애니메이션은 쓰지 말 것** — Chromium 에서 textPath 가 CSS 로 바뀐
+  d 를 따라 다시 배치되지 않는다(실측: computed d 는 변하는데 글리프 좌표는 그대로). 층은
+  키잉본을 「두루마리와 닿는 경계」로 가른 것이고 올빼미 층에 8px 겹침 띠를 두어 변위로
+  벌어지는 틈을 덮는다. **SMIL 은 reduced-motion 을 스스로 존중하지 않는다** — 그래서
+  `mountVillageBanner` 가 설정을 읽어 모션 축소면 `<animate>` 를 아예 넣지 않고(배너의
+  유일한 JS 분기 — `data-motion` 을 남겨 설정이 바뀌면 다시 붙인다, 이벤트 리스너는
+  장면 순환의 reduced-motion `change` 에 함께 걸었다), CSS 가 `.vb-cloth{filter:none}`·
+  흔들림 정지로 한 번 더 막는다(계약 테스트 있음). 실측(기본값): 천 영역 프레임 간 평균차
+  11/255·화소 17% 이동, 올빼미 층 0.
   **제목은 그림에 굽지 않는다** — `villageBannerSvg()` 가 두루마리 면 위에 SVG 텍스트로 얹고,
   글꼴을 지정하지 않아 마을 라벨과 같은 body 스택을 상속한다. **직선 baseline 을 쓰지 말 것** —
   면이 오른쪽으로 더 처져 글씨가 위로 뜬다(실측 32px). `VILLAGE_BANNER.text.d` 는 밝은
@@ -491,7 +501,7 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
   함께 다시 재야 한다(종횡비가 다르면 제목이 두루마리를 벗어난다). 올빼미 크기는 그림에
   구워져 있다 — 키잉본에서 두루마리와 닿는 지점을 앵커로 축소해 다시 인코딩한다(2026-09-08
   0.9배). 흔들림은 CSS(`.vb-sway` — 그림과 제목을
-  한 래퍼로 묶어 같이 움직인다)이고 reduced-motion 이면 CSS 가 세운다 — **JS 분기 없음**. 클릭 통과. 셰이드는 innerHTML 을 파싱하지 않으므로 프로브
+  한 래퍼로 묶어 같이 움직인다)이고 reduced-motion 이면 CSS 가 세운다. 클릭 통과. 셰이드는 innerHTML 을 파싱하지 않으므로 프로브
   `villageBanner` 는 마크업 문자열로 「제목이 살아 있는 텍스트인지」를 본다. 폐기된 두 판
   (영상 e660b01 · 코드 리본 2b7d29c)과 키잉 레시피는 `dashboard/assets/README.md`.
 - **정의되지 않은 CSS 이름은 조용히 무효가 된다 — 회귀 테스트가 있다.**

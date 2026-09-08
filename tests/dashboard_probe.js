@@ -3224,6 +3224,15 @@ safe("villageNotes", () => {
   r.noVerbs = !/(늘리|줄이|매수|매도|확대|축소|Increase|Reduce|▲|▼)/.test(all);
   r.notesNotClickable = [...frame.querySelectorAll(".vz-note")]
     .every((n) => n.tagName !== "BUTTON" && !n.querySelector("a, button"));
+  /* 머리(제목, 2026-09-08): 상자마다 VILLAGE_NOTES 의 title 이 흐르지 않는 .vz-note-head 에, 글은 .vz-note-scroll 안에 */
+  const cfgTitle = Object.fromEntries(P.VILLAGE_NOTES.map((n) => [n.zone, n.title]));
+  r.headsMatchConfig = [...frame.querySelectorAll(".vz-note")].every((n) => {
+    const h = n.querySelector(".vz-note-head");
+    return h && h.textContent === cfgTitle[n.getAttribute("data-zone")] && !!cfgTitle[n.getAttribute("data-zone")]
+      && !n.querySelector(".vz-note-scroll .vz-note-head") && !!n.querySelector(".vz-note-scroll .vz-note-track");
+  });
+  r.headsAreNounPhrases = P.VILLAGE_NOTES.every((n) => !/(늘리|줄이|매수|매도|확대|축소|하세요|하라)/.test(n.title));
+  r.headsDistinct = new Set(P.VILLAGE_NOTES.map((n) => n.title)).size === P.VILLAGE_NOTES.length;
   r.hotspotsStillThere = frame.querySelectorAll(".vz").length === P.VILLAGE_ZONES.length;
   /* 같은 계산 — 자산배분 화면의 요약표 「참고치 − 현재」 행과 곳간·교역소 안내판이 같은 수 */
   P.renderSection("alloc");
@@ -3263,7 +3272,7 @@ safe("villageNotes", () => {
   return r;
 });
 
-/* ====== 두루마리 배너 (§7.19) — 두 층 그림 + 살아 있는 제목 + 바람 필터, 재렌더에 중복 없이 =====
+/* ====== 두루마리 배너 (§7.19) — 두 층 그림 + 필터 밖의 살아 있는 제목 + 바람, 재렌더에 중복 없이 =====
    셰이드는 innerHTML 을 파싱하지 않으므로 마크업 문자열로 잰다(villageFxMarkup 과 같은 방식). */
 safe("villageBanner", () => {
   const r = {};
@@ -3271,26 +3280,29 @@ safe("villageBanner", () => {
   frame.clientWidth = 800;
   const prevReduced = REDUCED;
   REDUCED = false;
+  frame.querySelectorAll(".village-banner").forEach((n) => n.remove());
   P.renderVillage();
   const banners = () => frame.querySelectorAll(".village-banner");
+  const markup = () => String((banners()[0] && banners()[0].querySelector(".vb-sway .vb-art") || {}).innerHTML || "");
   r.count = banners().length;
   const b = banners()[0];
-  const art = b && b.querySelector(".vb-sway .vb-art");
-  const html = String((art && art.innerHTML) || "");
+  const html = markup();
   const B = P.VILLAGE_BANNER;
   r.artIsSvg = /^\s*<svg\b/.test(html) && (html.match(/<svg\b/g) || []).length === 1;
   /* 두 층: 두루마리는 바람 그룹 안, 올빼미는 그 밖(가만히) */
-  const cloth = (html.match(/<g class="vb-cloth"[^>]*>([\s\S]*?)<\/g>\s*<image/) || [])[1] || "";
+  const cloth = (html.match(/<g class="vb-cloth"[^>]*>([\s\S]*?)<\/g>/) || [])[1] || "";
   r.scrollLayerInCloth = cloth.includes(`<image href="${B.src.scroll}"`);
   r.owlLayerOutsideCloth = html.includes(`<image href="${B.src.owl}"`) && !cloth.includes(B.src.owl);
   r.twoImagesOnly = (html.match(/<image\b/g) || []).length === 2;
-  /* 제목은 이미지에 굽지 않고 <text>/<textPath> 로, 그것도 바람 그룹 **안**에 — 천과 같이 일렁여야 한다 */
+  /* 제목은 이미지에 굽지 않고 <text>/<textPath> 로, 그리고 필터 **밖**에(필터는 글자를 깨뜨린다) */
   r.titleIsLiveText = html.includes(">" + B.title + "<") && /<text\b/.test(html);
-  r.titleInCloth = cloth.includes(">" + B.title + "<");
+  r.titleOutsideCloth = !cloth.includes("<text") && !cloth.includes(B.title);
   r.titleRidesPath = /<path id="vb-line"/.test(html) && /<textPath[^>]*href="#vb-line"/.test(html);
+  /* 글씨 경로가 SMIL 로 흔들린다(천과 함께 움직이는 느낌) — CSS d 는 textPath 를 못 움직인다 */
+  r.pathWobbles = /<path id="vb-line"[^>]*>\s*<animate attributeName="d"[^>]*repeatCount="indefinite"/.test(html);
   /* 바람 = feTurbulence → feDisplacementMap, 주파수는 SMIL 로 숨쉰다 */
   r.windFilter = /<g class="vb-cloth" filter="url\(#vb-wind\)"/.test(html)
-    && /<feTurbulence[^>]*>[\s\S]*<animate attributeName="baseFrequency"[^>]*repeatCount="indefinite"/.test(html)
+    && /<feTurbulence[^>]*>\s*<animate attributeName="baseFrequency"[^>]*repeatCount="indefinite"/.test(html)
     && /<feDisplacementMap[^>]*in2="n"/.test(html);
   r.noMedia = !/<(video|img|iframe|object)\b/.test(html);
   r.noExternalRef = !/https?:\/\//.test(html);
@@ -3298,12 +3310,16 @@ safe("villageBanner", () => {
   r.positioned = !!(b && /left:5%/.test(b.getAttribute("style") || "") && /width:19%/.test(b.getAttribute("style") || ""));
   P.renderVillage();
   r.countAfterRerender = banners().length;
-  /* 모션 축소 — JS 분기가 없어야 한다(바람·흔들림은 CSS 가 세운다) */
-  frame.querySelectorAll(".village-banner").forEach((n) => n.remove());
+  r.sameNodeAfterRerender = banners()[0] === b;                 // 설정이 같으면 다시 붙이지 않는다
+  /* 모션 축소 — SMIL 은 스스로 서지 않으므로 <animate> 를 아예 넣지 않는다. 설정이 바뀌면 다시 붙는다 */
   REDUCED = true;
   P.renderVillage();
   r.countUnderReducedMotion = banners().length;
-  r.sameMarkupUnderReducedMotion = String(banners()[0].querySelector(".vb-art").innerHTML) === html;
+  r.remountedOnMotionChange = banners()[0] !== b && banners()[0].getAttribute("data-motion") === "false";
+  const reducedHtml = markup();
+  r.noSmilUnderReducedMotion = !/<animate\b/.test(reducedHtml);
+  r.stillWholeUnderReducedMotion = reducedHtml.includes(">" + B.title + "<") && (reducedHtml.match(/<image\b/g) || []).length === 2
+    && /filter="url\(#vb-wind\)"/.test(reducedHtml);           // 필터는 남고(CSS 가 끈다) 정지 상태로 붙는다
   REDUCED = prevReduced;
   frame.querySelectorAll(".village-banner").forEach((n) => n.remove());
   return r;
