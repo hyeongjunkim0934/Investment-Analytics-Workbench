@@ -5162,6 +5162,60 @@ function allocLambdaForSigma(E, sigTarget, opts) {
   return { lam, sig: sigAt(lam), bounded: null };
 }
 
+/* ---- 손실 한도 → 내재 λ — 심리계정(Das·Markowitz·Scheid·Statman 2010) (2026-09-08) --------
+   "λ 를 몇으로?" 는 비직관적이라 대신 **최대 허용 손실률 H** 와 **그 한도를 깨뜨릴 허용
+   확률 α** 를 받는다(1년 지평). 정규 근사에서 최적해 w(λ) 의 α-분위 수익률은
+       q(λ) = μ(λ) + Φ⁻¹(α)·σ(λ)      (Φ⁻¹(α) < 0)
+   이고, 한도 준수는 q(λ) ≥ H 다. 프론티어를 λ 로 훑으면 σ(λ)·μ(λ) 가 함께 줄고 μ(σ) 가
+   오목하므로 q(λ) 는 **단봉**(안전우선 접점에서 최대)이다 — 그래서 해는 0·1·2개다:
+   · q_max < H → 어떤 배분으로도 불가(달성 가능 최대 H 를 적는다 — 조용한 대체 금지)
+   · 아니면 두 교점: 공격적 쪽(λ 작음·μ 큼)과 보수적 쪽. 심리계정 프레임은 한도 아래서
+     기대수익을 최대로 하므로 **공격적 교점이 내재 λ** 다(보수적 교점도 함께 적는다).
+   · 탐색 끝값에서도 한도가 지켜지면 "느슨"(bounded) — 끝값을 정답이라 적지 않는다.
+   봉우리는 로그 격자 + 황금분할, 교점은 봉우리 양쪽에서 로그 이분법(σ 역산과 같은
+   방식 — 격자·초기값 임의성 없음). μ·Σ 는 시뮬레이터의 현재 설정(층·키인·헤지)이다.
+   정규 근사는 화면이 밝힌다(부트스트랩 분위로의 확장은 §7.20 후속). */
+function allocLossQuantileAt(E, lam, z, IT) {
+  const { mu, C } = E.V;
+  const w = E.optimizeUtilAt(mu, C, lam, 1, IT);
+  const m = mu.reduce((a, mi, i) => a + mi * w[i], 0), sg = E.sigmaW(w, C);
+  return { lam, mu: m, sig: sg, q: m + z * sg };
+}
+function allocLambdaForLoss(E, H, alphaPct, opts) {
+  const o = opts || {};
+  const LO = o.lo || 0.02, HI = o.hi || 500, IT = o.iters || 400, STEPS = o.steps || 12, N = o.grid || 28;
+  if (!isFinite(H) || !isFinite(alphaPct) || alphaPct <= 0 || alphaPct >= 50) return null;
+  const z = normInv(alphaPct / 100);
+  const at = (lam) => allocLossQuantileAt(E, lam, z, IT);
+  /* ① 봉우리 — 로그 격자로 대략 잡고 황금분할로 조인다 */
+  const grid = o.frontier || Array.from({ length: N }, (_, i) => at(LO * Math.pow(HI / LO, i / (N - 1))));
+  let k = 0;
+  grid.forEach((g, i) => { if (g.q > grid[k].q) k = i; });
+  let a = Math.log(grid[Math.max(0, k - 1)].lam), b = Math.log(grid[Math.min(N - 1, k + 1)].lam);
+  const G = (Math.sqrt(5) - 1) / 2;
+  let x1 = b - G * (b - a), x2 = a + G * (b - a), f1 = at(Math.exp(x1)).q, f2 = at(Math.exp(x2)).q;
+  for (let i = 0; i < 14; i++) {
+    if (f1 < f2) { a = x1; x1 = x2; f1 = f2; x2 = a + G * (b - a); f2 = at(Math.exp(x2)).q; }
+    else { b = x2; x2 = x1; f2 = f1; x1 = b - G * (b - a); f1 = at(Math.exp(x1)).q; }
+  }
+  const peak = at(Math.exp((a + b) / 2));
+  const out = { H, alpha: alphaPct, z, peak, grid, feasible: peak.q >= H - 1e-9, agg: null, con: null };
+  if (!out.feasible) return out;
+  /* ② 교점 — 봉우리 왼쪽(λ↑ 이면 q↑)과 오른쪽(λ↑ 이면 q↓)에서 각각 이분법 */
+  const bis = (lo, hi, rising) => {
+    for (let i = 0; i < STEPS; i++) {
+      const mid = Math.sqrt(lo * hi);
+      const qm = at(mid).q;
+      if (rising ? qm < H : qm >= H) lo = mid; else hi = mid;
+    }
+    return at(Math.sqrt(lo * hi));
+  };
+  const qLo = at(LO), qHi = at(HI);
+  out.agg = qLo.q >= H ? { ...qLo, bounded: "low" } : { ...bis(LO, peak.lam, true), bounded: null };
+  out.con = qHi.q >= H ? { ...qHi, bounded: "high" } : { ...bis(peak.lam, HI, false), bounded: null };
+  return out;
+}
+
 /* ---- 배분+헤지 동시 최적(§7.7.13) — 교대(블록 좌표) 최적화 ------------------
    시뮬레이터의 ① 최적 트랙: "최적 배분"과 "그에 맞는 최적 헤지"를 한 쌍으로 낸다
    (2026-08-12 사용자 지시 — 배분 2트랙과 매칭되는 헤지 2트랙).
@@ -5340,6 +5394,9 @@ function allocDefaults(A) {
     /* 시변·창 민감도 카드 — λ-효용 MVO. λ=1 소수 단위(2026-08-11 사용자 지정,
        2026-08-12 부터 시뮬레이터에서 선택). tv_len 은 롤링 길이(년) — null = 게시된 것 중 최장. */
     mvo_lambda: 1, tv_mode: "roll", tv_len: null,
+    /* 손실 한도 → 내재 λ(2026-09-08) — H(연 %, 손실이면 음수)·α(%). null = 미입력(역산 안 함).
+       **기본값을 두지 않는다** — 손실 한도는 기관의 결정이지 코드가 정할 수가 아니다. */
+    loss_h: null, loss_a: null,
     /* 통합 프로세스 카드(§7.16) — 관측 설정이라 즉시 저장(src·cma_win 과 같은 규약) */
     rp_layer: "stress", rp_map: "log",
     /* 시뮬레이터(§7.7.8) — 자산군별 위험 키인(연 %, 대체투자 두 분류 제외 5키).
@@ -5378,6 +5435,9 @@ function allocState(A) {
   });
   if (st.src !== "proxy" && st.src !== "cma") st.src = "cma";
   if (!isFinite(+st.mvo_lambda) || +st.mvo_lambda <= 0) st.mvo_lambda = 1;
+  if (st.loss_h == null || !isFinite(+st.loss_h)) st.loss_h = null; else st.loss_h = +st.loss_h;
+  if (st.loss_a == null || !isFinite(+st.loss_a) || +st.loss_a <= 0 || +st.loss_a >= 50) st.loss_a = null;
+  else st.loss_a = +st.loss_a;
   if (st.tv_mode !== "win" && st.tv_mode !== "roll") st.tv_mode = "roll";
   if (st.rp_layer !== "stress" && st.rp_layer !== "vuln") st.rp_layer = "stress";
   if (st.rp_map !== "log" && st.rp_map !== "lin") st.rp_map = "log";
@@ -6119,7 +6179,86 @@ function renderAlloc() {
       el("b", { style: "font-size:12.5px" }, "위험회피계수 λ"), lamIn, lamFit, lamNote,
       explainBox("alloc-lambda",
         "max(기대수익 − λ/2×분산) · λ↑ = 보수적 (λ→∞ 최소위험 · λ→0 수익 최대) · 소수 단위 · " +
-        "표준값 없음 — 「현재 위험과 같은 λ 찾기」로 역산해 출발.")));
+        "표준값 없음 — 「현재 위험과 같은 λ 찾기」또는 아래 손실 한도로 역산해 출발.")));
+
+    /* ---- 손실 한도 → 내재 λ (2026-09-08 — 심리계정 역산) ----
+       두 번째 관측 앵커: "1년에 H% 넘는 손실은 α% 확률 이내" 라는 결정에서 λ 를 역산한다.
+       H·α 는 모형 입력이라 즉시 저장(λ 와 같은 규약)하되 **기본값이 없다** — 비어 있으면
+       역산하지 않고 그 사실만 적는다. 결과는 헤드라인이라 접지 않는다(§7.13). */
+    const lossH = el("input", { type: "number", step: "0.5", id: "alloc-loss-h", style: "width:84px",
+      placeholder: "예: -10", "aria-label": "최대 허용 손실률 H (연 %)",
+      value: st.loss_h == null ? "" : String(st.loss_h) });
+    const lossA = el("input", { type: "number", step: "0.5", min: "0.1", max: "49", id: "alloc-loss-a", style: "width:72px",
+      placeholder: "예: 3", "aria-label": "한도 하회 허용 확률 α (%)",
+      value: st.loss_a == null ? "" : String(st.loss_a) });
+    const lossNote = el("div", { id: "alloc-loss-note", style: "font-size:12px;color:var(--ink-2);margin-top:4px" });
+    const lossMatrix = el("div", { id: "alloc-loss-matrix" });
+    const lossIdle = () => { lossNote.textContent = st.loss_h == null || st.loss_a == null
+      ? "H·α 를 입력하면 내재 λ 를 역산합니다(기본값 없음 — 한도는 기관의 결정)." : ""; lossMatrix.textContent = ""; };
+    const readLoss = () => {
+      const h = +lossH.value, a = +lossA.value;
+      st.loss_h = lossH.value !== "" && isFinite(h) ? h : null;
+      st.loss_a = lossA.value !== "" && isFinite(a) && a > 0 && a < 50 ? a : null;
+      allocSaveState(st);
+      lossIdle();
+    };
+    lossH.addEventListener("change", readLoss);
+    lossA.addEventListener("change", readLoss);
+    const fmtPt = (x) => `${fmtNum(x.mu, 2)}% · 위험 ${fmtNum(x.sig, 2)}% · α-분위 ${fmtNum(x.q, 2)}%`;
+    const lossFit = el("button", { type: "button", class: "btn-ghost", onclick: () => {
+      readLoss();
+      if (st.loss_h == null || st.loss_a == null) { lossIdle(); return; }
+      const Ef = allocEngine(A, st);
+      const r = allocLambdaForLoss(Ef, st.loss_h, st.loss_a);
+      lossNote.textContent = ""; lossMatrix.textContent = "";
+      if (!r) { lossNote.textContent = "H·α 를 읽을 수 없습니다(α 는 0~50% 사이)."; return; }
+      const cap = `H ${fmtNum(st.loss_h, 1)}% · α ${fmtNum(st.loss_a, 1)}%`;
+      if (!r.feasible) {
+        lossNote.append(el("b", { class: "d-up" }, `⚠ (${cap}) 는 현재 μ·Σ 로는 어떤 배분으로도 달성 불가`),
+          ` — 가장 좋은 α-분위 손실은 ${fmtNum(r.peak.q, 2)}% (λ≈${fmtNum(r.peak.lam, 2)} · 기대수익 ${fmtPt(r.peak).split(" · α")[0]}). ` +
+          "H 를 낮추거나 α 를 높이거나 μ·σ 키인을 보세요.");
+      } else {
+        const g = r.agg, c = r.con;
+        lossNote.append(el("b", {}, `내재 λ ≈ ${fmtNum(g.lam, 2)}`),
+          g.bounded === "low"
+            ? ` — 한도가 느슨합니다: λ→0(수익 최대) 최적도 (${cap}) 를 지킵니다(α-분위 ${fmtNum(g.q, 2)}%). 탐색 하한을 적었습니다.`
+            : ` — (${cap}) 를 딱 지키는 가장 공격적 배분 · 심리계정 선택 (기대수익 ${fmtPt(g)})`,
+          el("br"),
+          `보수적 교점 λ ≈ ${fmtNum(c.lam, 2)}` + (c.bounded === "high" ? "(탐색 상한 — 최소위험도 한도 안)" : "") +
+          ` (기대수익 ${fmtPt(c)}) · 달성 가능 최대 H ${fmtNum(r.peak.q, 2)}% (λ≈${fmtNum(r.peak.lam, 2)})`,
+          el("br"),
+          el("span", { style: "color:var(--ink-3)" }, "정규 근사 · 1년 지평 · μ·Σ = 현재 시뮬레이터 설정(층·키인·헤지) · 한도 아래서 기대수익 최대 = 공격적 교점"));
+        const apply = el("button", { type: "button", class: "btn-ghost", id: "alloc-loss-apply", style: "margin-left:8px", onclick: () => {
+          st.mvo_lambda = +g.lam.toFixed(2);
+          allocSaveState(st);
+          renderAlloc();
+        } }, "λ 에 적용");
+        lossNote.append(" ", apply);
+      }
+      /* 역산 행렬표 — 같은 프론티어 격자를 재사용해 H×α 축을 훑는다(검증 출력). 축은 고정 눈금이다. */
+      const HS = [-5, -10, -15, -20], AS = [1, 2.5, 5, 10];
+      const tbl = el("table", { class: "loss-matrix" });
+      tbl.append(el("tr", {}, el("th", {}, "H ＼ α"), ...AS.map((a2) => el("th", {}, `${a2}%`))));
+      HS.forEach((h2) => {
+        tbl.append(el("tr", {}, el("th", {}, `${h2}%`), ...AS.map((a2) => {
+          const rr = allocLambdaForLoss(Ef, h2, a2, { frontier: r.grid, steps: 9, iters: 300 });
+          const txt = !rr || !rr.feasible ? "불가" : rr.agg.bounded === "low" ? "느슨" : fmtNum(rr.agg.lam, 2);
+          const me = st.loss_h === h2 && st.loss_a === a2;
+          return el("td", { class: me ? "is-me" : "" }, txt);
+        })));
+      });
+      lossMatrix.append(el("div", { class: "card-sub", style: "margin-top:6px" }, "역산 행렬표 — 내재 λ(공격적 교점, 거친 이분법이라 ≈) · 불가 = 어떤 배분으로도 한도 미달 · 느슨 = 수익 최대 배분도 한도 안"), tbl);
+    } }, "손실 한도에 맞는 λ 찾기");
+    simBox.append(el("div", { class: "tenor-row", style: "margin:2px 0 8px;flex-wrap:wrap" },
+      el("b", { style: "font-size:12.5px" }, "손실 한도 → λ"),
+      el("span", { style: "font-size:12px" }, "1년 최대 허용 손실 H"), lossH, el("span", { style: "font-size:12px" }, "% · 하회 허용확률 α"), lossA,
+      el("span", { style: "font-size:12px" }, "%"), lossFit,
+      explainBox("alloc-loss",
+        "Das·Markowitz·Scheid·Statman(2010) 심리계정: P(1년 수익 < H) ≤ α ⟺ μ(λ) + Φ⁻¹(α)·σ(λ) ≥ H. " +
+        "프론티어를 λ 로 훑으면 이 α-분위가 단봉이라 해는 0·1·2개 — 불가 / 느슨 / 두 교점. " +
+        "내재 λ = 한도를 지키는 공격적 교점(한도 아래서 기대수익 최대). 정규 근사(부트스트랩 분위 확장은 후속).")));
+    simBox.append(lossNote, lossMatrix);          // 행(flex) 밖의 블록 — 행 안에 두면 줄바꿈이 가려진다
+    lossIdle();
 
     const simSum = el("span", { class: "sim-sum" });
     const refreshSimSum = () => {

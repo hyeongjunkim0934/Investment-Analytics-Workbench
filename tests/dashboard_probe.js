@@ -192,7 +192,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "renderVillage", "allocSaveState", "villageNotesInvalidate", "allocRefModel", "VILLAGE_NOTES", "VILLAGE_ZONES", "VILLAGE_BANNER",
   "currentScene", "currentTheme", "syncThemeButton",
   "RENDERERS", "renderAll", "renderSection", "renderACWI",
-  "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON",
+  "allocEngine", "allocHBands", "allocXeRange", "allocDefaults", "ALLOC_ECON", "allocLambdaForLoss", "allocLossQuantileAt", "normInv",
   "allocAssetDuration", "allocDurGap", "bindGate", "sha256Hex", "GATE_SHA256",
   "allocCcySum", "ALLOC_CCY", "allocState", "amOptimizeUtil",
   "allocRedistribute", "allocIsAlt", "allocLambdaForSigma", "allocJointOpt", "allocCcyHedgeRows",
@@ -3322,6 +3322,79 @@ safe("villageBanner", () => {
     && /filter="url\(#vb-wind\)"/.test(reducedHtml);           // 필터는 남고(CSS 가 끈다) 정지 상태로 붙는다
   REDUCED = prevReduced;
   frame.querySelectorAll(".village-banner").forEach((n) => n.remove());
+  return r;
+});
+
+/* ====== 손실 한도 → 내재 λ (2026-09-08 — 심리계정 역산) ======
+   손계산 상수 없이 자기무결성으로 잰다: q(λ) 단봉 → 두 교점 → 임의 λ 로 만든 한도를 되돌려
+   넣으면 그 λ 가 돌아온다. 불가·느슨은 끝값을 정답이라 적지 않고 알린다. */
+safe("lossLambda", () => {
+  const r = {};
+  shim.localStorage.removeItem("iaw-alloc");
+  const A = CMA_ALLOC;
+  const st = P.allocDefaults(A);
+  const E = P.allocEngine(A, st);
+  const IT = 300;
+  const z = P.normInv(0.05);
+  r.zNegative = z < 0;
+  /* ① 단봉 — 로그 격자에서 q(λ) 의 증감 부호가 한 번만 바뀐다(수치 잡음 허용 0.005) */
+  const lams = Array.from({ length: 18 }, (_, i) => 0.02 * Math.pow(500 / 0.02, i / 17));
+  const qs = lams.map((l) => P.allocLossQuantileAt(E, l, z, IT).q);
+  let flips = 0, prev = 0;
+  for (let i = 1; i < qs.length; i++) {
+    const d = qs[i] - qs[i - 1];
+    if (Math.abs(d) < 0.005) continue;
+    const sgn = d > 0 ? 1 : -1;
+    if (prev && sgn !== prev) flips++;
+    prev = sgn;
+  }
+  r.quantileSinglePeaked = flips <= 1;
+  r.quantileVaries = Math.max(...qs) - Math.min(...qs) > 0.05;
+  /* ② 왕복 — λ=4 의 최적 α-분위를 H 로 주면 공격/보수 교점 중 λ=4 가 있는 쪽이 4 로 돌아온다 */
+  const lamTrue = 4;
+  const truth = P.allocLossQuantileAt(E, lamTrue, z, IT);
+  const fit = P.allocLambdaForLoss(E, truth.q, 5, { iters: IT });
+  r.fitFeasible = !!fit && fit.feasible === true;
+  const side = fit && fit.feasible ? (lamTrue < fit.peak.lam ? fit.agg : fit.con) : null;
+  r.fitRoundTrips = !!side && !side.bounded && Math.abs(side.lam - lamTrue) / lamTrue < 0.3;
+  r.fitReproducesQuantile = !!side && Math.abs(side.q - truth.q) < 0.05;
+  r.aggIsMoreAggressive = !!fit && fit.feasible && fit.agg.lam <= fit.con.lam + 1e-9 && fit.agg.mu >= fit.con.mu - 1e-6;
+  r.bothMeetLimit = !!fit && fit.feasible && fit.agg.q >= truth.q - 0.05 && fit.con.q >= truth.q - 0.05;
+  /* ③ 불가 — 봉우리보다 높은 H 는 어떤 배분으로도 못 지킨다 → feasible:false + 달성 가능 최대 H */
+  const imp = P.allocLambdaForLoss(E, fit.peak.q + 1, 5, { iters: IT, frontier: fit.grid });
+  r.infeasibleReported = !!imp && imp.feasible === false && Math.abs(imp.peak.q - fit.peak.q) < 0.1;
+  /* ④ 느슨 — 아주 낮은 H 는 수익 최대 배분도 지킨다 → 공격적 교점 bounded:"low" */
+  const slack = P.allocLambdaForLoss(E, -90, 5, { iters: IT, frontier: fit.grid });
+  r.slackReported = !!slack && slack.feasible && slack.agg.bounded === "low";
+  /* ⑤ 입력 위생 */
+  r.rejectsBadAlpha = P.allocLambdaForLoss(E, -10, 0, { iters: IT }) === null && P.allocLambdaForLoss(E, -10, 60, { iters: IT }) === null;
+  /* ⑥ 화면 — H·α 칸(기본 비어 있음·즉시 저장), 찾기 → 내재 λ 문장, 적용 → λ 칸·저장 */
+  P.DATA.alloc = A;
+  shim.localStorage.removeItem("iaw-alloc");
+  P.renderSection("alloc");
+  const hIn = DOC.getElementById("alloc-loss-h"), aIn = DOC.getElementById("alloc-loss-a");
+  const note = () => DOC.getElementById("alloc-loss-note").textContent;
+  r.inputsExist = !!hIn && !!aIn;
+  r.noDefaultLimit = !!hIn && hIn.value === "" && aIn.value === "" && /입력하면/.test(note());
+  const findBtn = [...DOC.querySelectorAll("#alloc-sim-panel button")].find((b) => /손실 한도에 맞는 λ 찾기/.test(b.textContent));
+  r.findButtonExists = !!findBtn;
+  hIn.value = String(+truth.q.toFixed(2)); hIn.dispatchEvent({ type: "change" });
+  aIn.value = "5"; aIn.dispatchEvent({ type: "change" });
+  const saved1 = JSON.parse(shim.localStorage.getItem("iaw-alloc") || "{}");
+  r.limitSavedImmediately = Math.abs(+saved1.loss_h - +truth.q.toFixed(2)) < 1e-9 && +saved1.loss_a === 5;
+  findBtn.click();
+  const m = note().match(/내재 λ ≈ ([\d.]+)/);
+  r.noteShowsImpliedLambda = !!m;
+  r.noteStatesNormalApprox = /정규 근사/.test(note());
+  r.matrixRendered = DOC.querySelectorAll("#alloc-loss-matrix table tr").length === 5;
+  const applyBtn = DOC.getElementById("alloc-loss-apply");
+  r.applyButtonExists = !!applyBtn;
+  if (applyBtn) applyBtn.click();
+  const saved2 = JSON.parse(shim.localStorage.getItem("iaw-alloc") || "{}");
+  const lamIn = DOC.getElementById("alloc-lambda");
+  r.applySetsLambda = !!m && Math.abs(+saved2.mvo_lambda - +m[1]) < 0.011 && Math.abs(+lamIn.value - +m[1]) < 0.011;
+  r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
+  shim.localStorage.removeItem("iaw-alloc");
   return r;
 });
 

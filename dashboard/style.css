@@ -807,6 +807,12 @@ details.explain[open] > summary { color: var(--ink-2); }
 }
 .vz-menu a:hover { background: var(--page); }
 
+/* ---- 손실 한도 → 내재 λ 역산 행렬표 (2026-09-08) — 작은 격자, 현재 (H,α) 칸 강조 ---- */
+.loss-matrix { border-collapse: collapse; font-size: 11.5px; margin-top: 4px; width: auto; }
+.loss-matrix > tr > th, .loss-matrix > tr > td { padding: 2px 8px; text-align: right; border: 1px solid var(--border); }
+.loss-matrix > tr > th { color: var(--ink-2); font-weight: 600; }
+.loss-matrix > tr > td.is-me { background: rgba(42, 120, 214, .16); font-weight: 700; }
+
 /* ---- 건물 안내판 — 반투명 상자 안에서 글이 흐르는 티커 (§7.18) ----
    클릭은 전부 핫스팟 몫(pointer-events:none). 상자 배경은 낮·밤 지도 모두에서 읽히는
    어두운 반투명이고 글자는 .vz-label 과 같은 할로 규약을 쓴다. 폭·위치는 app.js 가

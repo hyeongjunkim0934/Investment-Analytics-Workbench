@@ -1979,6 +1979,36 @@ def test_lambda_reverse_optimization_reproduces_risk(probe):
     assert c["fitButtonReproducesCurrentRisk"] is True, "버튼이 저장한 λ 가 현재 위험을 재현하지 못한다"
 
 
+def test_loss_limit_implied_lambda_solver(probe):
+    """손실 한도 → 내재 λ(2026-09-08 — Das·Markowitz 심리계정 역산). 손계산 상수 없이
+    자기무결성으로 잰다: 최적해의 α-분위 q(λ) 는 λ 를 따라 **단봉**이고(안전우선 접점),
+    임의 λ 로 만든 한도를 되돌려 넣으면 같은 쪽 교점이 그 λ 로 돌아온다. 공격적 교점이
+    보수적 교점보다 λ 가 작고 기대수익이 크며(심리계정 선택), 둘 다 한도를 지킨다.
+    불가(봉우리 위 H)와 느슨(수익 최대 배분도 한도 안)은 끝값을 정답이라 적지 않고 알린다."""
+    c = probe["lossLambda"]
+    assert c["zNegative"] is True
+    assert c["quantileSinglePeaked"] is True and c["quantileVaries"] is True, "q(λ) 가 단봉이 아니다 — 두 교점 역산의 전제 붕괴"
+    assert c["fitFeasible"] is True and c["fitRoundTrips"] is True, "왕복 역산이 원래 λ 로 돌아오지 않는다"
+    assert c["fitReproducesQuantile"] is True, "역산 λ 가 한도(α-분위)를 재현하지 못한다"
+    assert c["aggIsMoreAggressive"] is True and c["bothMeetLimit"] is True
+    assert c["infeasibleReported"] is True, "달성 불가를 feasible:false + 최대 H 로 알리지 않는다"
+    assert c["slackReported"] is True, "느슨한 한도를 bounded:low 로 알리지 않는다"
+    assert c["rejectsBadAlpha"] is True
+
+
+def test_loss_limit_inputs_have_no_default_and_apply_to_lambda(probe):
+    """손실 한도 칸은 **기본값이 없다**(한도는 기관의 결정 — 코드가 정하지 않는다). H·α 는
+    모형 입력이라 즉시 저장되고, 「찾기」가 내재 λ 와 정규 근사임을 적으며, 4×4 역산 행렬표를
+    내고, 「λ 에 적용」이 λ 칸과 저장값을 그 값으로 바꾼다."""
+    c = probe["lossLambda"]
+    assert c["inputsExist"] is True and c["noDefaultLimit"] is True, "H·α 칸이 없거나 기본값이 들어 있다"
+    assert c["findButtonExists"] is True and c["limitSavedImmediately"] is True
+    assert c["noteShowsImpliedLambda"] is True and c["noteStatesNormalApprox"] is True
+    assert c["matrixRendered"] is True, "역산 행렬표(4×4)가 없다"
+    assert c["applyButtonExists"] is True and c["applySetsLambda"] is True, "「λ 에 적용」이 λ 를 바꾸지 않는다"
+    assert c["renderErrors"] == 0
+
+
 def test_hedge_ust_merit_monitor(probe):
     """미국채 투자 메리트 모니터(§7.7.14) — 헤지비용이 수익률에서 차감되는 관계의
     상시 감시. 항등식(헤지 후 = UST + 스왑, 스프레드 = 헤지 후 − 국고)이 픽스처
