@@ -27,6 +27,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `pipeline/common.py` | 공용 산식 한 벌 — `epoch_seconds`/`pack_values`/`spearman`/`auc`. 위 넷과 연구 하네스가 전부 여기서 가져온다 |
 | `pipeline/check_output.py` | **배포 게이트**. 산출물이 JSON 계약을 지키는지 보고 아니면 exit 1. 표준 라이브러리만 씀 |
 | `pipeline/research/wf_validation.py` | 가중치 방식 비교용 수동 연구 하네스. **CI에서 실행되지 않음**. 요인 정의는 `risk.factor_specs` 에서 import |
+| `pipeline/research/risk_validation.py` | 리스크 점수 정합성 백테스트 — 미래 실현변동성·낙폭·교차상관·국면 t-검정(순환순열 p)·위기 매핑 + 동적 λ vs 정적 60/40·MVO 경제 백테스트. CI 미실행, 결과는 docstring·HANDOVER §5.1(2026-09-08). `risk_lambda_alloc.py` 의 엔진 복제·로그 매핑을 import 한다 |
 | `pipeline/research/alloc_prototype.py` `modellab_prototype.py` | 같은 성격의 수동 시안 하네스 둘(자산배분 실데이터 검토 · 모델 랩 백테스트). CI 미실행 — 셋 다 실데이터로 완주하는지는 수동으로만 확인한다(2026-08-17 실행 확인, 각 exit 0) |
 | `pipeline/requirements.txt` | 파이프라인이 직접 import 하는 3개를 `==` 로 고정 |
 | `tests/` | pytest 스위트 + 합성 엑셀 픽스처 생성기(`synth.py`). **비공개 데이터 불필요** |
