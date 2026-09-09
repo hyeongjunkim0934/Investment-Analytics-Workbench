@@ -133,7 +133,7 @@ def test_risk_and_hedge_actually_ran(built):
 
 
 def test_valuation_and_revision_factors_active_with_forward_eps(built):
-    """12M 선행 EPS 가 있으면 잠재 위험의 밸류에이션·이익 리비전이 산다(§7.21, 2026-09-09).
+    """12M 선행 EPS 가 있으면 잠재 위험의 밸류에이션·이익 리비전이 산다(§7.22, 2026-09-09).
 
     픽스처는 KOSPI 가격지수를 정정 라벨(`_PR`)로, S&P 500 은 겹친 라벨의 분리 키
     (`(PX_LAST)`)로만 가진다 — 두 후보 경로가 모두 note 의 출처 문장에 드러나야 한다.
