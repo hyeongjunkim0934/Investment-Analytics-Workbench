@@ -21,7 +21,7 @@ def test_workspace_scope_and_metadata(workspace):
     for key in ("noRenderErrors", "defaultPort", "portContext", "institutionContext",
                 "onlyInstitutionVisible", "pressedState", "tocVisibleTargets", "hashUntouched"):
         assert workspace[key], key
-    assert workspace["portToc"] == ["alloc-port-panel"]
+    assert workspace["portToc"] == []
     assert workspace["institutionToc"] == ["alloc-sim-panel", "alloc-summary", "alloc-controls",
                                             "alloc-cards", "alloc-risk-proc"]
 
