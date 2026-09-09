@@ -3395,6 +3395,43 @@ function makeRatioChart(box, opts) {
       ctx.restore();
     }] };
   }
+  if (opts.area || opts.reference) {
+    cfg.hooks = cfg.hooks || {};
+    (cfg.hooks.drawClear = cfg.hooks.drawClear || []).push((u) => {
+      const { ctx, bbox } = u, dpr = devicePixelRatio || 1;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(bbox.left, bbox.top, bbox.width, bbox.height); ctx.clip();
+      const point = (x, y) => [u.valToPos(x, "x", true), u.valToPos(y, "y", true)];
+      if (opts.area && opts.area.x.length > 1) {
+        const a = opts.area;
+        const grad = ctx.createLinearGradient(0, bbox.top, 0, bbox.top + bbox.height);
+        grad.addColorStop(0, hexA(pal.series[0], 0.10));
+        grad.addColorStop(0.45, hexA(pal.series[0], 0.26));
+        grad.addColorStop(1, hexA(pal.series[6], 0.48));
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        a.x.forEach((x, i) => { const p = point(x, a.upper[i]);
+          if (i) ctx.lineTo(...p); else ctx.moveTo(...p); });
+        for (let i = a.x.length - 1; i >= 0; i--) ctx.lineTo(...point(a.x[i], a.lower[i]));
+        ctx.closePath(); ctx.fill();
+      }
+      if (opts.reference?.length) {
+        ctx.strokeStyle = pal.ink3; ctx.lineWidth = 1.3 * dpr;
+        ctx.setLineDash([5 * dpr, 5 * dpr]); ctx.beginPath();
+        opts.reference.forEach((p, i) => {
+          const xy = point(p.sig, p.mu);
+          if (i) ctx.lineTo(...xy); else ctx.moveTo(...xy);
+        });
+        ctx.stroke();
+      }
+      ctx.restore();
+    });
+  }
+  if (opts.axisTitles) {
+    cfg.axes[0].label = xLabel;
+    cfg.axes[1].label = opts.axisTitles.y;
+    cfg.axes[0].labelFont = cfg.axes[1].labelFont = AXIS_FONT;
+  }
   /* 점 마커 — 효율적 투자선 위의 「기준 × · 조정 ▲ · 참고치 ●」 처럼, 선이 아니라
      **한 점**인 상태를 라벨과 함께 그린다. 시리즈로 넣지 않는 이유: uPlot 은 x 배열이
      공유라 선 밖 임의 좌표를 못 받는다 — draw 훅에서 좌표 변환으로 직접 찍는다. */
@@ -5821,7 +5858,7 @@ function portDefaults(P) {
   const d = P.defaults || {};
   const grp = { ...(d.group_default || { 주식: 50, 채권: 30, 대체: 20 }) };
   const liq = d.liq_default != null ? +d.liq_default : 10;
-  return { grp, liq, mix: portMixFromGroups(P, grp, liq), mu: {}, win: null };
+  return { grp, liq, mix: portMixFromGroups(P, grp, liq), mu: {}, win: null, robust_k: 1 };
 }
 
 function portState(P) {
@@ -5835,18 +5872,128 @@ function portState(P) {
   if (!st.mix || typeof st.mix !== "object") st.mix = { ...d.mix };
   P.assets.forEach((a) => { if (!isFinite(+st.mix[a])) st.mix[a] = d.mix[a] || 0; });
   if (!st.mu || typeof st.mu !== "object") st.mu = {};
+  st.robust_k = portRobustK(st.robust_k);
   return st;
 }
 
 function portSaveState(st) {
   try {
     localStorage.setItem(PORT_LS_KEY, JSON.stringify({
-      grp: st.grp, liq: st.liq, mix: st.mix, mu: st.mu, win: st.win, saved: true }));
+      grp: st.grp, liq: st.liq, mix: st.mix, mu: st.mu, win: st.win, robust_k: portRobustK(st.robust_k), saved: true }));
   } catch {}
   refreshAllocWorkspaceInfo();
 }
 
 function portWinLabel(k) { return k === "all" ? "전체" : `${k}년`; }
+
+/* Ellipsoidal mean uncertainty: Q = (12 / monthly observations) C.
+   https://docs.mosek.com/portfolio-cookbook/robustopt.html §10.2.
+   For key-in/CMA means this is a historical-scale scenario, not a confidence region.
+   Enumerate simplex faces (7 assets); each face reduces to one scalar root. */
+function portRobustK(k) {
+  return k != null && Number.isFinite(+k) ? Math.max(0, Math.min(3, +k)) : 1;
+}
+
+function portRobustModel(C, mu, months) {
+  const n = mu.length, dot = (a, b) => a.reduce((s, x, i) => s + x * b[i], 0);
+  const mv = (M, w) => M.map((r) => dot(r, w));
+  if (!n || n > 10 || !Number.isFinite(months) || months < 2
+      || mu.some((x) => !Number.isFinite(x)) || C.length !== n
+      || C.some((r, i) => r.length !== n || r.some((v, j) => !Number.isFinite(v)
+        || Math.abs(v - C[j]?.[i]) > 1e-8))) return null;
+  const scale = Math.max(1, ...C.map((r, i) => Math.abs(r[i])));
+  // Tiny diagonal stabilizer only for singular faces; report original covariance metrics.
+  const ridge = scale * 1e-12;
+  const D = C.map((r, i) => r.map((v, j) => v + (i === j ? ridge : 0)));
+  const chol = Array.from({ length: n }, () => new Array(n).fill(0));
+  for (let i = 0; i < n; i++) for (let j = 0; j <= i; j++) {
+    let v = D[i][j];
+    for (let k = 0; k < j; k++) v -= chol[i][k] * chol[j][k];
+    if (i === j && v <= 0) return null;
+    chol[i][j] = i === j ? Math.sqrt(v) : v / chol[j][j];
+  }
+  const faces = [];
+  for (let mask = 1; mask < (1 << n); mask++) {
+    const ids = mu.map((_, i) => i).filter((i) => mask & (1 << i));
+    const sub = ids.map((i) => ids.map((j) => D[i][j] / scale));
+    const inv = matInv(sub);
+    if (!inv) continue;
+    const ones = mv(inv, ids.map(() => 1)).map((v) => v / scale);
+    const mus = mv(inv, ids.map((i) => mu[i])).map((v) => v / scale);
+    const A = ones.reduce((a, b) => a + b, 0);
+    if (!(A > 0)) continue;
+    const b = mus.reduce((a, x) => a + x, 0) / A;
+    const w0 = ones.map((v) => v / A), d = mus.map((v, i) => v - b * ones[i]);
+    const curvature = Math.max(0, dot(d, ids.map((i) => mu[i])));
+    faces.push({ ids, w0, d, v0: 1 / A, curvature });
+  }
+  const solve = (lam, kappa = 0) => {
+    const a = portRobustK(kappa) * Math.sqrt(12 / months);
+    let best = null;
+    for (const f of faces) {
+      let t = lam === Infinity || lam === 0 ? 0 : 1 / lam;
+      if (lam === 0 && f.curvature > 1e-12) {
+        if (a * a <= f.curvature) continue; // optimum is on a smaller face
+        t = Math.sqrt(f.v0 / (a * a - f.curvature));
+      }
+      if (lam > 0 && a > 0 && t > 0) {
+        let lo = 0, hi = t;
+        for (let k = 0; k < 64; k++) {
+          const mid = (lo + hi) / 2;
+          const sigma = Math.sqrt(f.v0 + mid * mid * f.curvature);
+          if (mid * (lam + a / sigma) > 1) hi = mid; else lo = mid;
+        }
+        t = (lo + hi) / 2;
+      }
+      const wf = f.w0.map((v, i) => v + t * f.d[i]);
+      if (wf.some((v) => v < -1e-9 || !Number.isFinite(v))) continue;
+      const w = new Array(n).fill(0);
+      const sum = wf.reduce((s, v) => s + Math.max(0, v), 0);
+      f.ids.forEach((id, i) => { w[id] = Math.max(0, wf[i]) / sum; });
+      const variance = Math.max(0, dot(w, mv(C, w))), m = dot(mu, w);
+      const sd = Math.sqrt(Math.max(0, dot(w, mv(D, w))));
+      const objective = lam === Infinity ? sd * sd / 2 : lam * sd * sd / 2 + a * sd - m;
+      if (!best || objective < best.objective) {
+        const g = mv(D, w).map((v, i) => lam === Infinity ? v : (lam + a / sd) * v - mu[i]);
+        best = { w, sig: Math.sqrt(variance), mu: m, worst: m - a * Math.sqrt(variance),
+          lam, objective, gap: Math.max(0, dot(g, w) - Math.min(...g)) };
+      }
+    }
+    // A simplex dual gap bounds global objective error; do not publish an uncertified area.
+    if (!best || best.gap > 1e-5) return null;
+    return best;
+  };
+  return { solve, meanScale: Math.sqrt(12 / months) };
+}
+
+const PORT_FRONT_CACHE = new WeakMap();
+function portFrontiers(P, W, C, mu, kappa) {
+  const key = JSON.stringify([W.key, W.n_months, C, mu, kappa]);
+  const cached = PORT_FRONT_CACHE.get(P);
+  if (cached && cached.key === key) return cached.value;
+  const model = portRobustModel(C, mu, W.n_months);
+  const clean = (pts, field) => {
+    const sorted = pts.filter(Boolean).sort((a, b) => a.sig - b.sig || b[field] - a[field]);
+    const kept = [];
+    for (const p of sorted) {
+      const last = kept[kept.length - 1];
+      if (!last) kept.push(p);
+      else if (p.sig - last.sig <= 1e-7) {
+        if (p[field] > last[field]) kept[kept.length - 1] = p;
+      } else if (p[field] > last[field] + 1e-9) kept.push(p);
+    }
+    return kept;
+  };
+  const lams = [...Array.from({ length: 41 }, (_, i) => Math.pow(10, 3 - 6 * i / 40)), 0];
+  const nominal = model ? [model.solve(Infinity), ...lams.map((l) => model.solve(l, 0))] : [];
+  const robust = model ? [model.solve(Infinity), ...lams.map((l) => model.solve(l, kappa))] : [];
+  // The minimum-risk endpoint has the same weights, with its own worst-case mean.
+  if (robust[0]) robust[0] = { ...robust[0], worst: robust[0].mu - kappa * model.meanScale * robust[0].sig };
+  const value = { front: clean(nominal, "mu"), robust: clean(robust, "worst"),
+    robustOk: !!model && robust.every(Boolean), meanScale: model?.meanScale || null };
+  PORT_FRONT_CACHE.set(P, { key, value });
+  return value;
+}
 
 function portEngine(P, st) {
   const wins = P.windows || [];
@@ -5865,30 +6012,8 @@ function portEngine(P, st) {
   const mv = (M, v) => M.map((r) => dot(r, v));
   const sig = (w) => Math.sqrt(Math.max(0, dot(w, mv(C, w))));
   const muOf = (w) => dot(mu, w);
-  const L = Math.max(1e-9, ...C.map((r) => r.reduce((a, b) => a + Math.abs(b), 0)));
-  const solve = (lam, iters = 400) => {
-    let w = new Array(n).fill(1 / n);
-    const eta = 1 / L;
-    for (let t = 0; t < iters; t++) {
-      const g = mv(C, w).map((x, i) => x - mu[i] / lam);
-      w = projSimplex(w.map((x, i) => x - eta * g[i]));
-    }
-    return w;
-  };
-  const pts = [];
-  for (let k = 0; k <= 32; k++) {
-    const lam = Math.pow(10, 3 - 6 * k / 32);
-    const w = solve(lam);
-    pts.push({ sig: sig(w), mu: muOf(w), w, lam });
-  }
-  pts.sort((a, b) => a.sig - b.sig || a.mu - b.mu);
-  const front = [];
-  for (const p of pts) {
-    if (!front.length) { front.push(p); continue; }
-    const last = front[front.length - 1];
-    if (p.sig - last.sig < 1e-4) { if (p.mu > last.mu) front[front.length - 1] = p; }
-    else if (p.mu > last.mu - 1e-9) front.push(p);
-  }
+  const kappa = portRobustK(st.robust_k);
+  const { front, robust, robustOk, meanScale } = portFrontiers(P, W, C, mu, kappa);
   const wb = P.assets.map((a) => (P.bench_w && P.bench_w[a]) || 0);
   const bench = { sig: sig(wb), mu: muOf(wb), w: wb };
   const rf = mu[P.assets.indexOf("원화유동성")] ?? 0;
@@ -5904,7 +6029,7 @@ function portEngine(P, st) {
     return { mu: m, sig: s, sharpe: s > 1e-9 ? (m - rf) / s : null,
              act: m - bench.mu, te, ir: te > 1e-9 ? (m - bench.mu) / te : null };
   };
-  return { W, mu, src, rf, front, minVar: front[0] || null,
+  return { W, mu, src, rf, front, robust, robustOk, kappa, meanScale, minVar: front[0] || null,
            maxSharpe: best, bench, wb, sig, muOf, metrics };
 }
 
@@ -6060,7 +6185,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   table.append(tbody);
   const sumBadge = el("span", { class: "port-badge" });
   const saveNote = el("span", { class: "port-note" },
-    "비중·대분류 미저장 · 저장 버튼/μ·표본 변경 시 현재값 함께 저장");
+    "비중·대분류 미저장 · 저장 버튼/μ·표본·오차 강도 변경 시 현재값 함께 저장");
   const btnRow = el("div", { class: "port-btns" },
     sumBadge,
     el("button", { class: "btn-ghost", onclick: () => { portSaveState(st); renderPortPanel(A); } },
@@ -6086,9 +6211,10 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   box.append(expWrap);
 
   /* ③ 효율적 경계선 + ④ 벤치마크 성과 리뷰 */
-  const frontCard = el("div", { class: "card port-sub-card" });
+  const frontCard = el("div", { class: "card port-sub-card port-frontier" });
   const reviewCard = el("div", { class: "card port-sub-card" });
   box.append(el("div", { class: "port-two" }, frontCard, reviewCard));
+  let frontierView = "robust";
 
   function recalc() {
     refreshAllocWorkspaceInfo();
@@ -6104,16 +6230,43 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     }, null, 2);
 
     const wCur = sumOk ? P.assets.map((a) => (+st.mix[a] || 0) / 100) : null;
-    const pts = E.front;
+    portCharts.forEach(destroyChart);
+    portCharts = [];
+    const pts = E.robustOk ? E.robust : E.front;
+    const robustInput = el("input", { type: "range", min: "0", max: "3", step: "0.25",
+      value: String(E.kappa), "aria-label": "강건 최적화 오차 강도", id: "port-robust-k" });
+    const robustValue = el("output", { for: "port-robust-k" }, fmtNum(E.kappa, 2));
+    robustInput.addEventListener("input", () => { robustValue.textContent = fmtNum(+robustInput.value, 2); });
+    robustInput.addEventListener("change", () => {
+      st.robust_k = portRobustK(robustInput.value); portSaveState(st); recalc();
+      document.getElementById("port-robust-k")?.focus();
+    });
+    const zoomed = frontierView === "robust" && E.robustOk && E.kappa > 0 && pts.length > 1;
+    const viewControl = el("div", { class: "seg", role: "group", "aria-label": "경계선 표시 범위" });
+    [["robust", "강건 구간"], ["all", "전체"]].forEach(([key, label]) => {
+      viewControl.append(el("button", { type: "button", class: (zoomed ? "robust" : "all") === key ? "active" : "",
+        "aria-pressed": String((zoomed ? "robust" : "all") === key), onclick: () => {
+          frontierView = key; recalc();
+          frontCard.querySelector(".seg .active")?.focus();
+        } }, label));
+    });
+    const controls = el("div", { class: "port-frontier-controls" }, viewControl,
+      el("label", { class: "port-robust-control", for: "port-robust-k" },
+        "오차 강도 κ", robustInput, robustValue));
     const fbox = cardScaffold(frontCard, {
-      title: "효율적 경계선",
-      sub: `합계 100% · 공매도 금지 · μ: 입력/CMA/과거 평균 · 무위험 ${fmtNum(E.rf, 2)}% (원화유동성)`,
+      title: "효율적 경계선", controls,
+      sub: "평균 불확실성 · 합계 100% · 공매도 금지",
       csvName: "효율적경계선.csv",
-      tableFn: () => ({
-        headers: ["위험%", "기대수익%", ...P.assets.map((a) => `${a}%`)],
-        rows: pts.map((p) => [fmtNum(p.sig, 2), fmtNum(p.mu, 2),
-                              ...p.w.map((x) => fmtNum(x * 100, 1))]),
-      }),
+      tableFn: (cap = 400, raw = false) => {
+        const rows = [...E.front.map((p) => ({ ...p, type: "일반", k: 0, worst: p.mu })),
+          ...(E.robustOk ? E.robust.map((p) => ({ ...p, type: "Robust", k: E.kappa })) : [])];
+        const num = (v) => raw ? v : fmtNum(v, 2);
+        return {
+          headers: ["구분", "κ", "위험%", "기준 기대수익%", "최악 기대수익%", ...P.assets.map((a) => `${a}%`)],
+          rows: rows.map((p) => [p.type, p.k, num(p.sig), num(p.mu), num(p.worst),
+            ...p.w.map((x) => num(x * 100))]),
+        };
+      },
     });
     const markers = [];
     if (E.minVar) markers.push({ x: E.minVar.sig, y: E.minVar.mu, kind: "dot",
@@ -6123,29 +6276,61 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     markers.push({ x: E.bench.sig, y: E.bench.mu, kind: "dot",
                    label: "BM 60/40", color: pal.series[2] });
     if (wCur) markers.push({ x: E.sig(wCur), y: E.muOf(wCur), kind: "x", label: "현재" });
-    const xsF = pts.map((p) => +p.sig.toFixed(3));
-    const ysF = pts.map((p) => +p.mu.toFixed(3));
-    const mxs = markers.map((m) => m.x), mys = markers.map((m) => m.y);
-    const hover = el("div", { class: "port-hover" });
-    const hoverReset = () => {
-      hover.textContent = "경계선에 마우스 → 위험·수익·비중";
+    const xsF = pts.map((p) => p.sig), ysF = pts.map((p) => p.mu);
+    const lower = pts.map((p) => E.robustOk ? p.worst : p.mu);
+    const allX = [...E.front.map((p) => p.sig), ...xsF, ...markers.map((m) => m.x)];
+    const allY = [...E.front.map((p) => p.mu), ...ysF, ...lower, ...markers.map((m) => m.y)];
+    const viewX = zoomed ? xsF : allX, viewY = zoomed ? [...ysF, ...lower] : allY;
+    const minX = Math.min(...viewX), maxX = Math.max(...viewX);
+    const minY = Math.min(...viewY), maxY = Math.max(...viewY);
+    const spanX = Math.max(0.005, maxX - minX), spanY = Math.max(0.2, maxY - minY);
+    const xRange = zoomed ? [Math.max(0, minX - spanX * 0.28), maxX + spanX * 0.32]
+      : [0, Math.max(1, maxX) * 1.30];
+    const yRange = [minY - spanY * 0.32, maxY + spanY * 0.28];
+    const visibleMarkers = markers.filter((m) => m.x >= xRange[0] && m.x <= xRange[1]
+      && m.y >= yRange[0] && m.y <= yRange[1]);
+    const hover = el("div", { class: "port-hover", role: "status" });
+    const hoverReset = () => { hover.textContent = "경계선에 마우스 → 위험·수익·비중 · 키보드 ← →"; };
+    const showPoint = (idx) => {
+      if (idx == null || !pts[idx]) { hoverReset(); return; }
+      const p = pts[idx];
+      hover.textContent = `위험 ${fmtNum(p.sig, 2)}% · 기준 ${fmtNum(p.mu, 2)}%` +
+        (E.robustOk ? ` · 최악 ${fmtNum(p.worst, 2)}%` : "") + " — 배분: " +
+        P.assets.map((a, i) => `${a} ${fmtNum(p.w[i] * 100, 1)}`).join(" · ");
     };
     hoverReset();
-    portCharts.push(makeRatioChart(fbox, {
-      seriesDefs: [{ label: "경계선", color: pal.series[0], x: xsF, v: ysF }],
-      xLabel: "위험(연)", unit: "%", height: 260, markers,
-      xRange: [Math.min(...xsF, ...mxs) * 0.9, Math.max(...xsF, ...mxs) * 1.05],
-      yRange: [Math.min(...ysF, ...mys) - 0.3, Math.max(...ysF, ...mys) + 0.3],
-      onCursor: (idx) => {
-        if (idx == null || !pts[idx]) { hoverReset(); return; }
-        const p = pts[idx];
-        const sh = p.sig > 1e-9 ? (p.mu - E.rf) / p.sig : null;
-        hover.textContent =
-          `위험 ${fmtNum(p.sig, 2)}% · 기대수익 ${fmtNum(p.mu, 2)}% · 샤프 ${fmtNum(sh, 2)} — 배분: ` +
-          P.assets.map((a, i) => `${a} ${fmtNum(p.w[i] * 100, 1)}`).join(" · ");
-      },
+    fbox.setAttribute("tabindex", "0");
+    fbox.setAttribute("role", "group");
+    fbox.setAttribute("aria-label", "효율적 경계선. 좌우 화살표로 배분 조회. 전체 수치는 표 버튼.");
+    let selected = 0;
+    fbox.addEventListener("keydown", (ev) => {
+      if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
+      ev.preventDefault();
+      selected = Math.max(0, Math.min(pts.length - 1, selected + (ev.key === "ArrowRight" ? 1 : -1)));
+      showPoint(selected);
+    });
+    if (pts.length) portCharts.push(makeRatioChart(fbox, {
+      seriesDefs: [
+        { label: "경계선", color: pal.series[0], x: xsF, v: ysF },
+        ...(E.robustOk ? [{ label: "Robust", color: pal.series[6], x: xsF, v: lower }] : []),
+      ],
+      area: E.robustOk && E.kappa > 0 ? { x: xsF, upper: ysF, lower } : null,
+      reference: E.front,
+      xLabel: "위험 · 연 %", axisTitles: { y: "기대수익 · 연 %" }, unit: "%", height: 390, markers: visibleMarkers,
+      xRange, yRange,
+      onCursor: showPoint,
     }));
-    frontCard.append(hover);
+    frontCard.append(el("div", { class: "port-frontier-key" },
+      el("span", { class: E.robustOk && E.kappa > 0 ? "port-area-key" : "" },
+        E.robustOk && E.kappa > 0 ? "영역: 강건 배분의 기준–최악 기대수익" : "일반 평균–분산 경계선"),
+      el("span", {}, zoomed ? "강건 구간 확대 · 전체에서 현재·BM 비교" : "점선: 일반 경계선 · 마커: 기준 기대수익")), hover);
+    if (!E.robustOk) frontCard.append(el("div", { class: "port-warn d-up", role: "status" },
+      "강건 영역 계산 불가 — 표본·공분산 또는 최적화 수렴을 확인하십시오."));
+    frontCard.append(explainBox("port-robust-method", { label: "Robust 기준" },
+      el("p", {}, "기대수익의 타원체 오차를 반영한 최악 기대수익 − λ×분산/2를 최대화합니다. κ=0은 일반 평균–분산 최적화, 기본 κ=1은 오차 강도 시나리오입니다."),
+      el("p", {}, `오차 공분산 Q = 연환산 공분산 × 12/${E.W.n_months}. 월별 독립·동일분포를 가정한 표본평균 오차 크기이며, 입력·CMA에도 이 역사적 크기를 적용합니다. 신뢰구간·실현수익 예측구간이 아닙니다.`),
+      el("p", {}, "공분산은 고정합니다. 같은 위험에서 배분이 같을 수 있으며, 강건 최적화는 선택 위험 수준을 낮춥니다. λ별 모형 참고치로, 현재 비중은 자동 변경하지 않습니다."),
+      el("p", {}, "근거: MOSEK Portfolio Optimization Cookbook §10.2")));
 
     reviewCard.textContent = "";
     reviewCard.append(el("div", { class: "card-head" },
