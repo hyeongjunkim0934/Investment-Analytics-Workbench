@@ -1367,7 +1367,7 @@ safe("durationGap", () => {
   P.renderSection("alloc");
   const cards = DOC.getElementById("alloc-cards").textContent;
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  r.cardShown = /ALM 듀레이션 갭/.test(cards);
+  r.cardShown = /ALM 갭/.test(cards);
   r.saysNotAConstraint = /제약이 아니라 결과 표시/.test(cards);
   r.showsReferenceGaps = /① 참고치/.test(cards);
   /* 옛 저장 상태(신규 키 없음)로도 죽지 않는가 */
@@ -1666,8 +1666,8 @@ safe("cmaLayer", () => {
   P.renderSection("alloc");
   const ctlTxt = DOC.getElementById("alloc-controls").textContent;
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  r.controlsShowSource = /위험 원천/.test(ctlTxt) && /기관 벤치마크/.test(ctlTxt);
-  r.controlsShowMapping = /대체투자 위험/.test(ctlTxt) && /디스무딩/.test(ctlTxt);
+  r.controlsShowSource = /위험 원천/.test(ctlTxt) && /벤치마크\(CMA\)/.test(ctlTxt);
+  r.controlsShowMapping = /대체 위험/.test(ctlTxt) && /디스무딩/.test(ctlTxt);
   r.controlsShowPerClassMapping = /지분형/.test(ctlTxt) && /대출형/.test(ctlTxt);
   /* 환 기준은 **계열마다 다르다**는 사실(§7.7.19)은 방법론·자산군 표 제거
      (2026-08-31 사용자 지시) 후 시뮬레이터 σ 키인 설명이 나른다 — 문구가 사라지면
@@ -1681,7 +1681,7 @@ safe("cmaLayer", () => {
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, view: "acct" }));
   P.renderSection("alloc");
   const sumTxt = DOC.getElementById("alloc-summary").textContent;
-  r.legacyViewSummaryHasReference = /현재 vs 참고치/.test(sumTxt) && /참고치/.test(sumTxt);
+  r.legacyViewSummaryHasReference = /현재 · 참고치/.test(sumTxt) && /참고치/.test(sumTxt);
   r.legacyViewNoAcctTitle = !/회계\(손익\) 관점/.test(sumTxt);
   r.legacyViewRenderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
   /* 프록시 폴백 화면 — 사유가 적히고 CMA 버튼이 비활성이다 */
@@ -1734,7 +1734,7 @@ safe("allocRiskProc", () => {
   const boxEl = () => DOC.getElementById("alloc-risk-proc");
   let txt = boxEl().textContent;
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  r.cardRendered = /통합 프로세스/.test(txt) && /λ-MVO/.test(txt) && /현재 위험 점수/.test(txt);
+  r.cardRendered = /리스크 연계/.test(txt) && /λ → 최적 배분/.test(txt) && /현재 위험 점수/.test(txt);
   /* 스택 기하 — 밴드 7 + 경계 6 + 점수선 1 = path 14개 */
   r.pathCount = boxEl().querySelectorAll("svg path").length;
   /* 표 버튼 → 각 월의 비중 7칸 합계 = 100 (0.1 반올림 오차 허용) */
@@ -1764,7 +1764,7 @@ safe("allocRiskProc", () => {
   txt = boxEl().textContent;
   r.layerToggleWorks = /잠재 위험 점수/.test(txt);
   r.layerToggleSaved = P.allocState(CMA_ALLOC).rp_layer === "vuln";
-  segBtn("선형 — 점수/50").click();
+  segBtn("선형").click();
   r.mapToggleShowsFormula = /점수\/50/.test(boxEl().textContent);
   /* 보류 사유 — hist_m 부재 / 프록시 층 (조용한 대체 금지) */
   P.DATA.risk = { layers: {} };
@@ -1936,7 +1936,7 @@ safe("cmaAudit", () => {
   const sC = P.allocState(D2);
   r.dfltKeepsUserKeyedValue = sC.mu_over["대체투자(지분형)"] === 9.9;
   /* 스냅숏이 없는 옛 저장분(사고 상태)은 유지되지만 — 화면이 표시로 알리고
-     「μ·σ 디폴트로 되돌리기」 버튼이 한 번에 정리한다(아래 ⑪) */
+     「μ·σ 기본값」 버튼이 한 번에 정리한다(아래 ⑪) */
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true,
     mu_over: { "대체투자(대출형)": 4.39, "대체투자(지분형)": 4.39 } }));
   const sD = P.allocState(D1);
@@ -1945,9 +1945,9 @@ safe("cmaAudit", () => {
   P.renderSection("alloc");
   const offMark = DOC.getElementById("alloc-sim-panel").querySelectorAll(".keyed-off-default").length;
   r.offDefaultIsMarked = offMark >= 1;
-  /* ⑪ 「μ·σ 디폴트로 되돌리기」 — 눌러야만 게시 디폴트로 돌아간다(명시적 조작) */
+  /* ⑪ 「μ·σ 기본값」 — 눌러야만 게시 디폴트로 돌아간다(명시적 조작) */
   const resetBtn = Array.from(DOC.getElementById("alloc-controls").querySelectorAll("button"))
-    .find((n) => /μ·σ 디폴트로 되돌리기/.test(n.textContent));
+    .find((n) => /μ·σ 기본값/.test(n.textContent));
   r.muResetButtonExists = !!resetBtn;
   if (resetBtn) resetBtn.click();
   const sE = P.allocState(D1);
@@ -2027,17 +2027,17 @@ safe("simPanel", () => {
     .filter((n) => !n.hidden).length;
   r.donutCount = panel.querySelectorAll("svg").length;
   const ptxt = panel.textContent;
-  r.hasOptCard = /① 최적 포트폴리오/.test(ptxt);
-  r.hasSimCard = /② 지금 시뮬레이션/.test(ptxt);
+  r.hasOptCard = /① 최적/.test(ptxt);
+  r.hasSimCard = /② 조정/.test(ptxt);
   r.statesCorrPolicy = /상관 = 벤치마크 실측/.test(ptxt);
   /* 도넛이 각자 자기 카드의 열(sim8-col) 안에 있다 — 카드 아래 중앙 배치의 구조 검증.
-     최적 열: 최적 카드 + 「최적 포트폴리오 비중」 도넛 / 시뮬 열: 시뮬 카드 + 「시뮬레이션 비중」. */
+     최적 열: 최적 카드 + 「최적 비중」 도넛 / 시뮬 열: 시뮬 카드 + 「조정 비중」. */
   const cols9 = [...panel.querySelectorAll(".sim8-col")];
   r.donutColumns = cols9.length;
   const colHas = (re, reDonut) => cols9.some((c) =>
     re.test(c.textContent) && reDonut.test(c.textContent) && c.querySelectorAll("svg").length === 1);
-  r.optDonutUnderOptCard = colHas(/① 최적 포트폴리오/, /최적 포트폴리오 비중/);
-  r.simDonutUnderSimCard = colHas(/② 지금 시뮬레이션/, /시뮬레이션 비중/);
+  r.optDonutUnderOptCard = colHas(/① 최적/, /최적 비중/);
+  r.simDonutUnderSimCard = colHas(/② 조정/, /조정 비중/);
   /* 도넛 크기 — 210 (구 132 에서 확대, 2026-08-12 사용자 지시) */
   const svg0 = panel.querySelector(".sim8-donut svg");
   r.donutSize = svg0 ? +svg0.getAttribute("width") : null;
@@ -2073,7 +2073,7 @@ safe("simPanel", () => {
   drag.dispatchEvent({ type: "change", target: drag });
   r.optMarkersStableUnderDrift = JSON.stringify(markPos()) === marksBefore;
   const applyBtn = Array.from(panel.querySelectorAll("button"))
-    .find((n) => /최적 비중으로/.test(n.textContent));
+    .find((n) => /최적 비중 적용/.test(n.textContent));
   r.applyButtonExists = !!applyBtn;
   if (applyBtn) applyBtn.click();
   /* id 로 읽되 getElementById 를 쓰지 않는다 — 셰이드의 getElementById 는
@@ -2112,7 +2112,7 @@ safe("simPanel", () => {
   const sigInputs = Array.from(p2.querySelectorAll("input"))
     .filter((n) => (n.getAttribute("aria-label") || "").includes("위험 % 키인"));
   r.proxySigDisabled = sigInputs.length === 7 && sigInputs.every((n) => n.disabled === true);
-  r.proxyOptDeferred = /최적 포트폴리오 — 보류/.test(p2.textContent);
+  r.proxyOptDeferred = /최적 — 보류/.test(p2.textContent);
   shim.localStorage.removeItem("iaw-alloc");
   return r;
 });
@@ -2129,7 +2129,7 @@ safe("portPanel", () => {
   shim.UPlotStub.made.length = 0;
   P.renderSection("alloc");
   const panel = DOC.getElementById("alloc-port-panel");
-  r.panelRendered = /포트폴리오 구성/.test(panel.textContent);
+  r.panelRendered = /포트폴리오/.test(panel.textContent);
   /* 패널이 시뮬레이터보다 위(제일 상단)인가 — DOM 순서로 잰다 */
   const kids = DOC.getElementById("alloc").childNodes;
   r.panelAboveSim = kids.indexOf(panel) >= 0 &&
@@ -2140,7 +2140,7 @@ safe("portPanel", () => {
     .filter((n) => (n.getAttribute("aria-label") || "").startsWith("대분류"));
   r.groupDefaults = gIn.map((n) => +n.value);          // [50, 30, 20, 10]
   const applyBtn = Array.from(panel.querySelectorAll("button"))
-    .find((b) => b.textContent === "7자산군에 적용");
+    .find((b) => b.textContent === "비중 적용");
   applyBtn.dispatchEvent({ type: "click", target: applyBtn });
   const mixIn = Array.from(panel.querySelectorAll("input"))
     .filter((n) => /비중$/.test(n.getAttribute("aria-label") || ""));
@@ -2173,7 +2173,7 @@ safe("portPanel", () => {
   r.srcIsAnnotationNotColumn = !Array.from(panel.querySelectorAll("th"))
     .some((n) => /μ 출처/.test(n.textContent));
   const pTh = Array.from(panel.querySelectorAll(".port-table th")).map((n) => n.textContent);
-  r.realizedColShown = pTh.some((t) => /^실현 μ %/.test(t));
+  r.realizedColShown = pTh.some((t) => /^실현수익 %/.test(t));
   /* 실현 μ 열의 값이 게시 창 평균과 일치하는가 — 국내채권 행(첫 행), 픽스처 pmean[0]=2.0 */
   const row0 = panel.querySelector(".port-table tbody tr");
   r.realizedMatchesWindowMean = !!row0
@@ -2193,7 +2193,7 @@ safe("portPanel", () => {
     r.hoverShowsDetail = /배분/.test(hv.textContent) && /국내채권/.test(hv.textContent)
       && /위험/.test(hv.textContent);
     hook({ cursor: { idx: null } });
-    r.hoverResets = /마우스를 올리면/.test(hv.textContent);
+    r.hoverResets = /경계선에 마우스/.test(hv.textContent);
   }
   /* 경계선 점들이 위험 오름차순·수익 비내림인가 (게시가 아니라 엔진 실행으로) */
   const E = P.portEngine(ALLOC_FIXTURE.port, P.portState(ALLOC_FIXTURE.port));
@@ -2221,7 +2221,7 @@ safe("portPanel", () => {
 
   /* ⑦b 기본 창 = 최장 공통 표본(all) — 저장이 없을 때 가장 긴 창이 기본이고
      화면이 그 사실을 적는다 (2026-08-22 사용자 지시 "가능한 긴 표본") */
-  r.defaultWindowLongest = /최장 공통 표본\(기본\)/.test(panel.textContent);
+  r.defaultWindowLongest = /최장 공통/.test(panel.textContent);
 
   /* ⑦c 원화유동성 CD 적립 참고 — 10년 참고가 없는 자리에 CD 수치가 참고 표기로
      들어오고, 출처·기간·실ETF 겹침 검증치는 툴팁에 있다 (참고 전용 — 행렬 미포함) */
@@ -2239,7 +2239,7 @@ safe("portPanel", () => {
   const saved2 = JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY) || "{}");
   r.windowChoiceSaved = saved2.win === "3";
   /* 최장 표본 표기는 all 창에만 붙는다 — 3년 창으로 바꾸면 사라져야 한다 */
-  r.longestMarkOnlyOnAll = !/최장 공통 표본\(기본\)/.test(
+  r.longestMarkOnlyOnAll = !/최장 공통/.test(
     DOC.getElementById("alloc-port-panel").textContent);
 
   /* ⑨ 비활성 블록 — 조용히 사라지지 않고 사유를 적는다 */
@@ -2643,7 +2643,7 @@ safe("lambdaControl", () => {
   const inp = DOC.getElementById("alloc-lambda");
   r.inputExists = !!inp;
   const riskOf = () => {
-    const m = (panel.textContent.match(/① 최적 포트폴리오[^위]*위험 ([\d.]+)%/) || [])[1];
+    const m = (panel.textContent.match(/① 최적[^위]*위험 ([\d.]+)%/) || [])[1];
     return m ? +m : null;
   };
   const riskBefore = riskOf();
@@ -2662,7 +2662,7 @@ safe("lambdaControl", () => {
   P.renderSection("alloc");
   const p2 = DOC.getElementById("alloc-sim-panel");
   const fitBtn = Array.from(p2.querySelectorAll("button"))
-    .find((n) => /현재 위험과 같은 λ/.test(n.textContent));
+    .find((n) => /현재 위험 → λ/.test(n.textContent));
   r.fitButtonExists = !!fitBtn;
   const Ecur = P.allocEngine(A, P.allocDefaults(A));
   const sigCur = Ecur.sigmaW(Ecur.w0, Ecur.V.C);
@@ -2721,11 +2721,11 @@ safe("hedgeTracks", () => {
     .filter((n) => /헤지비율$/.test(n.getAttribute("aria-label") || ""));
   r.slidersLiveInPanel = sliders.length === 2;
   const applyH = Array.from(panel.querySelectorAll("button"))
-    .find((n) => /헤지 슬라이더를 최적으로/.test(n.textContent));
+    .find((n) => /최적 헤지 적용/.test(n.textContent));
   r.applyHedgeButtonExists = !!applyH;
   /* 이미 최적이면 버튼이 스스로 그 사실을 말한다(눌리는데 무동작 = 고장으로 읽힌다) */
   const noopBtnBefore = Array.from(panel.querySelectorAll("button"))
-    .find((n) => /헤지 슬라이더 — 이미 최적/.test(n.textContent));
+    .find((n) => /헤지 이미 최적/.test(n.textContent));
   r.noopButtonAbsentWhenMovable = !noopBtnBefore;
   if (applyH) applyH.click();
   const st2 = P.allocState(CMA_ALLOC);   // 저장 안 됨 — 디폴트 그대로여야 한다
@@ -2733,7 +2733,7 @@ safe("hedgeTracks", () => {
   /* 적용 후 재렌더에서는 「이미 최적」 비활성 버튼이 되어 있어야 한다 */
   const p2b = DOC.getElementById("alloc-sim-panel");
   const noopBtn = Array.from(p2b.querySelectorAll("button"))
-    .find((n) => /헤지 슬라이더 — 이미 최적/.test(n.textContent));
+    .find((n) => /헤지 이미 최적/.test(n.textContent));
   r.noopButtonAppearsAfterApply = !!noopBtn && noopBtn.disabled === true;
   const sliderVals = sliders.map((n) => +n.value);
   r.applyHedgeMovesSliders = !!jo
@@ -2753,8 +2753,8 @@ safe("hedgeTracks", () => {
     r.ccyUniformWithinSleeve = db.rows.every((x) => Math.abs(x.hedged / x.exp - 0.8) < 1e-9);
   }
   const det = panel.querySelector(".sim-ccy");
-  r.ccyTableRendered = !!det && /통화별 환헤지 분해/.test(det.textContent);
-  r.ccyHonestAboutUniform = !!det && /같은 비율이 걸립니다/.test(det.textContent);
+  r.ccyTableRendered = !!det && /통화별 헤지/.test(det.textContent);
+  r.ccyHonestAboutUniform = !!det && /자산군 내 통화별 동일 헤지비율/.test(det.textContent);
 
   /* ③-b 최적 헤지 마커(§7.7.15, 2026-08-12 사용자 지시) — 비중 막대의 ▼ 와 같은 방식.
      비중 0 슬리브는 위험에 무영향이라 마커를 숨기고, 그 사실을 카드가 적어야 한다. */
@@ -2815,7 +2815,7 @@ safe("hedgeTracks", () => {
     bands: { ...P.allocDefaults(CMA_ALLOC).bands, 해외채권: [0, 0] } }));
   P.renderSection("alloc");
   const whyTxt = DOC.getElementById("alloc-sim-panel").textContent;
-  r.inertSleeveExplained = /해외채권 비중이 0이라 채권 헤지비율은 위험에 영향이 없습니다/.test(whyTxt);
+  r.inertSleeveExplained = /해외채권 비중이 0 — 채권 헤지비율은 위험에 영향이 없습니다/.test(whyTxt);
   /* 구속의 **출처**를 구분하는가 — 내규 밴드(band) vs 구조적 한계(cap).
      한 문장으로 뭉치면 중립 밴드 상태에서도 「밴드가 물고 있다」가 나가 사용자를
      밴드 완화라는 틀린 조치로 보낸다(재점검 발견). */
@@ -3082,7 +3082,7 @@ safe("simConsole", () => {
   inp2.value = "7";
   inp2.dispatchEvent({ type: "input", target: inp2 });
   const revertBtn = Array.from(DOC.getElementById("alloc-controls").querySelectorAll("button"))
-    .find((n) => n.textContent.includes("되돌리기"));
+    .find((n) => n.textContent === "저장값 복원");
   if (revertBtn) revertBtn.click();
   r.revertRestoresSaved = (DOC.getElementById("sim-mix-해외주식") || {}).value === "2";
 
@@ -3151,7 +3151,7 @@ safe("explainFold", () => {
   /* 계약 문자열은 textContent 에 남는다(닫혀 있어도) — 기존 프로브들의 전제 */
   r.contractStringsStillInDom = /Xe 에는 들어가지 않습니다/.test(full);
   /* 핵심 답·경고는 **보이는 텍스트**에 있어야 한다 */
-  r.answersVisible = /기대수익 /.test(vis) && /위험 /.test(vis) && /① 최적 포트폴리오/.test(vis);
+  r.answersVisible = /기대수익 /.test(vis) && /위험 /.test(vis) && /① 최적/.test(vis);
   r.hedgeControlsVisible = /해외채권 헤지비율/.test(vis) && /대체투자 환헤지 비율/.test(vis);
   /* 산문 대표 두 건은 보이는 텍스트에서 빠져 있어야 한다(접힘 확인) */
   r.proseFolded = !/레버는 두 개뿐입니다/.test(vis) && !/원가법 BM 은 시장위험을 나르지 않아/.test(vis);
@@ -3243,7 +3243,8 @@ safe("villageNotes", () => {
   const cells = [...delta.children].map((c) => c.textContent.trim());
   const iHedge = heads.indexOf("헤지 채권/주식"), iXe = heads.indexOf("미헤지 환노출 Xe");
   const iMu = heads.indexOf("수익"), iSig = heads.indexOf("위험");
-  const keys = heads.slice(1, iHedge > 0 ? iHedge : iMu);
+  const keyFromLabel = { "대체(대출)": "대체투자(대출형)", "대체(지분)": "대체투자(지분형)" };
+  const keys = heads.slice(1, iHedge > 0 ? iHedge : iMu).map((k) => keyFromLabel[k] || k);
   r.allocKeys = keys.length;
   r.allocDiffsMatchSummary = keys.every((k, i) => granary.includes(`${k} ${cells[1 + i]}`));
   r.allocMuSigMatchSummary = granary.includes(`수익 ${cells[iMu]} · 위험 ${cells[iSig]}`);
@@ -3375,8 +3376,8 @@ safe("lossLambda", () => {
   const hIn = DOC.getElementById("alloc-loss-h"), aIn = DOC.getElementById("alloc-loss-a");
   const note = () => DOC.getElementById("alloc-loss-note").textContent;
   r.inputsExist = !!hIn && !!aIn;
-  r.noDefaultLimit = !!hIn && hIn.value === "" && aIn.value === "" && /입력하면/.test(note());
-  const findBtn = [...DOC.querySelectorAll("#alloc-sim-panel button")].find((b) => /손실 한도에 맞는 λ 찾기/.test(b.textContent));
+  r.noDefaultLimit = !!hIn && hIn.value === "" && aIn.value === "" && /H·α 입력 후 역산/.test(note());
+  const findBtn = [...DOC.querySelectorAll("#alloc-sim-panel button")].find((b) => /손실 한도 → λ/.test(b.textContent));
   r.findButtonExists = !!findBtn;
   hIn.value = String(+truth.q.toFixed(2)); hIn.dispatchEvent({ type: "change" });
   aIn.value = "5"; aIn.dispatchEvent({ type: "change" });
