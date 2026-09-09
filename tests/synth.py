@@ -55,9 +55,11 @@ def _geo(rng, n, start, vol, drift=0.0002):
 BB_SPEC = [
     ("한국_KOSPI_TR", "주식", "geo", 1500.0),
     ("미국_S&P500_TR", "주식", "geo", 1000.0),
-    # 개요 카드(OVERVIEW_CARDS)가 쓰는 키 — 없으면 e2e 카드 전수 검사가 잡는다
+    # 개요 카드(OVERVIEW_CARDS)가 쓰는 키 — KOSPI 는 정정 라벨 `_PR` 을 두고(첫 후보
+    # 경로), S&P 500 은 일부러 **두지 않는다** — 2026-09-09 실파일처럼 `_PR` 이 없고
+    # 겹친 라벨을 파서가 분리한 `bb:S&P500 (PX_LAST)` 로 물러나는 경로(process.get_first)
+    # 를 e2e 가 지나가게 하려는 배치다(아래 BB_SPLIT_BLOCKS).
     ("한국_KOSPI_PR", "주식", "geo", 1400.0),
-    ("미국_S&P500_PR", "주식", "geo", 950.0),
     ("미국_변동성지수_VIX", "변동성", "walk", 18.0),
     ("달러지수", "환율", "walk", 100.0),
     ("원자재지수", "원자재", "geo", 600.0),
@@ -135,7 +137,18 @@ INFO_SPEC = [
     ("USDKRW_HP_12M", "헤지", "walk", 1.3),
 ]
 
-VOL = {"geo": 0.011, "walk": None}
+VOL = {"geo": 0.011, "geoslow": 0.003, "walk": None}
+#: 라벨이 겹치는 컬럼 블록 — (Notation, 아래 헤더 행의 필드, kind, level). 실파일
+#: (2026-09-09 익스포트)처럼 `KOSPI`/`S&P500` 라벨이 12M 선행 EPS 블록과 지수 블록에
+#: 겹쳐 있고, Notation **아래** 필드 행(`BEST_EPS`/`PX_LAST`)만 둘을 가른다. 파서는
+#: 첫 컬럼에 맨 라벨을, 두 번째에 `라벨 (PX_LAST)` 를 준다(process.dup_suffix).
+#: EPS 는 느린 행보(geoslow)라 지수÷EPS 가 risk.PER_SANE 안에 머문다.
+BB_SPLIT_BLOCKS = [
+    ("KOSPI", "BEST_EPS", "geoslow", 120.0),
+    ("S&P500", "BEST_EPS", "geoslow", 60.0),
+    ("KOSPI", "PX_LAST", "geo", 1400.0),
+    ("S&P500", "PX_LAST", "geo", 950.0),
+]
 #: 늦개시 시리즈 — 이 날짜 전 칸은 빈 셀로 쓴다 (실파일의 원화유동성 ETF 상대역)
 LATE_START = {"원화유동성": pd.Timestamp("2022-06-01")}
 # 중복 Notation 컬럼에 채우는 센티넬 — 결과에 이 값이 있으면 두 번째 컬럼이 채택된 것
@@ -146,8 +159,8 @@ _DUP_COL = "__dup__"
 def _series_for(rng, spec, n):
     out = {}
     for name, _cat, kind, level in spec:
-        if kind == "geo":
-            out[name] = _geo(rng, n, level, VOL["geo"])
+        if kind in ("geo", "geoslow"):
+            out[name] = _geo(rng, n, level, VOL[kind])
         else:
             vol = max(abs(level) * 0.004, 0.002)
             floor = 0.01 if level > 0 and level < 10 else None
@@ -156,37 +169,55 @@ def _series_for(rng, spec, n):
 
 
 def write_wide(path, spec, *, dup_notation: str | None = None,
-               sheet_title: str = "D", extra_vendor_rows: bool = True) -> None:
+               sheet_title: str = "D", extra_vendor_rows: bool = True,
+               split_blocks: list | None = None,
+               below_rows: list[tuple[str, list[str]]] | None = None) -> None:
     """와이드 익스포트(블룸버그/인포맥스 형식) 워크북을 만든다.
 
     dup_notation 을 주면 그 Notation 을 한 번 더 넣어 `duplicate column … skipped`
     경고 경로를 재현한다. 중복 컬럼에는 센티넬 값(DUP_SENTINEL)을 채우므로,
     파싱 결과에 그 값이 있으면 "첫 컬럼 채택" 규약이 깨진 것이다.
+
+    split_blocks 는 BB_SPLIT_BLOCKS 형식의 겹친 라벨 컬럼들 — Notation 행 **아래**
+    필드 행(A열 `Dates`)으로만 구분된다. 일반 컬럼의 필드는 전부 `PX_LAST` 이고
+    중복 센티넬 컬럼도 `PX_LAST` 라 예전대로 진짜 중복(버림)으로 남는다.
+    below_rows 는 (A열 라벨, 컬럼별 셀) 행을 Notation 아래에 더 끼운다(단위 테스트용).
     """
     idx = bdays()
     rng = np.random.default_rng(SEED)
     data = _series_for(rng, spec, len(idx))
     names = [s[0] for s in spec]
     cats = {s[0]: s[1] for s in spec}
+    fields = {n: "PX_LAST" for n in names}
+    cols: list[tuple[str, str, np.ndarray]] = [(n, fields[n], data[n]) for n in names]
     if dup_notation is not None:
-        names = names + [dup_notation]
-        data = dict(data)
-        data[_DUP_COL] = np.full(len(idx), DUP_SENTINEL, dtype=float)
+        cols.append((dup_notation, "PX_LAST", np.full(len(idx), DUP_SENTINEL, dtype=float)))
+    if split_blocks:
+        extra = _series_for(rng, [(f"{n}|{fld}", "", kind, lv) for n, fld, kind, lv in split_blocks],
+                            len(idx))
+        for n, fld, kind, lv in split_blocks:
+            cols.append((n, fld, extra[f"{n}|{fld}"]))
+            cats.setdefault(n, "")
+    all_names = [c[0] for c in cols]
 
     wb = openpyxl.Workbook(write_only=True)
     ws = wb.create_sheet(sheet_title)
     if extra_vendor_rows:
         # 파서가 무시해야 하는 벤더 잡음 행들 (A열이 날짜도 Category/Notation 도 아님)
-        ws.append(["Ticker"] + [f"{n}.TICK" for n in names])
-        ws.append(["DATES"] + ["PX_LAST"] * len(names))
-    ws.append(["Category"] + [cats[n] for n in names])
-    ws.append(["Notation"] + names)
-    src = ([(n, data[n]) for n in names[:-1]] + [(_DUP_COL, data[_DUP_COL])]) \
-        if dup_notation is not None else [(n, data[n]) for n in names]
+        ws.append(["Ticker"] + [f"{n}.TICK" for n in all_names])
+        ws.append(["DATES"] + ["PX_LAST"] * len(all_names))
+    ws.append(["Category"] + [cats[n] for n in all_names])
+    ws.append(["Notation"] + all_names)
+    # Notation 아래 헤더 행 — 실파일의 티커(8행)·필드(9행) 행 상대역, 같은 순서로
+    # below_rows(티커 등) 먼저, 필드 행 다음. 파서는 겹친 라벨을 이 행들로만 가른다
+    # (위의 잡음 행은 Notation 위라 보지 않는다).
+    for label, cells in (below_rows or []):
+        ws.append([label] + list(cells))
+    ws.append(["Dates"] + [c[1] for c in cols])
     for i, d in enumerate(idx):
         ws.append([d.to_pydatetime()]
                   + [None if (n in LATE_START and d < LATE_START[n]) else float(c[i])
-                     for n, c in src])
+                     for n, _f, c in cols])
     wb.save(path)
 
 
@@ -303,7 +334,7 @@ def build_all(dest) -> dict:
         # 실배포처럼 날짜 박힌 이름 — 접두사 `bm`(대소문자 무관)만 지키면 된다
         "bm": f"{dest}/BM지수_synth_20991231.xlsx",
     }
-    write_wide(paths["bb"], BB_SPEC, dup_notation="달러원")
+    write_wide(paths["bb"], BB_SPEC, dup_notation="달러원", split_blocks=BB_SPLIT_BLOCKS)
     write_wide(paths["info"], INFO_SPEC, sheet_title="DailyRate")
     write_index(paths["idx"])
     write_stock_report(paths["report"])
@@ -311,7 +342,9 @@ def build_all(dest) -> dict:
     return paths
 
 
-BB_KEYS = [f"bb:{s[0]}" for s in BB_SPEC]
+#: 겹친 라벨 블록이 만드는 키 — 첫 컬럼은 맨 라벨, 둘째는 `(필드)` 접미사.
+BB_SPLIT_KEYS = ["bb:KOSPI", "bb:S&P500", "bb:KOSPI (PX_LAST)", "bb:S&P500 (PX_LAST)"]
+BB_KEYS = [f"bb:{s[0]}" for s in BB_SPEC] + BB_SPLIT_KEYS
 INFO_KEYS = [f"info:{s[0]}" for s in INFO_SPEC]
 IDX_KEYS = ["idx:ACWI"]
 BM_KEYS = [f"bm:{g} {n}" for g, n in zip(BM_GROUPS, BM_NAMES)]

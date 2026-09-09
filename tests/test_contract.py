@@ -18,6 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 import check_output
@@ -123,11 +124,80 @@ def test_risk_and_hedge_actually_ran(built):
     k10 = risk["kospi10"]
     assert k10["levels"] == [-10, -16, -25]
     assert len(k10["hist"]["t"]) == len(k10["hist"]["v"]) > 0
-    assert k10["src"].startswith("bb:한국_KOSPI")
+    # 픽스처는 정정 라벨 `_PR` 을 가지므로 첫 후보가 뽑혀야 한다(risk.PER_SOURCES 순서)
+    assert k10["src"] == "bb:한국_KOSPI_PR"
     for banned in ("위기임박", "위기단계", "경보"):
         assert banned not in json.dumps(k10, ensure_ascii=False), (
             f"경보선 의미 문구('{banned}')가 게시물에 실렸다 — 수치만 공개(2026-08-27)"
         )
+
+
+def test_valuation_and_revision_factors_active_with_forward_eps(built):
+    """12M 선행 EPS 가 있으면 잠재 위험의 밸류에이션·이익 리비전이 산다(§7.21, 2026-09-09).
+
+    픽스처는 KOSPI 가격지수를 정정 라벨(`_PR`)로, S&P 500 은 겹친 라벨의 분리 키
+    (`(PX_LAST)`)로만 가진다 — 두 후보 경로가 모두 note 의 출처 문장에 드러나야 한다.
+    """
+    out, _ = built
+    risk = json.loads((out / "risk.json").read_text(encoding="utf-8"))
+    f = {x["key"]: x for x in risk["factors"]}
+    want = {"valuation": ("배", ["KOSPI 12M 선행 PER", "S&P 500 12M 선행 PER"]),
+            "revision": ("%", ["KOSPI 12M 선행 EPS 3개월 변화", "S&P 500 12M 선행 EPS 3개월 변화"])}
+    for key, (unit, labels) in want.items():
+        x = f[key]
+        assert x.get("pending") is None and x["score"] is not None, x.get("pending")
+        assert x["layer"] == "vuln" and 0 <= x["score"] <= 100
+        assert [i["label"] for i in x["indicators"]] == labels
+        assert all(i["unit"] == unit for i in x["indicators"])
+        assert len(x["steps"]) == 3 and all("백분위" in st for st in x["steps"][:2])
+    assert "bb:한국_KOSPI_PR ÷ bb:KOSPI" in f["valuation"]["note"]
+    assert "bb:S&P500 (PX_LAST) ÷ bb:S&P500" in f["valuation"]["note"]
+    assert "S&P 500 으로 대신" in f["valuation"]["note"], "ACWI 대체 사실을 밝혀야 한다"
+    assert "= bb:KOSPI," in f["revision"]["note"] and "÷" not in f["revision"]["note"], (
+        "리비전은 EPS 직접 관측 — 출처에 나눗셈이 있으면 안 된다")
+    # 리비전은 '낮을수록 위험'(lo) — 과정 문장이 100 − 백분위 를 적는다
+    assert all("100 −" in st for st in f["revision"]["steps"][:2])
+    v = risk["layers"]["vuln"]
+    assert v["active"] == v["total"] == 5
+    assert "확보 전까지" not in risk["limits"], "활성인데 한계 문장이 아직 대기를 말한다"
+    # 관계분석 패널에도 두 요인 계열이 실린다
+    panel = json.loads((out / "panel.json").read_text(encoding="utf-8"))
+    keys = {m["key"] for m in panel["risk_meta"]}
+    assert {"valuation", "revision"} <= keys and "valuation" in panel["risk"]
+
+
+def test_forward_per_factors_hold_with_reason_when_material_missing_or_mispaired(parsed):
+    """재료가 없거나 짝이 틀리면 **사유와 함께** 보류한다 — 조용한 대체 금지."""
+    import risk as risk_mod
+    _, P = parsed
+    S = {k: v["s"] for k, v in P.SERIES.items()}
+    # ① 한 시장의 EPS 만 빠져도 요인 전체가 보류(지역 구성이 조용히 바뀌지 않게)
+    S1 = {k: v for k, v in S.items() if k != "bb:S&P500"}
+    D = risk_mod.derive_inputs(S1, lambda m: None)
+    specs = {f["key"]: f for f in risk_mod.factor_specs(D)}
+    assert "S&P 500: EPS 없음" in specs["valuation"]["pending"]
+    assert "S&P 500: EPS 없음" in specs["revision"]["pending"]
+    assert "inds" not in specs["valuation"]
+    # ② 지수 자리에 EPS 가 들어오면(짝 오류) PER 중앙값 ≈ 1 → PER_SANE 밖 → 보류 + 경고
+    S2 = dict(S)
+    S2["bb:S&P500 (PX_LAST)"] = S["bb:S&P500"]
+    warns = []
+    D2 = risk_mod.derive_inputs(S2, warns.append)
+    specs2 = {f["key"]: f for f in risk_mod.factor_specs(D2)}
+    assert "짝 확인 필요" in specs2["valuation"]["pending"]
+    assert any("S&P 500 선행 PER 중앙값" in w and "bb:S&P500" in w for w in warns)
+    # ③ 정상 재료 — 두 시장 모두 살고 KOSPI 는 `_PR`(첫 후보), S&P 는 분리 키(둘째 후보)
+    D3 = risk_mod.derive_inputs(S, lambda m: None)
+    assert D3["per_hold"] == [] and set(D3["per"]) == {"KOSPI", "S&P 500"}
+    assert D3["per_src"]["KOSPI"]["per"].startswith("bb:한국_KOSPI_PR ÷")
+    assert D3["per_src"]["S&P 500"]["per"].startswith("bb:S&P500 (PX_LAST) ÷")
+    # 리비전 = 달력 3개월 전 대비 — 첫 3개월은 값이 없다
+    rev = D3["eps_rev"]["KOSPI"]
+    eps = S["bb:KOSPI"].dropna()
+    assert rev.index[0] >= eps.index[0] + pd.DateOffset(months=risk_mod.EPS_REV_MONTHS)
+    t = rev.index[-1]
+    prev = eps[eps.index <= t - pd.DateOffset(months=risk_mod.EPS_REV_MONTHS)].iloc[-1]
+    assert rev.iloc[-1] == pytest.approx((float(eps.loc[t]) / float(prev) - 1) * 100)
 
 
 def test_regime_reference_block(built):
@@ -1451,9 +1521,13 @@ def test_overview_five_cards_per_group_all_alive_on_synth(built):
     import process
     out, _ = built
     ov = json.loads((out / "overview.json").read_text(encoding="utf-8"))
-    expected = {k for k, *_ in process.OVERVIEW_CARDS}
+    # 첫 원소가 튜플이면 후보 체인 — 픽스처에서 실제로 뽑히는 키로 푼다(KOSPI 는
+    # 정정 라벨 `_PR`, S&P 500 은 `_PR` 이 없어 분리 키 `(PX_LAST)` 로 물러난다)
+    expected = {(k if isinstance(k, str) else next(x for x in k if x in synth.ALL_KEYS))
+                for k, *_ in process.OVERVIEW_CARDS}
     got = {c["key"] for c in ov["cards"]}
     assert got == expected, f"사라진 카드: {expected - got} / 미등록: {got - expected}"
+    assert "bb:한국_KOSPI_PR" in got and "bb:S&P500 (PX_LAST)" in got
     per = {}
     for c in ov["cards"]:
         per[c["group"]] = per.get(c["group"], 0) + 1

@@ -35,6 +35,28 @@ EVENT_LOOKBACK_D = 45
 
 GRADE_BANDS = [(0, 25, "낮음"), (25, 50, "보통"), (50, 75, "주의"), (75, 100, "경계")]
 
+# 선행 PER 재료(2026-09-09 업로드 — HANDOVER §6·§7.21). 시장마다 12M 선행 EPS 와 가격지수
+# 후보 키를 **순서대로** 찾아 처음 있는 것을 쓴다. 후보가 여럿인 이유: 익스포트 라벨이
+# 확정되지 않았다 — 지금 템플릿은 `KOSPI`/`S&P500` 라벨을 EPS 블록과 지수 블록에 겹쳐
+# 써서 파서(process.parse_wide)가 두 번째를 `(PX_LAST)` 로 분리하고, 가격지수 정정
+# 라벨 `_PR`(2026-08-21 익스포트)은 이 템플릿에서 사라졌다. 라벨을 정리하면 여기만
+# 고친다(개요 카드는 같은 튜플을 import 한다). 어떤 키를 썼는지는 요인 note 에 게시.
+PER_SOURCES = {
+    "KOSPI": {
+        "eps": ("bb:KOSPI", "bb:KOSPI (BEST_EPS)", "bb:한국_KOSPI_12MF_EPS"),
+        "px": ("bb:한국_KOSPI_PR", "bb:KOSPI (PX_LAST)", "bb:한국_KOSPI_TR (PX_LAST)"),
+    },
+    "S&P 500": {
+        "eps": ("bb:S&P500", "bb:S&P500 (BEST_EPS)", "bb:미국_S&P500_12MF_EPS"),
+        "px": ("bb:미국_S&P500_PR", "bb:S&P500 (PX_LAST)", "bb:미국_S&P500_TR (PX_LAST)"),
+    },
+}
+# 선행 PER 짝 검증 — 가격지수 ÷ EPS 의 전 이력 중앙값이 이 밖이면 짝이 틀린 것이다
+# (EPS÷지수 ≈ 0.05, 지수÷지수 = 1, EPS÷EPS = 1). 모형 모수가 아니라 데이터 무결성
+# 가드이며, 걸리면 요인을 **보류 사유와 함께** 비활성으로 둔다(조용한 대체 금지).
+PER_SANE = (3.0, 60.0)
+EPS_REV_MONTHS = 3    # 이익 리비전 = 12M 선행 EPS 의 달력 3개월 전 대비 변화율(%)
+
 
 def chg_of(weekly: pd.Series, cur: float) -> dict:
     """현재 점수의 1개월·3개월·1년 전 대비 변화 — 요인·층이 같은 산식을 쓴다."""
@@ -189,6 +211,35 @@ def derive_inputs(S: dict, warn=None) -> dict:
     sahm_now = float(sahm.iloc[-1])
     sahm_fired = sahm_now >= 0.5
 
+    # 선행 PER · 이익 리비전 (잠재 위험 — 2026-09-09 EPS 업로드로 활성화)
+    per, eps_rev, per_src, per_hold = {}, {}, {}, []
+
+    def first_of(cands):
+        for k in cands:
+            if k in S:
+                return k, S[k]
+        return None, None
+
+    for mkt, src in PER_SOURCES.items():
+        ek, eps = first_of(src["eps"])
+        pk, px = first_of(src["px"])
+        if eps is None or px is None:
+            per_hold.append(f"{mkt}: {'EPS' if eps is None else '가격지수'} 없음")
+            continue
+        eps = eps.dropna()
+        eps = eps[eps > 0]                       # 적자 컨센서스는 PER 정의 불가 — 제외
+        ratio = (px.dropna() / eps).dropna()     # 날짜 교집합에서만
+        med = float(ratio.median()) if len(ratio) else float("nan")
+        if not (PER_SANE[0] <= med <= PER_SANE[1]):
+            warn(f"risk: {mkt} 선행 PER 중앙값 {med:.2f} — 지수/EPS 짝 확인 필요 "
+                 f"({pk} ÷ {ek}), 밸류에이션·리비전 보류")
+            per_hold.append(f"{mkt}: 지수/EPS 짝 확인 필요 ({pk} ÷ {ek})")
+            continue
+        prev = eps.reindex(eps.index - pd.DateOffset(months=EPS_REV_MONTHS), method="ffill")
+        rev = pd.Series(eps.values / prev.values - 1, index=eps.index) * 100
+        per[mkt], eps_rev[mkt] = ratio, rev.dropna()
+        per_src[mkt] = {"per": f"{pk} ÷ {ek}", "eps_rev": ek}
+
     return {
         "kospi": kospi,
         "acwi": acwi,
@@ -216,7 +267,27 @@ def derive_inputs(S: dict, warn=None) -> dict:
         "sahm": sahm,
         "sahm_now": sahm_now,
         "sahm_fired": sahm_fired,
+        "per": per,                # {시장: 선행 PER 시계열}
+        "eps_rev": eps_rev,        # {시장: 12M 선행 EPS 3개월 변화율 %}
+        "per_src": per_src,        # {시장: {"per": "가격지수 키 ÷ EPS 키", "eps_rev": "EPS 키"}}
+        "per_hold": per_hold,      # 보류 사유 목록 (비어 있으면 두 시장 모두 활성)
     }
+
+
+def _per_block(D: dict, field: str, make, note: str) -> dict:
+    """선행 PER 재료로 요인 정의의 inds/note 또는 pending 을 만든다.
+
+    두 시장 중 하나라도 재료가 없거나 짝 검증에 걸리면 **요인 전체를 보류**한다 —
+    한 시장만으로 요인을 살리면 잠재 위험 합성의 지역 구성이 조용히 바뀐다.
+    """
+    hold = D.get("per_hold") or []
+    series = D.get(field) or {}
+    if hold or len(series) < len(PER_SOURCES):
+        why = "; ".join(hold) if hold else "재료 부족"
+        return dict(pending=f"12M 선행 EPS·가격지수 업로드 시 자동 활성화 ({why})")
+    srcs = ", ".join(f"{m} = {D['per_src'][m][field]}" for m in PER_SOURCES)
+    return dict(inds=[make(m, series[m]) for m in PER_SOURCES],
+                note=f"{note} 출처 {srcs}.")
 
 
 def factor_specs(D: dict) -> list[dict]:
@@ -277,9 +348,16 @@ def factor_specs(D: dict) -> list[dict]:
                    Indicator("한국 10년−3년", kr_slope, "lo", "{:+.0f}", "bp")],
              note="역전(음수)은 12~18개월 선행 침체 신호 — 1개월 지평 예측력은 낮아 학습 가중이 작고, 최소바닥 8%로 감시를 유지합니다."),
         # ----- 잠재 위험 (취약성) -----
+        # 밸류에이션·이익 리비전은 12M 선행 EPS 가 있어야 산다(2026-09-09 업로드 — §7.21).
+        # 글로벌 축은 ACWI 선행 EPS 가 익스포트에 없어 S&P 500 으로 대신한다.
         dict(key="valuation", layer="vuln", name="밸류에이션",
              sub="주가가 이익 대비 얼마나 비싼가", question="주가가 이익 대비 얼마나 비싼가",
-             tags=[], pending="포워드 PER 업로드 시 자동 활성화 (KOSPI·ACWI 12M 포워드 PER)"),
+             tags=["dd"],
+             **_per_block(D, "per", lambda mkt, s: Indicator(
+                 f"{mkt} 12M 선행 PER", s, "hi", "{:.1f}", "배",
+                 desc="가격지수 ÷ 12개월 선행 EPS(컨센서스)"),
+                 "선행 PER = 가격지수 ÷ 12개월 선행 EPS(블룸버그 BEst 컨센서스). "
+                 "ACWI 선행 EPS 가 익스포트에 없어 글로벌 축은 S&P 500 으로 대신합니다.")),
         dict(key="disp", layer="vuln", name="과열 이격도",
              sub="주가가 평균 추세보다 얼마나 위에 있나", question="주가가 추세 대비 얼마나 과열됐는가",
              tags=["dd"],
@@ -290,7 +368,12 @@ def factor_specs(D: dict) -> list[dict]:
              note="하방 이격(추세 아래)은 취약성이 아니라 현재 위험(주식 낙폭)에서 집계합니다."),
         dict(key="revision", layer="vuln", name="이익 리비전",
              sub="이익 전망이 상향인가 하향인가", question="이익 전망이 상향인가 하향인가",
-             tags=[], pending="포워드 PER 업로드 시 자동 활성화 (내재 포워드 EPS 3개월 변화율)"),
+             tags=["dd"],
+             **_per_block(D, "eps_rev", lambda mkt, s: Indicator(
+                 f"{mkt} 12M 선행 EPS {EPS_REV_MONTHS}개월 변화", s, "lo", "{:+.1f}", "%",
+                 desc="달력 3개월 전 대비 — 하향(음수)일수록 위험"),
+                 f"12M 선행 EPS 의 달력 {EPS_REV_MONTHS}개월 전 대비 변화율 — 하향 리비전이 "
+                 "취약성입니다(직접 관측한 EPS 라 PER 에서 역산하지 않습니다).")),
         dict(key="compress", layer="vuln", name="스프레드 압축",
              sub="크레딧 위험보상이 얼마나 얇아졌나", question="위험보상이 얼마나 얇아져 있는가",
              tags=["spread"],
@@ -493,9 +576,11 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
     # KOSPI 10영업일 전 대비 수익률 — 위험 추이 차트의 실제 상황 대조 축(2026-08-27
     # 사용자 지시). 주간 **최저**를 싣는 이유: 금요일 스냅숏은 주중에 참고선을 뚫었다
     # 반등한 주를 놓친다. 참고선 수치(levels)는 게시하되 의미 문구는 싣지 않는다.
-    k10_base, k10_src = S.get("bb:한국_KOSPI_PR"), "bb:한국_KOSPI_PR"
-    if k10_base is None:
-        k10_base, k10_src = kospi, "bb:한국_KOSPI_TR"
+    k10_base, k10_src = kospi, "bb:한국_KOSPI_TR"
+    for k in PER_SOURCES["KOSPI"]["px"]:          # 가격지수 후보(라벨별) → 없으면 TR
+        if k in S:
+            k10_base, k10_src = S[k], k
+            break
     r10 = (k10_base.dropna().pct_change(10) * 100).dropna()
     kospi10 = {"label": "KOSPI 10영업일 전 대비 수익률 (주간 최저)",
                "src": k10_src, "levels": [-10, -16, -25],
@@ -544,8 +629,10 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
         "factors": factors_out,
         "limits": ("점수는 과거 분포 대비 현재 상태의 요약이며 수익률 예측이 아닙니다 — 검증 결과 "
                    "어떤 요인도 1개월 뒤 하락폭 자체는 예측하지 못했고, 예측되는 것은 변동성입니다. "
-                   "백분위 방식은 전례 없는 수준의 사건을 100점 부근으로만 표현합니다. "
-                   "잠재 위험 층은 포워드 PER 데이터 확보 전까지 밸류에이션을 보지 못합니다."),
+                   "백분위 방식은 전례 없는 수준의 사건을 100점 부근으로만 표현합니다."
+                   + ("" if fmap["valuation"].get("score") is not None else
+                      " 잠재 위험 층은 12M 선행 EPS 데이터 확보 전까지 밸류에이션·이익 리비전을 "
+                      "보지 못합니다.")),
     }
 
     events_payload = detect_events(

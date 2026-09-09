@@ -13,10 +13,10 @@ import synth
 
 
 def test_series_count_and_files(parsed):
-    """파싱 시리즈 수 = 스펙 길이의 합, 파일 5개. 중복 컬럼은 세지 않는다."""
+    """파싱 시리즈 수 = 스펙 길이의 합, 파일 5개. 진짜 중복 컬럼은 세지 않고 분리 키는 센다."""
     report, P = parsed
     assert len(report) == 5
-    expected = (len(synth.BB_SPEC) + len(synth.INFO_SPEC)
+    expected = (len(synth.BB_KEYS) + len(synth.INFO_SPEC)   # BB_KEYS = 스펙 + 분리 키 4
                 + 1                       # idx:ACWI
                 + len(synth.BREADTH_KEYS)   # 데일리 리포트 집계 지표
                 + len(synth.BM_KEYS))       # 자산군 전략 벤치마크
@@ -69,12 +69,67 @@ def test_key_suffix_is_verbatim_header(parsed):
 def test_duplicate_notation_warns_and_keeps_first(parsed):
     """같은 시트에 같은 Notation 이 두 번이면 두 번째는 경고 후 버려진다."""
     _, P = parsed
-    dups = [w for w in P.WARNINGS if "duplicate column" in w]
+    dups = [w for w in P.WARNINGS if "duplicate column" in w and "skipped" in w]
     assert len(dups) == 1 and "달러원" in dups[0]
     s = P.SERIES["bb:달러원"]["s"]
     assert len(s) == len(synth.bdays())
     # 채택된 것은 **첫** 컬럼 — 두 번째 컬럼의 센티넬 값은 어디에도 없어야 한다
     assert not (s == synth.DUP_SENTINEL).any()
+
+
+def test_duplicate_notation_with_distinct_lower_header_is_split(parsed):
+    """겹친 라벨이라도 Notation **아래** 헤더 행(필드)이 다르면 버리지 않고 분리한다.
+
+    2026-09-09 익스포트: `KOSPI`/`S&P500` 라벨이 12M 선행 EPS 블록(`BEST_EPS`)과
+    지수 블록(`PX_LAST`)에 겹쳐 있었다 — 첫 컬럼이 맨 라벨, 둘째가 `라벨 (PX_LAST)`.
+    """
+    _, P = parsed
+    for k in synth.BB_SPLIT_KEYS:
+        assert k in P.SERIES, f"missing {k}"
+        assert P.SERIES[k]["name"] == k.split(":", 1)[1]
+    split = [w for w in P.WARNINGS if "로 분리" in w]
+    assert len(split) == 2 and all("(PX_LAST)" in w for w in split), split
+    # 첫 컬럼(EPS, 느린 행보)과 둘째(지수)는 서로 다른 시리즈여야 한다
+    eps, px = P.SERIES["bb:KOSPI"]["s"], P.SERIES["bb:KOSPI (PX_LAST)"]["s"]
+    assert len(eps) == len(px) == len(synth.bdays())
+    assert not eps.equals(px) and (px / eps).median() > 3
+
+
+def test_dup_suffix_joins_every_distinguishing_lower_row(tmp_path):
+    """접미사 = Notation 아래 행 중 첫 컬럼과 다른 셀 전부(` · ` 연결). 위 행은 무시."""
+    spec = [("X", "c", "walk", 1.0), ("Y", "c", "walk", 2.0)]
+    blocks = [("X", "PX_LAST", "walk", 3.0),      # 필드 같음 → 티커 행으로만 구분
+              ("X", "BEST_EPS", "walk", 4.0)]     # 필드·티커 둘 다 다름 → 둘을 잇는다
+    # below_rows: 티커 행 — X(첫) AAA, Y BBB, X(둘째) CCC, X(셋째) DDD
+    synth.write_wide(tmp_path / "data_bb_t.xlsx", spec, split_blocks=blocks,
+                     below_rows=[("Dates", ["AAA Index", "BBB Index", "CCC Index", "DDD Index"])])
+    process.load_data_dir(tmp_path)
+    keys = sorted(k for k in process.SERIES if k.startswith("bb:X"))
+    assert keys == ["bb:X", "bb:X (CCC Index)", "bb:X (DDD Index · BEST_EPS)"], keys
+    assert not [w for w in process.WARNINGS if "skipped" in w]
+
+
+def test_dup_suffix_ignores_rows_above_notation_and_numbers(tmp_path):
+    """Start/End Date 처럼 Notation 위의 행이나 숫자 셀은 구분 근거가 아니다 — 진짜 중복은 버린다."""
+    spec = [("X", "c", "walk", 1.0)]
+    synth.write_wide(tmp_path / "data_bb_t.xlsx", spec, dup_notation="X",
+                     below_rows=[("Dates", [1.0, 2.0])])    # 숫자만 다른 행
+    process.load_data_dir(tmp_path)
+    assert "bb:X" in process.SERIES and len([k for k in process.SERIES if k.startswith("bb:X")]) == 1
+    assert any("duplicate column 'X' skipped" in w for w in process.WARNINGS)
+    assert process.dup_suffix([("Dates", "A", "A")], 1, 2) is None
+    assert process.dup_suffix([("Dates", "A", "B"), ("Dates", "F1", "F2")], 1, 2) == "B · F2"
+
+
+def test_get_first_reports_used_key_and_warns_once_when_none(parsed):
+    """후보 키 체인 — 처음 있는 키를 쓰고 그 키를 돌려준다(카드 key 로 게시됨)."""
+    _, P = parsed
+    P.WARNINGS.clear()
+    k, s = P.get_first(("bb:없는키", "bb:S&P500 (PX_LAST)", "bb:한국_KOSPI_PR"))
+    assert k == "bb:S&P500 (PX_LAST)" and s is not None and not P.WARNINGS
+    k, s = P.get_first(("bb:없는키", "bb:없는키2"))
+    assert k is None and s is None
+    assert len(P.WARNINGS) == 1 and "bb:없는키 | bb:없는키2" in P.WARNINGS[0]
 
 
 def test_index_key_is_first_token_of_a1(tmp_path):

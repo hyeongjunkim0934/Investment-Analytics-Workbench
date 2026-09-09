@@ -82,6 +82,24 @@ def get(key: str) -> pd.Series | None:
     return entry["s"]
 
 
+def get_first(keys) -> tuple[str | None, pd.Series | None]:
+    """후보 키 중 **처음 존재하는** 것을 (키, 시리즈) 로 돌려준다.
+
+    같은 계열이 익스포트 템플릿의 라벨에 따라 다른 키로 올 때 쓴다 — 예: KOSPI
+    가격지수는 `bb:한국_KOSPI_PR`(정정 라벨) 이거나, 라벨이 겹쳐 파서가 분리한
+    `bb:KOSPI (PX_LAST)` 다(2026-09-09 익스포트). 어느 후보를 썼는지는 돌려준 키로
+    게시하므로 조용한 대체가 아니다. 하나도 없으면 경고 한 줄(후보 전부 나열).
+    """
+    if isinstance(keys, str):
+        keys = (keys,)
+    for k in keys:
+        entry = SERIES.get(k)
+        if entry is not None:
+            return k, entry["s"]
+    warn(f"series not found: {' | '.join(keys)}")
+    return None, None
+
+
 # --------------------------------------------------------------------------
 # cell helpers
 # --------------------------------------------------------------------------
@@ -122,6 +140,23 @@ CAT_LABELS = {"카테고리", "Category", "CATEGORY"}
 NOTATION_LABELS = {"Notation", "NOTATION", "노테이션"}
 
 
+def dup_suffix(below_rows: list, first: int, dup: int) -> str | None:
+    """중복 Notation 컬럼(dup)을 첫 컬럼(first)과 구분해 주는 접미사.
+
+    Notation 행 아래의 헤더 행을 위에서부터 훑어 두 컬럼 셀이 **둘 다 문자열이고
+    서로 다른** 행의 dup 쪽 셀을 모아 ` · ` 로 잇는다(예: 티커만 다르면 티커,
+    필드만 다르면 필드, 둘 다 다르면 `티커 · 필드`). 구분되는 행이 없으면 None
+    (= 진짜 중복). 숫자·빈 셀은 구분 근거로 쓰지 않는다.
+    """
+    parts = []
+    for row in below_rows:
+        a = cell_label(row[first]) if first < len(row) else None
+        b = cell_label(row[dup]) if dup < len(row) else None
+        if a and b and a != b:
+            parts.append(b)
+    return " · ".join(parts) if parts else None
+
+
 def parse_wide(path: Path, source_tag: str) -> int:
     """Parse a wide export (Bloomberg / Infomax style).
 
@@ -130,12 +165,22 @@ def parse_wide(path: Path, source_tag: str) -> int:
     followed by data rows whose col A is a datetime. Everything else is
     ignored, so extra vendor rows (Ticker, field, item labels, broken formula
     rows) are harmless.
+
+    같은 시트에 같은 Notation 이 두 번 이상이면 **첫 컬럼이 그 라벨을 갖고**, 뒤
+    컬럼은 Notation 행 **아래**의 헤더 행(블룸버그 티커·필드 행 등)에서 첫 컬럼과
+    다른 셀을 접미사로 붙여 `라벨 (접미사)` 키로 살린다 — 예: 라벨 `KOSPI` 가
+    12M 선행 EPS(`BEST_EPS`)와 지수(`PX_LAST`) 두 블록에 겹친 2026-09-09 익스포트는
+    `bb:KOSPI` + `bb:KOSPI (PX_LAST)` 가 된다. 아래 헤더까지 전부 같으면 진짜
+    중복이라 예전처럼 경고 후 버린다. 접미사는 파일이 준 문자열 그대로이며 여기서
+    이름을 짓지 않는다(dup_suffix). Notation 행 **위**의 행(Start/End Date 등)은
+    보지 않는다 — 진짜 중복도 그 행은 다를 수 있다.
     """
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     added = 0
     try:
         for ws in wb.worksheets:
             cats = notations = None
+            below: list = []      # Notation 행 아래 헤더 행들 — 중복 라벨 분리용
             cols: list[tuple[int, str, str]] = []   # (col_idx, category, name)
             data: dict[int, list] = {}
             dates: list[datetime] = []
@@ -150,9 +195,10 @@ def parse_wide(path: Path, source_tag: str) -> int:
                         cats = row
                     elif label in NOTATION_LABELS:
                         notations = row
+                        below = []
                     elif is_dt(a) and notations is not None:
                         # header block complete -> build column map, start data
-                        seen: set[str] = set()
+                        seen: dict[str, int] = {}     # 라벨 -> 첫 컬럼
                         for j, name in enumerate(notations):
                             if j == 0:
                                 continue
@@ -160,9 +206,15 @@ def parse_wide(path: Path, source_tag: str) -> int:
                             if not nm:
                                 continue
                             if nm in seen:
-                                warn(f"{path.name}/{ws.title}: duplicate column '{nm}' skipped")
-                                continue
-                            seen.add(nm)
+                                suffix = dup_suffix(below, seen[nm], j)
+                                split = f"{nm} ({suffix})" if suffix else None
+                                if split is None or split in seen:
+                                    warn(f"{path.name}/{ws.title}: duplicate column '{nm}' skipped")
+                                    continue
+                                warn(f"{path.name}/{ws.title}: duplicate column '{nm}' → "
+                                     f"'{split}' 로 분리 (아래 헤더 행이 다름)")
+                                nm = split
+                            seen[nm] = j
                             cat = ""
                             if cats is not None and j < len(cats):
                                 cat = cell_label(cats[j]) or ""
@@ -170,6 +222,8 @@ def parse_wide(path: Path, source_tag: str) -> int:
                             data[j] = []
                         started = True
                     else:
+                        if notations is not None:
+                            below.append(row)
                         continue
                 if started and is_dt(a):
                     dates.append(a)
@@ -413,9 +467,16 @@ OVERVIEW_GROUPS = [
 # 일본 > 중국). 주식 구역의 유럽·일본·중국 **주가지수는 원본 데이터에 없어서** 전세계
 # (ACWI)와 변동성 2종으로 채웠다 — 지수 컬럼이 익스포트에 추가되면 여기서 교체한다
 # (HANDOVER §6 데이터 요청).
+# 첫 원소가 **튜플이면 후보 키**다 — 같은 계열이 익스포트 라벨에 따라 다른 키로
+# 온다(`get_first`). KOSPI·S&P 500 가격지수: 정정 라벨 `_PR`(2026-08-21 익스포트)
+# → 2026-09-09 익스포트의 겹친 라벨 `KOSPI`/`S&P500` 을 파서가 분리한 `(PX_LAST)`
+# → `_TR` 오라벨 블록의 두 번째 컬럼(역시 PX_LAST). 카드 `key` 에는 실제로 쓴 키가
+# 실린다. 라벨을 정리하면 여기 후보와 risk.PER_SOURCES 를 함께 고친다.
+KOSPI_PX_KEYS = risk.PER_SOURCES["KOSPI"]["px"]
+SPX_PX_KEYS = risk.PER_SOURCES["S&P 500"]["px"]
 OVERVIEW_CARDS = [
-    ("bb:한국_KOSPI_PR",          "KOSPI",            "price", 1, "",   "equity", ""),
-    ("bb:미국_S&P500_PR",         "S&P 500",          "price", 1, "",   "equity", ""),
+    (KOSPI_PX_KEYS,              "KOSPI",            "price", 1, "",   "equity", ""),
+    (SPX_PX_KEYS,                "S&P 500",          "price", 1, "",   "equity", ""),
     ("idx:ACWI",                 "MSCI ACWI",        "price", 1, "",   "equity", "acwi"),
     ("info:VKOSPI",              "VKOSPI",           "level", 1, "",   "equity", ""),
     ("bb:미국_변동성지수_VIX",    "VIX",              "level", 1, "",   "equity", ""),
@@ -439,8 +500,8 @@ OVERVIEW_CARDS = [
 
 def build_overview() -> dict:
     cards = []
-    for key, label, kind, dec, unit, group, link in OVERVIEW_CARDS:
-        s = get(key)
+    for keys, label, kind, dec, unit, group, link in OVERVIEW_CARDS:
+        key, s = get_first(keys)
         if s is None:
             continue
         card = {
