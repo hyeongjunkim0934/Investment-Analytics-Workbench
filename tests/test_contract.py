@@ -937,7 +937,6 @@ def test_hidden_attribute_is_not_defeated_by_display_rules():
 #: app.js 가 **자기가 만들어 붙이는** id — index.html 에 없는 것이 정상이다.
 #: 여기에 이름을 더할 때는 아래 테스트가 "실제로 만드는지"까지 확인한다.
 DYNAMIC_IDS = {
-    "port-robust-k": 'id: "port-robust-k"',  # renderPortPanel()의 강건 최적화 강도 입력
     "alloc-workspace-info": 'id: "alloc-workspace-info"',  # renderAllocWorkspace()의 비활성·폴백 사유
     "village-fx":  'setAttribute("id", "village-fx")',   # 마을 앰비언트 SVG 레이어
     "hg-econ":     'tile("hg-econ"',                     # 시뮬레이터 결과 타일 3개

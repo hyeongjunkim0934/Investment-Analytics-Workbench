@@ -1144,6 +1144,10 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-two { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 12px; }
 @media (max-width: 900px) { .port-two { grid-template-columns: 1fr; } }
 .port-sub-card { padding: 12px 14px; }
+.port-benchmark th, .port-benchmark td {
+  text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.port-benchmark th:first-child, .port-benchmark td:first-child { text-align: left; }
 .port-hover { font-size: 12.5px; color: var(--ink-2); margin-top: 6px; min-height: 18px; }
 .rp-hover { font-size: 12px; color: var(--ink-2); margin-top: 6px; min-height: 18px; font-variant-numeric: tabular-nums; }
 
@@ -1152,13 +1156,7 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-frontier .chart-box { margin-top: 12px; border: 1px solid var(--border); border-radius: 8px;
   background: linear-gradient(160deg, rgba(57,135,229,.04), transparent 65%), var(--page); padding: 8px 0; }
 .port-frontier .chart-box:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 3px; }
-.port-robust-control { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 10px;
-  margin-left: auto; color: var(--ink-2); font-size: 14px; }
-.port-robust-control input { width: 128px; accent-color: var(--s7); }
-.port-robust-control output { min-width: 3ch; font-variant-numeric: tabular-nums; }
 .port-frontier-key { display: flex; flex-wrap: wrap; gap: 10px 20px; color: var(--ink-2); font-size: 12px; margin-top: 8px; }
-.port-area-key::before { content: ""; display: inline-block; width: 22px; height: 10px; margin-right: 6px;
-  background: linear-gradient(135deg, var(--s1), var(--s7)); opacity: .7; border-radius: 2px; }
 .port-marker-key { display: inline-flex; gap: 7px; align-items: center; }
 .port-marker-key b { font-size: 17px; line-height: 1; }
 .port-sharpe-scale { display: flex; align-items: center; gap: 10px; margin-top: 14px;
@@ -1167,8 +1165,4 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-frontier .port-hover { min-height: 36px; line-height: 1.7; overflow-wrap: anywhere; }
 @media (max-width: 600px) {
   .port-frontier { padding: 12px 8px; }
-  .port-robust-control { margin-left: 0; width: 100%; }
 }
-
-.port-frontier-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; margin-left: auto; }
-@media (max-width: 600px) { .port-frontier-controls { margin-left: 0; width: 100%; } }

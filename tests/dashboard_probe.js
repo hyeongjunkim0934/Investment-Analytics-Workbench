@@ -61,7 +61,6 @@ main.append(village);
 const overlayNode = elem("div", "detail-overlay");
 overlayNode.hidden = true;
 DOC.body.append(overlayNode);
-footer.append(elem("p", "build-line"), elem("div", "build-warnings"));
 
 /* 자산배분 뼈대 — renderAlloc 이 $("#alloc-…") 로 집는 자리들(index.html 과의 계약).
    하나라도 빠지면 그 자리에서 죽으므로 실제 마크업과 같은 목록을 둔다. */
@@ -512,22 +511,17 @@ safe("eventsBrief", () => {
   return r;
 });
 
-/* ============ P9. 빌드 경고는 <p id="build-line"> 밖의 형제 컨테이너에 들어간다 ====== */
-safe("footerWarnings", () => {
+/* ============ P9. 푸터 없이 상단 메타와 콘솔 진단을 갱신한다 =================== */
+safe("metaWithoutFooter", () => {
   P.DATA.meta = { last_observation: "2026-07-27", built_at_kst: "K", built_at_utc: "U",
     series_count: 444, files: [1, 2, 3, 4], warnings: ["w1", "w2", "w3"] };
-  P.renderMetaLine();
-  const bl = DOC.getElementById("build-line");
-  const wb = DOC.getElementById("build-warnings");
-  const det = wb.querySelector("details");
+  const calls = [], oldWarn = sandbox.console.warn;
+  sandbox.console.warn = (...args) => calls.push(args);
+  try { P.renderMetaLine(); } finally { sandbox.console.warn = oldWarn; }
   return {
-    buildLineTag: bl.tagName,
-    detailsParentId: det ? det.parentElement.id : null,
-    detailsParentTag: det ? det.parentElement.tagName : null,
-    detailsInsideBuildLine: det ? bl.contains(det) : null,
-    listItems: det ? det.querySelectorAll("li").length : 0,
-    summaryText: det ? (det.querySelector("summary") || {}).textContent : null,
-    buildLineText: bl.textContent,
+    headerText: DOC.getElementById("meta-line").textContent,
+    noFooterNodes: !DOC.getElementById("build-line") && !DOC.getElementById("build-warnings"),
+    warnings: calls,
   };
 });
 
@@ -2203,7 +2197,7 @@ safe("portPanel", () => {
     r.hoverShowsDetail = /배분/.test(hv.textContent) && /국내채권/.test(hv.textContent)
       && /위험/.test(hv.textContent);
     hook({ cursor: { idx: null } });
-    r.hoverResets = /경계선에 마우스/.test(hv.textContent);
+    r.hoverResets = hv.textContent === "";
   }
   /* 경계선 점들이 위험 오름차순·수익 비내림인가 (게시가 아니라 엔진 실행으로) */
   const E = P.portEngine(ALLOC_FIXTURE.port, P.portState(ALLOC_FIXTURE.port));
@@ -2213,10 +2207,10 @@ safe("portPanel", () => {
     && (E.maxSharpe.mu - E.rf) / E.maxSharpe.sig
        >= (E.bench.mu - E.rf) / E.bench.sig - 1e-9;
 
-  /* ⑤ 벤치마크 리뷰 표 + 실현 성과 참고 줄 */
+  /* ⑤ 벤치마크 리뷰 표만 표시하고 하단 참고 줄은 제외한다. */
   const rvTxt = panel.textContent;
   r.reviewHasRows = /최적\(최대 샤프\)/.test(rvTxt) && /벤치마크 60\/40/.test(rvTxt);
-  r.reviewShowsRealized = /실현 성과\(창/.test(rvTxt) && /실현 성과\(10년 참고/.test(rvTxt);
+  r.reviewNotesRemoved = !/실현 성과\(창|실현 성과\(10년 참고/.test(rvTxt);
 
   /* 2026-09-09 사용자 지시: 표본 부족 안내·산출 기준·번호 제거. */
   r.periodNotesRemoved = !/창 미충족|산출 기준|7자산군|원화 미헤지|① 제약조건|② 자산군/.test(panel.textContent);

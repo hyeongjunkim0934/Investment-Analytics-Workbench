@@ -309,23 +309,18 @@ def test_brief_container_exists_in_markup():
     assert 'id="events-brief"' in html
 
 
-# ---- 푸터 빌드 경고 --------------------------------------------------------
-def test_build_warnings_live_outside_the_build_line_paragraph(probe):
-    """<p id="build-line"> **안**에 넣으면 펼치는 순간 문단이 18px→209px 로 늘며
-    빌드 메타 줄과 설명 문장이 같은 시각적 줄에 겹친다(실제 클릭으로 재현). 게다가
-    <p> 안의 <ul>/<p> 는 HTML 콘텐츠 모델 위반이다."""
-    w = probe["footerWarnings"]
-    assert w["detailsInsideBuildLine"] is False
-    assert w["detailsParentId"] == "build-warnings"
-    assert w["detailsParentTag"] != "P"
-    assert w["listItems"] == 3, "경고 건수만큼 항목이 나와야 한다"
-    assert "콘솔" not in w["buildLineText"], "빌드 줄이 아직 개발자 콘솔을 열라고 한다"
+# ---- 푸터 제거 후 상단 메타 갱신 ------------------------------------------
+def test_metadata_updates_without_footer_nodes(probe):
+    w = probe["metaWithoutFooter"]
+    assert w["noFooterNodes"] is True
+    assert w["headerText"] == "기준일 2026-07-27 · 빌드 K · 444개 시리즈"
+    assert w["warnings"] == [["pipeline warnings:", ["w1", "w2", "w3"]]]
 
 
-def test_build_warnings_container_exists_in_markup():
+def test_footer_annotations_removed_from_markup():
     html = INDEX_HTML.read_text(encoding="utf-8")
-    m = re.search(r'<p id="build-line"></p>\s*(?:<!--.*?-->\s*)*<div id="build-warnings">', html, re.S)
-    assert m, "#build-warnings 가 #build-line 의 형제 <div> 로 있어야 한다"
+    assert not re.search(r'<footer\b|id="build-(?:line|warnings)"', html)
+    assert "원본 데이터 파일은 비공개 저장소에만" not in html
 
 
 # --------------------------------------------------------------------------
@@ -2613,7 +2608,7 @@ def test_port_panel_frontier_hover_and_review(probe):
     assert c["realizedColShown"] is True and c["realizedMatchesWindowMean"] is True, (
         "실현 μ(선택 창) 열이 없거나 게시 창 평균과 다른 수를 적는다"
     )
-    assert c["reviewHasRows"] is True and c["reviewShowsRealized"] is True
+    assert c["reviewHasRows"] is True and c["reviewNotesRemoved"] is True
     assert c["periodNotesRemoved"] is True, "사용자가 제거한 주석·번호가 남아 있다"
     assert c["sumWarnAfterDrift"] is True, "합계≠100 인데 몰래 정규화했거나 침묵했다"
     assert c["inactiveShowsReason"] is True, "비활성 사유가 화면에 없다 — 조용한 대체 금지"
