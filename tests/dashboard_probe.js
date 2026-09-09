@@ -3187,25 +3187,27 @@ safe("explainFold", () => {
 safe("villageNotes", () => {
   const r = {};
   const frame = DOC.getElementById("village-frame");
-  const prev = { risk: P.DATA.risk, events: P.DATA.events, alloc: P.DATA.alloc };
-  shim.localStorage.removeItem("iaw-alloc");
+  const prev = { risk: P.DATA.risk, overview: P.DATA.overview };
   P.DATA.risk = { asof: "2026-08-20", layers: {
     stress: { score: 53.5, grade: "주의", chg: { m1: -5.1, m3: 2.9, y1: 20.3 }, rank5y: 57 },
     vuln: { score: 60.1, grade: "주의", chg: { m1: -13.8, m3: -18.9, y1: -16.2 }, rank5y: 58 } },
     regime: { active: true, rows: [
       { name: "해외주식", prob: 5.6, ttest_p: 0.001 }, { name: "채권", prob: 18.3, ttest_p: 0.016 },
       { name: "원자재", prob: 75.1, ttest_p: 0.2 } ] } };
-  const BRIEF = [
-    "7월 13일부터 8월 6일까지 검출된 이벤트는 모두 3건 — 경계 1 · 주의 2 · 정보 0. 경계·주의만 읽습니다.",
-    "[경계] 7월 31일 — KOSPI TR 일간 급등 (+17.9%)",
-    "[주의] 8월 3일 — 미국 증시 — 오른 종목이 많은데 52주 신저가가 더 많음",
-    "[주의] 7월 13일 — KOSPI TR 일간 급락 (-8.9%)",
-    "검출 규칙은 아래 타임라인·방법론에 있습니다. 모델 참고치입니다.",
-  ];
-  P.DATA.events = { asof: "2026-08-06", lookback_days: 45, events: [
-    { date: "2026-07-31", sev: "경계", cat: "급변", title: "KOSPI TR 일간 급등", value: "+17.9%", rule: "r1" }],
-    brief: BRIEF, catalog: [] };
-  P.DATA.alloc = CMA_ALLOC;
+  /* 개요 카드 — 파이프라인 changes() 가 실은 값을 그대로 옮기는지 본다(값은 합성). 구역 4개:
+     주식(price)·금리(rate, bp 1자리)·환율(price)·기타(level, pt). d1_label 은 「직전 관측」일 수 있다. */
+  P.DATA.overview = { cards: [
+    { key: "k1", label: "KOSPI", kind: "price", unit: "", group: "equity", link: "", value: 2500.5, date: "2026-08-06",
+      chg: { d1: 1.3, m1: -2.25, ytd: 10, y1: null }, d1_label: "1일", spark: { t: [], v: [] } },
+    { key: "k2", label: "VIX", kind: "level", unit: "", group: "equity", link: "", value: 18, date: "2026-08-05",
+      chg: { d1: -0.5, m1: 0, ytd: 2.25, y1: 3 }, d1_label: "직전 관측", spark: { t: [], v: [] } },
+    { key: "k3", label: "국고 3년", kind: "rate", unit: "%", group: "rate", link: "rates", value: 3.9, date: "2026-08-06",
+      chg: { d1: 1.0, m1: 15, ytd: 95, y1: 100.5 }, d1_label: "1일", spark: { t: [], v: [] } },
+    { key: "k4", label: "달러/원", kind: "price", unit: "", group: "fx", link: "fx", value: 1380, date: "2026-08-06",
+      chg: { d1: 0, m1: -1.5, ytd: 8.12, y1: 12 }, d1_label: "1일", spark: { t: [], v: [] } },
+    { key: "k5", label: "한국 CDS 5년", kind: "level", unit: "bp", group: "other", link: "credit", value: 21.6, date: "2026-08-06",
+      chg: { d1: -0.05, m1: -1.07, ytd: -0.24, y1: 2 }, d1_label: "1일", spark: { t: [], v: [] } },
+  ], groups: [] };
   P.villageNotesInvalidate();
   P.renderVillage();
   const grab = () => Object.fromEntries([...frame.querySelectorAll(".vz-note")]
@@ -3215,14 +3217,25 @@ safe("villageNotes", () => {
   r.zones = Object.keys(notes).sort();
   const zoneKeys = new Set(P.VILLAGE_ZONES.map((z) => z.key));
   r.zonesExist = r.zones.every((k) => zoneKeys.has(k));
-  const risk = notes.belltower || "", inn = notes.inn || "", granary = notes.granary || "", trading = notes.trading || "";
+  const risk = notes.belltower || "", granary = notes.granary || "", market = notes.market || "",
+        trading = notes.trading || "", inn = notes.inn || "";
   r.riskShowsScores = /현재 위험 54 주의 \(1M -5\.1 · 3M \+2\.9 · 5년 백분위 57%\)/.test(risk)
     && /잠재 위험 60 주의/.test(risk);
   r.riskShowsRegimeWarn = /원자재 고변동 75% ⚠검정 미달/.test(risk) && /해외주식 고변동 6% ·/.test(risk);
-  r.saysReference = /참고 · 기준일 2026-08-20 · 자동 반영 없음/.test(risk);
-  r.eventsVerbatim = [0, 1, 2, 3].every((i) => inn.includes(BRIEF[i]));
-  r.eventsSkipsClosing = !inn.includes(BRIEF[4]);
-  const all = risk + inn + granary + trading;
+  r.saysReference = /참고 · 기준일 2026-08-20 · 자동 반영 없음/.test(risk)
+    && /참고 · 기준일 2026-08-06 · 개요 카드와 같은 수치/.test(granary);
+  /* 개요 카드 그대로 — 값·자릿수·단위·직전 관측 라벨. 화살표 대신 부호, null 은 – */
+  r.equityVerbatim = granary.includes("KOSPI 2,500.50 · 1일 +1.30% · 1개월 -2.25% · YTD +10.00% · 1년 –")
+    && granary.includes("VIX 18 · 직전 관측 -0.50pt · 1개월 0.00pt · YTD +2.25pt · 1년 +3.00pt");
+  r.rateVerbatim = market.includes("국고 3년 3.90% · 1일 +1.0bp · 1개월 +15.0bp · YTD +95.0bp · 1년 +100.5bp");
+  r.fxVerbatim = trading.includes("달러/원 1,380 · 1일 0.00% · 1개월 -1.50% · YTD +8.12% · 1년 +12.00%");
+  r.otherVerbatim = inn.includes("한국 CDS 5년 21.60bp · 1일 -0.05pt · 1개월 -1.07pt · YTD -0.24pt · 1년 +2.00pt");
+  /* 구역이 섞이지 않는다 — 주식 카드는 곳간에만, 금리 카드는 저잣거리에만 */
+  r.groupsSeparate = !granary.includes("국고 3년") && !market.includes("KOSPI") && !trading.includes("KOSPI")
+    && !inn.includes("달러/원") && !granary.includes("달러/원");
+  /* 브리핑·배분·헤지 문구는 더 이상 없다(2026-09-09 재구성) */
+  r.noOldContent = !/(브리핑|참고치 − 현재|헤지 채권\/주식|미헤지 환노출 Xe)/.test(risk + granary + market + trading + inn);
+  const all = risk + granary + market + trading + inn;
   r.noVerbs = !/(늘리|줄이|매수|매도|확대|축소|Increase|Reduce|▲|▼)/.test(all);
   r.notesNotClickable = [...frame.querySelectorAll(".vz-note")]
     .every((n) => n.tagName !== "BUTTON" && !n.querySelector("a, button"));
@@ -3236,41 +3249,28 @@ safe("villageNotes", () => {
   r.headsAreNounPhrases = P.VILLAGE_NOTES.every((n) => !/(늘리|줄이|매수|매도|확대|축소|하세요|하라)/.test(n.title));
   r.headsDistinct = new Set(P.VILLAGE_NOTES.map((n) => n.title)).size === P.VILLAGE_NOTES.length;
   r.hotspotsStillThere = frame.querySelectorAll(".vz").length === P.VILLAGE_ZONES.length;
-  /* 같은 계산 — 자산배분 화면의 요약표 「참고치 − 현재」 행과 곳간·교역소 안내판이 같은 수 */
-  P.renderSection("alloc");
-  const tbl = DOC.querySelector("#alloc-summary table");
-  const rows = [...tbl.querySelectorAll("tr")];
-  const heads = [...rows[0].children].map((c) => c.textContent.trim());
-  const delta = rows.find((tr) => tr.children[0].textContent.trim() === "참고치 − 현재");
-  const cells = [...delta.children].map((c) => c.textContent.trim());
-  const iHedge = heads.indexOf("헤지 채권/주식"), iXe = heads.indexOf("미헤지 환노출 Xe");
-  const iMu = heads.indexOf("수익"), iSig = heads.indexOf("위험");
-  const keyFromLabel = { "대체(대출)": "대체투자(대출형)", "대체(지분)": "대체투자(지분형)" };
-  const keys = heads.slice(1, iHedge > 0 ? iHedge : iMu).map((k) => keyFromLabel[k] || k);
-  r.allocKeys = keys.length;
-  r.allocDiffsMatchSummary = keys.every((k, i) => granary.includes(`${k} ${cells[1 + i]}`));
-  r.allocMuSigMatchSummary = granary.includes(`수익 ${cells[iMu]} · 위험 ${cells[iSig]}`);
-  r.hedgeXeMatchesSummary = iXe > 0 ? trading.includes(`(${cells[iXe]})`) : "no-fx";
-  r.hedgeShowsBasis = /저장값|기본값·미저장/.test(trading) && /기본값·미저장/.test(granary);
-  /* 저장이 안내판을 갱신하는가(캐시 무효화) — 헤지 90/90 → 10/10 */
-  const st = P.allocState(P.DATA.alloc);
-  st.h_bond = 10; st.h_eq = 10;
-  P.allocSaveState(st);
-  P.renderVillage();
-  notes = grab();
-  r.saveInvalidates = /현재 10\/10%/.test(notes.trading || "") && /저장값/.test(notes.granary || "");
-  /* 장면 순환의 재렌더는 중복 없이 같은 4개 */
+  /* 개요 카드와 **같은 수** — 개요 화면을 그려 KPI 의 변화 문자열(화살표 뒤 수)과 대조한다 */
+  P.renderSection("overview");
+  const kpiTxt = [...DOC.querySelectorAll("#ov-groups .kpi")].map((k) => k.textContent).join(" ");
+  r.overviewRendered = kpiTxt.includes("KOSPI") && kpiTxt.includes("국고 3년");
+  r.sameNumbersAsOverview = ["2,500.50", "1.30%", "2.25%", "10.00%", "3.90", "1.0bp", "15.0bp", "95.0bp", "100.5bp", "8.12%", "1.07pt"]
+    .every((x) => kpiTxt.includes(x) && all.includes(x));
+  /* 장면 순환의 재렌더는 중복 없이 같은 5개 */
   P.renderVillage();
   r.countAfterRerender = frame.querySelectorAll(".vz-note").length;
   /* 페이로드 부재 — 그 상자만 사유를 적고 나머지는 산다 */
-  P.DATA.risk = undefined; P.DATA.events = undefined;
+  P.DATA.risk = undefined;
   P.villageNotesInvalidate();
   P.renderVillage();
   notes = grab();
-  r.missingExplains = /리스크 데이터 없음/.test(notes.belltower || "") && /이벤트 데이터 없음/.test(notes.inn || "")
-    && /참고치 − 현재/.test(notes.granary || "");
-  P.DATA.risk = prev.risk; P.DATA.events = prev.events; P.DATA.alloc = prev.alloc;
-  shim.localStorage.removeItem("iaw-alloc");
+  r.riskMissingExplains = /리스크 데이터 없음/.test(notes.belltower || "") && /KOSPI 2,500\.50/.test(notes.granary || "");
+  P.DATA.overview = undefined;
+  P.villageNotesInvalidate();
+  P.renderVillage();
+  notes = grab();
+  r.overviewMissingExplains = ["granary", "market", "trading", "inn"].every((z) => /개요 데이터 없음/.test(notes[z] || ""))
+    && frame.querySelectorAll(".vz-note").length === 5;
+  P.DATA.risk = prev.risk; P.DATA.overview = prev.overview;
   P.villageNotesInvalidate();
   return r;
 });

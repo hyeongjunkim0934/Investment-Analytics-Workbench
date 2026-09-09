@@ -461,11 +461,15 @@ function sparkSVG(spk, accent) {
 
 const KIND_UNIT = { rate: "bp", price: "%", level: "pt" };
 
+/* 변화량의 크기·자릿수·단위 한 벌 — 개요 카드(화살표)와 마을 안내판(부호)이 같은 수를 적는다 */
+function deltaNum(v, kind) {
+  return `${fmtNum(Math.abs(v), kind === "rate" ? 1 : 2)}${KIND_UNIT[kind] || ""}`;
+}
+
 function deltaSpan(label, v, kind, big = false) {
-  const unit = KIND_UNIT[kind] || "";
   const cls = v == null || v === 0 ? "d-flat" : v > 0 ? "d-up" : "d-down";
   const arrow = v == null || v === 0 ? "–" : v > 0 ? "▲" : "▼";
-  const txt = v == null ? "–" : `${arrow} ${fmtNum(Math.abs(v), kind === "rate" ? 1 : 2)}${unit}`;
+  const txt = v == null ? "–" : `${arrow} ${deltaNum(v, kind)}`;
   const s = el("span", {}, `${label} `);
   s.append(el("b", { class: cls }, txt));
   if (big) s.style.fontSize = "13px";
@@ -2228,8 +2232,7 @@ const VILLAGE_NOTE_SEP = "  ◆  ";
 let VILLAGE_NOTE_CACHE = null;
 function villageNotesInvalidate() { VILLAGE_NOTE_CACHE = null; }
 
-/* 요약표(#alloc-summary)와 **같은 문자열**이 나오게 같은 산식을 쓴다 — 자산 차이는 원식
-   그대로, μ·σ·Xe 는 요약표의 z2 처럼 반올림해 0 이 되는 값을 부호 없이 0 으로 적는다. */
+/* 부호 붙은 수 — 반올림해 0 이 되는 값은 zeroGuard 로 부호 없이 0 으로 적는다(리스크 안내판). */
 const signed = (v, dec, zeroGuard = false) => {
   const x = zeroGuard && Math.abs(v) < 0.5 * Math.pow(10, -dec) ? 0 : v;
   return `${x > 0 ? "+" : ""}${fmtNum(x, dec)}`;
@@ -2258,67 +2261,60 @@ function villageNoteRisk() {
   return segs;
 }
 
-function villageNoteEvents() {
-  const E = DATA.events;
-  if (!E) return ["이벤트 데이터 없음 — 여관에서 확인"];
-  const b = Array.isArray(E.brief) ? E.brief : [];
-  /* 브리핑 원고(compose_brief)가 이미 경계·주의를 앞세운다 — 새 선별 규칙 없이
-     요약줄 + 다음 3문장을 **원문 그대로** 흘린다(맺음말은 화면 몫). */
-  if (!b.length) return [(E.events || []).length ? `이벤트 ${E.events.length}건 — 브리핑 원고 없음` : "검출된 이벤트 없음"];
-  return [b[0], ...b.slice(1, 4)];
+/* 최근 변화 — 개요 카드(overview.json)의 수치를 **그대로** 옮긴다(§7.23, 2026-09-09 사용자 지시
+   "주식·채권·외환 관련 최근 변화를 나눠서" + "브리핑 대신 일반적인 최근 변화"). 새 숫자 0개:
+   값·변화(직전/1일·1개월·YTD·1년)는 파이프라인 `changes()` 가 계산해 카드에 실은 것이고,
+   자릿수·단위는 개요 카드와 같은 deltaNum. 화살표 대신 부호를 쓰는 이유는 안내판의 참고 표시
+   규약(▲▼·동사 금지 — 프로브 noVerbs). 구역 = 개요의 4구역 그대로(equity·rate·fx·other). */
+const VILLAGE_NOTE_GROUPS = ["equity", "rate", "fx", "other"];
+function villageNoteOverview() {
+  const O = DATA.overview;
+  const out = {};
+  if (!O || !Array.isArray(O.cards)) {
+    VILLAGE_NOTE_GROUPS.forEach((g) => { out[g] = ["개요 데이터 없음 — 중앙 우체국에서 확인"]; });
+    return out;
+  }
+  const sg = (v, kind) => (v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "-" : ""}${deltaNum(v, kind)}`);
+  VILLAGE_NOTE_GROUPS.forEach((g) => {
+    const cards = O.cards.filter((c) => c.group === g);
+    if (!cards.length) { out[g] = ["이 구역의 개요 카드 없음"]; return; }
+    const asof = cards.map((c) => c.date).sort().slice(-1)[0];
+    const lines = [`참고 · 기준일 ${asof} · 개요 카드와 같은 수치`];
+    cards.forEach((c) => {
+      const chg = c.chg || {};
+      const val = fmtNum(c.value, String(c.value).includes(".") ? 2 : 0) + (c.unit || "");
+      lines.push(`${c.label} ${val} · ${overviewChangeLabel(c)} ${sg(chg.d1, c.kind)} · 1개월 ${sg(chg.m1, c.kind)}` +
+        ` · YTD ${sg(chg.ytd, c.kind)} · 1년 ${sg(chg.y1, c.kind)}`);
+    });
+    out[g] = lines;
+  });
+  return out;
 }
 
-/* 배분·헤지 — 요약표와 같은 allocRefModel 결과에서 문장을 만든다. 둘을 한 번에
-   계산해 두 상자가 나눠 쓴다(최적화를 두 번 돌리지 않는다). */
-function villageNoteAllocHedge() {
-  const A = DATA.alloc;
-  const none = (why) => ({ alloc: [why], hedge: [why] });
-  if (!A || !A.sets || !A.sets.length) return none("자산배분 데이터 없음");
-  const st = allocState(A);
-  const E = allocEngine(A, st);
-  const M = allocRefModel(A, st, E);
-  const basis = `${st.saved ? "저장값" : "기본값·미저장"} · λ ${st.mvo_lambda} · ${E.layer === "cma" ? "CMA 층" : "프록시 층"}` +
-    (E.layerNote ? ` — ${E.layerNote}` : "");
-  const alloc = [`참고치 − 현재 (${basis})`];
-  if (!M.doOpt) {
-    alloc.push("제약 모순으로 참고치 보류 — 자산배분 화면의 경고 카드 참조");
-  } else {
-    M.V.keys.forEach((k, i) => alloc.push(`${k} ${signed((M.wKeep[i] - M.w0[i]) * 100, 1)}`));
-    alloc.push(`수익 ${signed(M.muKeep - M.muCur, 2, true)}%p · 위험 ${signed(M.sigKeep - M.sigCur, 2, true)}%p`);
-  }
-  const hedge = [`참고 · ${st.saved ? "저장값" : "기본값·미저장"} 기준`];
-  if (!M.hq) {
-    hedge.push(M.doOpt ? "헤지 참고치 없음 — 환율 축 부재(모든 헤지비율 동점)" : "제약 모순으로 헤지 참고치 보류");
-  } else {
-    const hq = M.hq;
-    const pairTxt = hq.pair ? `${fmtNum(hq.pair[0] * 100, 0)}/${fmtNum(hq.pair[1] * 100, 0)}%` : "밴드 내 불가";
-    hedge.push(`헤지 채권/주식 현재 ${st.h_bond}/${st.h_eq}% vs 대표점 ${pairTxt}`);
-    hedge.push(`미헤지 환노출 Xe 현재 ${fmtNum(hq.xeCur * 100, 2)}% vs 참고 ${fmtNum(hq.xeBand * 100, 2)}% (${signed((hq.xeBand - hq.xeCur) * 100, 2, true)}%p)`);
-    allocXeBindNotes(hq.binds).forEach((sn) => hedge.push(`⚠ ${sn}`));
-    hedge.push("같은 Xe = 같은 위험 · 두 부분해(동시 최적해 아님)");
-  }
-  return { alloc, hedge };
-}
-
-/* 어느 건물에 무엇을 붙이나. side: 상자를 건물 위(above)·아래(below) 어디에 두나 —
-   종탑과 교역소가 세로로 가까워 교역소만 아래에 둔다(겹침 방지). */
-/* title = 상자 머리에 고정되는 제목(2026-09-08 사용자 "이게 어떤 내용들이 나오는건지") — 글은
-   그 아래 창에서 흐르고 제목은 흐르지 않는다. 명사구만(참고 표시 규약 — 동사 금지는 본문과 같다). */
+/* 어느 건물에 무엇을 붙이나. side: 상자를 건물 위(above)·아래(below) 어디에 두나 — 세로로
+   가까운 쌍(종탑↔교역소, 우체국↔저잣거리)은 한쪽을 아래에 둔다(겹침 방지). dx 는 가로 밀기.
+   2026-09-09 재구성: 자산배분·환헤지 안내판을 걷고 개요 4구역(주식·채권·외환·크레딧·원자재)의
+   최근 변화로 — 리스크만 그대로. 여관(이벤트)은 특이사항 대신 일반 변화(기타 구역)를 받는다.
+   title = 상자 머리에 고정되는 제목(2026-09-08) — 명사구만(동사 금지는 본문과 같다). */
 const VILLAGE_NOTES = [
   { zone: "belltower", side: "above", title: "리스크 점수 · 시장 국면", build: () => villageNoteRisk() },
-  { zone: "inn", side: "above", dx: 7, title: "이벤트 브리핑", build: () => villageNoteEvents() },   // 배너(좌상단 §7.19)와 겹침 방지
-  { zone: "granary", side: "above", title: "자산배분 — 참고치 vs 현재", build: (ah) => ah.alloc },
-  { zone: "trading", side: "below", title: "환헤지 · 미헤지 환노출", build: (ah) => ah.hedge },
+  { zone: "granary", side: "above", title: "최근 변화 — 주식", build: (ov) => ov.equity },
+  { zone: "market", side: "below", dx: 8, title: "최근 변화 — 채권·금리", build: (ov) => ov.rate },   // 서고 라벨과 겹침 방지
+  { zone: "trading", side: "below", title: "최근 변화 — 외환", build: (ov) => ov.fx },
+  { zone: "inn", side: "above", dx: 7, title: "최근 변화 — 크레딧·원자재", build: (ov) => ov.other },   // 배너(좌상단 §7.19)와 겹침 방지
 ];
 
 function villageNotesModel() {
   if (VILLAGE_NOTE_CACHE) return VILLAGE_NOTE_CACHE;
-  let ah;
-  try { ah = villageNoteAllocHedge(); }
-  catch (e) { console.error("village note (alloc/hedge) failed", e); ah = { alloc: ["안내판 오류 — 콘솔 확인"], hedge: ["안내판 오류 — 콘솔 확인"] }; }
+  let ov;
+  try { ov = villageNoteOverview(); }
+  catch (e) {
+    console.error("village note (overview) failed", e);
+    ov = Object.fromEntries(VILLAGE_NOTE_GROUPS.map((g) => [g, ["안내판 오류 — 콘솔 확인"]]));
+  }
   VILLAGE_NOTE_CACHE = VILLAGE_NOTES.map((n) => {
     let segs;
-    try { segs = n.build(ah); }
+    try { segs = n.build(ov); }
     catch (e) { console.error(`village note (${n.zone}) failed`, e); segs = ["안내판 오류 — 콘솔 확인"]; }
     return { zone: n.zone, side: n.side, title: n.title, lines: segs, text: segs.join(VILLAGE_NOTE_SEP) };
   });
@@ -3398,6 +3394,43 @@ function makeRatioChart(box, opts) {
       }
       ctx.restore();
     }] };
+  }
+  if (opts.area || opts.reference) {
+    cfg.hooks = cfg.hooks || {};
+    (cfg.hooks.drawClear = cfg.hooks.drawClear || []).push((u) => {
+      const { ctx, bbox } = u, dpr = devicePixelRatio || 1;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(bbox.left, bbox.top, bbox.width, bbox.height); ctx.clip();
+      const point = (x, y) => [u.valToPos(x, "x", true), u.valToPos(y, "y", true)];
+      if (opts.area && opts.area.x.length > 1) {
+        const a = opts.area;
+        const grad = ctx.createLinearGradient(0, bbox.top, 0, bbox.top + bbox.height);
+        grad.addColorStop(0, hexA(pal.series[0], 0.10));
+        grad.addColorStop(0.45, hexA(pal.series[0], 0.26));
+        grad.addColorStop(1, hexA(pal.series[6], 0.48));
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        a.x.forEach((x, i) => { const p = point(x, a.upper[i]);
+          if (i) ctx.lineTo(...p); else ctx.moveTo(...p); });
+        for (let i = a.x.length - 1; i >= 0; i--) ctx.lineTo(...point(a.x[i], a.lower[i]));
+        ctx.closePath(); ctx.fill();
+      }
+      if (opts.reference?.length) {
+        ctx.strokeStyle = pal.ink3; ctx.lineWidth = 1.3 * dpr;
+        ctx.setLineDash([5 * dpr, 5 * dpr]); ctx.beginPath();
+        opts.reference.forEach((p, i) => {
+          const xy = point(p.sig, p.mu);
+          if (i) ctx.lineTo(...xy); else ctx.moveTo(...xy);
+        });
+        ctx.stroke();
+      }
+      ctx.restore();
+    });
+  }
+  if (opts.axisTitles) {
+    cfg.axes[0].label = xLabel;
+    cfg.axes[1].label = opts.axisTitles.y;
+    cfg.axes[0].labelFont = cfg.axes[1].labelFont = AXIS_FONT;
   }
   /* 점 마커 — 효율적 투자선 위의 「기준 × · 조정 ▲ · 참고치 ●」 처럼, 선이 아니라
      **한 점**인 상태를 라벨과 함께 그린다. 시리즈로 넣지 않는 이유: uPlot 은 x 배열이
@@ -5746,7 +5779,6 @@ function allocCcySum(st, sleeve) {
 
 function allocSaveState(st) {
   try { localStorage.setItem(ALLOC_LS_KEY, JSON.stringify({ ...st, saved: true })); } catch {}
-  villageNotesInvalidate();          // 저장값이 바뀌면 마을 안내판의 「참고치 − 현재」도 바뀐다
   refreshAllocWorkspaceInfo();
 }
 
@@ -5827,7 +5859,7 @@ function portDefaults(P) {
   const d = P.defaults || {};
   const grp = { ...(d.group_default || { 주식: 50, 채권: 30, 대체: 20 }) };
   const liq = d.liq_default != null ? +d.liq_default : 10;
-  return { grp, liq, mix: portMixFromGroups(P, grp, liq), mu: {}, win: null };
+  return { grp, liq, mix: portMixFromGroups(P, grp, liq), mu: {}, win: null, robust_k: 1 };
 }
 
 function portState(P) {
@@ -5841,18 +5873,128 @@ function portState(P) {
   if (!st.mix || typeof st.mix !== "object") st.mix = { ...d.mix };
   P.assets.forEach((a) => { if (!isFinite(+st.mix[a])) st.mix[a] = d.mix[a] || 0; });
   if (!st.mu || typeof st.mu !== "object") st.mu = {};
+  st.robust_k = portRobustK(st.robust_k);
   return st;
 }
 
 function portSaveState(st) {
   try {
     localStorage.setItem(PORT_LS_KEY, JSON.stringify({
-      grp: st.grp, liq: st.liq, mix: st.mix, mu: st.mu, win: st.win, saved: true }));
+      grp: st.grp, liq: st.liq, mix: st.mix, mu: st.mu, win: st.win, robust_k: portRobustK(st.robust_k), saved: true }));
   } catch {}
   refreshAllocWorkspaceInfo();
 }
 
 function portWinLabel(k) { return k === "all" ? "전체" : `${k}년`; }
+
+/* Ellipsoidal mean uncertainty: Q = (12 / monthly observations) C.
+   https://docs.mosek.com/portfolio-cookbook/robustopt.html §10.2.
+   For key-in/CMA means this is a historical-scale scenario, not a confidence region.
+   Enumerate simplex faces (7 assets); each face reduces to one scalar root. */
+function portRobustK(k) {
+  return k != null && Number.isFinite(+k) ? Math.max(0, Math.min(3, +k)) : 1;
+}
+
+function portRobustModel(C, mu, months) {
+  const n = mu.length, dot = (a, b) => a.reduce((s, x, i) => s + x * b[i], 0);
+  const mv = (M, w) => M.map((r) => dot(r, w));
+  if (!n || n > 10 || !Number.isFinite(months) || months < 2
+      || mu.some((x) => !Number.isFinite(x)) || C.length !== n
+      || C.some((r, i) => r.length !== n || r.some((v, j) => !Number.isFinite(v)
+        || Math.abs(v - C[j]?.[i]) > 1e-8))) return null;
+  const scale = Math.max(1, ...C.map((r, i) => Math.abs(r[i])));
+  // Tiny diagonal stabilizer only for singular faces; report original covariance metrics.
+  const ridge = scale * 1e-12;
+  const D = C.map((r, i) => r.map((v, j) => v + (i === j ? ridge : 0)));
+  const chol = Array.from({ length: n }, () => new Array(n).fill(0));
+  for (let i = 0; i < n; i++) for (let j = 0; j <= i; j++) {
+    let v = D[i][j];
+    for (let k = 0; k < j; k++) v -= chol[i][k] * chol[j][k];
+    if (i === j && v <= 0) return null;
+    chol[i][j] = i === j ? Math.sqrt(v) : v / chol[j][j];
+  }
+  const faces = [];
+  for (let mask = 1; mask < (1 << n); mask++) {
+    const ids = mu.map((_, i) => i).filter((i) => mask & (1 << i));
+    const sub = ids.map((i) => ids.map((j) => D[i][j] / scale));
+    const inv = matInv(sub);
+    if (!inv) continue;
+    const ones = mv(inv, ids.map(() => 1)).map((v) => v / scale);
+    const mus = mv(inv, ids.map((i) => mu[i])).map((v) => v / scale);
+    const A = ones.reduce((a, b) => a + b, 0);
+    if (!(A > 0)) continue;
+    const b = mus.reduce((a, x) => a + x, 0) / A;
+    const w0 = ones.map((v) => v / A), d = mus.map((v, i) => v - b * ones[i]);
+    const curvature = Math.max(0, dot(d, ids.map((i) => mu[i])));
+    faces.push({ ids, w0, d, v0: 1 / A, curvature });
+  }
+  const solve = (lam, kappa = 0) => {
+    const a = portRobustK(kappa) * Math.sqrt(12 / months);
+    let best = null;
+    for (const f of faces) {
+      let t = lam === Infinity || lam === 0 ? 0 : 1 / lam;
+      if (lam === 0 && f.curvature > 1e-12) {
+        if (a * a <= f.curvature) continue; // optimum is on a smaller face
+        t = Math.sqrt(f.v0 / (a * a - f.curvature));
+      }
+      if (lam > 0 && a > 0 && t > 0) {
+        let lo = 0, hi = t;
+        for (let k = 0; k < 64; k++) {
+          const mid = (lo + hi) / 2;
+          const sigma = Math.sqrt(f.v0 + mid * mid * f.curvature);
+          if (mid * (lam + a / sigma) > 1) hi = mid; else lo = mid;
+        }
+        t = (lo + hi) / 2;
+      }
+      const wf = f.w0.map((v, i) => v + t * f.d[i]);
+      if (wf.some((v) => v < -1e-9 || !Number.isFinite(v))) continue;
+      const w = new Array(n).fill(0);
+      const sum = wf.reduce((s, v) => s + Math.max(0, v), 0);
+      f.ids.forEach((id, i) => { w[id] = Math.max(0, wf[i]) / sum; });
+      const variance = Math.max(0, dot(w, mv(C, w))), m = dot(mu, w);
+      const sd = Math.sqrt(Math.max(0, dot(w, mv(D, w))));
+      const objective = lam === Infinity ? sd * sd / 2 : lam * sd * sd / 2 + a * sd - m;
+      if (!best || objective < best.objective) {
+        const g = mv(D, w).map((v, i) => lam === Infinity ? v : (lam + a / sd) * v - mu[i]);
+        best = { w, sig: Math.sqrt(variance), mu: m, worst: m - a * Math.sqrt(variance),
+          lam, objective, gap: Math.max(0, dot(g, w) - Math.min(...g)) };
+      }
+    }
+    // A simplex dual gap bounds global objective error; do not publish an uncertified area.
+    if (!best || best.gap > 1e-5) return null;
+    return best;
+  };
+  return { solve, meanScale: Math.sqrt(12 / months) };
+}
+
+const PORT_FRONT_CACHE = new WeakMap();
+function portFrontiers(P, W, C, mu, kappa) {
+  const key = JSON.stringify([W.key, W.n_months, C, mu, kappa]);
+  const cached = PORT_FRONT_CACHE.get(P);
+  if (cached && cached.key === key) return cached.value;
+  const model = portRobustModel(C, mu, W.n_months);
+  const clean = (pts, field) => {
+    const sorted = pts.filter(Boolean).sort((a, b) => a.sig - b.sig || b[field] - a[field]);
+    const kept = [];
+    for (const p of sorted) {
+      const last = kept[kept.length - 1];
+      if (!last) kept.push(p);
+      else if (p.sig - last.sig <= 1e-7) {
+        if (p[field] > last[field]) kept[kept.length - 1] = p;
+      } else if (p[field] > last[field] + 1e-9) kept.push(p);
+    }
+    return kept;
+  };
+  const lams = [...Array.from({ length: 41 }, (_, i) => Math.pow(10, 3 - 6 * i / 40)), 0];
+  const nominal = model ? [model.solve(Infinity), ...lams.map((l) => model.solve(l, 0))] : [];
+  const robust = model ? [model.solve(Infinity), ...lams.map((l) => model.solve(l, kappa))] : [];
+  // The minimum-risk endpoint has the same weights, with its own worst-case mean.
+  if (robust[0]) robust[0] = { ...robust[0], worst: robust[0].mu - kappa * model.meanScale * robust[0].sig };
+  const value = { front: clean(nominal, "mu"), robust: clean(robust, "worst"),
+    robustOk: !!model && robust.every(Boolean), meanScale: model?.meanScale || null };
+  PORT_FRONT_CACHE.set(P, { key, value });
+  return value;
+}
 
 function portEngine(P, st) {
   const wins = P.windows || [];
@@ -5871,30 +6013,8 @@ function portEngine(P, st) {
   const mv = (M, v) => M.map((r) => dot(r, v));
   const sig = (w) => Math.sqrt(Math.max(0, dot(w, mv(C, w))));
   const muOf = (w) => dot(mu, w);
-  const L = Math.max(1e-9, ...C.map((r) => r.reduce((a, b) => a + Math.abs(b), 0)));
-  const solve = (lam, iters = 400) => {
-    let w = new Array(n).fill(1 / n);
-    const eta = 1 / L;
-    for (let t = 0; t < iters; t++) {
-      const g = mv(C, w).map((x, i) => x - mu[i] / lam);
-      w = projSimplex(w.map((x, i) => x - eta * g[i]));
-    }
-    return w;
-  };
-  const pts = [];
-  for (let k = 0; k <= 32; k++) {
-    const lam = Math.pow(10, 3 - 6 * k / 32);
-    const w = solve(lam);
-    pts.push({ sig: sig(w), mu: muOf(w), w, lam });
-  }
-  pts.sort((a, b) => a.sig - b.sig || a.mu - b.mu);
-  const front = [];
-  for (const p of pts) {
-    if (!front.length) { front.push(p); continue; }
-    const last = front[front.length - 1];
-    if (p.sig - last.sig < 1e-4) { if (p.mu > last.mu) front[front.length - 1] = p; }
-    else if (p.mu > last.mu - 1e-9) front.push(p);
-  }
+  const kappa = portRobustK(st.robust_k);
+  const { front, robust, robustOk, meanScale } = portFrontiers(P, W, C, mu, kappa);
   const wb = P.assets.map((a) => (P.bench_w && P.bench_w[a]) || 0);
   const bench = { sig: sig(wb), mu: muOf(wb), w: wb };
   const rf = mu[P.assets.indexOf("원화유동성")] ?? 0;
@@ -5910,7 +6030,7 @@ function portEngine(P, st) {
     return { mu: m, sig: s, sharpe: s > 1e-9 ? (m - rf) / s : null,
              act: m - bench.mu, te, ir: te > 1e-9 ? (m - bench.mu) / te : null };
   };
-  return { W, mu, src, rf, front, minVar: front[0] || null,
+  return { W, mu, src, rf, front, robust, robustOk, kappa, meanScale, minVar: front[0] || null,
            maxSharpe: best, bench, wb, sig, muOf, metrics };
 }
 
@@ -6055,7 +6175,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   table.append(tbody);
   const sumBadge = el("span", { class: "port-badge" });
   const saveNote = el("span", { class: "port-note" },
-    "비중·제약조건 미저장 · 저장 버튼/μ·표본 변경 시 현재값 함께 저장");
+    "비중·제약조건 미저장 · 저장 버튼/μ·표본·오차 강도 변경 시 현재값 함께 저장");
   const btnRow = el("div", { class: "port-btns" },
     sumBadge,
     el("button", { class: "btn-ghost", onclick: () => { portSaveState(st); renderPortPanel(A); } },
@@ -6081,9 +6201,10 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   box.append(expWrap);
 
   /* ③ 효율적 경계선 + ④ 벤치마크 성과 리뷰 */
-  const frontCard = el("div", { class: "card port-sub-card" });
+  const frontCard = el("div", { class: "card port-sub-card port-frontier" });
   const reviewCard = el("div", { class: "card port-sub-card" });
   box.append(el("div", { class: "port-two" }, frontCard, reviewCard));
+  let frontierView = "robust";
 
   function recalc() {
     refreshAllocWorkspaceInfo();
@@ -6099,16 +6220,43 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     }, null, 2);
 
     const wCur = sumOk ? P.assets.map((a) => (+st.mix[a] || 0) / 100) : null;
-    const pts = E.front;
+    portCharts.forEach(destroyChart);
+    portCharts = [];
+    const pts = E.robustOk ? E.robust : E.front;
+    const robustInput = el("input", { type: "range", min: "0", max: "3", step: "0.25",
+      value: String(E.kappa), "aria-label": "강건 최적화 오차 강도", id: "port-robust-k" });
+    const robustValue = el("output", { for: "port-robust-k" }, fmtNum(E.kappa, 2));
+    robustInput.addEventListener("input", () => { robustValue.textContent = fmtNum(+robustInput.value, 2); });
+    robustInput.addEventListener("change", () => {
+      st.robust_k = portRobustK(robustInput.value); portSaveState(st); recalc();
+      document.getElementById("port-robust-k")?.focus();
+    });
+    const zoomed = frontierView === "robust" && E.robustOk && E.kappa > 0 && pts.length > 1;
+    const viewControl = el("div", { class: "seg", role: "group", "aria-label": "경계선 표시 범위" });
+    [["robust", "강건 구간"], ["all", "전체"]].forEach(([key, label]) => {
+      viewControl.append(el("button", { type: "button", class: (zoomed ? "robust" : "all") === key ? "active" : "",
+        "aria-pressed": String((zoomed ? "robust" : "all") === key), onclick: () => {
+          frontierView = key; recalc();
+          frontCard.querySelector(".seg .active")?.focus();
+        } }, label));
+    });
+    const controls = el("div", { class: "port-frontier-controls" }, viewControl,
+      el("label", { class: "port-robust-control", for: "port-robust-k" },
+        "오차 강도 κ", robustInput, robustValue));
     const fbox = cardScaffold(frontCard, {
-      title: "효율적 경계선",
-      sub: `합계 100% · 공매도 금지 · μ: 입력/CMA/과거 평균 · 무위험 ${fmtNum(E.rf, 2)}% (원화유동성)`,
+      title: "효율적 경계선", controls,
+      sub: "평균 불확실성 · 합계 100% · 공매도 금지",
       csvName: "효율적경계선.csv",
-      tableFn: () => ({
-        headers: ["위험%", "기대수익%", ...P.assets.map((a) => `${a}%`)],
-        rows: pts.map((p) => [fmtNum(p.sig, 2), fmtNum(p.mu, 2),
-                              ...p.w.map((x) => fmtNum(x * 100, 1))]),
-      }),
+      tableFn: (cap = 400, raw = false) => {
+        const rows = [...E.front.map((p) => ({ ...p, type: "일반", k: 0, worst: p.mu })),
+          ...(E.robustOk ? E.robust.map((p) => ({ ...p, type: "Robust", k: E.kappa })) : [])];
+        const num = (v) => raw ? v : fmtNum(v, 2);
+        return {
+          headers: ["구분", "κ", "위험%", "기준 기대수익%", "최악 기대수익%", ...P.assets.map((a) => `${a}%`)],
+          rows: rows.map((p) => [p.type, p.k, num(p.sig), num(p.mu), num(p.worst),
+            ...p.w.map((x) => num(x * 100))]),
+        };
+      },
     });
     const markers = [];
     if (E.minVar) markers.push({ x: E.minVar.sig, y: E.minVar.mu, kind: "dot",
@@ -6118,29 +6266,61 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     markers.push({ x: E.bench.sig, y: E.bench.mu, kind: "dot",
                    label: "BM 60/40", color: pal.series[2] });
     if (wCur) markers.push({ x: E.sig(wCur), y: E.muOf(wCur), kind: "x", label: "현재" });
-    const xsF = pts.map((p) => +p.sig.toFixed(3));
-    const ysF = pts.map((p) => +p.mu.toFixed(3));
-    const mxs = markers.map((m) => m.x), mys = markers.map((m) => m.y);
-    const hover = el("div", { class: "port-hover" });
-    const hoverReset = () => {
-      hover.textContent = "경계선에 마우스 → 위험·수익·비중";
+    const xsF = pts.map((p) => p.sig), ysF = pts.map((p) => p.mu);
+    const lower = pts.map((p) => E.robustOk ? p.worst : p.mu);
+    const allX = [...E.front.map((p) => p.sig), ...xsF, ...markers.map((m) => m.x)];
+    const allY = [...E.front.map((p) => p.mu), ...ysF, ...lower, ...markers.map((m) => m.y)];
+    const viewX = zoomed ? xsF : allX, viewY = zoomed ? [...ysF, ...lower] : allY;
+    const minX = Math.min(...viewX), maxX = Math.max(...viewX);
+    const minY = Math.min(...viewY), maxY = Math.max(...viewY);
+    const spanX = Math.max(0.005, maxX - minX), spanY = Math.max(0.2, maxY - minY);
+    const xRange = zoomed ? [Math.max(0, minX - spanX * 0.28), maxX + spanX * 0.32]
+      : [0, Math.max(1, maxX) * 1.30];
+    const yRange = [minY - spanY * 0.32, maxY + spanY * 0.28];
+    const visibleMarkers = markers.filter((m) => m.x >= xRange[0] && m.x <= xRange[1]
+      && m.y >= yRange[0] && m.y <= yRange[1]);
+    const hover = el("div", { class: "port-hover", role: "status" });
+    const hoverReset = () => { hover.textContent = "경계선에 마우스 → 위험·수익·비중 · 키보드 ← →"; };
+    const showPoint = (idx) => {
+      if (idx == null || !pts[idx]) { hoverReset(); return; }
+      const p = pts[idx];
+      hover.textContent = `위험 ${fmtNum(p.sig, 2)}% · 기준 ${fmtNum(p.mu, 2)}%` +
+        (E.robustOk ? ` · 최악 ${fmtNum(p.worst, 2)}%` : "") + " — 배분: " +
+        P.assets.map((a, i) => `${a} ${fmtNum(p.w[i] * 100, 1)}`).join(" · ");
     };
     hoverReset();
-    portCharts.push(makeRatioChart(fbox, {
-      seriesDefs: [{ label: "경계선", color: pal.series[0], x: xsF, v: ysF }],
-      xLabel: "위험(연)", unit: "%", height: 260, markers,
-      xRange: [Math.min(...xsF, ...mxs) * 0.9, Math.max(...xsF, ...mxs) * 1.05],
-      yRange: [Math.min(...ysF, ...mys) - 0.3, Math.max(...ysF, ...mys) + 0.3],
-      onCursor: (idx) => {
-        if (idx == null || !pts[idx]) { hoverReset(); return; }
-        const p = pts[idx];
-        const sh = p.sig > 1e-9 ? (p.mu - E.rf) / p.sig : null;
-        hover.textContent =
-          `위험 ${fmtNum(p.sig, 2)}% · 기대수익 ${fmtNum(p.mu, 2)}% · 샤프 ${fmtNum(sh, 2)} — 배분: ` +
-          P.assets.map((a, i) => `${a} ${fmtNum(p.w[i] * 100, 1)}`).join(" · ");
-      },
+    fbox.setAttribute("tabindex", "0");
+    fbox.setAttribute("role", "group");
+    fbox.setAttribute("aria-label", "효율적 경계선. 좌우 화살표로 배분 조회. 전체 수치는 표 버튼.");
+    let selected = 0;
+    fbox.addEventListener("keydown", (ev) => {
+      if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
+      ev.preventDefault();
+      selected = Math.max(0, Math.min(pts.length - 1, selected + (ev.key === "ArrowRight" ? 1 : -1)));
+      showPoint(selected);
+    });
+    if (pts.length) portCharts.push(makeRatioChart(fbox, {
+      seriesDefs: [
+        { label: "경계선", color: pal.series[0], x: xsF, v: ysF },
+        ...(E.robustOk ? [{ label: "Robust", color: pal.series[6], x: xsF, v: lower }] : []),
+      ],
+      area: E.robustOk && E.kappa > 0 ? { x: xsF, upper: ysF, lower } : null,
+      reference: E.front,
+      xLabel: "위험 · 연 %", axisTitles: { y: "기대수익 · 연 %" }, unit: "%", height: 390, markers: visibleMarkers,
+      xRange, yRange,
+      onCursor: showPoint,
     }));
-    frontCard.append(hover);
+    frontCard.append(el("div", { class: "port-frontier-key" },
+      el("span", { class: E.robustOk && E.kappa > 0 ? "port-area-key" : "" },
+        E.robustOk && E.kappa > 0 ? "영역: 강건 배분의 기준–최악 기대수익" : "일반 평균–분산 경계선"),
+      el("span", {}, zoomed ? "강건 구간 확대 · 전체에서 현재·BM 비교" : "점선: 일반 경계선 · 마커: 기준 기대수익")), hover);
+    if (!E.robustOk) frontCard.append(el("div", { class: "port-warn d-up", role: "status" },
+      "강건 영역 계산 불가 — 표본·공분산 또는 최적화 수렴을 확인하십시오."));
+    frontCard.append(explainBox("port-robust-method", { label: "Robust 기준" },
+      el("p", {}, "기대수익의 타원체 오차를 반영한 최악 기대수익 − λ×분산/2를 최대화합니다. κ=0은 일반 평균–분산 최적화, 기본 κ=1은 오차 강도 시나리오입니다."),
+      el("p", {}, `오차 공분산 Q = 연환산 공분산 × 12/${E.W.n_months}. 월별 독립·동일분포를 가정한 표본평균 오차 크기이며, 입력·CMA에도 이 역사적 크기를 적용합니다. 신뢰구간·실현수익 예측구간이 아닙니다.`),
+      el("p", {}, "공분산은 고정합니다. 같은 위험에서 배분이 같을 수 있으며, 강건 최적화는 선택 위험 수준을 낮춥니다. λ별 모형 참고치로, 현재 비중은 자동 변경하지 않습니다."),
+      el("p", {}, "근거: MOSEK Portfolio Optimization Cookbook §10.2")));
 
     reviewCard.textContent = "";
     reviewCard.append(el("div", { class: "card-head" },

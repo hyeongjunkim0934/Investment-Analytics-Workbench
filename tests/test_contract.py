@@ -755,10 +755,12 @@ def test_village_notes_never_take_clicks_and_stop_under_reduced_motion():
         "reduced-motion 에서 흐르는 창의 마스크를 걷는 규칙이 없습니다(글이 잘려 보입니다)")
     assert re.search(r"\.vz-note-head\s*\{", css), "안내판 머리(.vz-note-head) 스타일이 없습니다"
     assert "paintVillageNotes" in _fn("renderVillage"), "renderVillage 가 안내판을 그리지 않습니다"
-    # 안내판 계산은 요약표와 같은 함수(allocRefModel)라야 한다 — 인라인 재계산 금지
-    assert "allocRefModel(" in _fn("villageNoteAllocHedge"), "안내판이 allocRefModel 을 쓰지 않습니다"
+    # 최근 변화 안내판(§7.23)은 개요 카드 값을 개요 KPI 와 같은 deltaNum 으로 적는다 — 인라인 재계산 금지
+    assert "deltaNum(" in _fn("villageNoteOverview"), "안내판이 deltaNum 을 쓰지 않습니다(개요 KPI 와 자릿수·단위가 갈립니다)"
+    assert "deltaNum(" in _fn("deltaSpan"), "개요 KPI(deltaSpan)가 deltaNum 을 쓰지 않습니다"
+    assert "villageNoteAllocHedge" not in _app_js(), "배분·헤지 안내판은 §7.23 으로 걷었다 — 되살리지 말 것"
     assert "allocRefModel(" in _app_js().split("function recalc(withCharts)")[1].split("\n  }\n")[0], (
-        "요약표(recalc)가 allocRefModel 을 쓰지 않습니다 — 두 참고치가 갈립니다")
+        "요약표(recalc)가 allocRefModel 을 쓰지 않습니다")
 
 
 def test_village_banner_asset_and_live_title():
@@ -941,6 +943,7 @@ def test_hidden_attribute_is_not_defeated_by_display_rules():
 #: app.js 가 **자기가 만들어 붙이는** id — index.html 에 없는 것이 정상이다.
 #: 여기에 이름을 더할 때는 아래 테스트가 "실제로 만드는지"까지 확인한다.
 DYNAMIC_IDS = {
+    "port-robust-k": 'id: "port-robust-k"',  # renderPortPanel()의 강건 최적화 강도 입력
     "alloc-workspace-info": 'id: "alloc-workspace-info"',  # renderAllocWorkspace()의 체계·표본·저장 상태
     "village-fx":  'setAttribute("id", "village-fx")',   # 마을 앰비언트 SVG 레이어
     "hg-econ":     'tile("hg-econ"',                     # 시뮬레이터 결과 타일 3개
