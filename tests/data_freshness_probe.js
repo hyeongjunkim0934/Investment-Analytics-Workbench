@@ -87,6 +87,11 @@ out.whileHidden = readHost();
 DOC.hidden = false;
 (DOC.listeners.visibilitychange || []).forEach((fn) => fn());
 out.afterVisible = readHost();
+out.allocationRoutes = ["#alloc", "#alloc-sim", "#alloc-boot", "#overview"].map((hash) => {
+  sandbox.location.hash = hash;
+  P.routeView();
+  return { hash, hidden: host.hidden };
+});
 nowMs = Date.parse("2026-09-09T00:00:00Z");
 
 const gap = card("기간", "2026-09-01", {previous_date: "2026-08-20", d1_label: "직전 관측"});

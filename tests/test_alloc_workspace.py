@@ -46,3 +46,11 @@ def test_workspace_reports_fallback_and_missing_data(workspace):
                 "portMissingShown", "institutionWorksWithoutPort", "detailSelectsInstitution",
                 "finalNoRenderErrors"):
         assert workspace[key], key
+
+
+def test_period_selection_updates_statistics_charts_and_separate_storage(workspace):
+    for key in ("availablePeriodsOnly", "periodUpdatesStatistics", "periodUpdatesChart",
+                "periodSavesDraft", "periodRetainsFocus", "unavailablePeriodIgnored",
+                "institutionPeriodSelected", "periodsStaySeparate",
+                "unavailableSavedPeriodFallsBack", "proxyPeriodSelected"):
+        assert workspace[key], key
