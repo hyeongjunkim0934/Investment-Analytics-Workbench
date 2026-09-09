@@ -161,8 +161,8 @@ change(input("alloc-port-panel", "국내채권 비중"), 30.4);
 change(byId("port-period"), "3", "change");
 const firstRow = byId("alloc-port-panel").querySelector("tbody tr");
 const cells = [...firstRow.querySelectorAll("td")];
-r.periodUpdatesStatistics = +cells[3].textContent === three.mean_pct[0]
-  && Math.abs(+cells[4].textContent - three.vol_pct[0]) < 1e-9
+r.periodUpdatesStatistics = +cells[4].textContent === three.mean_pct[0]
+  && Math.abs(+cells[5].textContent - three.vol_pct[0]) < 1e-9
   && /2027-07-31~2030-06-30 · 36개월/.test(periodText("alloc-port-panel"));
 r.periodUpdatesChart = chartData() !== beforePeriodChart;
 r.periodSavesDraft = JSON.parse(shim.localStorage.getItem("iaw-port")).mix.국내채권 === 30.4
