@@ -24,7 +24,8 @@ process.stdout.write(JSON.stringify(cases.map(c => {
   const model = portRobustModel(c.C, c.mu, c.months);
   return {valid: !!model, meanScale: model?.meanScale,
     points: c.params.map(([lam, k]) => model?.solve(lam === null ? Infinity : lam, k) || null),
-    frontier: portFrontiers({}, {key: 'test', n_months: c.months}, c.C, c.mu, c.kappa || 0)};
+    frontier: portFrontiers({}, {key: 'test', n_months: c.months}, c.C, c.mu, c.kappa || 0, c.rf || 0),
+    cloud: c.cloud ? portPortfolioCloud({}, c.C, c.mu, c.rf || 0) : null};
 })));
 """
 
@@ -133,3 +134,63 @@ def test_frontier_controls_gradient_ranges_and_chart_lifecycle():
     result = subprocess.run([node, str(root / "tests" / "robust_frontier_ui_probe.js")],
                             cwd=root, capture_output=True, text=True, check=True, timeout=30)
     assert json.loads(result.stdout)["pass"]
+
+
+def test_cloud_feasible_allocations_and_independent_moments(solve_js):
+    C = np.array([[36., 5., -2.], [5., 4., 1.], [-2., 1., 16.]])
+    mu = np.array([7., 3., 5.])
+    case = {**_case(C, mu), "rf": 2., "cloud": True}
+    first, second = solve_js([case, case])
+    assert first["cloud"] == second["cloud"]
+    cloud = first["cloud"]
+    w = np.array([p["w"] for p in cloud["points"]])
+    assert len(w) == 6003 and w.min() >= 0
+    assert np.allclose(w.sum(axis=1), 1., atol=1e-14)
+    m, sd = w @ mu, np.sqrt(np.einsum("ni,ij,nj->n", w, C, w))
+    assert np.allclose([p["mu"] for p in cloud["points"]], m, atol=1e-12)
+    assert np.allclose([p["sig"] for p in cloud["points"]], sd, atol=1e-12)
+    assert np.allclose([p["sharpe"] for p in cloud["points"]], (m - 2.) / sd, atol=1e-12)
+    # Deliberately include corners and sparse faces, rather than fabricated x/y coordinates.
+    assert np.array_equal(w[:3], np.eye(3))
+    assert ((w == 0).sum(axis=1) > 0).sum() > 1000
+    altered = solve_js([{**case, "mu": [8., 3., 5.]}])[0]["cloud"]
+    assert altered != cloud
+    assert [p["w"] for p in altered["points"]] == [p["w"] for p in cloud["points"]]
+
+
+def test_max_sharpe_against_independent_face_tangency(solve_js):
+    rng = np.random.default_rng(6007)
+    cases = []
+    for _ in range(6):
+        x = rng.normal(size=(7, 7))
+        C = x @ x.T + np.eye(7)
+        cases.append({**_case(C, rng.uniform(0, 8, 7)), "rf": 2.})
+    for c, result in zip(cases, solve_js(cases)):
+        C, mu, rf = np.array(c["C"]), np.array(c["mu"]), c["rf"]
+        candidates = list(np.eye(7))
+        for mask in range(1, 1 << 7):
+            ids = np.array([i for i in range(7) if mask & (1 << i)])
+            raw = np.linalg.solve(C[np.ix_(ids, ids)], mu[ids] - rf)
+            if raw.sum() <= 0:
+                continue
+            weights = raw / raw.sum()
+            if weights.min() < 0:
+                continue
+            w = np.zeros(7)
+            w[ids] = weights
+            candidates.append(w)
+        expected = max((w @ mu - rf) / np.sqrt(w @ C @ w) for w in candidates)
+        got = result["frontier"]["maxSharpe"]
+        assert got["sharpe"] == pytest.approx(expected, abs=1e-9)
+
+
+def test_sharpe_zero_risk_and_nonpositive_excess(solve_js):
+    zero, negative = solve_js([
+        {**_case(np.zeros((2, 2)), [1., 2.]), "cloud": True},
+        {**_case([[4., 0.], [0., 9.]], [1., 2.]), "rf": 4.},
+    ])
+    assert zero["frontier"]["maxSharpe"] is None
+    assert zero["cloud"]["min"] is None and zero["cloud"]["max"] is None
+    assert all(p["sharpe"] is None for p in zero["cloud"]["points"])
+    assert negative["frontier"]["maxSharpe"]["sharpe"] == pytest.approx(-2 / 3)
+    assert negative["frontier"]["maxSharpe"]["w"] == [0, 1]
