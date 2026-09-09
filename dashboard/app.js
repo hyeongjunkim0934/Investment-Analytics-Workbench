@@ -5533,9 +5533,44 @@ function allocPeriodControl(id, windows, current, onChange) {
   });
   const range = [current.start && current.end ? `${current.start}~${current.end}` : null,
     current.n_months != null ? `${current.n_months}개월` : null].filter(Boolean).join(" · ");
-  return el("div", { class: "alloc-period" },
+  const box = el("div", { class: "alloc-period" },
     el("label", { for: id }, "데이터 기간", select),
     el("span", { class: "alloc-period-range" }, range));
+  if (!current.start || !current.end) return box;
+
+  const status = el("span", { id: `${id}-status`, class: "alloc-period-status d-up", role: "status" });
+  status.hidden = true;
+  const dateInput = (key, label) => {
+    const input = el("input", { type: "date", id: `${id}-${key}`, value: current[key],
+      "aria-label": label, "aria-describedby": `${id}-status`, list: `${id}-${key}-options` });
+    const dates = [...new Set(windows.map((w) => w[key]).filter(Boolean))].sort();
+    const options = el("datalist", { id: `${id}-${key}-options` },
+      dates.map((date) => el("option", { value: date })));
+    input.addEventListener("input", () => { status.hidden = true; });
+    return { input, label: el("label", { for: input.id }, label, input, options) };
+  };
+  const start = dateInput("start", "시작기간"), end = dateInput("end", "종료기간");
+  const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value)
+    && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+  const apply = () => {
+    const from = start.input.value, to = end.input.value;
+    let error = "";
+    if (!validDate(from) || !validDate(to)) error = "시작기간과 종료기간을 입력하십시오.";
+    else if (from > to) error = "시작기간은 종료기간보다 늦을 수 없습니다.";
+    // Published data contains window aggregates, not a monthly return history.
+    // Never relabel an existing covariance matrix as an uncomputed date interval.
+    const chosen = windows.find((w) => w.start === from && w.end === to);
+    if (!error && !chosen) error = "해당 기간의 집계 데이터가 없습니다. 데이터 기간에서 제공 기간을 선택하십시오.";
+    if (error) { status.textContent = error; status.hidden = false; return; }
+    onChange(chosen);
+    document.getElementById(`${id}-apply`)?.focus();
+  };
+  [start.input, end.input].forEach((input) => input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); apply(); }
+  }));
+  box.append(start.label, end.label,
+    el("button", { type: "button", id: `${id}-apply`, class: "btn-ghost", onclick: apply }, "기간 적용"), status);
+  return box;
 }
 
 const ALLOC_LS_KEY = "iaw-alloc";
@@ -5823,6 +5858,52 @@ function allocSrcTag(key) {
 const PORT_LS_KEY = "iaw-port";
 let portCharts = [];
 let portPanelDraft = null;      // 같은 데이터의 재렌더·기관 입력 변경에서 초안을 보존
+let portAxisLimits = null;     // 화면 범위만 변경 — 투자 입력·저장값과 분리
+
+function portAxisControls(xRange, yRange, redraw) {
+  const controls = el("div", { class: "port-axis-controls", role: "group", "aria-label": "축 범위 · 연 %" });
+  const status = el("span", { id: "port-axis-status", class: "port-axis-status d-up", role: "status" });
+  status.hidden = true;
+  const inputs = {};
+  [["x", "X 변동성 %", xRange], ["y", "Y 기대수익 %", yRange]].forEach(([axis, label, range]) => {
+    const group = el("div", { class: "port-axis-group" }, el("span", {}, label));
+    ["min", "max"].forEach((bound, i) => {
+      const name = `${axis}-${bound}`, text = i ? "최대" : "최소";
+      // Round automatic placeholders outward so a small positive span stays usable.
+      const value = portAxisLimits ? range[i] : (i ? Math.ceil(range[i] * 100) : Math.floor(range[i] * 100)) / 100;
+      const input = el("input", { id: `port-${name}`, type: "number", step: "any",
+        value: String(value), "aria-label": `${axis.toUpperCase()}축 ${text} %`, "aria-describedby": "port-axis-status" });
+      input.addEventListener("input", () => { status.hidden = true; input.removeAttribute("aria-invalid"); });
+      inputs[name] = input;
+      group.append(el("label", { for: input.id }, text, input));
+    });
+    controls.append(group);
+  });
+  const apply = () => {
+    const values = Object.fromEntries(Object.entries(inputs).map(([key, input]) =>
+      [key, input.value.trim() === "" || input.validity?.badInput ? NaN : Number(input.value)]));
+    let error = "";
+    for (const axis of ["x", "y"]) {
+      const min = values[`${axis}-min`], max = values[`${axis}-max`];
+      const valid = Number.isFinite(min) && Number.isFinite(max) && Number.isFinite(max - min) && min < max;
+      ["min", "max"].forEach((bound) => inputs[`${axis}-${bound}`].setAttribute("aria-invalid", String(!valid)));
+      if (!valid && !error) error = `${axis.toUpperCase()}축 최소·최댓값을 숫자로 입력하고 최소값을 더 작게 설정하십시오.`;
+    }
+    if (error) { status.textContent = error; status.hidden = false; return; }
+    portAxisLimits = { x: [values["x-min"], values["x-max"]], y: [values["y-min"], values["y-max"]] };
+    redraw();
+    document.getElementById("port-axis-apply")?.focus();
+  };
+  Object.values(inputs).forEach((input) => input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); apply(); }
+  }));
+  controls.append(
+    el("button", { type: "button", id: "port-axis-apply", class: "btn-ghost", onclick: apply }, "축 적용"),
+    el("button", { type: "button", id: "port-axis-auto", class: "btn-ghost", onclick: () => {
+      portAxisLimits = null; redraw(); document.getElementById("port-axis-auto")?.focus();
+    } }, "자동"), status);
+  return controls;
+}
 
 function projSimplex(v) {
   const n = v.length;
@@ -6157,7 +6238,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     grpRow("대체", () => st.grp["대체"], (v) => { st.grp["대체"] = v; }, 0, 100),
     grpRow("유동성", () => st.liq, (v) => { st.liq = v; },
            (P.defaults.liq_range || [0, 20])[0], (P.defaults.liq_range || [0, 20])[1]));
-  const applyBtn = el("button", { class: "btn-primary", onclick: () => {
+  const applyBtn = el("button", { type: "button", class: "btn-ghost", onclick: () => {
     const mix = portMixFromGroups(P, st.grp, st.liq);
     P.assets.forEach((a) => {
       st.mix[a] = mix[a];
@@ -6209,7 +6290,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const refCell = r10 ? `${fmtNum(r10.mean_pct, 1)} / ${fmtNum(r10.vol_pct, 1)}`
       : cdRef ? el("span", { title: `${cdRef.note} · ${cdRef.start}~${cdRef.end}`
           + (cdRef.overlap ? ` · 실ETF 겹침 ${cdRef.overlap.n_months}개월 corr ${fmtNum(cdRef.overlap.corr, 2)}` : "") },
-          `${fmtNum(cdRef.mean_pct, 1)} / ${fmtNum(cdRef.vol_pct, 1)} (CD 적립 참고)`)
+          `${fmtNum(cdRef.mean_pct, 1)} / ${fmtNum(cdRef.vol_pct, 1)}`)
       : "–";
     tbody.append(el("tr", {},
       el("td", {}, a),
@@ -6307,8 +6388,9 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const minX = allX.length ? Math.min(...allX) : 0, maxX = allX.length ? Math.max(...allX) : 1;
     const minY = allY.length ? Math.min(...allY) : 0, maxY = allY.length ? Math.max(...allY) : 1;
     const spanX = Math.max(0.005, maxX - minX), spanY = Math.max(0.2, maxY - minY);
-    const xRange = [Math.max(0, minX - spanX * 0.14), maxX + spanX * 0.18];
-    const yRange = [minY - spanY * 0.32, maxY + spanY * 0.28];
+    const xRange = portAxisLimits?.x || [Math.max(0, minX - spanX * 0.14), maxX + spanX * 0.18];
+    const yRange = portAxisLimits?.y || [minY - spanY * 0.32, maxY + spanY * 0.28];
+    frontCard.insertBefore(portAxisControls(xRange, yRange, recalc), fbox);
     const visibleMarkers = markers.filter((m) => m.x >= xRange[0] && m.x <= xRange[1]
       && m.y >= yRange[0] && m.y <= yRange[1]);
     const hover = el("div", { class: "port-hover", role: "status" });

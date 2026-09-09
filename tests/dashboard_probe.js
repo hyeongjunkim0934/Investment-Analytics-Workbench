@@ -2222,11 +2222,10 @@ safe("portPanel", () => {
      화면이 그 사실을 적는다 (2026-08-22 사용자 지시 "가능한 긴 표본") */
   r.defaultWindowLongest = DOC.getElementById("port-period").value === "all";
 
-  /* ⑦c 원화유동성 CD 적립 참고 — 10년 참고가 없는 자리에 CD 수치가 참고 표기로
-     들어오고, 출처·기간·실ETF 겹침 검증치는 툴팁에 있다 (참고 전용 — 행렬 미포함) */
+  /* ⑦c 원화유동성은 수치만 표시. 출처·기간·겹침 검증치는 툴팁에 유지한다. */
   const cdSpan = Array.from(panel.querySelectorAll("span"))
-    .find((n) => /CD 적립 참고/.test(n.textContent));
-  r.cdRefShown = !!cdSpan && /3\.7 \/ 0\.5/.test(cdSpan.textContent);
+    .find((n) => /겹침 41개월/.test(n.getAttribute("title") || ""));
+  r.cdRefShown = !!cdSpan && cdSpan.textContent === "3.7 / 0.5";
   r.cdRefTooltipHasOverlap = !!cdSpan
     && /참고 전용/.test(cdSpan.getAttribute("title") || "")
     && /겹침 41개월 corr 0\.91/.test(cdSpan.getAttribute("title") || "");

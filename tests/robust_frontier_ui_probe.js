@@ -33,7 +33,7 @@ function assertContained(c){
 P.DATA.alloc=ALLOC_FIXTURE;shim.localStorage.removeItem(P.PORT_LS_KEY);P.renderPortPanel(ALLOC_FIXTURE);
 const initial=chart(),allRange=initial.opts.scales.x.range.slice();
 assert(!button('전체')&&!button('강건 구간'));
-assert.equal(card().querySelectorAll('input').length,0);
+assert.equal(card().querySelectorAll('input').length,4);
 assert(!/오차 강도|합계 100%|공매도 금지|Robust 기준|경계선에 마우스|점선 ·/.test(card().textContent));
 assert(draw(initial).filter(x=>x[0]==='arc').length>5000);
 assert(card().querySelector('.port-sharpe-scale').textContent.includes('6,007'));
@@ -70,6 +70,37 @@ const bench=panel.querySelector('.port-benchmark');
 assert.equal(bench.querySelectorAll('th').length,7);
 assert.equal(bench.querySelectorAll('tbody tr').length,4);
 assert(!/실현 성과\(/.test(panel.textContent));
+
+// View bounds affect only the drawing, including zero/negative bounds and cropped markers.
+const originalData=JSON.stringify(chart().data),originalStore=shim.localStorage.getItem(P.PORT_LS_KEY);
+const setBounds=(values)=>{
+  ['x-min','x-max','y-min','y-max'].forEach((key,i)=>{DOC.getElementById('port-'+key).value=String(values[i]);});
+  click('축 적용');
+};
+setBounds([0,12,-2,8]);
+assert.deepEqual(Array.from(chart().opts.scales.x.range),[0,12]);
+assert.deepEqual(Array.from(chart().opts.scales.y.range()),[-2,8]);
+assert.equal(JSON.stringify(chart().data),originalData);
+assert.equal(shim.localStorage.getItem(P.PORT_LS_KEY),originalStore);
+assert.equal(DOC.activeElement,DOC.getElementById('port-axis-apply'));
+draw(chart());
+const applied=chart();
+for(const bad of [[12,0,-2,8],[0,12,8,8],['',12,-2,8],[0,'Infinity',-2,8]]){
+  setBounds(bad);
+  assert.equal(chart(),applied);
+  assert(!DOC.getElementById('port-axis-status').hidden);
+}
+setBounds([-5,15,-10,15]);
+assert.deepEqual(Array.from(chart().opts.scales.x.range),[-5,15]);
+P.renderPortPanel(ALLOC_FIXTURE,{preserveDraft:true});
+assert.deepEqual(Array.from(chart().opts.scales.x.range),[-5,15]);
+assert.deepEqual(Array.from(chart().opts.scales.y.range()),[-10,15]);
+click('자동');
+assert.deepEqual(chart().opts.scales.x.range,allRange);
+assert.deepEqual(chart().opts.scales.y.range(),initial.opts.scales.y.range());
+assert.equal(JSON.stringify(chart().data),originalData);
+assert.equal(shim.localStorage.getItem(P.PORT_LS_KEY),originalStore);
+assert.equal(DOC.activeElement,DOC.getElementById('port-axis-auto'));
 assert.equal(live().length,1);assert.equal(inspect.live().length,1);assert(live().every(c=>DOC.contains(c.root)));
 console.log(JSON.stringify({pass:true,allRange,liveCharts:live().length,hoverDecimals:2}));
 `;

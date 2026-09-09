@@ -1009,11 +1009,14 @@ details.explain[open] > summary { color: var(--ink-2); }
 }
 .alloc-period { display: flex; gap: 8px 14px; flex-wrap: wrap; align-items: center; font-size: 12px; }
 .alloc-period label { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); }
-.alloc-period select {
+.alloc-period select, .alloc-period input[type="date"] {
   min-height: 34px; max-width: 100%; padding: 4px 10px; font: inherit;
   background: var(--surface); color: var(--ink-1); border: 1px solid var(--baseline); border-radius: 6px;
 }
 .alloc-period-range { color: var(--ink-2); overflow-wrap: anywhere; }
+.alloc-period input[type="date"] { width: 144px; color-scheme: dark; }
+[data-theme="light"] .alloc-period input[type="date"] { color-scheme: light; }
+.alloc-period-status { flex-basis: 100%; }
 #alloc-headline:empty { display: none; }
 .alloc-select { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; }
 .alloc-select select {
@@ -1153,6 +1156,14 @@ a.kpi-link .kpi-label > span:first-child::after {
 
 /* Robust frontier: space around the numeric region, using the existing chart palette. */
 .port-frontier { min-width: 0; padding: 18px 20px; }
+.port-axis-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  margin-top: 12px; color: var(--ink-2); font-size: 12px; }
+.port-axis-group, .port-axis-group label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.port-axis-group { gap: 10px; }
+.port-axis-group input { width: 82px; min-height: 30px; padding: 4px 6px; font: inherit;
+  font-variant-numeric: tabular-nums; background: var(--surface); color: var(--ink-1);
+  border: 1px solid var(--border); border-radius: 6px; }
+.port-axis-status { flex-basis: 100%; }
 .port-frontier .chart-box { margin-top: 12px; border: 1px solid var(--border); border-radius: 8px;
   background: linear-gradient(160deg, rgba(57,135,229,.04), transparent 65%), var(--page); padding: 8px 0; }
 .port-frontier .chart-box:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 3px; }
