@@ -461,11 +461,15 @@ function sparkSVG(spk, accent) {
 
 const KIND_UNIT = { rate: "bp", price: "%", level: "pt" };
 
+/* 변화량의 크기·자릿수·단위 한 벌 — 개요 카드(화살표)와 마을 안내판(부호)이 같은 수를 적는다 */
+function deltaNum(v, kind) {
+  return `${fmtNum(Math.abs(v), kind === "rate" ? 1 : 2)}${KIND_UNIT[kind] || ""}`;
+}
+
 function deltaSpan(label, v, kind, big = false) {
-  const unit = KIND_UNIT[kind] || "";
   const cls = v == null || v === 0 ? "d-flat" : v > 0 ? "d-up" : "d-down";
   const arrow = v == null || v === 0 ? "–" : v > 0 ? "▲" : "▼";
-  const txt = v == null ? "–" : `${arrow} ${fmtNum(Math.abs(v), kind === "rate" ? 1 : 2)}${unit}`;
+  const txt = v == null ? "–" : `${arrow} ${deltaNum(v, kind)}`;
   const s = el("span", {}, `${label} `);
   s.append(el("b", { class: cls }, txt));
   if (big) s.style.fontSize = "13px";
@@ -2228,8 +2232,7 @@ const VILLAGE_NOTE_SEP = "  ◆  ";
 let VILLAGE_NOTE_CACHE = null;
 function villageNotesInvalidate() { VILLAGE_NOTE_CACHE = null; }
 
-/* 요약표(#alloc-summary)와 **같은 문자열**이 나오게 같은 산식을 쓴다 — 자산 차이는 원식
-   그대로, μ·σ·Xe 는 요약표의 z2 처럼 반올림해 0 이 되는 값을 부호 없이 0 으로 적는다. */
+/* 부호 붙은 수 — 반올림해 0 이 되는 값은 zeroGuard 로 부호 없이 0 으로 적는다(리스크 안내판). */
 const signed = (v, dec, zeroGuard = false) => {
   const x = zeroGuard && Math.abs(v) < 0.5 * Math.pow(10, -dec) ? 0 : v;
   return `${x > 0 ? "+" : ""}${fmtNum(x, dec)}`;
@@ -2258,67 +2261,60 @@ function villageNoteRisk() {
   return segs;
 }
 
-function villageNoteEvents() {
-  const E = DATA.events;
-  if (!E) return ["이벤트 데이터 없음 — 여관에서 확인"];
-  const b = Array.isArray(E.brief) ? E.brief : [];
-  /* 브리핑 원고(compose_brief)가 이미 경계·주의를 앞세운다 — 새 선별 규칙 없이
-     요약줄 + 다음 3문장을 **원문 그대로** 흘린다(맺음말은 화면 몫). */
-  if (!b.length) return [(E.events || []).length ? `이벤트 ${E.events.length}건 — 브리핑 원고 없음` : "검출된 이벤트 없음"];
-  return [b[0], ...b.slice(1, 4)];
+/* 최근 변화 — 개요 카드(overview.json)의 수치를 **그대로** 옮긴다(§7.23, 2026-09-09 사용자 지시
+   "주식·채권·외환 관련 최근 변화를 나눠서" + "브리핑 대신 일반적인 최근 변화"). 새 숫자 0개:
+   값·변화(직전/1일·1개월·YTD·1년)는 파이프라인 `changes()` 가 계산해 카드에 실은 것이고,
+   자릿수·단위는 개요 카드와 같은 deltaNum. 화살표 대신 부호를 쓰는 이유는 안내판의 참고 표시
+   규약(▲▼·동사 금지 — 프로브 noVerbs). 구역 = 개요의 4구역 그대로(equity·rate·fx·other). */
+const VILLAGE_NOTE_GROUPS = ["equity", "rate", "fx", "other"];
+function villageNoteOverview() {
+  const O = DATA.overview;
+  const out = {};
+  if (!O || !Array.isArray(O.cards)) {
+    VILLAGE_NOTE_GROUPS.forEach((g) => { out[g] = ["개요 데이터 없음 — 중앙 우체국에서 확인"]; });
+    return out;
+  }
+  const sg = (v, kind) => (v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "-" : ""}${deltaNum(v, kind)}`);
+  VILLAGE_NOTE_GROUPS.forEach((g) => {
+    const cards = O.cards.filter((c) => c.group === g);
+    if (!cards.length) { out[g] = ["이 구역의 개요 카드 없음"]; return; }
+    const asof = cards.map((c) => c.date).sort().slice(-1)[0];
+    const lines = [`참고 · 기준일 ${asof} · 개요 카드와 같은 수치`];
+    cards.forEach((c) => {
+      const chg = c.chg || {};
+      const val = fmtNum(c.value, String(c.value).includes(".") ? 2 : 0) + (c.unit || "");
+      lines.push(`${c.label} ${val} · ${overviewChangeLabel(c)} ${sg(chg.d1, c.kind)} · 1개월 ${sg(chg.m1, c.kind)}` +
+        ` · YTD ${sg(chg.ytd, c.kind)} · 1년 ${sg(chg.y1, c.kind)}`);
+    });
+    out[g] = lines;
+  });
+  return out;
 }
 
-/* 배분·헤지 — 요약표와 같은 allocRefModel 결과에서 문장을 만든다. 둘을 한 번에
-   계산해 두 상자가 나눠 쓴다(최적화를 두 번 돌리지 않는다). */
-function villageNoteAllocHedge() {
-  const A = DATA.alloc;
-  const none = (why) => ({ alloc: [why], hedge: [why] });
-  if (!A || !A.sets || !A.sets.length) return none("자산배분 데이터 없음");
-  const st = allocState(A);
-  const E = allocEngine(A, st);
-  const M = allocRefModel(A, st, E);
-  const basis = `${st.saved ? "저장값" : "기본값·미저장"} · λ ${st.mvo_lambda} · ${E.layer === "cma" ? "CMA 층" : "프록시 층"}` +
-    (E.layerNote ? ` — ${E.layerNote}` : "");
-  const alloc = [`참고치 − 현재 (${basis})`];
-  if (!M.doOpt) {
-    alloc.push("제약 모순으로 참고치 보류 — 자산배분 화면의 경고 카드 참조");
-  } else {
-    M.V.keys.forEach((k, i) => alloc.push(`${k} ${signed((M.wKeep[i] - M.w0[i]) * 100, 1)}`));
-    alloc.push(`수익 ${signed(M.muKeep - M.muCur, 2, true)}%p · 위험 ${signed(M.sigKeep - M.sigCur, 2, true)}%p`);
-  }
-  const hedge = [`참고 · ${st.saved ? "저장값" : "기본값·미저장"} 기준`];
-  if (!M.hq) {
-    hedge.push(M.doOpt ? "헤지 참고치 없음 — 환율 축 부재(모든 헤지비율 동점)" : "제약 모순으로 헤지 참고치 보류");
-  } else {
-    const hq = M.hq;
-    const pairTxt = hq.pair ? `${fmtNum(hq.pair[0] * 100, 0)}/${fmtNum(hq.pair[1] * 100, 0)}%` : "밴드 내 불가";
-    hedge.push(`헤지 채권/주식 현재 ${st.h_bond}/${st.h_eq}% vs 대표점 ${pairTxt}`);
-    hedge.push(`미헤지 환노출 Xe 현재 ${fmtNum(hq.xeCur * 100, 2)}% vs 참고 ${fmtNum(hq.xeBand * 100, 2)}% (${signed((hq.xeBand - hq.xeCur) * 100, 2, true)}%p)`);
-    allocXeBindNotes(hq.binds).forEach((sn) => hedge.push(`⚠ ${sn}`));
-    hedge.push("같은 Xe = 같은 위험 · 두 부분해(동시 최적해 아님)");
-  }
-  return { alloc, hedge };
-}
-
-/* 어느 건물에 무엇을 붙이나. side: 상자를 건물 위(above)·아래(below) 어디에 두나 —
-   종탑과 교역소가 세로로 가까워 교역소만 아래에 둔다(겹침 방지). */
-/* title = 상자 머리에 고정되는 제목(2026-09-08 사용자 "이게 어떤 내용들이 나오는건지") — 글은
-   그 아래 창에서 흐르고 제목은 흐르지 않는다. 명사구만(참고 표시 규약 — 동사 금지는 본문과 같다). */
+/* 어느 건물에 무엇을 붙이나. side: 상자를 건물 위(above)·아래(below) 어디에 두나 — 세로로
+   가까운 쌍(종탑↔교역소, 우체국↔저잣거리)은 한쪽을 아래에 둔다(겹침 방지). dx 는 가로 밀기.
+   2026-09-09 재구성: 자산배분·환헤지 안내판을 걷고 개요 4구역(주식·채권·외환·크레딧·원자재)의
+   최근 변화로 — 리스크만 그대로. 여관(이벤트)은 특이사항 대신 일반 변화(기타 구역)를 받는다.
+   title = 상자 머리에 고정되는 제목(2026-09-08) — 명사구만(동사 금지는 본문과 같다). */
 const VILLAGE_NOTES = [
   { zone: "belltower", side: "above", title: "리스크 점수 · 시장 국면", build: () => villageNoteRisk() },
-  { zone: "inn", side: "above", dx: 7, title: "이벤트 브리핑", build: () => villageNoteEvents() },   // 배너(좌상단 §7.19)와 겹침 방지
-  { zone: "granary", side: "above", title: "자산배분 — 참고치 vs 현재", build: (ah) => ah.alloc },
-  { zone: "trading", side: "below", title: "환헤지 · 미헤지 환노출", build: (ah) => ah.hedge },
+  { zone: "granary", side: "above", title: "최근 변화 — 주식", build: (ov) => ov.equity },
+  { zone: "market", side: "below", dx: 8, title: "최근 변화 — 채권·금리", build: (ov) => ov.rate },   // 서고 라벨과 겹침 방지
+  { zone: "trading", side: "below", title: "최근 변화 — 외환", build: (ov) => ov.fx },
+  { zone: "inn", side: "above", dx: 7, title: "최근 변화 — 크레딧·원자재", build: (ov) => ov.other },   // 배너(좌상단 §7.19)와 겹침 방지
 ];
 
 function villageNotesModel() {
   if (VILLAGE_NOTE_CACHE) return VILLAGE_NOTE_CACHE;
-  let ah;
-  try { ah = villageNoteAllocHedge(); }
-  catch (e) { console.error("village note (alloc/hedge) failed", e); ah = { alloc: ["안내판 오류 — 콘솔 확인"], hedge: ["안내판 오류 — 콘솔 확인"] }; }
+  let ov;
+  try { ov = villageNoteOverview(); }
+  catch (e) {
+    console.error("village note (overview) failed", e);
+    ov = Object.fromEntries(VILLAGE_NOTE_GROUPS.map((g) => [g, ["안내판 오류 — 콘솔 확인"]]));
+  }
   VILLAGE_NOTE_CACHE = VILLAGE_NOTES.map((n) => {
     let segs;
-    try { segs = n.build(ah); }
+    try { segs = n.build(ov); }
     catch (e) { console.error(`village note (${n.zone}) failed`, e); segs = ["안내판 오류 — 콘솔 확인"]; }
     return { zone: n.zone, side: n.side, title: n.title, lines: segs, text: segs.join(VILLAGE_NOTE_SEP) };
   });
@@ -5745,7 +5741,6 @@ function allocCcySum(st, sleeve) {
 
 function allocSaveState(st) {
   try { localStorage.setItem(ALLOC_LS_KEY, JSON.stringify({ ...st, saved: true })); } catch {}
-  villageNotesInvalidate();          // 저장값이 바뀌면 마을 안내판의 「참고치 − 현재」도 바뀐다
   refreshAllocWorkspaceInfo();
 }
 
