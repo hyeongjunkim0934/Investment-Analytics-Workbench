@@ -663,20 +663,50 @@ def detect_events(S: dict, asof: pd.Timestamp, d: dict) -> dict:
                        "title": title, "value": value, "rule": rule, "tags": tags})
 
     def scan_jump(s, name, is_rate, tags):
-        s = s.dropna()
-        chg = s.diff() if is_rate else s.pct_change() * 100
-        sigma = chg.rolling(250).std()
-        seen_days = set()
+        if s is None:
+            return
+        # 이 여섯 시장은 평일 관측으로 비교한다. 주말 carry-forward 행을 일간
+        # 표본에 섞으면 0변화가 σ를 낮춘다. 결측은 채우지 않고 날짜 공백으로 남긴다.
+        s = s.replace([np.inf, -np.inf], np.nan).dropna().sort_index()
+        s = s[(s.index.dayofweek < 5) & (s.index <= asof)]
+        s = s[~s.index.duplicated(keep="last")]
+        if len(s) < 2:
+            return
+        previous = s.shift(1)
+        previous_dates = pd.Series(s.index, index=s.index).shift(1)
+        continuous = pd.Series([
+            common.is_consecutive_weekday_observation(prev, dt)
+            for prev, dt in zip(previous_dates, s.index)
+        ], index=s.index)
+        chg = s.diff() if is_rate else (s / previous - 1) * 100
+        # 공백을 뺀 유효 일변화 250개. 현재 관측을 포함하는 기존 창·임계값은
+        # 유지한다. 250행에 NaN만 끼우면 휴일마다 250행 동안 검출이 중단된다.
+        sigma = chg[continuous & np.isfinite(chg)].rolling(250).std()
         for dt, c in chg[chg.index > win_start].items():
-            sg = sigma.loc[:dt].iloc[-1] if len(sigma.loc[:dt]) else None
-            if not sg or abs(c) <= 2.5 * sg or dt.date() in seen_days:
+            prev_dt = previous_dates.loc[dt]
+            if pd.isna(prev_dt):
                 continue
-            seen_days.add(dt.date())
+            days = (dt.normalize() - prev_dt.normalize()).days
+            period = f"{prev_dt.date()} → {dt.date()} · {days}일"
+            if not np.isfinite(c):
+                reason = "직전 값 0" if not is_rate and previous.loc[dt] == 0 else "비유한 변화"
+                ev(dt, "정보", "데이터", f"{name} 직전 관측 대비 변화 ({days}일)",
+                   "계산 불가", f"{period} · {reason} — 일간 σ 판정 제외", [*tags, "data"])
+                continue
             unit = "bp" if is_rate else "%"
             v = c * 100 if is_rate else c
+            if not continuous.loc[dt]:
+                ev(dt, "정보", "데이터", f"{name} 직전 관측 대비 변화 ({days}일)",
+                   f"{v:+.1f}{unit}",
+                   f"{period} · 평일 공백(공휴일·누락 여부 미확인) — 일간 σ 판정 제외",
+                   [*tags, "data"])
+                continue
+            sg = sigma.get(dt, np.nan)
+            if not np.isfinite(sg) or sg <= 0 or abs(c) <= 2.5 * sg:
+                continue
             ev(dt, "경계" if abs(c) > 3.5 * sg else "주의", "급변",
                f"{name} 일간 {'급등' if c > 0 else '급락'}", f"{v:+.1f}{unit}",
-               f"일변동 |{c/sg:.1f}σ| > 2.5σ (최근 1년 σ)", tags)
+               f"일변동 |{c/sg:.1f}σ| > 2.5σ (최근 유효 일변화 250개 σ) · {period}", tags)
 
     scan_jump(S.get("info:한국_10y"), "국고 10년", True, ["curve"])
     scan_jump(S.get("info:UST10y"), "미국채 10년", True, ["curve"])
@@ -735,15 +765,15 @@ def detect_events(S: dict, asof: pd.Timestamp, d: dict) -> dict:
         gap = (asof - last).days
         if gap >= 5:
             ev(last, "정보", "데이터", f"{label} 시계열이 기준일보다 {gap}일 뒤처짐",
-               f"최종 {last.date()}", "최신 관측일 − 기준일 ≥ 5일", ["data"])
+               f"최종 {last.date()}", "기준일 − 최신 관측일 ≥ 5일", ["data"])
 
     events.sort(key=lambda e: e["date"], reverse=True)
     catalog = [
-        {"cat": "급변", "rule": "일간 변동 |2.5σ| 초과 (최근 1년 σ, 금리 bp·가격 %) — 3.5σ 초과 시 경계로 상향", "sev": "주의→경계"},
+        {"cat": "급변", "rule": "연속 평일 관측(금→월 허용)의 변화 |2.5σ| 초과 — 최근 유효 일변화 250개 σ(현재 포함), 금리 bp·가격 %. 3.5σ 초과 시 경계", "sev": "주의→경계"},
         {"cat": "백분위", "rule": "VIX·VKOSPI·스프레드·환율변동성·CDS의 전체 이력 백분위 90% 진입/이탈", "sev": "경계/정보"},
         {"cat": "커브", "rule": "미 10y−2y · 한 10y−3y 역전 발생/해소", "sev": "경계/정보"},
         {"cat": "사이클", "rule": "삼 룰 발동 (미국 실업률 3개월 평균이 12개월 저점 +0.5%p 이상)", "sev": "경계"},
-        {"cat": "데이터", "rule": "소스별 최신 관측일이 기준일보다 5일 이상 뒤처짐", "sev": "정보"},
+        {"cat": "데이터", "rule": "소스별 최신 관측일이 기준일보다 5일 이상 뒤처짐. 평일 공백은 공휴일·누락 여부 미확인으로 기간 변화만 표시하며, 0분모·공백 변화는 일간 σ 판정·표본에서 제외", "sev": "정보"},
     ]
     return {"asof": asof.strftime("%Y-%m-%d"), "lookback_days": EVENT_LOOKBACK_D,
             "events": events[:40], "catalog": catalog}

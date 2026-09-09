@@ -36,7 +36,7 @@ import regime
 import risk
 # 재수출(re-export): 예전 process.epoch_seconds 를 쓰던 호출부를 그대로 두면서
 # 정의는 common 한 곳만 남긴다. tests/test_formulas.py 가 동일성을 단정한다.
-from common import epoch_seconds
+from common import epoch_seconds, is_consecutive_weekday_observation
 
 # --------------------------------------------------------------------------
 # series store
@@ -457,6 +457,8 @@ OVERVIEW_GROUPS = [
 ]
 
 # key, label, kind, decimals, unit, group, link
+# DXY uses the same already-published series in the overview and FX detail.
+DXY_KEY = "info:DXY"
 #
 # `link` = 그 카드를 누르면 열리는 화면(사용자 지시: "겹치는 지표, 예를들어 개요의 ACWI
 # 카드를 클릭하면 탭 중에 ACWI 눌러서 나오는 화면"). **전용 화면이 없는 카드는 링크를
@@ -486,7 +488,7 @@ OVERVIEW_CARDS = [
     ("info:한국_기준금리",        "한국 기준금리",     "rate",  2, "%",  "rate",   "rates"),
     ("bb:미국_기준금리",          "미국 기준금리",     "rate",  2, "%",  "rate",   "rates"),
     ("info:USDKRW",              "달러/원",           "price", 1, "",   "fx",     "fx"),
-    ("bb:달러지수",               "달러지수(DXY)",     "price", 1, "",   "fx",     "fx"),
+    (DXY_KEY,                    "달러지수(DXY)",     "price", 2, "",   "fx",     "fx"),
     ("info:EURKRW",              "유로/원",           "price", 1, "",   "fx",     "fx"),
     ("info:KRWJPY",              "원/100엔",          "price", 1, "",   "fx",     "fx"),
     ("info:USDCNY",              "달러/위안",         "price", 2, "",   "fx",     "fx"),
@@ -506,12 +508,19 @@ def build_overview() -> dict:
             continue
         card = {
             "key": key, "label": label, "kind": kind, "unit": unit,
+            "source": SERIES[key]["source"],
             "group": group, "link": link,
             "value": round(float(s.iloc[-1]), dec),
             "date": s.index[-1].strftime("%Y-%m-%d"),
             "chg": changes(s, kind),
             "spark": spark(s),
         }
+        # d1 remains the previous observation's change; disclose its actual span.
+        previous = s.index[-2] if len(s) > 1 else None
+        card["previous_date"] = previous.strftime("%Y-%m-%d") if previous is not None else None
+        card["d1_label"] = ("1일" if previous is not None and
+                            is_consecutive_weekday_observation(previous, s.index[-1])
+                            else "직전 관측")
         # 전용 화면이 없는 카드는 오버레이 상세가 열린다(2026-08-24 사용자 지시
         # "전부 다 그렇게") — 그 차트에 쓸 이력을 함께 싣는다(최근 1년 일별 + 이전 주별)
         if not link:
@@ -703,7 +712,7 @@ def build_fx() -> dict:
     # 원/100엔·달러/위안은 개요 환율 카드의 링크 도착지가 이 화면이라 함께 그린다
     # (2026-08-24 — 카드가 가리키는 화면에 그 계열의 차트가 실제로 있어야 한다)
     ts = series_group([
-        ("info:USDKRW", "달러/원"), ("info:DXY", "달러지수"),
+        ("info:USDKRW", "달러/원"), (DXY_KEY, "달러지수"),
         ("info:USDJPY", "달러/엔"), ("info:EURKRW", "유로/원"),
         ("info:KRWJPY", "원/100엔"), ("info:USDCNY", "달러/위안"),
     ])
@@ -737,6 +746,7 @@ def build_acwi() -> dict:
 
     last_ts = s.index[-1]
     first_ts = s.index[0]
+    previous = s.index[-2] if len(s) > 1 else None
     years = (last_ts - first_ts).days / 365.25
     cagr = ((float(s.iloc[-1]) / float(s.iloc[0])) ** (1 / years) - 1) * 100 if years > 0 else None
     daily_ret = s.pct_change().dropna()
@@ -745,6 +755,9 @@ def build_acwi() -> dict:
         "last": round(float(s.iloc[-1]), 2),
         "date": last_ts.strftime("%Y-%m-%d"),
         "first_date": first_ts.strftime("%Y-%m-%d"),
+        "previous_date": previous.strftime("%Y-%m-%d") if previous is not None else None,
+        "d1_label": ("1일" if previous is not None and
+                     is_consecutive_weekday_observation(previous, last_ts) else "직전 관측"),
         "cagr": round(cagr, 2) if cagr is not None else None,
         "vol_1y": round(vol, 2) if vol is not None else None,
         "mdd": round(float(dd.min()), 2),

@@ -490,6 +490,63 @@ function sectionLink(id, extra) {
     SECTION_LABELS[id] || id, extra ? el("span", { class: "sec-link-sub" }, ` ${extra}`) : "", " ›");
 }
 
+function marketSourceLabel(key) {
+  const source = String(key || "").split(":")[0];
+  return ({ info: "Infomax", bb: "Bloomberg", idx: "지수 파일" })[source] || source || "출처 미확인";
+}
+
+function todayKst(now = new Date()) {
+  return new Date(now.getTime() + 9 * 3600000).toISOString().slice(0, 10);
+}
+
+function observationAge(date, today = todayKst()) {
+  const parse = (value) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return null;
+    const ms = Date.parse(`${value}T00:00:00Z`);
+    return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === value ? ms : null;
+  };
+  const observed = parse(date), current = parse(today);
+  if (observed == null || current == null) return { days: null, check: true, text: "관측일 확인" };
+  const days = Math.round((current - observed) / 86400000);
+  if (days < 0) return { days, check: true, text: "관측일 확인" };
+  return { days, check: days >= 5, text: days === 0 ? "오늘 관측" : `${days}일 경과` };
+}
+
+function observationBadge(date) {
+  const age = observationAge(date);
+  return el("span", { class: `observation-age${age.check ? " needs-check" : ""}`,
+    "data-observed": date || "" }, age.text);
+}
+
+function renderDataFreshness(today = todayKst()) {
+  const host = $("#data-freshness");
+  if (!host) return;
+  const date = DATA.meta && DATA.meta.last_observation;
+  const age = observationAge(date, today);
+  const cards = (DATA.overview && DATA.overview.cards) || [];
+  const count = cards.filter((c) => observationAge(c.date, today).check).length;
+  const check = age.check || count > 0;
+  host.hidden = false;
+  host.classList.toggle("needs-check", check);
+  host.textContent = "";
+  host.append(el("b", {}, check ? "자료 확인" : "자료 시점"),
+    el("span", {}, `최신 관측 ${date || "미확인"} · ${age.text}`));
+  if (cards.length) {
+    host.append(el("span", {}, `개요 ${cards.length}개 중 확인 필요 ${count}개`));
+  }
+  host.append(el("a", { href: "#catalog" }, "출처·기간"),
+    el("span", { class: "freshness-basis" }, `${today} KST · 달력일 5일 이상 경과 시 확인`));
+  document.querySelectorAll(".observation-age").forEach((node) => {
+    const item = observationAge(node.getAttribute("data-observed"), today);
+    node.textContent = item.text;
+    node.classList.toggle("needs-check", item.check);
+  });
+}
+
+function overviewChangeLabel(c) {
+  return c.d1_label || "직전 관측";
+}
+
 function renderOverview() {
   const host = $("#ov-groups");
   if (!host) return;
@@ -524,10 +581,15 @@ function renderOverview() {
     }
     kpi.append(el("div", { class: "kpi-label" },
       el("span", {}, c.label), el("span", { class: "kpi-date" }, c.date)));
+    kpi.append(el("div", { class: "kpi-source" },
+      el("span", {}, marketSourceLabel(c.source || c.key)), observationBadge(c.date)));
     const val = el("div", { class: "kpi-value" }, fmtNum(c.value, String(c.value).includes(".") ? 2 : 0));
     if (c.unit) val.append(el("span", { class: "unit" }, c.unit));
     kpi.append(val);
-    kpi.append(el("div", { class: "kpi-delta" }, deltaSpan("1일", c.chg.d1, c.kind, true)));
+    kpi.append(el("div", { class: "kpi-delta" }, deltaSpan(overviewChangeLabel(c), c.chg.d1, c.kind, true)));
+    if (c.previous_date && overviewChangeLabel(c) !== "1일") {
+      kpi.append(el("div", { class: "kpi-period" }, `${c.previous_date} → ${c.date}`));
+    }
     kpi.append(el("div", { class: "kpi-delta" },
       deltaSpan("1개월", c.chg.m1, c.kind),
       deltaSpan("YTD", c.chg.ytd, c.kind),
@@ -587,9 +649,12 @@ function openOvDetail(c) {
   panel.append(head);
 
   const deltas = el("div", { class: "ov-detail-deltas" },
-    ...[["1일", "d1"], ["1주", "w1"], ["1개월", "m1"], ["3개월", "m3"],
+    ...[[overviewChangeLabel(c), "d1"], ["1주", "w1"], ["1개월", "m1"], ["3개월", "m3"],
         ["YTD", "ytd"], ["1년", "y1"]].map(([lb, k]) => deltaSpan(lb, c.chg[k], c.kind)));
   panel.append(deltas);
+  if (c.previous_date && overviewChangeLabel(c) !== "1일") {
+    panel.append(el("div", { class: "kpi-period" }, `${c.previous_date} → ${c.date}`));
+  }
 
   const card = el("div", { class: "card" });
   const box = cardScaffold(card, {
@@ -759,7 +824,7 @@ function renderFX() {
     grid.append(card);
     const data = joinSeries([g]);
     const box = cardScaffold(card, {
-      title: g.label, csvName: `${g.label}.csv`,
+      title: g.label, sub: marketSourceLabel(g.key), csvName: `${g.label}.csv`,
       tableFn: tsTableFn([g.label], data, 2),
     });
     makeTimeChart(box, {
@@ -797,7 +862,10 @@ function renderACWI() {
     stats.append(
       tile(`종가 (${s.date})`, v(fmtNum(s.last, 1)),
         el("div", { class: "kpi-delta" },
-          deltaSpan("1일", s.chg.d1, "price", true), deltaSpan("YTD", s.chg.ytd, "price", true))),
+          deltaSpan(overviewChangeLabel(s), s.chg.d1, "price", true),
+          s.previous_date && overviewChangeLabel(s) !== "1일"
+            ? el("span", {}, `${s.previous_date} → ${s.date}`) : "",
+          deltaSpan("YTD", s.chg.ytd, "price", true))),
       tile("연환산 수익률 (CAGR)", v(fmtNum(s.cagr, 2), "%"),
         el("div", { class: "kpi-delta" }, el("span", {}, `기점 ${s.first_date}`))),
       tile("변동성 (1년, 연율)", v(fmtNum(s.vol_1y, 2), "%")),
@@ -971,6 +1039,7 @@ function renderCatalog() {
 }
 
 function renderMetaLine() {
+  renderDataFreshness();
   const m = DATA.meta;
   if (!m) return;
   $("#meta-line").textContent =
@@ -992,8 +1061,7 @@ function renderMetaLine() {
       const ul = el("ul");
       m.warnings.forEach((w) => ul.append(el("li", {}, w)));
       det.append(ul, el("p", {},
-        "경고는 대시보드의 값이 틀렸다는 뜻이 아니라, 원본 엑셀에서 같은 이름의 열이 겹쳐 "
-        + "뒤쪽 열이 버려졌다는 기록입니다. 건수가 늘거나 성격이 바뀌면 원본 파일 구조가 바뀐 것입니다."));
+        "경고에는 중복 열·자료 누락·표본 부족·계산 실패가 포함될 수 있습니다. 항목별로 영향을 받는 자료와 화면을 확인하십시오."));
       wbox.append(det);
     }
   }
@@ -2499,6 +2567,7 @@ function sectionHasRangedChart(sec) {
 
 /* 마을 ↔ 섹션 화면 전환. 섹션은 한 번에 하나만 보인다(스크롤 길이 문제 해결). */
 function routeView() {
+  renderDataFreshness();
   const hash = location.hash.replace(/^#/, "");
   const sec = underlyingSection(hash);
   const showVillage = !sec;
@@ -5353,6 +5422,81 @@ function allocDonutSVG(entries, size) {
 
 /* ================= 자산배분 — 화면 ================= */
 
+/* 두 분석 체계는 자산 분류·표본·저장 키가 다르다. 선택은 화면 수명 동안만 유지하며,
+   전환할 때 패널을 다시 그리지 않아 저장 전 입력과 기존 계산을 그대로 보존한다. */
+let allocWorkspace = "port";
+const ALLOC_WORKSPACES = {
+  port: { label: "포트폴리오", basis: "7자산 · 대체 통합 · 달러/원화 유동성",
+    panels: ["alloc-port-panel"], toc: [["포트폴리오", "alloc-port-panel"]] },
+  institution: { label: "기관 배분·헤지", basis: "7자산 · 대체 대출/지분 · 단기자금",
+    panels: ["alloc-sim-panel", "alloc-headline", "alloc-summary", "alloc-controls",
+      "alloc-cards", "alloc-levers", "alloc-risk-proc"],
+    toc: [["시뮬레이터", "alloc-sim-panel"], ["요약", "alloc-summary"],
+      ["설정", "alloc-controls"], ["참고치", "alloc-cards"], ["리스크 연계", "alloc-risk-proc"]] },
+};
+const allocWorkspaceContext = {};
+
+function allocWorkspaceSaveLabel(st, saved) {
+  const dirty = Object.keys(st).filter((k) => k !== "saved")
+    .some((k) => JSON.stringify(st[k]) !== JSON.stringify(saved[k]));
+  return dirty ? "미저장 조정" : saved.saved ? "브라우저 저장값" : "기본값";
+}
+
+function refreshAllocWorkspaceInfo() {
+  const box = $("#alloc-workspace-info");
+  if (!box) return;
+  const spec = ALLOC_WORKSPACES[allocWorkspace];
+  const ctx = allocWorkspaceContext[allocWorkspace];
+  box.textContent = "";
+  box.append(el("strong", {}, spec.label), el("span", {}, spec.basis));
+  if (!ctx) return;
+  if (ctx.sample) box.append(el("span", {}, ctx.sample));
+  if (ctx.save) box.append(el("span", { class: "alloc-workspace-save", role: "status" }, ctx.save()));
+  if (ctx.warning) box.append(el("span", { class: "alloc-workspace-warning d-up" }, ctx.warning));
+}
+
+function selectAllocWorkspace(key) {
+  if (!ALLOC_WORKSPACES[key]) return;
+  allocWorkspace = key;
+  Object.entries(ALLOC_WORKSPACES).forEach(([k, spec]) => {
+    const b = document.getElementById(`alloc-workspace-${k}`);
+    if (b) {
+      b.className = k === key ? "active" : "";
+      b.setAttribute("aria-pressed", String(k === key));
+    }
+    spec.panels.forEach((id) => {
+      const n = document.getElementById(id);
+      if (n) n.hidden = k !== key;
+    });
+  });
+  const toc = $("#alloc-toc");
+  if (toc) {
+    toc.textContent = "";
+    ALLOC_WORKSPACES[key].toc.forEach(([label, id]) => {
+      toc.append(el("button", { type: "button", "aria-controls": id, onclick: () => {
+        const n = document.getElementById(id);
+        if (n && !n.hidden && n.scrollIntoView) n.scrollIntoView({ block: "start" });
+      } }, label));
+    });
+  }
+  refreshAllocWorkspaceInfo();
+}
+
+function renderAllocWorkspace() {
+  const box = $("#alloc-workspace");
+  if (!box) return;
+  box.textContent = "";
+  const seg = el("div", { class: "seg", role: "group", "aria-label": "분석 체계" });
+  Object.entries(ALLOC_WORKSPACES).forEach(([key, spec]) => {
+    seg.append(el("button", { type: "button", id: `alloc-workspace-${key}`,
+      "aria-controls": spec.panels.join(" "), onclick: () => selectAllocWorkspace(key) }, spec.label));
+  });
+  box.append(seg, el("div", { class: "alloc-workspace-info", id: "alloc-workspace-info" }),
+    el("div", { class: "alloc-workspace-note" },
+      "체계별 입력 별도 저장 · 모형 입력 변경 시 해당 체계의 현재 입력 함께 저장"));
+  selectAllocWorkspace(allocWorkspace);
+}
+
 const ALLOC_LS_KEY = "iaw-alloc";
 
 function allocDefaults(A) {
@@ -5602,6 +5746,7 @@ function allocCcySum(st, sleeve) {
 function allocSaveState(st) {
   try { localStorage.setItem(ALLOC_LS_KEY, JSON.stringify({ ...st, saved: true })); } catch {}
   villageNotesInvalidate();          // 저장값이 바뀌면 마을 안내판의 「참고치 − 현재」도 바뀐다
+  refreshAllocWorkspaceInfo();
 }
 
 /* CMA 층의 출처 태그 — 위험은 벤치마크 직접 관측. 기대수익을 키인했으면 그 사실이
@@ -5637,6 +5782,7 @@ function allocSrcTag(key) {
 
 const PORT_LS_KEY = "iaw-port";
 let portCharts = [];
+let portPanelDraft = null;      // 같은 데이터의 재렌더·기관 입력 변경에서 초안을 보존
 
 function projSimplex(v) {
   const n = v.length;
@@ -5702,6 +5848,7 @@ function portSaveState(st) {
     localStorage.setItem(PORT_LS_KEY, JSON.stringify({
       grp: st.grp, liq: st.liq, mix: st.mix, mu: st.mu, win: st.win, saved: true }));
   } catch {}
+  refreshAllocWorkspaceInfo();
 }
 
 function portWinLabel(k) { return k === "all" ? "전체" : `${k}년`; }
@@ -5766,7 +5913,7 @@ function portEngine(P, st) {
            maxSharpe: best, bench, wb, sig, muOf, metrics };
 }
 
-function renderPortPanel(A) {
+function renderPortPanel(A, { preserveDraft = false } = {}) {
   const box = $("#alloc-port-panel");
   if (!box) return;
   portCharts.forEach(destroyChart);
@@ -5776,15 +5923,28 @@ function renderPortPanel(A) {
   const head = el("div", { class: "card-head" },
     el("span", { class: "card-title" }, "포트폴리오"));
   if (!P || !P.active || !(P.windows || []).length) {
+    portPanelDraft = null;
+    allocWorkspaceContext.port = { warning: `비활성 — ${(P && P.reason) || "데이터 없음"}` };
+    refreshAllocWorkspaceInfo();
     head.append(el("span", { class: "card-sub d-up" },
       `비활성 — ${(P && P.reason) || "데이터 없음"}`));
     box.append(head);
     return;
   }
   const pal = palette();
-  const st = portState(P);
+  /* 기관 쪽 λ·모형 설정과 테마 변경도 renderAlloc을 부른다. 같은 데이터의 port
+     초안을 저장값으로 덮지 않는다. 명시 저장/되돌리기는 기존 직접 호출로 초기화하고,
+     새 데이터 객체는 새 자산 분류·표본에 맞춰 저장값/기본값에서 다시 시작한다. */
+  const st = preserveDraft && portPanelDraft && portPanelDraft.source === P
+    ? portPanelDraft.st : portState(P);
+  portPanelDraft = { source: P, st };
   const wins = P.windows;
   const W = wins.find((w) => w.key === st.win) || wins[wins.length - 1];
+  allocWorkspaceContext.port = {
+    sample: `원화·미헤지 · ${W.start}~${W.end} · ${W.n_months}개월`,
+    save: () => allocWorkspaceSaveLabel(st, portState(P)),
+  };
+  refreshAllocWorkspaceInfo();
 
   head.append(el("span", { class: "card-sub" },
     `7자산군 · 원화 미헤지 · 월말 ${W.start}~${W.end} (${W.n_months}개월)`
@@ -5848,6 +6008,7 @@ function renderPortPanel(A) {
     const mix = portMixFromGroups(P, st.grp, st.liq);
     preview.textContent = "적용 시: " +
       P.assets.map((a) => `${a} ${fmtNum(mix[a], 1)}`).join(" · ") + " (합계 100.0)";
+    refreshAllocWorkspaceInfo();
   }
   updPreview();
 
@@ -5904,7 +6065,7 @@ function renderPortPanel(A) {
   table.append(tbody);
   const sumBadge = el("span", { class: "port-badge" });
   const saveNote = el("span", { class: "port-note" },
-    "비중·대분류: 저장 전 · 기대수익: 즉시 저장");
+    "비중·대분류 미저장 · 저장 버튼/μ·표본 변경 시 현재값 함께 저장");
   const btnRow = el("div", { class: "port-btns" },
     sumBadge,
     el("button", { class: "btn-ghost", onclick: () => { portSaveState(st); renderPortPanel(A); } },
@@ -5935,6 +6096,7 @@ function renderPortPanel(A) {
   box.append(el("div", { class: "port-two" }, frontCard, reviewCard));
 
   function recalc() {
+    refreshAllocWorkspaceInfo();
     const E = portEngine(P, st);
     const sum = P.assets.reduce((s, a) => s + (+st.mix[a] || 0), 0);
     const sumOk = Math.abs(sum - 100) <= 0.05;
@@ -6075,8 +6237,16 @@ function allocRefModel(A, st, E) {
 function renderAlloc() {
   const A = DATA.alloc;
   if (!$("#alloc")) return;
+  renderAllocWorkspace();
+  renderPortPanel(A, { preserveDraft: true });
   if (!A || !A.sets || !A.sets.length) {
+    allocWorkspaceContext.institution = { warning: "기관 배분·헤지 데이터를 불러오지 못했습니다." };
+    ALLOC_WORKSPACES.institution.panels.forEach((id) => {
+      const n = document.getElementById(id);
+      if (n) n.textContent = "";
+    });
     $("#alloc-headline").textContent = "자산배분 데이터를 불러오지 못했습니다.";
+    refreshAllocWorkspaceInfo();
     return;
   }
   const pal = palette();
@@ -6091,27 +6261,15 @@ function renderAlloc() {
   const baseMu = amDot(baseE.V.mu, baseE.w0);
   const baseXe = baseE.xeOf(baseSt.h_bond / 100, baseSt.h_eq / 100);
 
-  /* 컨텐츠 탭(목차) — 화면이 길어져 상단에서 각 구역으로 바로 이동한다.
-     해시(href="#…")를 쓰지 않는 이유: 해시는 섹션 라우팅 축이라(routeView)
-     섹션 안 앵커로 쓰면 마을로 튕긴다 — 버튼 + scrollIntoView 로만 움직인다. */
-  const toc = $("#alloc-toc");
-  toc.textContent = "";
-  /* 투자선·시변·특성·자산군 표·방법론 구역은 2026-08-31 사용자 지시로 제거.
-     통합 프로세스는 2026-09-01 사용자 지시로 추가(§7.16). */
-  [["시뮬레이터", "#alloc-sim-panel"], ["포트폴리오", "#alloc-port-panel"],
-   ["요약", "#alloc-summary"], ["설정", "#alloc-controls"], ["참고치", "#alloc-cards"],
-   ["리스크 연계", "#alloc-risk-proc"]]
-    .forEach(([label, sel]) => {
-      toc.append(el("button", { type: "button", onclick: () => {
-        const n = $(sel);
-        if (n && n.scrollIntoView) n.scrollIntoView({ block: "start" });
-      } }, label));
-    });
-
-  renderPortPanel(A);
-
   /* 층·창·매핑 표식용 엔진 한 벌 — recalc 는 매번 새로 만들므로 이건 표시 전용이다 */
   const E0 = allocEngine(A, st);
+  allocWorkspaceContext.institution = {
+    sample: `${E0.layer === "cma" ? "기관 BM" : "벤더 프록시"} · ` +
+      `${E0.sample.start || "시작일 없음"}~${E0.sample.end || "종료일 없음"} · ${E0.sample.n_months}개월`,
+    save: () => allocWorkspaceSaveLabel(st, allocState(A)),
+    warning: E0.layerNote,
+  };
+  refreshAllocWorkspaceInfo();
 
   /* ---- ⓪ 포트폴리오 시뮬레이터 (§7.7.8 — 화면 최상단, 2026-08-11 사용자 지시) ----
      7자산군(시가 기준 — 장부가 축 제외 §7.7.11) μ·σ 키인 → λ-MVO 최적 배분(막대 위
@@ -6842,6 +7000,7 @@ function renderAlloc() {
   const leverBox = $("#alloc-levers");
 
   function recalc(withCharts) {
+    refreshAllocWorkspaceInfo();
     const E = allocEngine(A, st);
     /* 시뮬레이터(§7.7.8) — 우주가 하나(시가 7축 §7.7.11)라 같은 엔진을 그대로 쓴다 */
     if (simDyn) simDyn(E, withCharts);
@@ -7056,6 +7215,7 @@ function allocOverlayShell(title) {
 function openAllocDetail(topic) {
   const A = DATA.alloc;
   if (!A || !A.sets || !A.sets.length) { hideDetail(); return; }
+  selectAllocWorkspace("institution");   // 기존 상세 딥링크의 돌아갈 분석 체계
   const st = allocState(A);
   const E = allocEngine(A, st);
   const pal = palette();
@@ -7735,7 +7895,10 @@ function bindTheme() {
   });
 
   /* 탭이 백그라운드로 가면 영상 디코드·타이머를 멈추고, 돌아오면 다시 건다. */
-  document.addEventListener("visibilitychange", restartSceneCycle);
+  document.addEventListener("visibilitychange", () => {
+    restartSceneCycle();
+    if (!document.hidden) renderDataFreshness();
+  });
   matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", () => {
     restartSceneCycle();
     renderVillage();                       // 배너의 SMIL 유무가 이 설정을 따른다(mountVillageBanner)

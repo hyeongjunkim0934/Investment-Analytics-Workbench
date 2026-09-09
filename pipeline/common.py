@@ -16,9 +16,24 @@ from __future__ import annotations
 
 import pandas as pd
 
-__all__ = ["epoch_seconds", "pack_values", "spearman", "auc"]
+__all__ = ["epoch_seconds", "pack_values", "spearman", "auc",
+           "is_consecutive_weekday_observation"]
 
 _EPOCH = pd.Timestamp("1970-01-01")
+
+
+def is_consecutive_weekday_observation(previous, current) -> bool:
+    """연속 평일 관측 여부. 금→월은 허용하되 공휴일 달력은 추정하지 않는다.
+
+    양끝이 평일이고 중간에 다른 평일이 없어야 한다. 따라서 평일 휴장이
+    끼면 실제 누락과 구분할 수 없어 False다. 시간 부분은 달력일로 맞춘다.
+    """
+    previous, current = pd.Timestamp(previous), pd.Timestamp(current)
+    if pd.isna(previous) or pd.isna(current):
+        return False
+    previous, current = previous.normalize(), current.normalize()
+    return (previous.dayofweek < 5 and current.dayofweek < 5
+            and current == previous + pd.offsets.BDay(1))
 
 
 def epoch_seconds(index: pd.DatetimeIndex) -> list[int]:
