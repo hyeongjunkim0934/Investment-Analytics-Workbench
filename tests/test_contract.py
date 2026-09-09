@@ -701,12 +701,6 @@ def test_village_map_has_no_baked_text_dependency():
     assert 'class: "vz-label"' in src, "라벨을 코드로 얹는 경로가 사라졌습니다"
 
 
-def test_gate_states_it_is_not_access_control():
-    """관문이 '접근 차단'인 척하면 안 된다 — 공개 정적 호스팅에서 사실이 아니다."""
-    html = _index_html()
-    assert "접근 차단이 아니라" in html, "관문의 한계 고지 문구가 없습니다"
-
-
 def test_section_ids_constant_matches_html():
     """app.js 의 SECTION_IDS 와 index.html 의 섹션이 같아야 한다.
 

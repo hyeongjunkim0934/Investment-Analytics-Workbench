@@ -710,22 +710,21 @@ details.explain[open] > summary { color: var(--ink-2); }
 .gate-card {
   position: relative; width: min(420px, 100%);
   background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
-  padding: 28px 26px 22px; text-align: center;
+  padding: 24px; text-align: center;
   box-shadow: 0 10px 40px rgba(0, 0, 0, .18);
 }
 .gate-emblem {
-  width: 56px; height: 56px; margin: 0 auto 12px;
+  width: 44px; height: 44px; margin: 0 auto 12px;
   display: grid; place-items: center;
   border: 1px solid var(--border); border-radius: 50%;
-  font-size: 24px; color: var(--ink-2);
+  font-size: 20px; color: var(--ink-2);
   background-size: cover; background-position: center;
 }
 .gate-title { margin: 0; font-size: 22px; letter-spacing: .04em; color: var(--ink-1); }
-.gate-sub   { margin: 4px 0 18px; font-size: 12.5px; color: var(--ink-3); }
-.gate-form  { display: grid; gap: 8px; text-align: left; }
+.gate-form  { display: grid; gap: 8px; margin-top: 20px; text-align: left; }
 .gate-label { font-size: 12px; color: var(--ink-2); }
 .gate-form input {
-  padding: 9px 11px; font: inherit; font-size: 14px;
+  min-width: 0; padding: 9px 11px; font: inherit; font-size: 16px;
   border: 1px solid var(--border); border-radius: 8px;
   background: var(--page); color: var(--ink-1);
 }
@@ -735,10 +734,6 @@ details.explain[open] > summary { color: var(--ink-2); }
   background: var(--accent); color: #fff;
 }
 .gate-err  { margin: 2px 0 0; font-size: 12px; color: var(--up); }
-.gate-note {
-  margin: 16px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--ink-3);
-  text-align: left; border-top: 1px solid var(--border); padding-top: 12px;
-}
 
 /* ---- 마을 지도 ---- */
 .village { margin: 0 0 18px; }
