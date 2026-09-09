@@ -1177,3 +1177,59 @@ a.kpi-link .kpi-label > span:first-child::after {
 @media (max-width: 600px) {
   .port-frontier { padding: 12px 8px; }
 }
+
+/* Portfolio working surface: compact terminal controls with one geometric language. */
+#alloc-port-panel { --port-accent: #edb45d; --port-input: #111820; }
+[data-theme="light"] #alloc-port-panel { --port-accent: #995800; --port-input: #fff; }
+#alloc-port-panel .btn-ghost, #alloc-port-panel .card-actions button,
+#alloc-port-panel .port-result-tabs button {
+  min-height: 32px; padding: 5px 11px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface); color: var(--ink-2); font: inherit; font-size: 13px;
+}
+#alloc-port-panel input[type="number"] {
+  min-height: 32px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--port-input); color: var(--ink-1); font: inherit; font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+#alloc-port-panel input[type="number"]::placeholder { color: var(--ink-3); opacity: 1; }
+#alloc-port-panel input:focus-visible, #alloc-port-panel button:focus-visible {
+  outline: 2px solid var(--port-accent); outline-offset: 2px;
+}
+#alloc-port-panel input[aria-invalid="true"] { border-color: var(--up-ink); }
+#alloc-port-panel .table-wrap, #alloc-port-panel .card, #alloc-port-panel .chart-box { border-radius: 4px; }
+#alloc-port-panel .port-table th { white-space: nowrap; font-size: 13px; }
+#alloc-port-panel .port-table td { padding: 8px; font-variant-numeric: tabular-nums; }
+#alloc-port-panel .port-src { font-size: 12px; }
+#alloc-port-panel .port-grp, #alloc-port-panel .port-axis-controls { font-size: 14px; }
+.port-result-tabs { display: flex; gap: 6px; margin-top: 20px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+#alloc-port-panel .port-result-tabs [aria-selected="true"] { color: var(--port-accent); border-color: var(--port-accent); }
+.port-correlation { padding-top: 12px; }
+.port-corr-table { width: 100%; min-width: 780px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.port-corr-table th, .port-corr-table td { padding: 9px 8px; text-align: center; white-space: nowrap; }
+.port-corr-table thead th { color: var(--ink-2); }
+.port-corr-table tr > th:first-child { position: sticky; left: 0; background: var(--surface); z-index: 1; text-align: left; }
+.port-corr-table input { width: 74px; text-align: center; }
+.port-corr-diagonal { color: var(--ink-3); background: var(--surface); }
+.port-corr-mirror { color: var(--ink-2); }
+.port-palette { position: relative; }
+#alloc-port-panel .port-palette-toggle { display: grid; grid-template-columns: repeat(2, 6px); gap: 3px;
+  align-content: center; justify-content: center; width: 32px; height: 32px; padding: 5px; }
+.port-palette-toggle span { width: 6px; height: 6px; border-radius: 1px; }
+.port-palette-panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 5; width: 196px;
+  padding: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.port-palette-panel label { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  margin-bottom: 10px; color: var(--ink-2); font-size: 14px; }
+.port-palette-panel input[type="color"] { width: 40px; height: 28px; padding: 2px;
+  border: 1px solid var(--border); border-radius: 3px; background: var(--page); cursor: pointer; }
+.port-palette-panel .btn-ghost { width: 100%; }
+.port-asset-key { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--border); color: var(--ink-2); font-size: 13px; }
+.port-asset-position { display: inline-flex; align-items: center; gap: 7px; }
+.port-asset-position b { font-size: 16px; line-height: 1; }
+.port-asset-coordinates { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+#port-risk-status:empty { display: none; }
+@media (max-width: 600px) {
+  .port-asset-key { gap: 8px 12px; }
+  .port-palette-panel { max-width: calc(100vw - 48px); }
+}
