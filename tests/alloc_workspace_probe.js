@@ -41,13 +41,13 @@ const originalNumbers = engineValues();
 P.renderSection("alloc");
 r.noRenderErrors = byId("alloc").querySelectorAll(".render-error").length === 0;
 r.defaultPort = !byId("alloc-port-panel").hidden && byId("alloc-sim-panel").hidden;
-r.portContext = /대체 통합/.test(info()) && /달러\/원화 유동성/.test(info())
-  && /2027-01-31~2030-06-30/.test(info()) && /42개월/.test(info()) && /기본값/.test(info());
-r.portToc = [...byId("alloc-toc").querySelectorAll("button")]
-  .map((b) => b.getAttribute("aria-controls"));
+r.portContext = /2027-01-31~2030-06-30/.test(info()) && /42개월/.test(info()) && /기본값/.test(info());
+r.workspaceExplanationRemoved = !/대체 통합|달러\/원화 유동성|체계별 입력 별도 저장/.test(
+  byId("alloc-workspace").textContent);
+r.portTocRemoved = byId("alloc-toc") === null;
 const beforeSelect = snapshot();
 choose("institution");
-r.institutionContext = /대체 대출\/지분/.test(info()) && /기관 BM/.test(info())
+r.institutionContext = /기관 BM/.test(info())
   && /2026-01-31~2030-06-30/.test(info()) && /54개월/.test(info());
 const institutionPanels = ["alloc-sim-panel", "alloc-headline", "alloc-summary", "alloc-controls",
   "alloc-cards", "alloc-levers", "alloc-risk-proc"];
@@ -56,10 +56,9 @@ r.onlyInstitutionVisible = byId("alloc-port-panel").hidden
 const activeButton = byId("alloc-workspace-institution");
 r.pressedState = activeButton.getAttribute("aria-pressed") === "true"
   && byId("alloc-workspace-port").getAttribute("aria-pressed") === "false";
-r.institutionToc = [...byId("alloc-toc").querySelectorAll("button")]
-  .map((b) => b.getAttribute("aria-controls"));
-r.tocVisibleTargets = r.institutionToc.every((id) => !byId(id).hidden);
-byId("alloc-toc").querySelectorAll("button").forEach((b) => b.click());
+r.institutionTocRemoved = byId("alloc-toc") === null;
+r.workspaceLabels = [...byId("alloc-workspace").querySelectorAll("button")]
+  .map((b) => b.textContent);
 choose("port");
 r.switchDoesNotSave = snapshot() === beforeSelect;
 r.switchDoesNotRecalculateNumbers = engineValues() === originalNumbers;
@@ -121,7 +120,7 @@ choose("institution");
 r.fallbackShown = /벤더 프록시/.test(info()) && /벤치마크 CMA 없음/.test(info());
 P.DATA.alloc = { ...CMA_ALLOC, sets: [] };
 P.renderSection("alloc");
-r.institutionMissingShown = /기관 배분·헤지 데이터를 불러오지 못했습니다/.test(info());
+r.institutionMissingShown = /기관\s?배분·헤지 데이터를 불러오지 못했습니다/.test(info());
 choose("port");
 r.portWorksWithoutInstitution = !byId("alloc-port-panel").hidden
   && !!input("alloc-port-panel", "국내채권 비중") && /42개월/.test(info());
@@ -135,4 +134,35 @@ P.openAllocDetail("sim");
 r.detailSelectsInstitution = byId("alloc-port-panel").hidden && !byId("alloc-sim-panel").hidden;
 P.hideDetail();
 r.finalNoRenderErrors = byId("alloc").querySelectorAll(".render-error").length === 0;
+
+/* 버튼 대신 선택 입력을 써도 원천·기간·매핑 값이 저장되고 실제 엔진에 전달된다. */
+P.DATA.alloc = CMA_ALLOC;
+shim.localStorage.removeItem("iaw-alloc");
+P.renderSection("alloc");
+choose("institution");
+const selectValue = (id, value) => {
+  const n = byId(id);
+  if (!n || n.tagName !== "SELECT") throw new Error(`missing select: ${id}`);
+  change(n, value, "change");
+};
+r.modelControlsAreSelects = ["alloc-source", "alloc-window", "alloc-alt-map"]
+  .every((id) => byId(id)?.tagName === "SELECT");
+selectValue("alloc-window", "1");
+r.windowSelectUpdatesEngine = P.allocState(CMA_ALLOC).cma_win === "1"
+  && P.allocEngine(CMA_ALLOC, P.allocState(CMA_ALLOC)).sample.n_months === 12
+  && /2029-07-31~2030-06-30/.test(info());
+selectValue("alloc-alt-map", "bm");
+r.mappingSelectUpdatesEngine = P.allocState(CMA_ALLOC).alt_map.mode === "bm"
+  && P.allocEngine(CMA_ALLOC, P.allocState(CMA_ALLOC)).altInfo.mode === "bm";
+selectValue("alloc-source", "proxy");
+r.sourceSelectUpdatesEngine = P.allocState(CMA_ALLOC).src === "proxy"
+  && P.allocEngine(CMA_ALLOC, P.allocState(CMA_ALLOC)).layer === "proxy"
+  && byId("alloc-window") === null && byId("alloc-alt-map") === null;
+selectValue("alloc-source", "cma");
+r.modelSelectionsSurviveSourceSwitch = byId("alloc-window").value === "1"
+  && byId("alloc-alt-map").value === "bm";
+P.DATA.alloc = ALLOC_FIXTURE;
+P.renderSection("alloc");
+r.missingCmaOptionDisabled = [...byId("alloc-source").querySelectorAll("option")]
+  .some((n) => n.value === "cma" && n.disabled);
 process.stdout.write(JSON.stringify(r));

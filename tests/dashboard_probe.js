@@ -65,7 +65,7 @@ footer.append(elem("p", "build-line"), elem("div", "build-warnings"));
 
 /* 자산배분 뼈대 — renderAlloc 이 $("#alloc-…") 로 집는 자리들(index.html 과의 계약).
    하나라도 빠지면 그 자리에서 죽으므로 실제 마크업과 같은 목록을 둔다. */
-secNodes.alloc.append(elem("div", "alloc-workspace"), elem("nav", "alloc-toc"));
+secNodes.alloc.append(elem("div", "alloc-workspace"));
 ["alloc-port-panel",
  "alloc-sim-panel",
  "alloc-headline", "alloc-summary", "alloc-controls", "alloc-cards", "alloc-levers",
@@ -1303,9 +1303,9 @@ safe("hedgeLeverText", () => {
   const txt = box ? box.textContent : "";
   r.rendered = txt.length > 0;
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  r.mentionsXe = /총 미헤지 환노출/.test(txt);
-  r.saysRiskIsOneAxis = /총 미헤지 환노출 Xe 하나/.test(txt);   /* 2026-08-31 키워드 축약 */
-  r.saysTiesAreEqual = /같은 Xe = 같은 위험/.test(txt);
+  r.showsXeTransition = /현재 Xe [\d.]+% → 위험 최소 Xe [\d.]+%/.test(txt);
+  r.hedgeDetailAvailable = [...box.querySelectorAll("a")]
+    .some((a) => a.getAttribute("href") === "#alloc-hedge");
   r.labelsPairAsRepresentative = /대표점/.test(txt);
   /* 되살아나면 안 되는 옛 문구 */
   r.noFlatnessThreshold = !/사실상 평평합니다/.test(txt);
@@ -1666,17 +1666,17 @@ safe("cmaLayer", () => {
   P.renderSection("alloc");
   const ctlTxt = DOC.getElementById("alloc-controls").textContent;
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  r.controlsShowSource = /위험 원천/.test(ctlTxt) && /벤치마크\(CMA\)/.test(ctlTxt);
+  const sourceSelect = DOC.getElementById("alloc-source");
+  r.controlsShowSource = sourceSelect && sourceSelect.tagName === "SELECT"
+    && sourceSelect.value === "cma" && /벤치마크/.test(sourceSelect.textContent);
   r.controlsShowMapping = /대체 위험/.test(ctlTxt) && /디스무딩/.test(ctlTxt);
   r.controlsShowPerClassMapping = /지분형/.test(ctlTxt) && /대출형/.test(ctlTxt);
-  /* 환 기준은 **계열마다 다르다**는 사실(§7.7.19)은 방법론·자산군 표 제거
-     (2026-08-31 사용자 지시) 후 시뮬레이터 σ 키인 설명이 나른다 — 문구가 사라지면
-     여기서 걸린다. 예전 문구 「환노출 제거 기준」의 부활도 계속 잡는다. */
+  /* 본문의 일반 설명은 제거한다. 환 기준·σ 변환의 수치 계약은 위 엔진 검증에 남긴다. */
   const simTxt = DOC.getElementById("alloc-sim-panel").textContent;
-  r.methodShowsFxBasis = /환 기준은 계열마다 다름/.test(simTxt)
-    && /해외채권 = 헤지 후/.test(simTxt) && /해외주식 = 환노출 포함/.test(simTxt);
+  r.simMethodExplanationsRemoved = DOC.getElementById("alloc-sim-panel")
+    .querySelectorAll("details.explain").length === 0;
   r.methodDroppedWrongFxClaim = !/환노출 제거 기준/.test(simTxt);
-  r.headlineShowsLayer = /기관 벤치마크/.test(DOC.getElementById("alloc-headline").textContent);
+  r.redundantHeadlineRemoved = DOC.getElementById("alloc-headline").textContent === "";
   /* 구 저장분(view:"acct")이 남아 있어도 — 단일 요약이 그대로 나오고 죽지 않는다 */
   shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, view: "acct" }));
   P.renderSection("alloc");
@@ -1693,9 +1693,8 @@ safe("cmaLayer", () => {
   return r;
 });
 
-/* ====== P20-d. 자산배분 목차 =================================================
-   시변·특성·자산군 표·방법론 카드는 2026-08-31 사용자 지시로 제거 — 남은 구역
-   이동용 목차(해시 아님 — 라우팅 축과 분리)만 검사한다. */
+/* ====== P20-d. 자산배분 체계 선택 ===========================================
+   기관 목차는 제거하고 서로 다른 두 체계의 선택만 남긴다. */
 safe("allocToc", () => {
   const r = {};
   shim.localStorage.removeItem("iaw-alloc");
@@ -1703,12 +1702,13 @@ safe("allocToc", () => {
   P.renderSection("alloc");
   DOC.getElementById("alloc-workspace-institution").click();
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  const toc = DOC.getElementById("alloc-toc");
-  const btns = toc ? [...toc.querySelectorAll("button")] : [];
-  r.tocButtonCount = btns.length;
-  let clickOk = true;
-  try { btns.forEach((b) => b.click()); } catch (e) { clickOk = false; }
-  r.tocClicksSafe = clickOk;
+  r.tocRemoved = DOC.getElementById("alloc-toc") === null;
+  r.workspaceButtons = [...DOC.getElementById("alloc-workspace").querySelectorAll("button")]
+    .map((b) => b.textContent);
+  const hash = shim.location.hash;
+  DOC.getElementById("alloc-workspace-port").click();
+  DOC.getElementById("alloc-workspace-institution").click();
+  r.workspaceSwitchPreservesHash = shim.location.hash === hash;
   shim.localStorage.removeItem("iaw-alloc");
   return r;
 });
@@ -1758,15 +1758,20 @@ safe("allocRiskProc", () => {
   /* 참고 표시 계약 — 자동 반영 없음 문구 + 화면 λ 불변(λ 키인을 건드리지 않는다) */
   r.saysReferenceOnly = /자동 반영 없음/.test(txt);
   r.lambdaKeyinUntouched = +P.allocState(CMA_ALLOC).mvo_lambda === 1;
-  /* 층·매핑 토글 — 즉시 저장(관측 설정 규약) + 재렌더 */
-  const segBtn = (label) => [...boxEl().querySelectorAll(".seg button")]
-    .find((b) => b.textContent === label);
-  segBtn("잠재 위험").click();
+  /* 층·매핑 콤보박스 — 즉시 저장(관측 설정 규약) + 재렌더 */
+  const selectValue = (id, value) => {
+    const input = DOC.getElementById(id);
+    if (!input || input.tagName !== "SELECT") throw new Error(`missing select: ${id}`);
+    input.value = value;
+    input.dispatchEvent({ type: "change", target: input });
+  };
+  selectValue("alloc-rp-layer", "vuln");
   txt = boxEl().textContent;
   r.layerToggleWorks = /잠재 위험 점수/.test(txt);
   r.layerToggleSaved = P.allocState(CMA_ALLOC).rp_layer === "vuln";
-  segBtn("선형").click();
+  selectValue("alloc-rp-map", "lin");
   r.mapToggleShowsFormula = /점수\/50/.test(boxEl().textContent);
+  r.mapToggleSaved = P.allocState(CMA_ALLOC).rp_map === "lin";
   /* 보류 사유 — hist_m 부재 / 프록시 층 (조용한 대체 금지) */
   P.DATA.risk = { layers: {} };
   shim.localStorage.removeItem("iaw-alloc");
@@ -2011,15 +2016,14 @@ safe("simPanel", () => {
   const E0d = P.allocEngine(CMA_ALLOC, st0);
   r.keyedMuUnaffectedBySigma = Math.abs(ESd.V.mu[iEq] - E0d.V.mu[iEq]) < 1e-12;
 
-  /* ③ 렌더 — 목차 첫 버튼·막대 8·▼ = 최적 위치·도넛 2·카드 2·상관 정책 문구 */
+  /* ③ 렌더 — 기관 선택·막대 7·▼ = 최적 위치·도넛 2·카드 2 */
   P.DATA.alloc = CMA_ALLOC;
   shim.localStorage.removeItem("iaw-alloc");
   P.renderSection("alloc");
   const panel = DOC.getElementById("alloc-sim-panel");
   DOC.getElementById("alloc-workspace-institution").click();
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  r.tocFirstIsSim =
-    (DOC.getElementById("alloc-toc").querySelectorAll("button")[0] || {}).textContent === "시뮬레이터";
+  r.institutionPanelVisible = !panel.hidden && DOC.getElementById("alloc-port-panel").hidden;
   /* **비중 막대만** 센다 — §7.7.15 에서 헤지 슬라이더도 같은 .sim-bar-wrap 래퍼를
      쓰게 되어(최적 ▼ 마커 공유) 패널 전체 셀렉터는 9개를 세게 됐다. 축이 다른 둘을
      한 수로 묶으면 어느 쪽이 깨져도 이 검사가 거짓말한다 — 행(.sim8-row)으로 좁힌다.
@@ -2029,17 +2033,18 @@ safe("simPanel", () => {
     .filter((n) => !n.hidden).length;
   r.donutCount = panel.querySelectorAll("svg").length;
   const ptxt = panel.textContent;
-  r.hasOptCard = /① 최적/.test(ptxt);
-  r.hasSimCard = /② 조정/.test(ptxt);
-  r.statesCorrPolicy = /상관 = 벤치마크 실측/.test(ptxt);
+  const simTitles = [...panel.querySelectorAll(".sim8-card .card-title")].map((n) => n.textContent);
+  r.hasOptCard = simTitles.includes("최적");
+  r.hasSimCard = simTitles.includes("조정");
+  r.redundantCorrExplanationRemoved = !/상관 = 벤치마크 실측/.test(ptxt);
   /* 도넛이 각자 자기 카드의 열(sim8-col) 안에 있다 — 카드 아래 중앙 배치의 구조 검증.
      최적 열: 최적 카드 + 「최적 비중」 도넛 / 시뮬 열: 시뮬 카드 + 「조정 비중」. */
   const cols9 = [...panel.querySelectorAll(".sim8-col")];
   r.donutColumns = cols9.length;
   const colHas = (re, reDonut) => cols9.some((c) =>
     re.test(c.textContent) && reDonut.test(c.textContent) && c.querySelectorAll("svg").length === 1);
-  r.optDonutUnderOptCard = colHas(/① 최적/, /최적 비중/);
-  r.simDonutUnderSimCard = colHas(/② 조정/, /조정 비중/);
+  r.optDonutUnderOptCard = colHas(/최적/, /최적 비중/);
+  r.simDonutUnderSimCard = colHas(/조정/, /조정 비중/);
   /* 도넛 크기 — 210 (구 132 에서 확대, 2026-08-12 사용자 지시) */
   const svg0 = panel.querySelector(".sim8-donut svg");
   r.donutSize = svg0 ? +svg0.getAttribute("width") : null;
@@ -2095,9 +2100,12 @@ safe("simPanel", () => {
   r.applyClearsSumWarning = !panel.querySelector(".sim-sum").classList.contains("warn");
   r.applyDoesNotSave = shim.localStorage.getItem("iaw-alloc") == null;
 
-  /* ④ 합계 100% 유지 모드 — 숫자 입력 하나가 나머지를 재분배해 합을 지킨다 */
-  shim.localStorage.setItem("iaw-alloc", JSON.stringify({ saved: true, sum_lock: true }));
-  P.renderSection("alloc");
+  /* ④ 체크박스로 합계 유지 활성화 → 저장 → 입력 하나가 나머지를 재분배한다. */
+  const lockInput = DOC.getElementById("alloc-sum-lock");
+  r.lockIsCheckbox = !!lockInput && lockInput.getAttribute("type") === "checkbox";
+  lockInput.checked = true;
+  lockInput.dispatchEvent({ type: "change", target: lockInput });
+  r.lockCheckboxSaved = P.allocState(CMA_ALLOC).sum_lock === true;
   const inp = DOC.getElementById("sim-mix-해외주식");
   inp.value = "25";
   inp.dispatchEvent({ type: "input", target: inp });
@@ -2645,7 +2653,9 @@ safe("lambdaControl", () => {
   const inp = DOC.getElementById("alloc-lambda");
   r.inputExists = !!inp;
   const riskOf = () => {
-    const m = (panel.textContent.match(/① 최적[^위]*위험 ([\d.]+)%/) || [])[1];
+    const optCard = [...panel.querySelectorAll(".sim8-card")]
+      .find((n) => n.querySelector(".card-title").textContent === "최적");
+    const m = ((optCard?.textContent || "").match(/위험 ([\d.]+)%/) || [])[1];
     return m ? +m : null;
   };
   const riskBefore = riskOf();
@@ -2717,8 +2727,9 @@ safe("hedgeTracks", () => {
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
   const hedgeLines = panel.querySelectorAll(".sim-hedge-line");
   r.bothCardsShowHedge = hedgeLines.length === 2;
-  r.optCardSaysRepresentative = /대표점/.test(panel.textContent)
-    && /배분\+헤지/.test(panel.textContent);
+  const optResultCard = [...panel.querySelectorAll(".sim8-card")]
+    .find((n) => n.querySelector(".card-title").textContent === "최적");
+  r.optCardSaysRepresentative = !!optResultCard && /대표점/.test(optResultCard.textContent);
   const sliders = Array.from(panel.querySelectorAll("input"))
     .filter((n) => /헤지비율$/.test(n.getAttribute("aria-label") || ""));
   r.slidersLiveInPanel = sliders.length === 2;
@@ -2797,7 +2808,7 @@ safe("hedgeTracks", () => {
     r.altHedgeHasNoOptMark = !!altWrap
       && altWrap.querySelectorAll(".sim-opt-mark").length === 0;
     /* Xe 와 다르다는 사실을 화면이 적는가 — 합치면 최적 헤지쌍이 이 값을 덮어쓴다 */
-    r.altHedgeExplainsNotXe = /Xe 에는 들어가지 않습니다/.test(p3.textContent);
+    r.altHedgeShowsInputStatus = /즉시 저장 · 최적화 제외/.test(p3.textContent);
     const badgeBefore = p3.querySelector(".sim-dirty");
     if (altInp) {
       altInp.value = "40";
@@ -3018,7 +3029,7 @@ safe("simConsole", () => {
   const txt0 = summary.textContent;
   r.summaryRendered = txt0.length > 0;
   r.summaryHasBothAnswers = /참고치/.test(txt0) && /미헤지 환노출 Xe/.test(txt0) && /헤지 채권\/주식/.test(txt0);
-  r.summaryAdmitsPartiality = /동시 최적해가 아닙니다/.test(txt0);
+  r.summaryAdmitsPartiality = /배분·헤지는 부분해/.test(txt0) && /동시 최적해 아님/.test(txt0);
 
   /* ① 배분 입력 즉시 반영 — 해외주식을 6→20 으로 올리면 요약 위험이 변해야 한다 */
   const sigOf = (t) => {
@@ -3137,26 +3148,25 @@ safe("explainFold", () => {
   d3.querySelector("summary").click();
   r.openBodyVisible = visText(host).includes("숨은본문");
 
-  /* 화면 적용 — alloc 를 렌더해 explain 이 실제로 깔렸고 전부 닫혀 있는지 */
+  /* 기관 본문은 일반 설명을 접어 남기지 않고 제거한다. */
   P.EXPLAIN_OPEN.clear();
   P.DATA.alloc = CMA_ALLOC;
   shim.localStorage.removeItem("iaw-alloc");
   P.renderSection("alloc");
   const panel = DOC.getElementById("alloc");
-  const folds = panel.querySelectorAll("details.explain");
-  r.allocHasFolds = folds.length >= 5;
-  r.allFoldsClosedByDefault = folds.every((d) => !d.hasAttribute("open"));
+  const institutionIds = ["alloc-sim-panel", "alloc-headline", "alloc-summary",
+    "alloc-controls", "alloc-cards", "alloc-levers", "alloc-risk-proc"];
+  r.institutionExplanationsRemoved = institutionIds.every((id) =>
+    DOC.getElementById(id).querySelectorAll("details.explain").length === 0);
   const vis = visText(panel);
   const full = panel.textContent;
-  /* 접기의 요점 — 보이는 글자가 전체의 일부여야 한다(산문이 실제로 접혀 있다) */
-  r.visibleIsSubset = vis.length < full.length * 0.85;
-  /* 계약 문자열은 textContent 에 남는다(닫혀 있어도) — 기존 프로브들의 전제 */
-  r.contractStringsStillInDom = /Xe 에는 들어가지 않습니다/.test(full);
   /* 핵심 답·경고는 **보이는 텍스트**에 있어야 한다 */
-  r.answersVisible = /기대수익 /.test(vis) && /위험 /.test(vis) && /① 최적/.test(vis);
+  r.answersVisible = /기대수익 /.test(vis) && /위험 /.test(vis)
+    && [...DOC.getElementById("alloc-sim-panel").querySelectorAll(".sim8-card .card-title")]
+      .some((n) => n.textContent === "최적");
   r.hedgeControlsVisible = /해외채권 헤지비율/.test(vis) && /대체투자 환헤지 비율/.test(vis);
-  /* 산문 대표 두 건은 보이는 텍스트에서 빠져 있어야 한다(접힘 확인) */
-  r.proseFolded = !/레버는 두 개뿐입니다/.test(vis) && !/원가법 BM 은 시장위험을 나르지 않아/.test(vis);
+  /* 산문 대표 두 건은 DOM에서도 제거되어야 한다. */
+  r.proseRemoved = !/레버는 두 개뿐입니다/.test(full) && !/원가법 BM 은 시장위험을 나르지 않아/.test(full);
 
   /* 경고는 접히지 않는다 — 밴드를 눌러 구속을 강제하고, ⚠ 문장이 **보이는** 텍스트에
      있는지 잰다(§7.7.17 네 자리 중 시뮬레이터 카드·요약표가 이 화면에 있다). */
