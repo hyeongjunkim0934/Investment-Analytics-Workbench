@@ -1791,7 +1791,7 @@ def test_alloc_toc_navigates_without_touching_the_hash(probe):
     """
     c = probe["allocToc"]
     assert c["renderErrors"] == 0
-    assert c["tocButtonCount"] == 6      # 시뮬레이터·포트폴리오 구성·요약·설정·참고치·통합 프로세스
+    assert c["tocButtonCount"] == 5      # 기관 체계: 시뮬레이터·요약·설정·참고치·통합 프로세스
     assert c["tocClicksSafe"] is True
 
 
@@ -2052,7 +2052,7 @@ def test_overview_groups_cards_and_opens_the_detail_screens(probe):
     assert c["popOpensOverlay"] is True and c["popOverlayChartMade"] is True, (
         "무링크 카드 오버레이가 안 열리거나 이력 차트가 없다"
     )
-    assert c["popOverlayHasSixDeltas"] is True, "변화 6구간(1일~1년)이 빠졌다"
+    assert c["popOverlayHasSixDeltas"] is True, "변화 6구간(직전 관측~1년)이 빠졌다"
     assert c["popMetaFallsBackToHistRange"] is True, (
         "카탈로그가 없을 때 표본 메타가 조용히 사라진다 — 이력 범위로 적어야 한다"
     )

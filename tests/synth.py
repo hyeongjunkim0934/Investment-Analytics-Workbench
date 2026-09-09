@@ -135,6 +135,7 @@ INFO_SPEC = [
     ("USDKRW_HP_3M", "헤지", "walk", 1.1),
     ("USDKRW_HP_6M", "헤지", "walk", 1.2),
     ("USDKRW_HP_12M", "헤지", "walk", 1.3),
+    ("DXY", "환율", "walk", 100.0),  # 개요와 FX 상세의 공통 출처
 ]
 
 VOL = {"geo": 0.011, "geoslow": 0.003, "walk": None}
