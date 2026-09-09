@@ -65,7 +65,7 @@ footer.append(elem("p", "build-line"), elem("div", "build-warnings"));
 
 /* 자산배분 뼈대 — renderAlloc 이 $("#alloc-…") 로 집는 자리들(index.html 과의 계약).
    하나라도 빠지면 그 자리에서 죽으므로 실제 마크업과 같은 목록을 둔다. */
-secNodes.alloc.append(elem("nav", "alloc-toc"));
+secNodes.alloc.append(elem("div", "alloc-workspace"), elem("nav", "alloc-toc"));
 ["alloc-port-panel",
  "alloc-sim-panel",
  "alloc-headline", "alloc-summary", "alloc-controls", "alloc-cards", "alloc-levers",
@@ -1701,6 +1701,7 @@ safe("allocToc", () => {
   shim.localStorage.removeItem("iaw-alloc");
   P.DATA.alloc = CMA_ALLOC;
   P.renderSection("alloc");
+  DOC.getElementById("alloc-workspace-institution").click();
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
   const toc = DOC.getElementById("alloc-toc");
   const btns = toc ? [...toc.querySelectorAll("button")] : [];
@@ -2015,6 +2016,7 @@ safe("simPanel", () => {
   shim.localStorage.removeItem("iaw-alloc");
   P.renderSection("alloc");
   const panel = DOC.getElementById("alloc-sim-panel");
+  DOC.getElementById("alloc-workspace-institution").click();
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
   r.tocFirstIsSim =
     (DOC.getElementById("alloc-toc").querySelectorAll("button")[0] || {}).textContent === "시뮬레이터";
@@ -2309,7 +2311,7 @@ safe("infoArchitecture", () => {
   r.popOverlayChartMade = shim.UPlotStub.made.some((u) =>
     u.opts && u.opts.series && u.opts.series.some((s) => s.label === "VIX"));
   r.popOverlayHasSixDeltas = !!ovBack
-    && ["1일", "1주", "1개월", "3개월", "YTD", "1년"].every(
+    && ["직전 관측", "1주", "1개월", "3개월", "YTD", "1년"].every(
       (lb) => new RegExp(lb).test(ovBack.textContent));
   /* 카탈로그가 안 실렸을 때(로드 실패) 메타가 조용히 사라지지 않고 이력 범위로 적는가 */
   r.popMetaFallsBackToHistRange = !!ovBack && /표본 2023-11-1/.test(ovBack.textContent);
