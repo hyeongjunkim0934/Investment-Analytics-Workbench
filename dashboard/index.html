@@ -297,20 +297,9 @@
 
 </main>
 
-<footer class="footer">
-  <p>원본 데이터 파일은 비공개 저장소에만 보관됩니다. 이 페이지에는 선별된 시리즈와
-     파생 지표만 게시되며, 장기 시계열의 과거 구간은 주별로 축약되어 있습니다.</p>
-  <p id="build-line"></p>
-  <!-- 빌드 경고 펼침. <p id="build-line"> **안**이 아니라 형제 <div> 여야 한다 —
-       <p> 안에 넣으면 펼치는 순간 문단이 209px 로 늘며 텍스트가 겹치고, <p> 안의
-       <ul>/<p> 는 HTML 콘텐츠 모델 위반이다. 실제 클릭으로 재현해 확인한 자리다. -->
-  <div id="build-warnings"></div>
-</footer>
-
 <div class="detail-overlay" id="detail-overlay" hidden></div>
 
 <script src="vendor/uplot.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
-

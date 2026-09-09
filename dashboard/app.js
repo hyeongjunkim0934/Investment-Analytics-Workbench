@@ -1048,27 +1048,6 @@ function renderMetaLine() {
   if (!m) return;
   $("#meta-line").textContent =
     `기준일 ${m.last_observation} · 빌드 ${m.built_at_kst} · ${m.series_count}개 시리즈`;
-  $("#build-line").textContent =
-    `빌드 ${m.built_at_kst} (${m.built_at_utc}) · 원본 파일 ${m.files.length}개 · 시리즈 ${m.series_count}개`;
-  /* 예전에는 "경고 N건(콘솔 참조)" 라고만 적혀 있었다. 브라우저 개발자 콘솔을 여는 것은
-     이 화면을 쓰는 사람의 일이 아니다 — 같은 내용을 화면에서 펼쳐 볼 수 있게 한다.
-     내용은 이미 meta.json 으로 내려받아지는 값이라 새로 공개되는 것은 없다.
-     반드시 #build-warnings(<p> 의 형제 <div>)에 넣을 것 — <p id="build-line"> 안에
-     넣으면 펼치는 순간 문단이 18px→209px 로 늘며 빌드 메타 줄과 설명 문장이 같은
-     시각적 줄에 겹친다(실제 클릭으로 재현). 콘솔 출력도 그대로 남긴다. */
-  const wbox = $("#build-warnings");
-  if (wbox) {
-    wbox.textContent = "";
-    if (m.warnings && m.warnings.length) {
-      const det = el("details", { class: "warn-box", id: "build-warnings-details" });
-      det.append(el("summary", {}, `빌드 경고 ${m.warnings.length}건 — 펼쳐 보기`));
-      const ul = el("ul");
-      m.warnings.forEach((w) => ul.append(el("li", {}, w)));
-      det.append(ul, el("p", {},
-        "경고에는 중복 열·자료 누락·표본 부족·계산 실패가 포함될 수 있습니다. 항목별로 영향을 받는 자료와 화면을 확인하십시오."));
-      wbox.append(det);
-    }
-  }
   if (m.warnings && m.warnings.length) console.warn("pipeline warnings:", m.warnings);
 }
 
@@ -3350,14 +3329,15 @@ function wrapTable(t, hint = "옆으로 밀면 나머지 열이 나옵니다") {
 function makeRatioChart(box, opts) {
   const { seriesDefs, height = 280, unit = "%", xLabel = "헤지비율",
           xRange = [0, 100], yRange = null, band = null, zeroLine = false,
-          xSuffix = xLabel === "헤지비율" ? "%" : "" } = opts;
+          xSuffix = xLabel === "헤지비율" ? "%" : "", hoverDecimals = null } = opts;
   const pal = palette();
   const xs = seriesDefs[0].x;
-  const series = [{ label: xLabel, value: (u, v) => v == null ? "–" : v + xSuffix }];
+  const series = [{ label: xLabel, value: (u, v) => v == null ? "–"
+    : (hoverDecimals == null ? v : fmtNum(v, hoverDecimals)) + xSuffix }];
   seriesDefs.forEach((sd) => series.push({
     label: sd.label, stroke: sd.color, width: 2.5, spanGaps: true,
     points: { show: false },
-    value: (u, v) => v == null ? "–" : fmtNum(v, unit === "" ? 2 : 1) + unit,
+    value: (u, v) => v == null ? "–" : fmtNum(v, hoverDecimals ?? (unit === "" ? 2 : 1)) + unit,
   }));
   const cfg = {
     width: Math.max(280, box.clientWidth), height,
@@ -5900,14 +5880,15 @@ function portState(P) {
   if (!st.mix || typeof st.mix !== "object") st.mix = { ...d.mix };
   P.assets.forEach((a) => { if (!isFinite(+st.mix[a])) st.mix[a] = d.mix[a] || 0; });
   if (!st.mu || typeof st.mu !== "object") st.mu = {};
-  st.robust_k = portRobustK(st.robust_k);
+  // The simplified chart always uses the default scenario, including older saved states.
+  st.robust_k = d.robust_k;
   return st;
 }
 
 function portSaveState(st) {
   try {
     localStorage.setItem(PORT_LS_KEY, JSON.stringify({
-      grp: st.grp, liq: st.liq, mix: st.mix, mu: st.mu, win: st.win, robust_k: portRobustK(st.robust_k), saved: true }));
+      grp: st.grp, liq: st.liq, mix: st.mix, mu: st.mu, win: st.win, saved: true }));
   } catch {}
   refreshAllocWorkspaceInfo();
 }
@@ -6241,7 +6222,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   table.append(tbody);
   const sumBadge = el("span", { class: "port-badge" });
   const saveNote = el("span", { class: "port-note" },
-    "비중·제약조건 미저장 · 저장 버튼/μ·표본·오차 강도 변경 시 현재값 함께 저장");
+    "비중·제약조건 미저장 · 저장 버튼/μ·표본 변경 시 현재값 함께 저장");
   const btnRow = el("div", { class: "port-btns" },
     sumBadge,
     el("button", { class: "btn-ghost", onclick: () => { portSaveState(st); renderPortPanel(A); } },
@@ -6270,7 +6251,6 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   const frontCard = el("div", { class: "card port-sub-card port-frontier" });
   const reviewCard = el("div", { class: "card port-sub-card" });
   box.append(el("div", { class: "port-two" }, frontCard, reviewCard));
-  let frontierView = "all";
 
   function recalc() {
     refreshAllocWorkspaceInfo();
@@ -6292,29 +6272,8 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const colors = currentTheme() === "light"
       ? { nominal: "#315b89", robust: "#7556b5", min: "#19745f", max: "#9c650d", bm: "#785cc0", current: "#202d3b" }
       : { nominal: "#b4d8eb", robust: "#b9a0ee", min: "#6ed3b7", max: "#f0cc78", bm: "#b49ae8", current: "#f3f5f7" };
-    const robustInput = el("input", { type: "range", min: "0", max: "3", step: "0.25",
-      value: String(E.kappa), "aria-label": "강건 최적화 오차 강도", id: "port-robust-k" });
-    const robustValue = el("output", { for: "port-robust-k" }, fmtNum(E.kappa, 2));
-    robustInput.addEventListener("input", () => { robustValue.textContent = fmtNum(+robustInput.value, 2); });
-    robustInput.addEventListener("change", () => {
-      st.robust_k = portRobustK(robustInput.value); portSaveState(st); recalc();
-      document.getElementById("port-robust-k")?.focus();
-    });
-    const zoomed = frontierView === "robust" && E.robustOk && E.kappa > 0 && pts.length > 1;
-    const viewControl = el("div", { class: "seg", role: "group", "aria-label": "경계선 표시 범위" });
-    [["robust", "강건 구간"], ["all", "전체"]].forEach(([key, label]) => {
-      viewControl.append(el("button", { type: "button", class: (zoomed ? "robust" : "all") === key ? "active" : "",
-        "aria-pressed": String((zoomed ? "robust" : "all") === key), onclick: () => {
-          frontierView = key; recalc();
-          frontCard.querySelector(".seg .active")?.focus();
-        } }, label));
-    });
-    const controls = el("div", { class: "port-frontier-controls" }, viewControl,
-      el("label", { class: "port-robust-control", for: "port-robust-k" },
-        "오차 강도 κ", robustInput, robustValue));
     const fbox = cardScaffold(frontCard, {
-      title: "효율적 경계선", controls,
-      sub: "합계 100% · 공매도 금지",
+      title: "효율적 경계선",
       csvName: "효율적경계선.csv",
       tableFn: (cap = 400, raw = false) => {
         const rows = [...E.front.map((p) => ({ ...p, type: "일반", k: 0, worst: p.mu })),
@@ -6345,23 +6304,21 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const cloudPoints = E.cloud?.points || [];
     const allX = [...E.front.map((p) => p.sig), ...xsF, ...markers.map((m) => m.x), ...cloudPoints.map((p) => p.sig)];
     const allY = [...E.front.map((p) => p.mu), ...ysF, ...lower, ...markers.map((m) => m.y), ...cloudPoints.map((p) => p.mu)];
-    const viewX = zoomed ? xsF : allX, viewY = zoomed ? [...ysF, ...lower] : allY;
-    const minX = viewX.length ? Math.min(...viewX) : 0, maxX = viewX.length ? Math.max(...viewX) : 1;
-    const minY = viewY.length ? Math.min(...viewY) : 0, maxY = viewY.length ? Math.max(...viewY) : 1;
+    const minX = allX.length ? Math.min(...allX) : 0, maxX = allX.length ? Math.max(...allX) : 1;
+    const minY = allY.length ? Math.min(...allY) : 0, maxY = allY.length ? Math.max(...allY) : 1;
     const spanX = Math.max(0.005, maxX - minX), spanY = Math.max(0.2, maxY - minY);
-    const xRange = zoomed ? [Math.max(0, minX - spanX * 0.28), maxX + spanX * 0.32]
-      : [Math.max(0, minX - spanX * 0.14), maxX + spanX * 0.18];
+    const xRange = [Math.max(0, minX - spanX * 0.14), maxX + spanX * 0.18];
     const yRange = [minY - spanY * 0.32, maxY + spanY * 0.28];
     const visibleMarkers = markers.filter((m) => m.x >= xRange[0] && m.x <= xRange[1]
       && m.y >= yRange[0] && m.y <= yRange[1]);
     const hover = el("div", { class: "port-hover", role: "status" });
-    const hoverReset = () => { hover.textContent = "경계선에 마우스 · ← → 위험·수익·비중"; };
+    const hoverReset = () => { hover.textContent = ""; };
     const showPoint = (idx) => {
       if (idx == null || !pts[idx]) { hoverReset(); return; }
       const p = pts[idx];
       hover.textContent = `위험 ${fmtNum(p.sig, 2)}% · 기준 ${fmtNum(p.mu, 2)}%` +
         (E.robustOk ? ` · 최악 ${fmtNum(p.worst, 2)}%` : "") + " — 배분: " +
-        P.assets.map((a, i) => `${a} ${fmtNum(p.w[i] * 100, 1)}`).join(" · ");
+        P.assets.map((a, i) => `${a} ${fmtNum(p.w[i] * 100, 2)}%`).join(" · ");
     };
     hoverReset();
     fbox.setAttribute("tabindex", "0");
@@ -6383,7 +6340,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       reference: E.front, referenceColor: colors.nominal, cloud: E.cloud,
       xLabel: "변동성 · 연 %", axisTitles: { y: "기대수익 · 연 %" }, unit: "%", height: 470,
       markers: visibleMarkers, markerLegend: true,
-      xRange, yRange,
+      xRange, yRange, hoverDecimals: 2,
       onCursor: showPoint,
     }));
     const key = el("div", { class: "port-frontier-key" });
@@ -6399,18 +6356,9 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
         el("div", { class: "port-sharpe-ramp", style: `background:linear-gradient(90deg,${stops.join(",")})` }),
         el("span", {}, fmtNum(E.cloud.max, 2)), el("span", {}, `${cloudPoints.length.toLocaleString()} 배분`)));
     }
-    frontCard.append(el("div", { class: "port-frontier-key" },
-      el("span", { class: E.robustOk && E.kappa > 0 ? "port-area-key" : "" },
-        E.robustOk && E.kappa > 0 ? "Robust · 기준–최악 기대수익" : "일반 평균–분산 경계선"),
-      el("span", {}, zoomed ? "강건 구간 확대" : "점선 · 일반 경계선")), hover);
+    frontCard.append(hover);
     if (!E.robustOk) frontCard.append(el("div", { class: "port-warn d-up", role: "status" },
       "강건 영역 계산 불가 — 표본·공분산 또는 최적화 수렴을 확인하십시오."));
-    frontCard.append(explainBox("port-robust-method", { label: "Robust 기준" },
-      el("p", {}, "기대수익의 타원체 오차를 반영한 최악 기대수익 − λ×분산/2를 최대화합니다. κ=0은 일반 평균–분산 최적화, 기본 κ=1은 오차 강도 시나리오입니다."),
-      el("p", {}, `오차 공분산 Q = 연환산 공분산 × 12/${E.W.n_months}. 월별 독립·동일분포를 가정한 표본평균 오차 크기이며, 입력·CMA에도 이 역사적 크기를 적용합니다. 신뢰구간·실현수익 예측구간이 아닙니다.`),
-      el("p", {}, "공분산은 고정합니다. 같은 위험에서 배분이 같을 수 있으며, 강건 최적화는 선택 위험 수준을 낮춥니다. λ별 모형 참고치로, 현재 비중은 자동 변경하지 않습니다."),
-      el("p", {}, "점군은 같은 기대수익·공분산으로 계산한 비음수·합계 100% 배분입니다. 내부와 경계면을 함께 추출하므로 점 밀도는 발생확률이 아닙니다. 색상은 (기대수익−원화유동성 기대수익)/변동성이며, 변동성 0의 색상은 정의하지 않습니다. 그룹 입력 제약은 현재 배분에만 적용됩니다."),
-      el("p", {}, "근거: MOSEK Portfolio Optimization Cookbook §10.2")));
 
     reviewCard.textContent = "";
     reviewCard.append(el("div", { class: "card-head" },
@@ -6426,20 +6374,12 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     rows.push(["벤치마크 60/40", fmtNum(E.bench.mu, 2), fmtNum(E.bench.sig, 2),
                fmtNum(E.bench.sig > 1e-9 ? (E.bench.mu - E.rf) / E.bench.sig : null, 2),
                "0.00", "0.00", "–"]);
-    const wrap = el("div", { class: "table-wrap" });
+    const wrap = el("div", { class: "table-wrap port-benchmark" });
     renderTable(wrap, {
       headers: ["구분", "기대수익%", "위험%", "샤프", "초과수익%p", "TE%p", "IR"], rows });
     reviewCard.append(wrap);
     if (!wCur) reviewCard.append(el("div", { class: "port-warn d-up" },
       `합계 ${fmtNum(sum, 1)}% — 100% 가 아니라 현재점을 계산하지 않았습니다(몰래 정규화하지 않습니다).`));
-    const wb = E.W.bench || null;
-    if (wb) reviewCard.append(el("div", { class: "port-note" },
-      `실현 성과(창 ${portWinLabel(E.W.key)} · 월별 리밸런싱): BM μ ${fmtNum(wb.mean_pct, 2)}% · ` +
-      `σ ${fmtNum(wb.vol_pct, 2)}% · MDD ${fmtNum(wb.mdd_pct, 2)}%`));
-    const rb10 = P.ref10y && P.ref10y.bench;
-    if (rb10) reviewCard.append(el("div", { class: "port-note" },
-      `실현 성과(10년 참고 ${rb10.start}~${rb10.end}): BM μ ${fmtNum(rb10.mean_pct, 2)}% · ` +
-      `σ ${fmtNum(rb10.vol_pct, 2)}% · MDD ${fmtNum(rb10.mdd_pct, 2)}%`));
   }
   recalc();
 }

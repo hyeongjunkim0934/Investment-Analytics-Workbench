@@ -127,7 +127,7 @@ def test_zero_covariance_and_invalid_covariance(solve_js):
     assert not indefinite["frontier"]["robust"]
 
 
-def test_frontier_controls_gradient_ranges_and_chart_lifecycle():
+def test_frontier_fixed_scenario_formatting_gradient_and_chart_lifecycle():
     root = Path(__file__).resolve().parents[1]
     node = shutil.which("node")
     assert node, "Node.js is required to exercise the frontier UI"
