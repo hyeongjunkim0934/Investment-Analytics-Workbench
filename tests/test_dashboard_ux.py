@@ -2716,7 +2716,7 @@ def test_port_panel_longest_window_and_cd_reference(probe):
     )
     assert c["periodSelectionUpdated"] is True, "콤보박스와 통계 표의 선택 기간이 다르다"
     assert c["cdRefShown"] is True, (
-        "원화유동성 10년 참고 자리에 CD 적립 수치(참고 표기)가 없다"
+        "원화유동성 10년 참고는 괄호 주석 없이 수치만 표시해야 한다"
     )
     assert c["cdRefTooltipHasOverlap"] is True, (
         "CD 참고 툴팁에 참고 전용·실ETF 겹침 검증치가 없다"

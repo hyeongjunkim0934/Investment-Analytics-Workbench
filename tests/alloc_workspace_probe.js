@@ -182,6 +182,39 @@ r.institutionPeriodSelected = JSON.parse(shim.localStorage.getItem("iaw-alloc"))
 choose("port");
 r.periodsStaySeparate = byId("port-period").value === "3"
   && shim.localStorage.getItem("iaw-port") === savedPortPeriod;
+
+/* 날짜는 정확히 게시된 창에 연결한다. 없는 기간을 기존 행렬로 가장하지 않는다. */
+const allWindow = sampled.port.windows.find((w) => w.key === "all");
+const inputDates = (id, from, to) => {
+  change(byId(`${id}-start`), from);
+  change(byId(`${id}-end`), to);
+  byId(`${id}-apply`).click();
+};
+r.periodDatesInitialized = byId("port-period-start").value === three.start
+  && byId("port-period-end").value === three.end;
+const beforeDates = chartData(), instBeforeDates = shim.localStorage.getItem("iaw-alloc");
+inputDates("port-period", allWindow.start, allWindow.end);
+r.periodDatesApply = byId("port-period").value === "all" && chartData() !== beforeDates
+  && P.portEngine(sampled.port, P.portState(sampled.port)).W.key === "all"
+  && DOC.activeElement === byId("port-period-apply")
+  && JSON.parse(shim.localStorage.getItem("iaw-port")).mix.국내채권 === 30.4
+  && shim.localStorage.getItem("iaw-alloc") === instBeforeDates;
+const afterDates = chartData(), savedDates = shim.localStorage.getItem("iaw-port");
+r.invalidPeriodDatesBlocked = true;
+for (const [from, to] of [["", allWindow.end], [allWindow.end, allWindow.start],
+  ["2027-02-30", allWindow.end], ["2028-01-31", "2029-12-31"]]) {
+  inputDates("port-period", from, to);
+  r.invalidPeriodDatesBlocked &&= !byId("port-period-status").hidden
+    && chartData() === afterDates && shim.localStorage.getItem("iaw-port") === savedDates
+    && byId("port-period").value === "all";
+}
+change(byId("port-period"), "3", "change");
+r.periodDatesFollowPreset = byId("port-period-start").value === three.start
+  && byId("port-period-end").value === three.end && byId("port-period-status").hidden;
+const anotherInstWindow = sampled.cma.windows.find((w) => w.key !== instWindow.key);
+inputDates("institution-period", anotherInstWindow.start, anotherInstWindow.end);
+r.institutionPeriodDatesApply = P.allocEngine(sampled, P.allocState(sampled)).cmaW.key === anotherInstWindow.key
+  && byId("institution-period").value === anotherInstWindow.key && byId("port-period").value === "3";
 shim.localStorage.setItem("iaw-port", JSON.stringify({win: "10"}));
 P.renderPortPanel(sampled);
 r.unavailableSavedPeriodFallsBack = byId("port-period").value === "all";

@@ -58,3 +58,8 @@ def test_period_selection_updates_statistics_charts_and_separate_storage(workspa
                 "unavailableSavedPeriodFallsBack", "proxyPeriodSelected"):
         assert workspace[key], key
 
+
+def test_period_dates_apply_only_matching_published_statistics(workspace):
+    for key in ("periodDatesInitialized", "periodDatesApply", "invalidPeriodDatesBlocked",
+                "periodDatesFollowPreset", "institutionPeriodDatesApply"):
+        assert workspace[key], key
