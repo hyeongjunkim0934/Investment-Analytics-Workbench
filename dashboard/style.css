@@ -1122,7 +1122,6 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-groups { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
 .port-grp { font-size: 13px; color: var(--ink-2); }
 .port-grp input { width: 74px; }
-.port-preview { margin-top: 6px; font-size: 12.5px; color: var(--ink-3); }
 .port-table th, .port-table td { padding: 5px 8px; }
 /* 이 표만 가운데 정렬 — 열 제목과 그 아래 키인 칸이 세로로 맞아 보이게
    (2026-08-23 사용자 지시). 전역 td.num 우측 정렬을 여기서만 이긴다. */

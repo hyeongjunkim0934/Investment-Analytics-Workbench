@@ -5427,7 +5427,7 @@ function allocDonutSVG(entries, size) {
 let allocWorkspace = "port";
 const ALLOC_WORKSPACES = {
   port: { label: "포트폴리오", basis: "7자산 · 대체 통합 · 달러/원화 유동성",
-    panels: ["alloc-port-panel"], toc: [["포트폴리오", "alloc-port-panel"]] },
+    panels: ["alloc-port-panel"], toc: [] },
   institution: { label: "기관 배분·헤지", basis: "7자산 · 대체 대출/지분 · 단기자금",
     panels: ["alloc-sim-panel", "alloc-headline", "alloc-summary", "alloc-controls",
       "alloc-cards", "alloc-levers", "alloc-risk-proc"],
@@ -5448,7 +5448,7 @@ function refreshAllocWorkspaceInfo() {
   const spec = ALLOC_WORKSPACES[allocWorkspace];
   const ctx = allocWorkspaceContext[allocWorkspace];
   box.textContent = "";
-  box.append(el("strong", {}, spec.label), el("span", {}, spec.basis));
+  box.append(el("span", {}, spec.basis));
   if (!ctx) return;
   if (ctx.sample) box.append(el("span", {}, ctx.sample));
   if (ctx.save) box.append(el("span", { class: "alloc-workspace-save", role: "status" }, ctx.save()));
@@ -5472,6 +5472,7 @@ function selectAllocWorkspace(key) {
   const toc = $("#alloc-toc");
   if (toc) {
     toc.textContent = "";
+    toc.hidden = ALLOC_WORKSPACES[key].toc.length === 0;
     ALLOC_WORKSPACES[key].toc.forEach(([label, id]) => {
       toc.append(el("button", { type: "button", "aria-controls": id, onclick: () => {
         const n = document.getElementById(id);
@@ -5920,8 +5921,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   portCharts = [];
   box.textContent = "";
   const P = A && A.port;
-  const head = el("div", { class: "card-head" },
-    el("span", { class: "card-title" }, "포트폴리오"));
+  const head = el("div", { class: "card-head" });
   if (!P || !P.active || !(P.windows || []).length) {
     portPanelDraft = null;
     allocWorkspaceContext.port = { warning: `비활성 — ${(P && P.reason) || "데이터 없음"}` };
@@ -5972,19 +5972,16 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     el("p", {}, P.method || ""),
     el("p", {}, "유동성 차감 후 주식·채권·대체 비례 배분 · 그룹 내 균등 분할.")));
 
-  /* ① 대분류 초기 세팅 */
+  /* ① 제약조건 초기 세팅 */
   const gWrap = el("div", { class: "port-groups" });
-  const gInputs = {};
-  const preview = el("div", { class: "port-preview" });
   const grpRow = (label, get, set, min, max) => {
     const inp = el("input", { type: "number", step: "0.5", min: String(min), max: String(max),
-                              value: String(get()), "aria-label": `대분류 ${label}` });
+                              value: String(get()), "aria-label": `제약조건 ${label}` });
     inp.addEventListener("input", () => {
       const v = parseFloat(inp.value);
       set(isFinite(v) ? v : 0);
-      updPreview();
+      refreshAllocWorkspaceInfo();
     });
-    gInputs[label] = inp;
     return el("label", { class: "port-grp" }, `${label} `, inp, " %");
   };
   gWrap.append(
@@ -6000,17 +5997,10 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       if (mixInputs[a]) mixInputs[a].value = String(mix[a]);
     });
     recalc();
-  } }, "비중 적용");
+  } }, "제약 적용");
   gWrap.append(applyBtn);
   box.append(el("div", { class: "port-sec-title" },
-    "① 대분류"), gWrap, preview);
-  function updPreview() {
-    const mix = portMixFromGroups(P, st.grp, st.liq);
-    preview.textContent = "적용 시: " +
-      P.assets.map((a) => `${a} ${fmtNum(mix[a], 1)}`).join(" · ") + " (합계 100.0)";
-    refreshAllocWorkspaceInfo();
-  }
-  updPreview();
+    "① 제약조건"), gWrap);
 
   /* ② 자산군 표 — 비중(시뮬레이션·저장 안 함) + CMA μ 키인(모형 입력·즉시 저장) */
   const E0 = portEngine(P, st);
@@ -6065,7 +6055,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   table.append(tbody);
   const sumBadge = el("span", { class: "port-badge" });
   const saveNote = el("span", { class: "port-note" },
-    "비중·대분류 미저장 · 저장 버튼/μ·표본 변경 시 현재값 함께 저장");
+    "비중·제약조건 미저장 · 저장 버튼/μ·표본 변경 시 현재값 함께 저장");
   const btnRow = el("div", { class: "port-btns" },
     sumBadge,
     el("button", { class: "btn-ghost", onclick: () => { portSaveState(st); renderPortPanel(A); } },

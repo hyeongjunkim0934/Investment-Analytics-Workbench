@@ -2131,7 +2131,7 @@ safe("portPanel", () => {
   shim.UPlotStub.made.length = 0;
   P.renderSection("alloc");
   const panel = DOC.getElementById("alloc-port-panel");
-  r.panelRendered = /포트폴리오/.test(panel.textContent);
+  r.panelRendered = /① 제약조건/.test(panel.textContent);
   /* 패널이 시뮬레이터보다 위(제일 상단)인가 — DOM 순서로 잰다 */
   const kids = DOC.getElementById("alloc").childNodes;
   r.panelAboveSim = kids.indexOf(panel) >= 0 &&
@@ -2139,10 +2139,10 @@ safe("portPanel", () => {
 
   /* ① 대분류 디폴트 + 적용 */
   const gIn = Array.from(panel.querySelectorAll("input"))
-    .filter((n) => (n.getAttribute("aria-label") || "").startsWith("대분류"));
+    .filter((n) => (n.getAttribute("aria-label") || "").startsWith("제약조건"));
   r.groupDefaults = gIn.map((n) => +n.value);          // [50, 30, 20, 10]
   const applyBtn = Array.from(panel.querySelectorAll("button"))
-    .find((b) => b.textContent === "비중 적용");
+    .find((b) => b.textContent === "제약 적용");
   applyBtn.dispatchEvent({ type: "click", target: applyBtn });
   const mixIn = Array.from(panel.querySelectorAll("input"))
     .filter((n) => /비중$/.test(n.getAttribute("aria-label") || ""));
