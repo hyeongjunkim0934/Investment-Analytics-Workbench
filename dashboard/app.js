@@ -530,7 +530,7 @@ function renderDataFreshness(today = todayKst()) {
   const cards = (DATA.overview && DATA.overview.cards) || [];
   const count = cards.filter((c) => observationAge(c.date, today).check).length;
   const check = age.check || count > 0;
-  host.hidden = false;
+  host.hidden = underlyingSection(location.hash.replace(/^#/, "")) === "alloc";
   host.classList.toggle("needs-check", check);
   host.textContent = "";
   host.append(el("b", {}, check ? "자료 확인" : "자료 시점"),
@@ -5459,9 +5459,9 @@ function allocDonutSVG(entries, size) {
    전환할 때 패널을 다시 그리지 않아 저장 전 입력과 기존 계산을 그대로 보존한다. */
 let allocWorkspace = "port";
 const ALLOC_WORKSPACES = {
-  port: { label: "포트폴리오", basis: "7자산 · 대체 통합 · 달러/원화 유동성",
+  port: { label: "포트폴리오",
     panels: ["alloc-port-panel"], toc: [] },
-  institution: { label: "기관 배분·헤지", basis: "7자산 · 대체 대출/지분 · 단기자금",
+  institution: { label: "기관 배분·헤지",
     panels: ["alloc-sim-panel", "alloc-headline", "alloc-summary", "alloc-controls",
       "alloc-cards", "alloc-levers", "alloc-risk-proc"],
     toc: [["시뮬레이터", "alloc-sim-panel"], ["요약", "alloc-summary"],
@@ -5469,23 +5469,12 @@ const ALLOC_WORKSPACES = {
 };
 const allocWorkspaceContext = {};
 
-function allocWorkspaceSaveLabel(st, saved) {
-  const dirty = Object.keys(st).filter((k) => k !== "saved")
-    .some((k) => JSON.stringify(st[k]) !== JSON.stringify(saved[k]));
-  return dirty ? "미저장 조정" : saved.saved ? "브라우저 저장값" : "기본값";
-}
-
 function refreshAllocWorkspaceInfo() {
   const box = $("#alloc-workspace-info");
   if (!box) return;
-  const spec = ALLOC_WORKSPACES[allocWorkspace];
   const ctx = allocWorkspaceContext[allocWorkspace];
-  box.textContent = "";
-  box.append(el("span", {}, spec.basis));
-  if (!ctx) return;
-  if (ctx.sample) box.append(el("span", {}, ctx.sample));
-  if (ctx.save) box.append(el("span", { class: "alloc-workspace-save", role: "status" }, ctx.save()));
-  if (ctx.warning) box.append(el("span", { class: "alloc-workspace-warning d-up" }, ctx.warning));
+  box.textContent = (ctx && ctx.warning) || "";
+  box.hidden = !box.textContent;
 }
 
 function selectAllocWorkspace(key) {
@@ -5520,15 +5509,30 @@ function renderAllocWorkspace() {
   const box = $("#alloc-workspace");
   if (!box) return;
   box.textContent = "";
-  const seg = el("div", { class: "seg", role: "group", "aria-label": "분석 체계" });
+  const seg = el("div", { class: "alloc-tabs", role: "group", "aria-label": "분석 체계" });
   Object.entries(ALLOC_WORKSPACES).forEach(([key, spec]) => {
     seg.append(el("button", { type: "button", id: `alloc-workspace-${key}`,
       "aria-controls": spec.panels.join(" "), onclick: () => selectAllocWorkspace(key) }, spec.label));
   });
-  box.append(seg, el("div", { class: "alloc-workspace-info", id: "alloc-workspace-info" }),
-    el("div", { class: "alloc-workspace-note" },
-      "체계별 입력 별도 저장 · 모형 입력 변경 시 해당 체계의 현재 입력 함께 저장"));
+  box.append(seg, el("div", { class: "alloc-workspace-info d-up", id: "alloc-workspace-info", role: "status" }));
   selectAllocWorkspace(allocWorkspace);
+}
+
+function allocPeriodControl(id, windows, current, onChange) {
+  const select = el("select", { id, "aria-label": "데이터 기간" });
+  windows.forEach((w) => select.append(el("option", { value: w.key }, w.label || portWinLabel(w.key))));
+  select.value = current.key;
+  select.addEventListener("change", () => {
+    const chosen = windows.find((w) => w.key === select.value);
+    if (!chosen) { select.value = current.key; return; }
+    onChange(chosen);
+    document.getElementById(id)?.focus();
+  });
+  const range = [current.start && current.end ? `${current.start}~${current.end}` : null,
+    current.n_months != null ? `${current.n_months}개월` : null].filter(Boolean).join(" · ");
+  return el("div", { class: "alloc-period" },
+    el("label", { for: id }, "데이터 기간", select),
+    el("span", { class: "alloc-period-range" }, range));
 }
 
 const ALLOC_LS_KEY = "iaw-alloc";
@@ -6060,37 +6064,13 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   portPanelDraft = { source: P, st };
   const wins = P.windows;
   const W = wins.find((w) => w.key === st.win) || wins[wins.length - 1];
-  allocWorkspaceContext.port = {
-    sample: `원화·미헤지 · ${W.start}~${W.end} · ${W.n_months}개월`,
-    save: () => allocWorkspaceSaveLabel(st, portState(P)),
-  };
+  allocWorkspaceContext.port = {};
   refreshAllocWorkspaceInfo();
 
-  head.append(el("span", { class: "card-sub" },
-    `7자산군 · 원화 미헤지 · 월말 ${W.start}~${W.end} (${W.n_months}개월)`
-    + (W.key === "all" ? " · 최장 공통" : "")));
-  const seg = el("div", { class: "seg", role: "group" });
-  wins.forEach((w) => seg.append(el("button", {
-    class: w.key === W.key ? "active" : "",
-    onclick: () => { st.win = w.key; portSaveState(st); renderPortPanel(A); },
-  }, portWinLabel(w.key))));
-  head.append(el("span", {}, seg));
+  head.append(allocPeriodControl("port-period", wins, W, (w) => {
+    st.win = w.key; portSaveState(st); renderPortPanel(A);
+  }));
   box.append(head);
-
-  const missing = P.missing_windows || [];
-  if (missing.length) {
-    const cov = P.coverage || [];
-    const short = cov.length ? cov.reduce((a, b) => (a.n_months <= b.n_months ? a : b)) : null;
-    box.append(el("div", { class: "port-warn d-up" },
-      `⚠ ${missing.map((y) => `${y}년`).join("·")} 창 미충족 — ` +
-      (short ? `최단 자산 ${short.asset} 표본 ${short.first}~. ` : "") +
-      "자산별 10년 통계는 아래 참고 열에 표시."));
-  }
-  box.append(explainBox("port-method",
-    { label: "산출 기준" },
-    el("p", {}, `프록시: ${P.assets.map((a) => `${a}=${(P.proxies || {})[a] || "?"}`).join(" · ")}`),
-    el("p", {}, P.method || ""),
-    el("p", {}, "유동성 차감 후 주식·채권·대체 비례 배분 · 그룹 내 균등 분할.")));
 
   /* ① 제약조건 초기 세팅 */
   const gWrap = el("div", { class: "port-groups" });
@@ -6120,7 +6100,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   } }, "제약 적용");
   gWrap.append(applyBtn);
   box.append(el("div", { class: "port-sec-title" },
-    "① 제약조건"), gWrap);
+    "제약조건"), gWrap);
 
   /* ② 자산군 표 — 비중(시뮬레이션·저장 안 함) + CMA μ 키인(모형 입력·즉시 저장) */
   const E0 = portEngine(P, st);
@@ -6188,7 +6168,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     el("button", { class: "btn-ghost", onclick: () => { expWrap.hidden = !expWrap.hidden; } },
       "CMA JSON 내보내기"),
     saveNote);
-  box.append(el("div", { class: "port-sec-title" }, "② 자산군"),
+  box.append(el("div", { class: "port-sec-title" }, "자산군"),
     el("div", { class: "table-wrap" }, table), btnRow);
 
   const expTa = el("textarea", { class: "port-export", readonly: "", rows: "11",
@@ -6433,12 +6413,7 @@ function renderAlloc() {
 
   /* 층·창·매핑 표식용 엔진 한 벌 — recalc 는 매번 새로 만들므로 이건 표시 전용이다 */
   const E0 = allocEngine(A, st);
-  allocWorkspaceContext.institution = {
-    sample: `${E0.layer === "cma" ? "기관 BM" : "벤더 프록시"} · ` +
-      `${E0.sample.start || "시작일 없음"}~${E0.sample.end || "종료일 없음"} · ${E0.sample.n_months}개월`,
-    save: () => allocWorkspaceSaveLabel(st, allocState(A)),
-    warning: E0.layerNote,
-  };
+  allocWorkspaceContext.institution = { warning: E0.layerNote };
   refreshAllocWorkspaceInfo();
 
   /* ---- ⓪ 포트폴리오 시뮬레이터 (§7.7.8 — 화면 최상단, 2026-08-11 사용자 지시) ----
@@ -6459,12 +6434,13 @@ function renderAlloc() {
     lockSeg.append(mkLock("자유 조정", false), mkLock("합계 100% 유지", true));
     simBox.append(el("div", { class: "card-head" },
       el("span", { class: "card-title" }, "시뮬레이터"),
-      el("span", { class: "card-sub" },
-        `7자산군 · 시가 기준 · λ=${fmtNum(+st.mvo_lambda || 1, 1)}` +
-        (E0.layer === "cma" ? "" : " · 프록시층 — 최적·σ 키인은 벤치마크 층 전용")),
       el("span", {}, lockSeg)));
-    simBox.append(explainBox("alloc-sim-head",
-      "최적 = λ-MVO(배분+헤지) · 상관 = 벤치마크 실측 ρ."));
+    simBox.append(allocPeriodControl("institution-period",
+      E0.layer === "cma" ? E0.cmaAll.windows : A.sets,
+      E0.layer === "cma" ? E0.cmaW : E0.set, (w) => {
+        if (E0.layer === "cma") st.cma_win = w.key; else st.start_key = w.key;
+        allocSaveState(st); renderAlloc();
+      }));
 
     /* ---- λ(위험회피계수) 선택 — 2026-08-12 사용자 지시 「람다도 선택할 수 있게」 ----
        모형 입력이라 즉시 저장한다(μ·σ 키인과 같은 규약 — 비중만 시뮬레이션이다).
@@ -7026,16 +7002,6 @@ function renderAlloc() {
     mkSrc("프록시", "proxy"));
   srcRow.append(el("b", {}, "위험 원천"), srcSeg);
   if (E0.layer === "cma") {
-    const winSeg = el("div", { class: "seg", role: "group" });
-    (E0.cmaAll.windows || []).forEach((w) => {
-      winSeg.append(el("button", {
-        class: E0.cmaW && E0.cmaW.key === w.key ? "active" : "",
-        onclick: () => { st.cma_win = w.key; allocSaveState(st); renderAlloc(); },
-      }, `${w.key === "all" ? "전체" : w.key + "년"} (${w.n_months}개월)`));
-    });
-    srcRow.append(el("span", { style: "font-size:12.5px" }, "창"), winSeg,
-      explainBox("alloc-cma-src",
-        "벤치마크 월간 수익률 실측 σ·상관 — 프록시 근사 없음."));
     /* μ 기준일 컷(§7.7.16) — 데이터가 더 있는데 잘랐다는 사실을 화면이 말한다.
        조용히 자르면 사용자는 σ 가 최신인 줄 안다(μ·σ 시점 불일치의 반대 사고).
 

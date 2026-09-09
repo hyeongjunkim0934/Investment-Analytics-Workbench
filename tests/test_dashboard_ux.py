@@ -1888,14 +1888,14 @@ def test_sim_panel_sigma_keyin_scales_variance_not_correlation(probe):
 
 def test_sim_panel_renders_bars_markers_donuts_cards(probe):
     """패널 렌더 — 목차 첫 버튼 = 시뮬레이터, 막대 7(시가 7축 — 장부가 축 제외),
-    ▼ 마커 = λ-MVO 산출 위치, 도넛 2(최적·시뮬), 카드 2(최적·시뮬), 상관 정책 문구."""
+    ▼ 마커 = λ-MVO 산출 위치, 도넛 2(최적·시뮬), 카드 2(최적·시뮬), 상단 주석 간소화."""
     c = probe["simPanel"]
     assert c["renderErrors"] == 0
     assert c["tocFirstIsSim"] is True
     assert c["barCount"] == 7 and c["markerVisibleCount"] == 7
     assert c["donutCount"] == 2
     assert c["hasOptCard"] is True and c["hasSimCard"] is True
-    assert c["statesCorrPolicy"] is True
+    assert c["simHeaderNotesRemoved"] is True
     assert c["markerMatchesOptimum"] is True, "막대 위 ▼ 가 최적화 산출과 어긋난다"
 
 
@@ -2632,9 +2632,7 @@ def test_port_panel_frontier_hover_and_review(probe):
         "실현 μ(선택 창) 열이 없거나 게시 창 평균과 다른 수를 적는다"
     )
     assert c["reviewHasRows"] is True and c["reviewShowsRealized"] is True
-    assert c["missingWindowWarnVisible"] is True, (
-        "10년 창 미충족 경고가 접혔거나 사라졌다 — 경고는 접지 않는다(§7.13)"
-    )
+    assert c["periodNotesRemoved"] is True, "사용자가 제거한 주석·번호가 남아 있다"
     assert c["sumWarnAfterDrift"] is True, "합계≠100 인데 몰래 정규화했거나 침묵했다"
     assert c["inactiveShowsReason"] is True, "비활성 사유가 화면에 없다 — 조용한 대체 금지"
 
@@ -2739,9 +2737,7 @@ def test_port_panel_longest_window_and_cd_reference(probe):
     assert c["defaultWindowLongest"] is True, (
         "저장이 없으면 최장 공통 표본(all)이 기본 창이어야 하고 화면이 그 사실을 적는다"
     )
-    assert c["longestMarkOnlyOnAll"] is True, (
-        "최장 표본 표기가 다른 창에도 붙는다 — all 창에만 붙어야 한다"
-    )
+    assert c["periodSelectionUpdated"] is True, "콤보박스와 통계 표의 선택 기간이 다르다"
     assert c["cdRefShown"] is True, (
         "원화유동성 10년 참고 자리에 CD 적립 수치(참고 표기)가 없다"
     )

@@ -106,6 +106,15 @@ def test_overview_and_detail_preserve_numeric_change_and_disclose_gap(freshness_
     assert detail["period"] == gap["period"]
 
 
+def test_freshness_banner_is_hidden_on_allocation_routes(freshness_probe):
+    assert freshness_probe["allocationRoutes"] == [
+        {"hash": "#alloc", "hidden": True},
+        {"hash": "#alloc-sim", "hidden": True},
+        {"hash": "#alloc-boot", "hidden": True},
+        {"hash": "#overview", "hidden": False},
+    ]
+
+
 def _add(key, dates, values):
     source, name = key.split(":", 1)
     process.add_series(key, source, "합성", name,
