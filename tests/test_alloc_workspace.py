@@ -51,3 +51,10 @@ def test_model_selects_preserve_engine_and_saved_state(workspace):
     for key in ("modelControlsAreSelects", "windowSelectUpdatesEngine", "mappingSelectUpdatesEngine",
                 "sourceSelectUpdatesEngine", "modelSelectionsSurviveSourceSwitch", "missingCmaOptionDisabled"):
         assert workspace[key], key
+def test_period_selection_updates_statistics_charts_and_separate_storage(workspace):
+    for key in ("availablePeriodsOnly", "periodUpdatesStatistics", "periodUpdatesChart",
+                "periodSavesDraft", "periodRetainsFocus", "unavailablePeriodIgnored",
+                "institutionPeriodSelected", "periodsStaySeparate",
+                "unavailableSavedPeriodFallsBack", "proxyPeriodSelected"):
+        assert workspace[key], key
+

@@ -992,27 +992,28 @@ details.explain[open] > summary { color: var(--ink-2); }
 }
 .sec-toc:empty { display: none; }
 
-/* 자산배분: 자산 분류·표본이 다른 두 체계를 선택하고 맥락을 함께 표시한다. */
+/* 자산배분: 두 체계는 탭, 표본 선택은 각 패널의 콤보박스. */
 .alloc-workspace {
-  padding: 12px 14px;
   margin: 8px 0 10px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
 }
-.alloc-workspace .seg button { min-height: 34px; }
+.alloc-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); }
+.alloc-tabs button {
+  min-height: 38px; padding: 7px 14px; font: inherit; font-size: 13px;
+  color: var(--ink-2); background: transparent; cursor: pointer;
+  border: 0; border-bottom: 2px solid transparent;
+}
+.alloc-tabs button:hover { color: var(--ink-1); }
+.alloc-tabs button.active { color: var(--ink-1); border-bottom-color: var(--accent-solid); font-weight: 650; }
 .alloc-workspace-info {
-  display: flex;
-  gap: 5px 14px;
-  align-items: baseline;
-  flex-wrap: wrap;
-  margin-top: 9px;
-  color: var(--ink-2);
-  font-size: 12px;
-  overflow-wrap: anywhere;
+  margin-top: 8px; font-size: 12px; overflow-wrap: anywhere;
 }
-.alloc-workspace-save { font-weight: 650; }
-.alloc-workspace-warning { flex-basis: 100%; }
+.alloc-period { display: flex; gap: 8px 14px; flex-wrap: wrap; align-items: center; font-size: 12px; }
+.alloc-period label { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); }
+.alloc-period select {
+  min-height: 34px; max-width: 100%; padding: 4px 10px; font: inherit;
+  background: var(--surface); color: var(--ink-1); border: 1px solid var(--baseline); border-radius: 6px;
+}
+.alloc-period-range { color: var(--ink-2); overflow-wrap: anywhere; }
 #alloc-headline:empty { display: none; }
 .alloc-select { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; }
 .alloc-select select {

@@ -2036,7 +2036,7 @@ safe("simPanel", () => {
   const simTitles = [...panel.querySelectorAll(".sim8-card .card-title")].map((n) => n.textContent);
   r.hasOptCard = simTitles.includes("최적");
   r.hasSimCard = simTitles.includes("조정");
-  r.redundantCorrExplanationRemoved = !/상관 = 벤치마크 실측/.test(ptxt);
+  r.simHeaderNotesRemoved = !/상관 = 벤치마크 실측|7자산군/.test(ptxt);
   /* 도넛이 각자 자기 카드의 열(sim8-col) 안에 있다 — 카드 아래 중앙 배치의 구조 검증.
      최적 열: 최적 카드 + 「최적 비중」 도넛 / 시뮬 열: 시뮬 카드 + 「조정 비중」. */
   const cols9 = [...panel.querySelectorAll(".sim8-col")];
@@ -2139,7 +2139,7 @@ safe("portPanel", () => {
   shim.UPlotStub.made.length = 0;
   P.renderSection("alloc");
   const panel = DOC.getElementById("alloc-port-panel");
-  r.panelRendered = /① 제약조건/.test(panel.textContent);
+  r.panelRendered = /제약조건/.test(panel.textContent);
   /* 패널이 시뮬레이터보다 위(제일 상단)인가 — DOM 순서로 잰다 */
   const kids = DOC.getElementById("alloc").childNodes;
   r.panelAboveSim = kids.indexOf(panel) >= 0 &&
@@ -2218,20 +2218,15 @@ safe("portPanel", () => {
   r.reviewHasRows = /최적\(최대 샤프\)/.test(rvTxt) && /벤치마크 60\/40/.test(rvTxt);
   r.reviewShowsRealized = /실현 성과\(창/.test(rvTxt) && /실현 성과\(10년 참고/.test(rvTxt);
 
-  /* ⑥ 10년 창 미충족 경고 — 접힌 설명(details.explain) 안이 아니라 본문에 있어야 한다 */
-  const warnNode = Array.from(panel.querySelectorAll(".port-warn"))
-    .find((n) => /창 미충족/.test(n.textContent));
-  let warnFolded = false;
-  for (let anc = warnNode; anc; anc = anc.parentElement)
-    if ((anc.className || "").split(/\s+/).includes("explain")) warnFolded = true;
-  r.missingWindowWarnVisible = !!warnNode && !warnFolded;
+  /* 2026-09-09 사용자 지시: 표본 부족 안내·산출 기준·번호 제거. */
+  r.periodNotesRemoved = !/창 미충족|산출 기준|7자산군|원화 미헤지|① 제약조건|② 자산군/.test(panel.textContent);
 
   /* ⑦ 합계 ≠ 100 이면 현재점을 몰래 정규화하지 않고 사유를 적는다 */
   r.sumWarnAfterDrift = /100% 가 아니라 현재점을 계산하지 않았습니다/.test(panel.textContent);
 
   /* ⑦b 기본 창 = 최장 공통 표본(all) — 저장이 없을 때 가장 긴 창이 기본이고
      화면이 그 사실을 적는다 (2026-08-22 사용자 지시 "가능한 긴 표본") */
-  r.defaultWindowLongest = /최장 공통/.test(panel.textContent);
+  r.defaultWindowLongest = DOC.getElementById("port-period").value === "all";
 
   /* ⑦c 원화유동성 CD 적립 참고 — 10년 참고가 없는 자리에 CD 수치가 참고 표기로
      들어오고, 출처·기간·실ETF 겹침 검증치는 툴팁에 있다 (참고 전용 — 행렬 미포함) */
@@ -2243,14 +2238,13 @@ safe("portPanel", () => {
     && /겹침 41개월 corr 0\.91/.test(cdSpan.getAttribute("title") || "");
 
   /* ⑧ 창 선택은 모형 입력 — 즉시 저장 */
-  const segBtn = Array.from(panel.querySelectorAll(".seg button"))
-    .find((b) => b.textContent === "3년");
-  segBtn.dispatchEvent({ type: "click", target: segBtn });
+  const period = DOC.getElementById("port-period");
+  period.value = "3";
+  period.dispatchEvent({ type: "change", target: period });
   const saved2 = JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY) || "{}");
   r.windowChoiceSaved = saved2.win === "3";
-  /* 최장 표본 표기는 all 창에만 붙는다 — 3년 창으로 바꾸면 사라져야 한다 */
-  r.longestMarkOnlyOnAll = !/최장 공통/.test(
-    DOC.getElementById("alloc-port-panel").textContent);
+  r.periodSelectionUpdated = DOC.getElementById("port-period").value === "3"
+    && /실현수익 % \(3년\)/.test(DOC.getElementById("alloc-port-panel").textContent);
 
   /* ⑨ 비활성 블록 — 조용히 사라지지 않고 사유를 적는다 */
   P.DATA.alloc = { ...ALLOC_FIXTURE, port: { active: false, reason: "probe 사유" } };
@@ -2729,7 +2723,8 @@ safe("hedgeTracks", () => {
   r.bothCardsShowHedge = hedgeLines.length === 2;
   const optResultCard = [...panel.querySelectorAll(".sim8-card")]
     .find((n) => n.querySelector(".card-title").textContent === "최적");
-  r.optCardSaysRepresentative = !!optResultCard && /대표점/.test(optResultCard.textContent);
+  r.optCardSaysRepresentative = !!optResultCard && [...optResultCard.querySelectorAll(".sim-hedge-line")]
+    .some((n) => /대표점 — 같은 Xe = 같은 위험/.test(n.textContent));
   const sliders = Array.from(panel.querySelectorAll("input"))
     .filter((n) => /헤지비율$/.test(n.getAttribute("aria-label") || ""));
   r.slidersLiveInPanel = sliders.length === 2;

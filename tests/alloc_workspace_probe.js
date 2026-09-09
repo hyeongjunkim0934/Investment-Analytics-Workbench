@@ -19,6 +19,7 @@ const { P, DOC, shim, ALLOC_FIXTURE, CMA_ALLOC } = load(require, __dirname);
 const r = {};
 const byId = (id) => DOC.getElementById(id);
 const info = () => byId("alloc-workspace-info").textContent;
+const periodText = (root) => byId(root).querySelector(".alloc-period-range").textContent;
 const choose = (key) => byId(`alloc-workspace-${key}`).click();
 const input = (root, label) => [...byId(root).querySelectorAll("input")]
   .find((n) => n.getAttribute("aria-label") === label);
@@ -41,14 +42,18 @@ const originalNumbers = engineValues();
 P.renderSection("alloc");
 r.noRenderErrors = byId("alloc").querySelectorAll(".render-error").length === 0;
 r.defaultPort = !byId("alloc-port-panel").hidden && byId("alloc-sim-panel").hidden;
-r.portContext = /2027-01-31~2030-06-30/.test(info()) && /42개월/.test(info()) && /기본값/.test(info());
-r.workspaceExplanationRemoved = !/대체 통합|달러\/원화 유동성|체계별 입력 별도 저장/.test(
+r.portContext = byId("alloc-workspace-info").hidden
+  && byId("alloc-workspace").textContent === "포트폴리오기관배분·헤지"
+  && /2027-01-31~2030-06-30/.test(periodText("alloc-port-panel"))
+  && /42개월/.test(periodText("alloc-port-panel"));
+r.workspaceExplanationRemoved = !/대체 통합|달러\/원화 유동성|체계별 입력 별도 저장|브라우저 저장값/.test(
   byId("alloc-workspace").textContent);
 r.portTocRemoved = byId("alloc-toc") === null;
 const beforeSelect = snapshot();
 choose("institution");
-r.institutionContext = /기관 BM/.test(info())
-  && /2026-01-31~2030-06-30/.test(info()) && /54개월/.test(info());
+r.institutionContext = byId("alloc-workspace-info").hidden
+  && /2026-01-31~2030-06-30/.test(periodText("alloc-sim-panel"))
+  && /54개월/.test(periodText("alloc-sim-panel"));
 const institutionPanels = ["alloc-sim-panel", "alloc-headline", "alloc-summary", "alloc-controls",
   "alloc-cards", "alloc-levers", "alloc-risk-proc"];
 r.onlyInstitutionVisible = byId("alloc-port-panel").hidden
@@ -67,12 +72,12 @@ r.hashUntouched = shim.location.hash === "#alloc";
 /* 저장 전 초안은 전환만으로 버려지거나 다른 체계로 섞이지 않아야 한다. */
 const portWeight = input("alloc-port-panel", "국내채권 비중");
 change(portWeight, 31.2);
-r.portDirty = /미저장 조정/.test(info()) && shim.localStorage.getItem("iaw-port") === null;
+r.portDirty = +portWeight.value === 31.2 && shim.localStorage.getItem("iaw-port") === null;
 choose("institution");
 const instWeight = byId("sim-mix-국내채권");
 const instOriginal = +instWeight.value;
 change(instWeight, instOriginal + 1);
-r.institutionDirty = /미저장 조정/.test(info()) && shim.localStorage.getItem("iaw-alloc") === null;
+r.institutionDirty = +instWeight.value === instOriginal + 1 && shim.localStorage.getItem("iaw-alloc") === null;
 choose("port");
 r.portDraftPreserved = input("alloc-port-panel", "국내채권 비중") === portWeight && +portWeight.value === 31.2;
 choose("institution");
@@ -82,10 +87,10 @@ r.selectionSurvivesRerender = byId("alloc-port-panel").hidden && !byId("alloc-si
   && byId("alloc-workspace-institution").getAttribute("aria-pressed") === "true";
 r.portDraftSurvivesRerender = +input("alloc-port-panel", "국내채권 비중").value === 31.2;
 
-/* 기존 저장 규약 그대로: λ·μ 변경이 현재 입력을 함께 저장함을 표시한다. */
+/* 기존 저장 규약 그대로: λ·μ 변경이 현재 입력을 함께 저장한다. */
 change(byId("alloc-lambda"), 2.3, "change");
 r.institutionSaved = JSON.parse(shim.localStorage.getItem("iaw-alloc")).mvo_lambda === 2.3
-  && /브라우저 저장값/.test(info());
+  && byId("alloc-workspace-info").hidden;
 r.portDraftSurvivesInstitutionSave = +input("alloc-port-panel", "국내채권 비중").value === 31.2
   && shim.localStorage.getItem("iaw-port") === null;
 const savedInstitution = shim.localStorage.getItem("iaw-alloc");
@@ -96,7 +101,7 @@ change(input("alloc-port-panel", "국내채권 비중"), 29.1);
 change(input("alloc-port-panel", "국내채권 기대수익"), 4.1);
 const portSaved = JSON.parse(shim.localStorage.getItem("iaw-port"));
 r.portSaveSemantics = portSaved.mix.국내채권 === 29.1 && portSaved.mu.국내채권 === 4.1
-  && /브라우저 저장값/.test(info());
+  && byId("alloc-workspace-info").hidden;
 r.separateStorage = shim.localStorage.getItem("iaw-alloc") === savedInstitution;
 r.institutionDraftSurvivesPortSave = byId("sim-mix-국내채권") === institutionalDraftInput
   && +institutionalDraftInput.value === 47.2;
@@ -117,13 +122,13 @@ r.newDatasetStartsFromSaved = +input("alloc-port-panel", "국내채권 비중").
 P.DATA.alloc = ALLOC_FIXTURE;
 P.renderSection("alloc");
 choose("institution");
-r.fallbackShown = /벤더 프록시/.test(info()) && /벤치마크 CMA 없음/.test(info());
+r.fallbackShown = /프록시로 계산/.test(info()) && /벤치마크 CMA 없음/.test(info());
 P.DATA.alloc = { ...CMA_ALLOC, sets: [] };
 P.renderSection("alloc");
 r.institutionMissingShown = /기관\s?배분·헤지 데이터를 불러오지 못했습니다/.test(info());
 choose("port");
 r.portWorksWithoutInstitution = !byId("alloc-port-panel").hidden
-  && !!input("alloc-port-panel", "국내채권 비중") && /42개월/.test(info());
+  && !!input("alloc-port-panel", "국내채권 비중") && /42개월/.test(periodText("alloc-port-panel"));
 P.DATA.alloc = { ...CMA_ALLOC, port: { active: false, reason: "합성 데이터 없음" } };
 P.renderSection("alloc");
 r.portMissingShown = /합성 데이터 없음/.test(info());
@@ -133,6 +138,60 @@ choose("port");
 P.openAllocDetail("sim");
 r.detailSelectsInstitution = byId("alloc-port-panel").hidden && !byId("alloc-sim-panel").hidden;
 P.hideDetail();
+
+/* 서로 다른 창 통계로 선택값·표·차트·저장을 연결해서 확인한다. */
+const sampled = JSON.parse(JSON.stringify(CMA_ALLOC));
+sampled.port.cma_input = null;
+const three = sampled.port.windows.find((w) => w.key === "3");
+three.start = "2027-07-31";
+three.mean_pct = three.mean_pct.map((v) => v + 1);
+three.vol_pct = three.vol_pct.map((v) => v / 2);
+three.cov = three.cov.map((row) => row.map((v) => v / 4));
+shim.localStorage.removeItem("iaw-port");
+shim.localStorage.removeItem("iaw-alloc");
+P.DATA.alloc = sampled;
+P.renderSection("alloc");
+choose("port");
+const options = (id) => [...byId(id).querySelectorAll("option")].map((n) => n.getAttribute("value"));
+r.availablePeriodsOnly = JSON.stringify(options("port-period")) === JSON.stringify(sampled.port.windows.map((w) => w.key));
+const chartData = () => JSON.stringify(shim.UPlotStub.made.filter((u) =>
+  u.opts.series.some((s) => s.label === "경계선")).at(-1).data);
+const beforePeriodChart = chartData();
+change(input("alloc-port-panel", "국내채권 비중"), 30.4);
+change(byId("port-period"), "3", "change");
+const firstRow = byId("alloc-port-panel").querySelector("tbody tr");
+const cells = [...firstRow.querySelectorAll("td")];
+r.periodUpdatesStatistics = +cells[3].textContent === three.mean_pct[0]
+  && Math.abs(+cells[4].textContent - three.vol_pct[0]) < 1e-9
+  && /2027-07-31~2030-06-30 · 36개월/.test(periodText("alloc-port-panel"));
+r.periodUpdatesChart = chartData() !== beforePeriodChart;
+r.periodSavesDraft = JSON.parse(shim.localStorage.getItem("iaw-port")).mix.국내채권 === 30.4
+  && JSON.parse(shim.localStorage.getItem("iaw-port")).win === "3";
+r.periodRetainsFocus = DOC.activeElement === byId("port-period");
+const savedPortPeriod = shim.localStorage.getItem("iaw-port");
+change(byId("port-period"), "10", "change");
+r.unavailablePeriodIgnored = byId("port-period").value === "3"
+  && shim.localStorage.getItem("iaw-port") === savedPortPeriod;
+choose("institution");
+const instWindow = sampled.cma.windows.find((w) => w.key !== byId("institution-period").value);
+change(byId("institution-period"), instWindow.key, "change");
+r.institutionPeriodSelected = JSON.parse(shim.localStorage.getItem("iaw-alloc")).cma_win === instWindow.key
+  && byId("institution-period").value === instWindow.key
+  && DOC.activeElement === byId("institution-period")
+  && P.allocEngine(sampled, P.allocState(sampled)).cmaW.key === instWindow.key;
+choose("port");
+r.periodsStaySeparate = byId("port-period").value === "3"
+  && shim.localStorage.getItem("iaw-port") === savedPortPeriod;
+shim.localStorage.setItem("iaw-port", JSON.stringify({win: "10"}));
+P.renderPortPanel(sampled);
+r.unavailableSavedPeriodFallsBack = byId("port-period").value === "all";
+P.DATA.alloc = ALLOC_FIXTURE;
+P.renderSection("alloc");
+choose("institution");
+change(byId("institution-period"), "y2015", "change");
+r.proxyPeriodSelected = JSON.parse(shim.localStorage.getItem("iaw-alloc")).start_key === "y2015"
+  && P.allocEngine(ALLOC_FIXTURE, P.allocState(ALLOC_FIXTURE)).set.key === "y2015"
+  && byId("institution-period").value === "y2015";
 r.finalNoRenderErrors = byId("alloc").querySelectorAll(".render-error").length === 0;
 
 /* 버튼 대신 선택 입력을 써도 원천·기간·매핑 값이 저장되고 실제 엔진에 전달된다. */
@@ -145,21 +204,22 @@ const selectValue = (id, value) => {
   if (!n || n.tagName !== "SELECT") throw new Error(`missing select: ${id}`);
   change(n, value, "change");
 };
-r.modelControlsAreSelects = ["alloc-source", "alloc-window", "alloc-alt-map"]
+r.modelControlsAreSelects = ["alloc-source", "institution-period", "alloc-alt-map"]
   .every((id) => byId(id)?.tagName === "SELECT");
-selectValue("alloc-window", "1");
+selectValue("institution-period", "1");
 r.windowSelectUpdatesEngine = P.allocState(CMA_ALLOC).cma_win === "1"
   && P.allocEngine(CMA_ALLOC, P.allocState(CMA_ALLOC)).sample.n_months === 12
-  && /2029-07-31~2030-06-30/.test(info());
+  && /2029-07-31~2030-06-30/.test(periodText("alloc-sim-panel"));
 selectValue("alloc-alt-map", "bm");
 r.mappingSelectUpdatesEngine = P.allocState(CMA_ALLOC).alt_map.mode === "bm"
   && P.allocEngine(CMA_ALLOC, P.allocState(CMA_ALLOC)).altInfo.mode === "bm";
 selectValue("alloc-source", "proxy");
 r.sourceSelectUpdatesEngine = P.allocState(CMA_ALLOC).src === "proxy"
   && P.allocEngine(CMA_ALLOC, P.allocState(CMA_ALLOC)).layer === "proxy"
-  && byId("alloc-window") === null && byId("alloc-alt-map") === null;
+  && byId("institution-period")?.tagName === "SELECT" && byId("alloc-alt-map") === null
+  && JSON.stringify(options("institution-period")) === JSON.stringify(CMA_ALLOC.sets.map((s) => s.key));
 selectValue("alloc-source", "cma");
-r.modelSelectionsSurviveSourceSwitch = byId("alloc-window").value === "1"
+r.modelSelectionsSurviveSourceSwitch = byId("institution-period").value === "1"
   && byId("alloc-alt-map").value === "bm";
 P.DATA.alloc = ALLOC_FIXTURE;
 P.renderSection("alloc");
