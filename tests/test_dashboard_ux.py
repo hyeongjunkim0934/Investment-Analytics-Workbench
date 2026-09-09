@@ -1492,17 +1492,15 @@ def test_no_arbitrary_flatness_threshold_survives():
     )
 
 
-def test_lever_text_states_the_one_axis_not_a_single_optimal_pair(probe):
-    """화면에 실제로 그려지는 문단을 읽는다 — 엔진이 옳아도 문구가 옛말이면 소용없다.
+def test_lever_shows_exposure_and_identifies_representative_pair(probe):
+    """Xe 변화·대표점·상세 접근은 유지하고 1축 구조의 반복 설명은 제거한다.
 
-    P17 은 엔진만 본다. 이 검사는 #alloc 을 실제로 렌더해서 #alloc-levers 의
-    텍스트를 읽으므로, "최적 헤지비율은 (35%, 100%)" 류가 되살아나면 잡힌다.
+    같은 Xe의 위험이 같은지는 hedgeCore의 항등식 검증으로 별도 확인한다.
     """
     t = probe["hedgeLeverText"]
     assert t["rendered"] is True and t["renderErrors"] == 0
-    assert t["mentionsXe"] is True, "총 미헤지 환노출(Xe)을 말하지 않는다"
-    assert t["saysRiskIsOneAxis"] is True, "위험이 보는 축이 하나라는 사실을 적지 않는다"
-    assert t["saysTiesAreEqual"] is True, "동점 조합의 위험이 같다는 사실을 적지 않는다"
+    assert t["showsXeTransition"] is True, "현재·위험 최소 Xe 결과가 없다"
+    assert t["hedgeDetailAvailable"] is True, "헤지 상세 접근이 사라졌다"
     assert t["labelsPairAsRepresentative"] is True, (
         "헤지비율 쌍을 적으면서 그것이 **대표점**임을 밝히지 않는다 — 한 점을 최적으로 읽힌다"
     )
@@ -1769,30 +1767,25 @@ def test_book_axis_and_cap_book_are_gone(probe):
 
 
 def test_cma_screen_shows_layer_mapping_and_provenance(probe):
-    """층 스위치·매핑 콘솔·[매핑] 출처 태그·환노출 근거·제외 자산군이 실제로 렌더된다."""
+    """위험 원천과 매핑은 유지하고 반복 헤드라인·본문 설명은 제거한다."""
     c = probe["cmaLayer"]
     assert c["renderErrors"] == 0
     assert c["controlsShowSource"] is True
     assert c["controlsShowMapping"] is True
     assert c["controlsShowPerClassMapping"] is True, "매핑 콘솔에 지분형/대출형 분류가 없다"
-    # 자산군 표·방법론 카드는 2026-08-31 사용자 지시로 제거 — §7.7.19 환 기준
-    # 문구는 시뮬레이터 σ 키인 설명이 나른다(프로브가 재조준).
-    assert c["methodShowsFxBasis"] is True
+    assert c["simMethodExplanationsRemoved"] is True
     assert c["methodDroppedWrongFxClaim"] is True
-    assert c["headlineShowsLayer"] is True
+    assert c["redundantHeadlineRemoved"] is True
 
 
-def test_alloc_toc_navigates_without_touching_the_hash(probe):
-    """컨텐츠 탭 — 버튼 5개가 있고 눌러도 죽지 않는다.
-
-    투자선·시변·특성·자산군 표·방법론 구역은 2026-08-31 사용자 지시로 제거됐다.
-    해시 앵커(href="#…")를 쓰면 섹션 라우팅 축과 충돌해 마을로 튕긴다 — 버튼 +
-    scrollIntoView 여야 한다. index.html 쪽 검사는 계약 테스트(id 대조)가 맡는다.
-    """
+def test_alloc_removes_toc_and_preserves_workspace_switch(probe):
+    """중복 목차는 제거하고 체계 2개의 전환은 해시를 바꾸지 않는다."""
     c = probe["allocToc"]
     assert c["renderErrors"] == 0
-    assert c["tocButtonCount"] == 5      # 기관 체계: 시뮬레이터·요약·설정·참고치·통합 프로세스
-    assert c["tocClicksSafe"] is True
+    assert c["tocRemoved"] is True
+    assert 'id="alloc-toc"' not in INDEX_HTML.read_text(encoding="utf-8")
+    assert c["workspaceButtons"] == ["포트폴리오", "기관배분·헤지"]
+    assert c["workspaceSwitchPreservesHash"] is True
 
 
 def test_risk_to_optimization_process_card(probe):
@@ -1813,6 +1806,7 @@ def test_risk_to_optimization_process_card(probe):
     assert c["lambdaKeyinUntouched"] is True, "카드가 λ 키인을 건드렸다 — λ 소유권 위반"
     assert c["layerToggleWorks"] is True and c["layerToggleSaved"] is True
     assert c["mapToggleShowsFormula"] is True
+    assert c["mapToggleSaved"] is True
     assert c["missingHistMExplains"] is True
     assert c["proxyLayerExplains"] is True
 
@@ -1871,6 +1865,8 @@ def test_sim_panel_redistribution_is_exact(probe):
     assert c["lockValuesAre1dp"] is True, "재분배 결과가 0.1%p 단위가 아니다(2026-08-12)"
     assert c["lockClamps"] is True
     assert c["lockSplitsEquallyWhenOthersZero"] is True
+    assert c["lockIsCheckbox"] is True
+    assert c["lockCheckboxSaved"] is True
     assert c["lockModeRedistributesInUi"] is True
 
 
@@ -1887,11 +1883,10 @@ def test_sim_panel_sigma_keyin_scales_variance_not_correlation(probe):
 
 
 def test_sim_panel_renders_bars_markers_donuts_cards(probe):
-    """패널 렌더 — 목차 첫 버튼 = 시뮬레이터, 막대 7(시가 7축 — 장부가 축 제외),
-    ▼ 마커 = λ-MVO 산출 위치, 도넛 2(최적·시뮬), 카드 2(최적·시뮬), 상단 주석 간소화."""
+    """기관 선택·막대 7·λ-MVO 마커·도넛 2·카드 2, 반복 설명 제거."""
     c = probe["simPanel"]
     assert c["renderErrors"] == 0
-    assert c["tocFirstIsSim"] is True
+    assert c["institutionPanelVisible"] is True
     assert c["barCount"] == 7 and c["markerVisibleCount"] == 7
     assert c["donutCount"] == 2
     assert c["hasOptCard"] is True and c["hasSimCard"] is True
@@ -2164,7 +2159,7 @@ def test_alt_fx_hedge_slider_is_a_model_input(probe):
     사용자 확인: 「대체투자는 유동적으로 환헤지 하는 중, 현재 거의 90%」. 최적화가 고르는
     레버가 아니라 「지금 이렇게 운용 중」을 넣는 **모형 입력**이라(사용자 선택) μ·σ·λ 와
     같이 즉시 저장하고, 최적 ▼ 를 달지 않으며, 「저장 안 됨」 배지도 켜지 않는다 —
-    저장했는데 배지가 뜨면 거짓 표시다. Xe 밖이라는 사실도 화면이 적어야 한다.
+    저장했는데 배지가 뜨면 거짓 표시다. 즉시 저장·최적화 제외 상태는 짧게 표시한다.
     """
     c = probe["hedgeTracks"]
     assert c["altHedgeSliderExists"] is True, "대체투자 환헤지 슬라이더가 없다"
@@ -2175,7 +2170,7 @@ def test_alt_fx_hedge_slider_is_a_model_input(probe):
     assert c["altHedgeDoesNotMarkDirty"] is True, (
         "즉시 저장하면서 「저장 안 됨」 배지를 켠다 — 조정/저장 분리 표시가 거짓이 된다"
     )
-    assert c["altHedgeExplainsNotXe"] is True, "Xe 에 들어가지 않는다는 사실을 화면이 적지 않는다"
+    assert c["altHedgeShowsInputStatus"] is True, "즉시 저장·최적화 제외 상태가 없다"
 
 
 def test_xe_binding_attribution_is_not_exclusive(probe):
@@ -2556,17 +2551,9 @@ def test_every_css_variable_and_class_actually_exists():
     assert not stale, f"CSS 가 생겼는데 무스타일 예외 목록에 남아 있습니다: {stale}"
 
 
-# ---- §7.13 설명 접기 — 답·경고만 보이고 산문은 클릭 뒤 (실행해서 확인) ----------
+# ---- 설명 공통 기능·기관 본문 간소화·경고 가시성 (실행해서 확인) -----------------
 def test_explain_fold_behaviour_and_warning_visibility(probe):
-    """산문 접기(§7.13 — 2026-08-19 사용자 지시 "화면을 심플하게")의 계약.
-
-    ① 기본 닫힘, 클릭 토글, 같은 id 재생성(recalc) 시 열림 상태 유지 — 상태 유지가
-       없으면 슬라이더를 끌 때마다 열어 둔 설명이 닫힌다.
-    ② 닫힌 본문은 보이는 텍스트에서 빠지지만 **textContent 에는 남는다** — 문자열
-       기반 기존 프로브·테스트의 전제가 유지된다.
-    ③ **경고·사유는 접히지 않는다** — 구속 ⚠(§7.7.17)·폴백 사유(layerNote)가 접히면
-       그 계약이 조용히 무력화된다. visText(닫힌 explain 본문 제외)로 실행 확인.
-    """
+    """공통 접기 기능은 유지하되 기관 본문 설명은 제거하고 결과·경고는 표시한다."""
     c = probe["explainFold"]
     assert c["helperExists"] is True
     assert c["closedByDefault"] is True, "explain 이 기본 열림이다 — 접기의 요점이 사라진다"
@@ -2577,15 +2564,10 @@ def test_explain_fold_behaviour_and_warning_visibility(probe):
     )
     assert c["closeAlsoSurvives"] is True
     assert c["closedBodyHidden"] is True and c["openBodyVisible"] is True
-    assert c["allocHasFolds"] is True, "자산배분 화면에 explain 접기가 깔리지 않았다"
-    assert c["allFoldsClosedByDefault"] is True
-    assert c["visibleIsSubset"] is True, "접었는데 보이는 글자가 줄지 않았다"
-    assert c["contractStringsStillInDom"] is True, (
-        "계약 문자열이 DOM 에서 사라졌다 — title 속성으로 옮겼는지 확인(textContent 상실)"
-    )
+    assert c["institutionExplanationsRemoved"] is True, "기관 본문에 설명 접기가 남았다"
     assert c["answersVisible"] is True, "답(기대수익·위험·최적 카드)이 접혔다 — 접는 대상이 뒤집혔다"
     assert c["hedgeControlsVisible"] is True
-    assert c["proseFolded"] is True, "대표 산문이 기본 상태에 그대로 보인다 — 접기가 안 걸렸다"
+    assert c["proseRemoved"] is True, "제거 대상 산문이 DOM에 남았다"
     assert c["bindWarningVisibleNotFolded"] is True, (
         "구속 ⚠ 가 접혔다 — 경고는 explain 에 넣지 않는다(§7.13 계약)"
     )

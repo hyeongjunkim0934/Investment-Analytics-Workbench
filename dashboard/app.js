@@ -5080,17 +5080,12 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
   });
 
   /* 컨트롤 — 층·매핑은 관측 설정(즉시 저장, src 와 같은 규약) */
-  const seg = (pairs, key) => {
-    const s = el("div", { class: "seg", role: "group" });
-    pairs.forEach(([label, v]) => s.append(el("button", {
-      class: st[key] === v ? "active" : "",
-      onclick: () => { st[key] = v; allocSaveState(st); rerender(); },
-    }, label)));
-    return s;
-  };
+  const choose = (id, label, pairs, key) => allocSelect(id, label, pairs, st[key], (v) => {
+    st[key] = v; allocSaveState(st); rerender();
+  });
   const controls = el("span", { style: "display:inline-flex;gap:10px;flex-wrap:wrap;align-items:center" },
-    seg([["현재 위험", "stress"], ["잠재 위험", "vuln"]], "rp_layer"),
-    seg([["로그", "log"], ["선형", "lin"]], "rp_map"));
+    choose("alloc-rp-layer", "리스크", [["현재", "stress"], ["잠재", "vuln"]], "rp_layer"),
+    choose("alloc-rp-map", "λ 변환", [["로그", "log"], ["선형", "lin"]], "rp_map"));
 
   const mLabel = (t) => tsToDate(t).slice(0, 7);
   const box = cardScaffold(card, {
@@ -5459,13 +5454,10 @@ function allocDonutSVG(entries, size) {
    전환할 때 패널을 다시 그리지 않아 저장 전 입력과 기존 계산을 그대로 보존한다. */
 let allocWorkspace = "port";
 const ALLOC_WORKSPACES = {
-  port: { label: "포트폴리오",
-    panels: ["alloc-port-panel"], toc: [] },
-  institution: { label: "기관 배분·헤지",
+  port: { label: "포트폴리오", panels: ["alloc-port-panel"] },
+  institution: { label: "기관배분·헤지",
     panels: ["alloc-sim-panel", "alloc-headline", "alloc-summary", "alloc-controls",
-      "alloc-cards", "alloc-levers", "alloc-risk-proc"],
-    toc: [["시뮬레이터", "alloc-sim-panel"], ["요약", "alloc-summary"],
-      ["설정", "alloc-controls"], ["참고치", "alloc-cards"], ["리스크 연계", "alloc-risk-proc"]] },
+      "alloc-cards", "alloc-levers", "alloc-risk-proc"] },
 };
 const allocWorkspaceContext = {};
 
@@ -5491,17 +5483,6 @@ function selectAllocWorkspace(key) {
       if (n) n.hidden = k !== key;
     });
   });
-  const toc = $("#alloc-toc");
-  if (toc) {
-    toc.textContent = "";
-    toc.hidden = ALLOC_WORKSPACES[key].toc.length === 0;
-    ALLOC_WORKSPACES[key].toc.forEach(([label, id]) => {
-      toc.append(el("button", { type: "button", "aria-controls": id, onclick: () => {
-        const n = document.getElementById(id);
-        if (n && !n.hidden && n.scrollIntoView) n.scrollIntoView({ block: "start" });
-      } }, label));
-    });
-  }
   refreshAllocWorkspaceInfo();
 }
 
@@ -5516,6 +5497,19 @@ function renderAllocWorkspace() {
   });
   box.append(seg, el("div", { class: "alloc-workspace-info d-up", id: "alloc-workspace-info", role: "status" }));
   selectAllocWorkspace(allocWorkspace);
+}
+
+/* 설정은 화면 이동과 구별되는 네이티브 선택 입력으로 표시한다. */
+function allocSelect(id, label, pairs, value, change) {
+  const select = el("select", { id, "aria-label": label });
+  pairs.forEach(([text, key, disabled = false]) => {
+    const option = el("option", { value: key }, text);
+    option.disabled = disabled;
+    select.append(option);
+  });
+  select.value = value;
+  select.addEventListener("change", () => change(select.value));
+  return el("label", { class: "alloc-select" }, label, select);
 }
 
 function allocPeriodControl(id, windows, current, onChange) {
@@ -6427,14 +6421,14 @@ function renderAlloc() {
   {
     simBox.textContent = "";
     const target = () => 100;   // 대출금·장부가 축 제외(2026-08-12) — 7개 자산군이 합 100
-    const lockSeg = el("div", { class: "seg", role: "group" });
-    const mkLock = (label, v) => el("button", {
-      class: st.sum_lock === v ? "active" : "",
-      onclick: () => { st.sum_lock = v; allocSaveState(st); renderAlloc(); } }, label);
-    lockSeg.append(mkLock("자유 조정", false), mkLock("합계 100% 유지", true));
+    const lock = el("input", { type: "checkbox", id: "alloc-sum-lock", "aria-label": "합계 100% 유지" });
+    lock.checked = st.sum_lock;
+    lock.addEventListener("change", () => {
+      st.sum_lock = lock.checked; allocSaveState(st); renderAlloc();
+    });
     simBox.append(el("div", { class: "card-head" },
-      el("span", { class: "card-title" }, "시뮬레이터"),
-      el("span", {}, lockSeg)));
+      el("span", { class: "card-title" }, "배분·헤지"),
+      el("label", { class: "alloc-select" }, lock, "합계 100% 유지")));
     simBox.append(allocPeriodControl("institution-period",
       E0.layer === "cma" ? E0.cmaAll.windows : A.sets,
       E0.layer === "cma" ? E0.cmaW : E0.set, (w) => {
@@ -6475,9 +6469,7 @@ function renderAlloc() {
       renderAlloc();
     } }, "현재 위험 → λ");
     simBox.append(el("div", { class: "tenor-row", style: "margin:2px 0 8px" },
-      el("b", { style: "font-size:12.5px" }, "위험회피계수 λ"), lamIn, lamFit, lamNote,
-      explainBox("alloc-lambda",
-        "max(기대수익 − λ/2×분산) · 소수 단위 · λ↑ 보수적 · 표준값 없음 · 현재 위험/손실 한도로 역산.")));
+      el("b", { style: "font-size:12.5px" }, "위험회피계수 λ"), lamIn, lamFit, lamNote));
 
     /* ---- 손실 한도 → 내재 λ (2026-09-08 — 심리계정 역산) ----
        두 번째 관측 앵커: "1년에 H% 넘는 손실은 α% 확률 이내" 라는 결정에서 λ 를 역산한다.
@@ -6550,10 +6542,7 @@ function renderAlloc() {
     simBox.append(el("div", { class: "tenor-row", style: "margin:2px 0 8px;flex-wrap:wrap" },
       el("b", { style: "font-size:12.5px" }, "손실 한도"),
       el("span", { style: "font-size:12px" }, "손실률 H (연 %)"), lossH, el("span", { style: "font-size:12px" }, "하회확률 α"), lossA,
-      el("span", { style: "font-size:12px" }, "%"), lossFit,
-      explainBox("alloc-loss",
-        "Das·Markowitz·Scheid·Statman(2010) 심리계정: P(1년 수익 < H) ≤ α ⟺ μ(λ) + Φ⁻¹(α)·σ(λ) ≥ H. " +
-        "내재 λ = 한도 내 기대수익 최대인 교점 · 정규 근사.")));
+      el("span", { style: "font-size:12px" }, "%"), lossFit));
     simBox.append(lossNote, lossMatrix);          // 행(flex) 밖의 블록 — 행 안에 두면 줄바꿈이 가려진다
     lossIdle();
 
@@ -6698,10 +6687,7 @@ function renderAlloc() {
            래퍼만 세는 검사가 이 칸을 헤지 레버로 잘못 세지 않게 하는 자리다
            (§7.7.15 의 `.sim-bar-wrap` 함정과 같은 종류). */
         el("div", { style: "display:flex;gap:8px;align-items:center" },
-          el("div", { class: "sim-bar-wrap sim-alt-hedge" }, inp), lbl),
-        explainBox("alloc-alt-hedge",
-          "매핑 팩터(시가 해외주식 — 미헤지)로 딸려 온 환에 거는 비율 · ",
-          el("b", {}, "Xe 에는 들어가지 않습니다"), " (모형 입력)."));
+          el("div", { class: "sim-bar-wrap sim-alt-hedge" }, inp), lbl));
     };
     const syncHedgeUi = () => {
       ["h_bond", "h_eq"].forEach((k) => {
@@ -6728,11 +6714,8 @@ function renderAlloc() {
     };
     simBox.append(el("div", { class: "sim-hedge-row",
       style: "display:flex;gap:26px;flex-wrap:wrap;align-items:center;margin-top:8px" },
-      el("b", { style: "font-size:12.5px" }, "② 헤지 조정"),
+      el("b", { style: "font-size:12.5px" }, "헤지"),
       mkHedge("해외채권 헤지비율", "h_bond"), mkHedge("해외주식 헤지비율", "h_eq"),
-      el("span", { style: "color:var(--ink-3);font-size:11.5px" }, "즉시 반영 · 저장 안 함"),
-      explainBox("alloc-hedge-sliders",
-        "위험은 총 미헤지 환노출(Xe)로만 움직임 — 같은 Xe = 같은 위험 · ① 카드의 쌍 = 현재값 최근접 대표점."),
       /* 대체투자 헤지는 **위 둘과 다른 칸이다**(§7.7.20 — 2026-08-19 사용자 지시).
          최적화가 고르는 레버가 아니라 「지금 이렇게 운용 중」을 넣는 모형 입력이라
          μ·σ·λ 와 같이 **즉시 저장**하고, Xe 에도 넣지 않는다(합치면 최적 헤지쌍이
@@ -6752,13 +6735,7 @@ function renderAlloc() {
     } }, "잔여 → 단기자금");
     const dynBox = el("div", { class: "sim8-dyn" });
     simBox.append(el("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px" },
-      simSum, st.sum_lock ? "" : fillCash,
-      el("span", { style: "color:var(--ink-3);font-size:11.5px" },
-        "비중 = 즉시 반영·저장 안 함 · μ·σ = 즉시 저장 · 회색 σ = 적용 중"),
-      explainBox("alloc-sim-tracks",
-        "비중 = 시뮬레이션(저장은 「기본값으로 저장」) · μ 키인 = 최종치(헤지캐리 미가산) · " +
-        "회색 σ = 적용 중인 벤치마크 실측(비우면 그대로 계산) · 키인 σ = 키인 × 실측 ρ · " +
-        "환 기준은 계열마다 다름 — 해외채권 = 헤지 후 · 해외주식 = 환노출 포함")),
+      simSum, st.sum_lock ? "" : fillCash),
       dynBox);
     refreshSimSum();
 
@@ -6838,7 +6815,7 @@ function renderAlloc() {
           ? el("span", { style: "color:var(--ink-3)" }, " · * = 위험에 무영향(현재값 표시)") : "");
       let optCol;
       if (opt) {
-        const optCard = card8("① 최적", opt.mu, opt.sig,
+        const optCard = card8("최적", opt.mu, opt.sig,
           "막대 위 ▼ = 최적 위치" +
           (opt.fxLive ? "" : " · 환율 축 없음 — 헤지는 무력(모든 조합 동점)이라 배분만 최적화"), true);
         /* 방법 주석(explainBox)은 2026-08-31 사용자 지시로 제거 — 핵심 사유·⚠ 만 남긴다 */
@@ -6911,13 +6888,13 @@ function renderAlloc() {
         optCol = col(optCard, dwrap("최적 비중", opt.w));
       } else {
         optCol = col(el("div", { class: "card sim8-card" },
-          el("div", { class: "card-title" }, "① 최적 — 보류"),
+          el("div", { class: "card-title" }, "최적 — 보류"),
           el("div", { style: "font-size:12px;margin-top:4px" },
             Es.layer !== "cma"
               ? "위험 원천을 기관 벤치마크(CMA)로 두면 계산됩니다."
               : "제약이 서로 모순입니다 — 수기 입력에서 밴드·상한을 확인하세요.")));
       }
-      const simCard = card8("② 조정", sim.mu, sim.sig,
+      const simCard = card8("조정", sim.mu, sim.sig,
           opt ? `최적 대비 수익 ${sim.mu - opt.mu >= 0 ? "+" : ""}${fmtNum(sim.mu - opt.mu, 2)}%p · ` +
                 `위험 ${sim.sig - opt.sig >= 0 ? "+" : ""}${fmtNum(sim.sig - opt.sig, 2)}%p`
               : "막대를 끌면 즉시 다시 계산됩니다");
@@ -6957,8 +6934,8 @@ function renderAlloc() {
             ` · 주식 [${d.src.해외주식 || "없음"}]` +
             (d.coverage.해외주식 != null ? ` 커버리지 ${fmtNum(d.coverage.해외주식, 1)}%` : "")));
       };
-      const g1 = opt && opt.fxLive ? mk("① 최적", opt.w, opt.hb, opt.he) : null;
-      const g2 = mk("② 조정", w, hbS, heS);
+      const g1 = opt && opt.fxLive ? mk("최적", opt.w, opt.hb, opt.he) : null;
+      const g2 = mk("조정", w, hbS, heS);
       if (g1 || g2) {
         ccyBox.append(el("div", { style: "display:flex;gap:18px;flex-wrap:wrap" },
           ...(g1 ? [g1] : []), ...(g2 ? [g2] : [])),
@@ -6969,14 +6946,7 @@ function renderAlloc() {
     };
   }
 
-  const hl = $("#alloc-headline");
-  hl.textContent = "";
-  hl.append(el("div", { class: "q" }, "배분·헤지 요약"));
-  const sub = el("div", { class: "a" }, "모델 참고치 ");
-  sub.append(el("small", {},
-    `권고 아님 · 위험 원천 ${E0.layer === "cma" ? "기관 벤치마크(CMA)" : "벤더 프록시"}` +
-    ` · 표본 ${E0.sample.start}~${E0.sample.end} (${E0.sample.n_months}개월)`));
-  hl.append(sub);
+  $("#alloc-headline").textContent = "";
 
   const ctl = $("#alloc-controls");
   ctl.textContent = "";
@@ -6987,20 +6957,10 @@ function renderAlloc() {
      층·창·매핑은 "어떤 모형으로 보나"이므로 시뮬레이션이 아니라 관측 설정이다 —
      표본·프록시·비용 선택과 같은 규약으로 바꾸는 즉시 저장한다. */
   const srcRow = el("div", { style: "display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-top:8px" });
-  const srcSeg = el("div", { class: "seg", role: "group" });
   const cmaOk = !!(A.cma && A.cma.active);
-  const mkSrc = (label, v, disabled, title) => {
-    const b = el("button", {
-      class: E0.layer === v ? "active" : "",
-      onclick: () => { st.src = v; allocSaveState(st); renderAlloc(); },
-    }, label);
-    if (disabled) { b.disabled = true; if (title) b.title = title; }
-    return b;
-  };
-  srcSeg.append(
-    mkSrc("벤치마크(CMA)", "cma", !cmaOk, cmaOk ? "" : (A.cma && A.cma.reason) || "비활성"),
-    mkSrc("프록시", "proxy"));
-  srcRow.append(el("b", {}, "위험 원천"), srcSeg);
+  srcRow.append(allocSelect("alloc-source", "데이터", [
+    ["벤치마크", "cma", !cmaOk], ["프록시", "proxy"]
+  ], E0.layer, (v) => { st.src = v; allocSaveState(st); renderAlloc(); }));
   if (E0.layer === "cma") {
     /* μ 기준일 컷(§7.7.16) — 데이터가 더 있는데 잘랐다는 사실을 화면이 말한다.
        조용히 자르면 사용자는 σ 가 최신인 줄 안다(μ·σ 시점 불일치의 반대 사고).
@@ -7042,13 +7002,9 @@ function renderAlloc() {
   if (E0.layer === "cma" && E0.altInfo) {
     const ai = E0.altInfo;
     const mapRow = el("div", { style: "display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:8px" });
-    const mapSeg = el("div", { class: "seg", role: "group" });
-    const mkMap = (label, v) => el("button", {
-      class: ai.mode === v ? "active" : "",
-      onclick: () => { st.alt_map.mode = v; allocSaveState(st); renderAlloc(); },
-    }, label);
-    mapSeg.append(mkMap("팩터 매핑", "factor"), mkMap("벤치마크(진단)", "bm"));
-    mapRow.append(el("b", {}, "대체 위험"), mapSeg);
+    mapRow.append(allocSelect("alloc-alt-map", "대체 위험", [
+      ["팩터", "factor"], ["벤치마크(진단)", "bm"]
+    ], ai.mode, (v) => { st.alt_map.mode = v; allocSaveState(st); renderAlloc(); }));
     if (ai.mode === "factor") {
       /* 분류별 매핑 — 지분형/대출형이 각자 해외주식·국내채권 블렌드를 가진다(§7.7.9) */
       const clsRow = (label, cls, keyE, keyB) => {
@@ -7128,9 +7084,7 @@ function renderAlloc() {
       renderAlloc();
     } }, "μ·σ 기본값"),
     dirtyBadge,
-    el("a", { href: "#alloc-sim", style: "font-size:12.5px" }, "상세 입력 →"),
-    el("span", { style: "color:var(--ink-3);font-size:12px" },
-      st.saved ? "저장값 · 이 브라우저" : "예시값 · 이 브라우저에 저장")));
+    el("a", { href: "#alloc-sim", style: "font-size:12.5px" }, "제약조건")));
 
   const cardsBox = $("#alloc-cards");
   const leverBox = $("#alloc-levers");
@@ -7216,11 +7170,7 @@ function renderAlloc() {
           ...(hq ? [
             /* ⚠(구속 귀속 §7.7.17)은 사유라 접지 않는다 — 설명 산문만 explain 으로 */
             ...allocXeBindNotes(hq.binds).map((s) => el("b", {}, `${s}. `)),
-            explainBox("alloc-summary-partial",
-              "배분 = 헤지 고정(②) · 헤지 = 배분 고정 대표점 — ",
-              el("b", {}, "두 부분해이며 동시 최적해가 아닙니다"),
-              " · 같은 Xe = 같은 위험 ",
-              el("a", { href: "#alloc-hedge" }, "왜? ›")),
+            el("span", {}, "배분·헤지는 부분해 · 동시 최적해 아님"),
           ] : [
             /* 환율 축 부재(재점검 발견) — 헤지 참고치를 내지 않는 이유를 밝힌다 */
             el("b", {}, "헤지 참고치가 없습니다"),
@@ -7257,8 +7207,8 @@ function renderAlloc() {
     } else {
       cardsBox.append(
         card("현재", muCur, sigCur, dirty ? "조정값 기준" : st.saved ? "저장값 기준" : "예시값 기준", capW(sigCur)),
-        card("① 위험 최소", muMin, sigMin, "헤지 고정 · 밴드 내 참고치", capW(sigMin)),
-        card("② 수익 유지", muKeep, sigKeep,
+        card("위험 최소", muMin, sigMin, "헤지 고정 · 밴드 내 참고치", capW(sigMin)),
+        card("수익 유지", muKeep, sigKeep,
           st.target_ret != null ? `목표수익 ${fmtNum(target, 2)}% 입력값 기준` : "수익 유지 · 위험만 축소",
           capW(sigKeep)));
       /* ALM 듀레이션 갭 — **제약이 아니라 결과 표시**. 배분을 바꾸면 갭이 따라 움직인다.
@@ -7318,13 +7268,7 @@ function renderAlloc() {
         "· ", el("b", {}, "레버 2 (헤지 고정, 배분만 이동)"),
         ` — 같은 기대수익 ${fmtNum(target, 2)}%를 유지하며 위험 ${fmtNum(sigCur, 2)}→${fmtNum(sigKeep, 2)}% (±표본오차 ${fmtNum(se, 2)}%p 병기 · 매매회전 ${fmtNum(turnover, 1)}%p).`,
         el("a", { href: "#alloc-boot", style: "margin-left:6px" }, "표본을 다시 뽑으면? ›"),
-        explainBox("alloc-levers",
-          "위험이 보는 축은 ", el("b", {}, "총 미헤지 환노출 Xe 하나"),
-          " — 같은 Xe = 같은 위험 · 표기 쌍 = 현재값 최근접 대표점. ",
-          /* 총 환노출 ≠ Xe 의 사유(§7.7.19·§7.7.20)는 한 줄로 남긴다 */
-          totDiffers
-            ? el("span", {}, "총 환노출 − Xe = 매핑 대체투자 몫(「대체투자 환헤지 비율」이 움직임). ")
-            : ""));
+        "");
     }
 
     /* ----- 통합 프로세스 (§7.16) — 드래그 중(recalc(false))에는 다시 계산하지 않는다.
@@ -8087,3 +8031,4 @@ async function boot() {
 }
 
 boot();
+

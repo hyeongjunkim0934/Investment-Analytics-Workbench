@@ -43,11 +43,12 @@ P.renderSection("alloc");
 r.noRenderErrors = byId("alloc").querySelectorAll(".render-error").length === 0;
 r.defaultPort = !byId("alloc-port-panel").hidden && byId("alloc-sim-panel").hidden;
 r.portContext = byId("alloc-workspace-info").hidden
-  && byId("alloc-workspace").textContent === "포트폴리오기관 배분·헤지"
+  && byId("alloc-workspace").textContent === "포트폴리오기관배분·헤지"
   && /2027-01-31~2030-06-30/.test(periodText("alloc-port-panel"))
   && /42개월/.test(periodText("alloc-port-panel"));
-r.portToc = [...byId("alloc-toc").querySelectorAll("button")]
-  .map((b) => b.getAttribute("aria-controls"));
+r.workspaceExplanationRemoved = !/대체 통합|달러\/원화 유동성|체계별 입력 별도 저장|브라우저 저장값/.test(
+  byId("alloc-workspace").textContent);
+r.portTocRemoved = byId("alloc-toc") === null;
 const beforeSelect = snapshot();
 choose("institution");
 r.institutionContext = byId("alloc-workspace-info").hidden
@@ -60,10 +61,9 @@ r.onlyInstitutionVisible = byId("alloc-port-panel").hidden
 const activeButton = byId("alloc-workspace-institution");
 r.pressedState = activeButton.getAttribute("aria-pressed") === "true"
   && byId("alloc-workspace-port").getAttribute("aria-pressed") === "false";
-r.institutionToc = [...byId("alloc-toc").querySelectorAll("button")]
-  .map((b) => b.getAttribute("aria-controls"));
-r.tocVisibleTargets = r.institutionToc.every((id) => !byId(id).hidden);
-byId("alloc-toc").querySelectorAll("button").forEach((b) => b.click());
+r.institutionTocRemoved = byId("alloc-toc") === null;
+r.workspaceLabels = [...byId("alloc-workspace").querySelectorAll("button")]
+  .map((b) => b.textContent);
 choose("port");
 r.switchDoesNotSave = snapshot() === beforeSelect;
 r.switchDoesNotRecalculateNumbers = engineValues() === originalNumbers;
@@ -125,7 +125,7 @@ choose("institution");
 r.fallbackShown = /프록시로 계산/.test(info()) && /벤치마크 CMA 없음/.test(info());
 P.DATA.alloc = { ...CMA_ALLOC, sets: [] };
 P.renderSection("alloc");
-r.institutionMissingShown = /기관 배분·헤지 데이터를 불러오지 못했습니다/.test(info());
+r.institutionMissingShown = /기관\s?배분·헤지 데이터를 불러오지 못했습니다/.test(info());
 choose("port");
 r.portWorksWithoutInstitution = !byId("alloc-port-panel").hidden
   && !!input("alloc-port-panel", "국내채권 비중") && /42개월/.test(periodText("alloc-port-panel"));
@@ -193,4 +193,36 @@ r.proxyPeriodSelected = JSON.parse(shim.localStorage.getItem("iaw-alloc")).start
   && P.allocEngine(ALLOC_FIXTURE, P.allocState(ALLOC_FIXTURE)).set.key === "y2015"
   && byId("institution-period").value === "y2015";
 r.finalNoRenderErrors = byId("alloc").querySelectorAll(".render-error").length === 0;
+
+/* 버튼 대신 선택 입력을 써도 원천·기간·매핑 값이 저장되고 실제 엔진에 전달된다. */
+P.DATA.alloc = CMA_ALLOC;
+shim.localStorage.removeItem("iaw-alloc");
+P.renderSection("alloc");
+choose("institution");
+const selectValue = (id, value) => {
+  const n = byId(id);
+  if (!n || n.tagName !== "SELECT") throw new Error(`missing select: ${id}`);
+  change(n, value, "change");
+};
+r.modelControlsAreSelects = ["alloc-source", "institution-period", "alloc-alt-map"]
+  .every((id) => byId(id)?.tagName === "SELECT");
+selectValue("institution-period", "1");
+r.windowSelectUpdatesEngine = P.allocState(CMA_ALLOC).cma_win === "1"
+  && P.allocEngine(CMA_ALLOC, P.allocState(CMA_ALLOC)).sample.n_months === 12
+  && /2029-07-31~2030-06-30/.test(periodText("alloc-sim-panel"));
+selectValue("alloc-alt-map", "bm");
+r.mappingSelectUpdatesEngine = P.allocState(CMA_ALLOC).alt_map.mode === "bm"
+  && P.allocEngine(CMA_ALLOC, P.allocState(CMA_ALLOC)).altInfo.mode === "bm";
+selectValue("alloc-source", "proxy");
+r.sourceSelectUpdatesEngine = P.allocState(CMA_ALLOC).src === "proxy"
+  && P.allocEngine(CMA_ALLOC, P.allocState(CMA_ALLOC)).layer === "proxy"
+  && byId("institution-period")?.tagName === "SELECT" && byId("alloc-alt-map") === null
+  && JSON.stringify(options("institution-period")) === JSON.stringify(CMA_ALLOC.sets.map((s) => s.key));
+selectValue("alloc-source", "cma");
+r.modelSelectionsSurviveSourceSwitch = byId("institution-period").value === "1"
+  && byId("alloc-alt-map").value === "bm";
+P.DATA.alloc = ALLOC_FIXTURE;
+P.renderSection("alloc");
+r.missingCmaOptionDisabled = [...byId("alloc-source").querySelectorAll("option")]
+  .some((n) => n.value === "cma" && n.disabled);
 process.stdout.write(JSON.stringify(r));

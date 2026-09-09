@@ -1014,6 +1014,15 @@ details.explain[open] > summary { color: var(--ink-2); }
   background: var(--surface); color: var(--ink-1); border: 1px solid var(--baseline); border-radius: 6px;
 }
 .alloc-period-range { color: var(--ink-2); overflow-wrap: anywhere; }
+#alloc-headline:empty { display: none; }
+.alloc-select { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; }
+.alloc-select select {
+  min-height: 32px; max-width: 100%; padding: 4px 26px 4px 8px;
+  font: inherit; color: var(--ink-1); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 5px;
+}
+.alloc-select input[type="checkbox"] { accent-color: var(--ink-1); }
+
 
 .sec-toc button {
   font: inherit; font-size: 12px; padding: 3px 10px; cursor: pointer;
@@ -1157,3 +1166,4 @@ a.kpi-link .kpi-label > span:first-child::after {
 
 .port-frontier-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; margin-left: auto; }
 @media (max-width: 600px) { .port-frontier-controls { margin-left: 0; width: 100%; } }
+

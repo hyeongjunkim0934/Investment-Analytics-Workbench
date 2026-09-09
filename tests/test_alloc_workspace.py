@@ -19,11 +19,10 @@ def workspace():
 
 def test_workspace_scope_and_metadata(workspace):
     for key in ("noRenderErrors", "defaultPort", "portContext", "institutionContext",
-                "onlyInstitutionVisible", "pressedState", "tocVisibleTargets", "hashUntouched"):
+                "onlyInstitutionVisible", "pressedState", "portTocRemoved",
+                "institutionTocRemoved", "workspaceExplanationRemoved", "hashUntouched"):
         assert workspace[key], key
-    assert workspace["portToc"] == []
-    assert workspace["institutionToc"] == ["alloc-sim-panel", "alloc-summary", "alloc-controls",
-                                            "alloc-cards", "alloc-risk-proc"]
+    assert workspace["workspaceLabels"] == ["포트폴리오", "기관배분·헤지"]
 
 
 def test_workspace_preserves_calculations_and_drafts(workspace):
@@ -48,9 +47,14 @@ def test_workspace_reports_fallback_and_missing_data(workspace):
         assert workspace[key], key
 
 
+def test_model_selects_preserve_engine_and_saved_state(workspace):
+    for key in ("modelControlsAreSelects", "windowSelectUpdatesEngine", "mappingSelectUpdatesEngine",
+                "sourceSelectUpdatesEngine", "modelSelectionsSurviveSourceSwitch", "missingCmaOptionDisabled"):
+        assert workspace[key], key
 def test_period_selection_updates_statistics_charts_and_separate_storage(workspace):
     for key in ("availablePeriodsOnly", "periodUpdatesStatistics", "periodUpdatesChart",
                 "periodSavesDraft", "periodRetainsFocus", "unavailablePeriodIgnored",
                 "institutionPeriodSelected", "periodsStaySeparate",
                 "unavailableSavedPeriodFallsBack", "proxyPeriodSelected"):
         assert workspace[key], key
+
