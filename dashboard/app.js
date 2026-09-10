@@ -3348,7 +3348,7 @@ function makeRatioChart(box, opts) {
   const series = [{ label: xLabel, value: (u, v) => v == null ? "–"
     : (hoverDecimals == null ? v : fmtNum(v, hoverDecimals)) + xSuffix }];
   seriesDefs.forEach((sd) => series.push({
-    label: sd.label, stroke: sd.color, width: 2.5, spanGaps: true,
+    label: sd.label, stroke: sd.color, width: 2.5, spanGaps: sd.spanGaps ?? true,
     points: { show: false },
     value: (u, v) => v == null ? "–" : fmtNum(v, hoverDecimals ?? (unit === "" ? 2 : 1)) + unit,
   }));
@@ -6094,11 +6094,11 @@ const PORT_CHART_LS_KEY = "iaw-port-chart";
 function portChartColors() {
   const light = currentTheme() === "light";
   const colors = light
-    ? { nominal: "#995800", robust: "#376baf", asset: "#197565", min: "#197565", max: "#995800", bm: "#586c82", current: "#243449" }
-    : { nominal: "#edb45d", robust: "#7da4d2", asset: "#77c5b0", min: "#77c5b0", max: "#edb45d", bm: "#a8b9cc", current: "#f0f3f7" };
+    ? { nominal: "#995800", robust: "#376baf", optimistic: "#995468", asset: "#197565", min: "#197565", max: "#995800", bm: "#586c82", current: "#243449" }
+    : { nominal: "#edb45d", robust: "#7da4d2", optimistic: "#c58f9c", asset: "#77c5b0", min: "#77c5b0", max: "#edb45d", bm: "#a8b9cc", current: "#f0f3f7" };
   try {
     const saved = JSON.parse(localStorage.getItem(PORT_CHART_LS_KEY)) || {};
-    ["nominal", "robust", "asset"].forEach((k) => {
+    ["nominal", "robust", "optimistic", "asset"].forEach((k) => {
       if (typeof saved[k] === "string" && /^#[0-9a-f]{6}$/i.test(saved[k])) colors[k] = saved[k];
     });
   } catch {}
@@ -6114,13 +6114,13 @@ function portPaletteControl(redraw) {
     title: "그래프 색상", "aria-label": "그래프 색상", "aria-expanded": String(portPaletteOpen), "aria-controls": panel.id,
     onclick: () => { portPaletteOpen = !portPaletteOpen; panel.hidden = !portPaletteOpen;
       toggle.setAttribute("aria-expanded", String(portPaletteOpen)); } },
-    ...[colors.nominal, colors.robust, colors.asset, colors.current].map((color) =>
+    ...[colors.nominal, colors.robust, colors.optimistic, colors.asset].map((color) =>
       el("span", { style: `background:${color}`, "aria-hidden": "true" })));
-  [["nominal", "경계선"], ["robust", "Robust"], ["asset", "자산"]].forEach(([key, label]) => {
+  [["nominal", "경계선"], ["robust", "Conservative"], ["optimistic", "Optimistic"], ["asset", "자산"]].forEach(([key, label]) => {
     const input = el("input", { type: "color", id: `port-color-${key}`, value: colors[key], "aria-label": `${label} 색상` });
     input.addEventListener("change", () => {
       if (!/^#[0-9a-f]{6}$/i.test(input.value)) return;
-      const next = Object.fromEntries(["nominal", "robust", "asset"].map((k) => [k, k === key ? input.value : colors[k]]));
+      const next = Object.fromEntries(["nominal", "robust", "optimistic", "asset"].map((k) => [k, k === key ? input.value : colors[k]]));
       try { localStorage.setItem(PORT_CHART_LS_KEY, JSON.stringify(next)); } catch {}
       redraw(); document.getElementById(input.id)?.focus();
     });
@@ -6337,7 +6337,15 @@ function portRobustModel(C, mu, months) {
     const b = mus.reduce((a, x) => a + x, 0) / A;
     const w0 = ones.map((v) => v / A), d = mus.map((v, i) => v - b * ones[i]);
     const curvature = Math.max(0, dot(d, ids.map((i) => mu[i])));
-    faces.push({ ids, w0, d, v0: 1 / A, curvature });
+    // Center the mean for the fixed-risk direction to avoid cancellation.
+    const shifted = mv(inv, ids.map((i) => mu[i] - mu[ids[0]])).map((v) => v / scale);
+    const center = shifted.reduce((s, v) => s + v, 0) / A;
+    const riskD = shifted.map((v, i) => v - center * ones[i]);
+    const riskCurvature = Math.max(0, dot(riskD, mv(sub, riskD)) * scale);
+    const gmv = new Array(n).fill(0);
+    ids.forEach((id, i) => { gmv[id] = w0[i]; });
+    faces.push({ mask, ids, w0, d, v0: 1 / A, curvature, riskD, riskCurvature,
+      gmv: w0.every((v) => v >= -1e-9) ? gmv : null });
   }
   const solve = (lam, kappa = 0) => {
     const a = portRobustK(kappa) * Math.sqrt(12 / months);
@@ -6375,7 +6383,60 @@ function portRobustModel(C, mu, months) {
     if (!best || best.gap > 1e-5) return null;
     return best;
   };
-  return { solve, meanScale: Math.sqrt(12 / months) };
+  // Maximum nominal mean on a fixed-risk section of the whole simplex. Both
+  // stationary directions and all faces are needed beyond the maximum-mean asset.
+  // This avoids treating the nonconcave optimistic utility as a convex problem.
+  const atRisk = (sigma) => {
+    if (!Number.isFinite(sigma) || sigma < 0) return null;
+    const target = sigma * sigma, tolerance = scale * 1e-10;
+    let best = null;
+    const add = (raw) => {
+      if (raw.some((v) => !Number.isFinite(v) || v < -1e-9)) return;
+      const total = raw.reduce((s, v) => s + Math.max(0, v), 0);
+      if (!(total > 0)) return;
+      const w = raw.map((v) => Math.max(0, v) / total);
+      const variance = Math.max(0, dot(w, mv(C, w)));
+      if (Math.abs(variance - target) > tolerance * 4) return;
+      const m = dot(mu, w);
+      if (!best || m > best.mu) best = { w, sig: Math.sqrt(variance), mu: m };
+    };
+    for (const f of faces) {
+      if (f.ids.length === 1) {
+        add(f.gmv);
+        continue;
+      }
+      const delta = target - f.v0;
+      if (delta < -tolerance) continue;
+      if (f.riskCurvature > 1e-24) {
+        const t = Math.sqrt(Math.max(0, delta) / f.riskCurvature);
+        for (const sign of [1, -1]) {
+          const w = new Array(n).fill(0);
+          f.ids.forEach((id, i) => { w[id] = f.w0[i] + sign * t * f.riskD[i]; });
+          add(w);
+        }
+      } else {
+        // Equal means: the affine GMV may be outside the simplex. Start at the
+        // constrained GMV over its subfaces, then reach the highest-risk vertex.
+        if (!f.flatStart) {
+          const candidates = faces.filter((q) => (q.mask & f.mask) === q.mask && q.gmv);
+          f.flatStart = candidates.reduce((p, q) => !p || q.v0 < p.v0 ? q : p, null);
+        }
+        const start = f.flatStart?.gmv;
+        if (!start) continue;
+        const id = f.ids.reduce((i, j) => D[j][j] > D[i][i] ? j : i);
+        const direction = start.map((v, i) => +(i === id) - v);
+        const qa = dot(direction, mv(D, direction));
+        const qb = Math.max(0, 2 * dot(start, mv(D, direction)));
+        const dv = target - dot(start, mv(D, start));
+        if (dv < -tolerance) continue;
+        const disc = Math.sqrt(qb * qb + 4 * qa * Math.max(0, dv));
+        const t = dv <= 0 ? 0 : qb + disc > 0 ? 2 * dv / (qb + disc) : Infinity;
+        if (t <= 1 + 1e-9) add(start.map((v, i) => v + Math.min(1, t) * direction[i]));
+      }
+    }
+    return best;
+  };
+  return { solve, atRisk, meanScale: Math.sqrt(12 / months) };
 }
 
 // Nominal Sharpe tangency: mu(w)-rf = lambda * variance(w).
@@ -6450,15 +6511,20 @@ function portFrontiers(P, W, C, mu, kappa, rf = 0) {
   const cached = PORT_FRONT_CACHE.get(P);
   if (cached && cached.key === key) return cached.value;
   const model = portRobustModel(C, mu, W.n_months);
-  const clean = (pts, field) => {
+  const clean = (pts, field, keepGaps = false) => {
     const sorted = pts.filter(Boolean).sort((a, b) => a.sig - b.sig || b[field] - a[field]);
     const kept = [];
+    let gap = false;
     for (const p of sorted) {
       const last = kept[kept.length - 1];
       if (!last) kept.push(p);
       else if (p.sig - last.sig <= 1e-7) {
-        if (p[field] > last[field]) kept[kept.length - 1] = p;
-      } else if (p[field] > last[field] + 1e-9) kept.push(p);
+        if (p[field] > last[field]) kept[kept.length - 1] = keepGaps && last.breakBefore
+          ? { ...p, breakBefore: true } : p;
+      } else if (p[field] > last[field] + 1e-9) {
+        kept.push(keepGaps && gap ? { ...p, breakBefore: true } : p);
+        gap = false;
+      } else if (keepGaps) gap = true;
     }
     return kept;
   };
@@ -6467,7 +6533,25 @@ function portFrontiers(P, W, C, mu, kappa, rf = 0) {
   const robust = model ? [model.solve(Infinity), ...lams.map((l) => model.solve(l, kappa))] : [];
   // The minimum-risk endpoint has the same weights, with its own worst-case mean.
   if (robust[0]) robust[0] = { ...robust[0], worst: robust[0].mu - kappa * model.meanScale * robust[0].sig };
-  const value = { front: clean(nominal, "mu"), robust: clean(robust, "worst"),
+  const front = clean(nominal, "mu"), conservative = clean(robust, "worst");
+  const a = portRobustK(kappa) * (model?.meanScale || 0);
+  let optimistic = [];
+  if (model && front.length) {
+    if (a === 0) optimistic = front.map((p) => ({ ...p, best: p.mu }));
+    else {
+      const vertices = mu.map((m, i) => ({ mu: m, sig: Math.sqrt(Math.max(0, C[i][i])),
+        w: mu.map((_, j) => +(i === j)) }));
+      const low = front[0].sig, high = Math.max(...vertices.map((p) => p.sig));
+      const risks = [...Array.from({ length: 121 }, (_, i) => low + (high - low) * i / 120),
+        ...vertices.map((p) => p.sig), ...front.map((p) => p.sig), ...conservative.map((p) => p.sig)];
+      // Exact face solutions at sampled risks; vertices include the global maximum
+      // of the convex upper-return function. Displayed segments interpolate samples.
+      const samples = risks.map((s) => model.atRisk(s)).filter(Boolean);
+      optimistic = clean([...samples, ...vertices, ...front, ...conservative]
+        .map((p) => ({ ...p, best: p.mu + a * p.sig })), "best", true);
+    }
+  }
+  const value = { front, robust: conservative, optimistic,
     robustOk: !!model && robust.every(Boolean), meanScale: model?.meanScale || null,
     maxSharpe: portMaxSharpe(model, C, mu, rf) };
   PORT_FRONT_CACHE.set(P, { key, value });
@@ -6533,9 +6617,9 @@ function portEngine(P, st) {
   const muOf = (w) => dot(mu, w);
   const kappa = portRobustK(st.robust_k);
   const rf = mu[P.assets.indexOf(P.assets.includes("국내장부") ? "국내장부" : "원화유동성")] ?? 0;
-  const { front, robust, robustOk, meanScale, maxSharpe } = risk.valid
+  const { front, robust, optimistic, robustOk, meanScale, maxSharpe } = risk.valid
     ? portFrontiers(P, W, C, mu, kappa, rf)
-    : { front: [], robust: [], robustOk: false, meanScale: null, maxSharpe: null };
+    : { front: [], robust: [], optimistic: [], robustOk: false, meanScale: null, maxSharpe: null };
   const wb = P.assets.map((a) => (P.bench_w && P.bench_w[a]) || 0);
   const bench = { sig: sig(wb), mu: muOf(wb), w: wb };
   const metrics = (w) => {
@@ -6545,7 +6629,7 @@ function portEngine(P, st) {
     return { mu: m, sig: s, sharpe: s > 1e-9 ? (m - rf) / s : null,
              act: m - bench.mu, te, ir: te > 1e-9 ? (m - bench.mu) / te : null };
   };
-  return { W, mu, src, rf, risk, front, robust, robustOk, kappa, meanScale, minVar: front[0] || null,
+  return { W, mu, src, rf, risk, front, robust, optimistic, robustOk, kappa, meanScale, minVar: front[0] || null,
            maxSharpe, cloud: robustOk ? portPortfolioCloud(P, C, mu, rf) : null,
            bench, wb, sig, muOf, metrics };
 }
@@ -6826,18 +6910,22 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       title: "효율적 경계선",
       csvName: "효율적경계선.csv",
       tableFn: (cap = 400, raw = false) => {
-        const rows = [...E.front.map((p) => ({ ...p, type: "일반", k: 0, worst: p.mu })),
-          ...(E.robustOk ? E.robust.map((p) => ({ ...p, type: "Robust", k: E.kappa })) : []),
+        const scenario = (p, type) => ({ ...p, type, k: E.kappa,
+          worst: p.mu - E.kappa * E.meanScale * p.sig, best: p.mu + E.kappa * E.meanScale * p.sig });
+        const rows = [...E.front.map((p) => ({ ...p, type: "일반", k: 0, worst: p.mu, best: p.mu })),
+          ...(E.robustOk ? [...E.robust.map((p) => scenario(p, "Conservative")),
+            ...E.optimistic.map((p) => scenario(p, "Optimistic"))] : []),
           ...[["샤프 최대", E.maxSharpe], ["최소위험", E.minVar], ["BM 60/40", E.bench],
             ["현재", wCur && { w: wCur, mu: E.muOf(wCur), sig: E.sig(wCur) }]]
             .filter(([, p]) => p).map(([type, p]) => ({ ...p, type, k: E.kappa,
-              worst: E.robustOk ? p.mu - E.kappa * E.meanScale * p.sig : null })),
-          ...P.assets.map((a, i) => ({ type: a, k: null, sig: E.risk.sig[i], mu: E.mu[i], worst: null,
+              worst: E.robustOk ? p.mu - E.kappa * E.meanScale * p.sig : null,
+              best: E.robustOk ? p.mu + E.kappa * E.meanScale * p.sig : null })),
+          ...P.assets.map((a, i) => ({ type: a, k: null, sig: E.risk.sig[i], mu: E.mu[i], worst: null, best: null,
             w: P.assets.map((_, j) => +(i === j)) }))];
         const num = (v) => raw ? v : fmtNum(v, 2);
         return {
-          headers: ["구분", "κ", "위험%", "기준 기대수익%", "최악 기대수익%", ...P.assets.map((a) => `${a}%`)],
-          rows: rows.map((p) => [p.type, p.k, num(p.sig), num(p.mu), num(p.worst),
+          headers: ["구분", "κ", "위험%", "기준 기대수익%", "Conservative 기대수익%", "Optimistic 기대수익%", ...P.assets.map((a) => `${a}%`)],
+          rows: rows.map((p) => [p.type, p.k, num(p.sig), num(p.mu), num(p.worst), num(p.best),
             ...p.w.map((x) => num(x * 100))]),
         };
       },
@@ -6856,9 +6944,27 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       label: "현재", symbol: "○", color: colors.current });
     const xsF = pts.map((p) => p.sig), ysF = pts.map((p) => p.mu);
     const lower = pts.map((p) => E.robustOk ? p.worst : p.mu);
+    const optimistic = E.robustOk ? E.optimistic : [];
+    // uPlot shares its x array. Align the independently selected frontiers without
+    // extrapolation, and leave real gaps in the optimistic Pareto set unconnected.
+    const plotPoints = [...pts.map((p) => ({ ...p, scenario: E.robustOk ? "Conservative" : "경계선" })),
+      ...optimistic.map((p) => ({ ...p, scenario: "Optimistic" })),
+      ...optimistic.flatMap((p, i) => p.breakBefore && i
+        ? [{ sig: (optimistic[i - 1].sig + p.sig) / 2, plotGap: true }] : [])]
+      .sort((a, b) => a.sig - b.sig).filter((p, i, all) => !i || p.sig - all[i - 1].sig > 1e-7);
+    const at = (curve, field, x) => {
+      const i = curve.findIndex((p) => p.sig >= x - 1e-7);
+      if (i < 0) return null;
+      if (Math.abs(curve[i].sig - x) <= 1e-7) return curve[i][field];
+      if (!i || curve[i].breakBefore) return null;
+      const p = curve[i - 1], q = curve[i];
+      return p[field] + (q[field] - p[field]) * (x - p.sig) / (q.sig - p.sig);
+    };
+    const plotX = plotPoints.map((p) => p.sig);
     const cloudPoints = E.cloud?.points || [];
     const allX = [...E.front.map((p) => p.sig), ...xsF, ...markers.map((m) => m.x), ...cloudPoints.map((p) => p.sig)];
-    const allY = [...E.front.map((p) => p.mu), ...ysF, ...lower, ...markers.map((m) => m.y), ...cloudPoints.map((p) => p.mu)];
+    const allY = [...E.front.map((p) => p.mu), ...ysF, ...lower, ...optimistic.map((p) => p.best),
+      ...markers.map((m) => m.y), ...cloudPoints.map((p) => p.mu)];
     const minX = allX.length ? Math.min(...allX) : 0, maxX = allX.length ? Math.max(...allX) : 1;
     const minY = allY.length ? Math.min(...allY) : 0, maxY = allY.length ? Math.max(...allY) : 1;
     const spanX = Math.max(0.005, maxX - minX), spanY = Math.max(0.2, maxY - minY);
@@ -6874,10 +6980,10 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const hover = el("div", { class: "port-hover", role: "status" });
     const hoverReset = () => { hover.textContent = ""; };
     const showPoint = (idx) => {
-      if (idx == null || !pts[idx]) { hoverReset(); return; }
-      const p = pts[idx];
-      hover.textContent = `위험 ${fmtNum(p.sig, 2)}% · 기준 ${fmtNum(p.mu, 2)}%` +
-        (E.robustOk ? ` · 최악 ${fmtNum(p.worst, 2)}%` : "") + " — 배분: " +
+      if (idx == null || !plotPoints[idx] || plotPoints[idx].plotGap) { hoverReset(); return; }
+      const p = plotPoints[idx], adjustment = E.kappa * E.meanScale * p.sig;
+      hover.textContent = `${p.scenario} · 위험 ${fmtNum(p.sig, 2)}% · 기준 ${fmtNum(p.mu, 2)}%` +
+        (E.robustOk ? ` · Conservative ${fmtNum(p.mu - adjustment, 2)}% · Optimistic ${fmtNum(p.mu + adjustment, 2)}%` : "") + " — 배분: " +
         P.assets.map((a, i) => `${a} ${fmtNum(p.w[i] * 100, 2)}%`).join(" · ");
     };
     hoverReset();
@@ -6888,13 +6994,18 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     fbox.addEventListener("keydown", (ev) => {
       if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
       ev.preventDefault();
-      selected = Math.max(0, Math.min(pts.length - 1, selected + (ev.key === "ArrowRight" ? 1 : -1)));
+      const step = ev.key === "ArrowRight" ? 1 : -1;
+      selected = Math.max(0, Math.min(plotPoints.length - 1, selected + step));
+      if (plotPoints[selected]?.plotGap) selected = Math.max(0, Math.min(plotPoints.length - 1, selected + step));
       showPoint(selected);
     });
     if (pts.length) portCharts.push(makeRatioChart(fbox, {
       seriesDefs: [
-        { label: "경계선", color: colors.nominal, x: xsF, v: ysF },
-        ...(E.robustOk ? [{ label: "Robust", color: colors.robust, x: xsF, v: lower }] : []),
+        { label: "경계선", color: colors.nominal, x: plotX, v: plotX.map((x) => at(pts, "mu", x)) },
+        ...(E.robustOk ? [
+          { label: "Conservative", color: colors.robust, x: plotX, v: plotX.map((x) => at(pts, "worst", x)) },
+          { label: "Optimistic", color: colors.optimistic, x: plotX, v: plotX.map((x) => at(optimistic, "best", x)), spanGaps: false },
+        ] : []),
       ],
       area: E.robustOk && E.kappa > 0 ? { x: xsF, upper: ysF, lower, color: colors.robust, opacity: [0.025, 0.06, 0.12] } : null,
       reference: E.front, referenceColor: colors.nominal, cloud: E.cloud, cloudOpacity: 0.25,

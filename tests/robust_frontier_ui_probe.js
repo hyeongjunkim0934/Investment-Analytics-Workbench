@@ -107,8 +107,9 @@ function draw(c,dpr=1){
 function assertContained(c){
   const xr=c.opts.scales.x.range,yr=c.opts.scales.y.range();
   assert(c.data[0].every(x=>x>=xr[0]&&x<=xr[1]));
-  assert(c.data.slice(1).flat().every(y=>y>=yr[0]&&y<=yr[1]));
-  assert(Math.min(...c.data.slice(1).flat())>yr[0]);
+  const ys=c.data.slice(1).flat().filter(Number.isFinite);
+  assert(ys.every(y=>y>=yr[0]&&y<=yr[1]));
+  assert(Math.min(...ys)>yr[0]);
 }
 P.DATA.alloc=SIX_ASSET_FIXTURE;shim.localStorage.removeItem(P.PORT_LS_KEY);P.renderPortPanel(SIX_ASSET_FIXTURE);
 const initial=chart(),allRange=initial.opts.scales.x.range.slice();
@@ -131,10 +132,24 @@ assert(card().querySelector('.port-sharpe-scale').textContent.includes('6,006'))
 assert(card().querySelector('.port-frontier-key').textContent.includes('샤프 최대'));
 assert(draw(initial).filter(x=>x[0]==='arc').every(x=>x.slice(1).every(Number.isFinite)));
 click('표');
-assert(card().querySelector('.chart-table').textContent.includes('최악 기대수익%'));
+assert(card().querySelector('.chart-table').textContent.includes('Conservative 기대수익%'));
+assert(card().querySelector('.chart-table').textContent.includes('Optimistic 기대수익%'));
 vm.runInContext('downloadCSV = (...args) => { globalThis.robustCSV = args; }', sandbox);
 click('CSV');
-assert(sandbox.robustCSV[2].some(row=>row[0]==='Robust' && typeof row[2]==='number' && row[4]<=row[3]));
+assert(sandbox.robustCSV[2].some(row=>row[0]==='Conservative' && typeof row[2]==='number' && row[4]<=row[3]));
+assert(sandbox.robustCSV[2].some(row=>row[0]==='Optimistic' && typeof row[2]==='number' && row[5]>=row[3]));
+assert(!sandbox.robustCSV[2].some(row=>row[0]==='Robust'));
+assert.deepEqual(Array.from(initial.opts.series,s=>s.label).slice(1),['경계선','Conservative','Optimistic']);
+assert.equal(initial.opts.series[3].spanGaps,false);
+const E0=P.portEngine(SIX_ASSET_FIXTURE.port,P.portState(SIX_ASSET_FIXTURE.port));
+for(const p of E0.optimistic){
+  const index=initial.data[0].findIndex(x=>Math.abs(x-p.sig)<1e-7);
+  assert(index>=0 && Math.abs(initial.data[3][index]-p.best)<1e-7);
+}
+for(const row of sandbox.robustCSV[2].filter(r=>r[0]==='Conservative'||r[0]==='Optimistic')){
+  assert(Math.abs((row[5]-row[3])-(row[3]-row[4]))<1e-9);
+  assert(Math.abs(row.slice(6).reduce((a,b)=>a+b,0)-100)<1e-7);
+}
 assert.equal(P.portState(SIX_ASSET_FIXTURE.port).robust_k,1);assertContained(initial);
 assert.equal(draw(initial).filter(x=>x[0]==='gradient').length,1);assert.equal(draw(initial).filter(x=>x[0]==='stop').length,3);
 // Old saved slider values cannot silently choose a different scenario once the control is gone.
@@ -153,7 +168,7 @@ for(const [i,s] of chart().opts.series.entries()){
   assert.equal(s.value(null,-1.236),i===0?'-1.24':'-1.24%');
   assert.equal(s.value(null,null),'–');
 }
-const hover=card().querySelector('.port-hover');chart().opts.hooks.setCursor[0]({cursor:{idx:2}});assert(/최악/.test(hover.textContent));
+const hover=card().querySelector('.port-hover');chart().opts.hooks.setCursor[0]({cursor:{idx:2}});assert(/Conservative.*Optimistic/.test(hover.textContent));
 assert(hover.textContent.match(/-?\d+(?:\.\d+)?/g).every(v=>/^-?\d+\.\d{2}$/.test(v)));
 card().querySelector('.chart-box').dispatchEvent({type:'keydown',key:'ArrowRight',preventDefault(){}});assert(/배분/.test(hover.textContent));
 chart().opts.hooks.setCursor[0]({cursor:{idx:null}});assert.equal(hover.textContent,'');
@@ -306,6 +321,13 @@ const color=DOC.getElementById('port-color-nominal');color.value='#55aaff';color
 assert.equal(chart().opts.series[1].stroke,'#55aaff');assert.equal(JSON.stringify(chart().data),chartValues);
 assert.equal(shim.localStorage.getItem(P.PORT_LS_KEY),financial);
 assert.equal(R.portChartColors().nominal,'#55aaff');
+const optimisticColor=DOC.getElementById('port-color-optimistic');
+optimisticColor.value='#b5809c';optimisticColor.dispatchEvent({type:'change'});
+assert.equal(chart().opts.series[3].stroke,'#b5809c');
+assert.equal(R.portChartColors().optimistic,'#b5809c');
+assert.equal(JSON.stringify(chart().data),chartValues);
+assert.equal(shim.localStorage.getItem(P.PORT_LS_KEY),financial);
+assert.equal(DOC.getElementById('port-color-robust').getAttribute('aria-label'),'Conservative 색상');
 card().querySelector('.port-palette').dispatchEvent({type:'keydown',key:'Escape',preventDefault(){}});
 assert(DOC.getElementById('port-palette-panel').hidden);assert.equal(DOC.activeElement,DOC.getElementById('port-palette-toggle'));
 assert.equal(live().length,1);assert.equal(inspect.live().length,1);
