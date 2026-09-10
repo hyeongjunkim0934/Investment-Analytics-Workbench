@@ -43,7 +43,7 @@ P.renderSection("alloc");
 r.noRenderErrors = byId("alloc").querySelectorAll(".render-error").length === 0;
 r.defaultPort = !byId("alloc-port-panel").hidden && byId("alloc-sim-panel").hidden;
 r.portContext = byId("alloc-workspace-info").hidden
-  && byId("alloc-workspace").textContent === "포트폴리오기관배분·헤지"
+  && byId("alloc-workspace").textContent === "포트폴리오리스크연계기관배분/헤지"
   && /2027-01-31~2030-06-30/.test(periodText("alloc-port-panel"))
   && /42개월/.test(periodText("alloc-port-panel"));
 r.workspaceExplanationRemoved = !/대체 통합|달러\/원화 유동성|체계별 입력 별도 저장|브라우저 저장값/.test(
@@ -55,15 +55,23 @@ r.institutionContext = byId("alloc-workspace-info").hidden
   && /2026-01-31~2030-06-30/.test(periodText("alloc-sim-panel"))
   && /54개월/.test(periodText("alloc-sim-panel"));
 const institutionPanels = ["alloc-sim-panel", "alloc-headline", "alloc-summary", "alloc-controls",
-  "alloc-cards", "alloc-levers", "alloc-risk-proc"];
+  "alloc-cards", "alloc-levers"];
 r.onlyInstitutionVisible = byId("alloc-port-panel").hidden
-  && institutionPanels.every((id) => !byId(id).hidden);
+  && institutionPanels.every((id) => !byId(id).hidden)
+  && byId("alloc-risk-source").hidden && byId("alloc-risk-proc").hidden;
 const activeButton = byId("alloc-workspace-institution");
 r.pressedState = activeButton.getAttribute("aria-pressed") === "true"
   && byId("alloc-workspace-port").getAttribute("aria-pressed") === "false";
 r.institutionTocRemoved = byId("alloc-toc") === null;
 r.workspaceLabels = [...byId("alloc-workspace").querySelectorAll("button")]
   .map((b) => b.textContent);
+choose("risk");
+r.onlyRiskVisible = !byId("alloc-risk-source").hidden && !byId("alloc-risk-proc").hidden
+  && byId("alloc-port-panel").hidden && institutionPanels.every((id) => byId(id).hidden)
+  && byId("alloc-workspace-risk").getAttribute("aria-pressed") === "true";
+byId("alloc-risk-settings").click();
+r.riskSettingsReturnsToInstitution = !byId("alloc-sim-panel").hidden
+  && byId("alloc-risk-proc").hidden && DOC.activeElement === byId("alloc-workspace-institution");
 choose("port");
 r.switchDoesNotSave = snapshot() === beforeSelect;
 r.switchDoesNotRecalculateNumbers = engineValues() === originalNumbers;
@@ -80,6 +88,7 @@ change(instWeight, instOriginal + 1);
 r.institutionDirty = +instWeight.value === instOriginal + 1 && shim.localStorage.getItem("iaw-alloc") === null;
 choose("port");
 r.portDraftPreserved = input("alloc-port-panel", "국내채권 비중") === portWeight && +portWeight.value === 31.2;
+choose("risk");
 choose("institution");
 r.institutionDraftPreserved = byId("sim-mix-국내채권") === instWeight && +instWeight.value === instOriginal + 1;
 P.renderSection("alloc");
@@ -126,6 +135,10 @@ r.fallbackShown = /프록시로 계산/.test(info()) && /벤치마크 CMA 없음
 P.DATA.alloc = { ...CMA_ALLOC, sets: [] };
 P.renderSection("alloc");
 r.institutionMissingShown = /기관\s?배분·헤지 데이터를 불러오지 못했습니다/.test(info());
+choose("risk");
+r.riskMissingAllocClearsOldResult = /보류/.test(info())
+  && /배분 데이터 없음/.test(byId("alloc-risk-proc").textContent)
+  && byId("alloc-risk-proc").querySelectorAll("svg").length === 0;
 choose("port");
 r.portWorksWithoutInstitution = !byId("alloc-port-panel").hidden
   && !!input("alloc-port-panel", "국내채권 비중") && /42개월/.test(periodText("alloc-port-panel"));
@@ -134,6 +147,8 @@ P.renderSection("alloc");
 r.portMissingShown = /합성 데이터 없음/.test(info());
 choose("institution");
 r.institutionWorksWithoutPort = !byId("alloc-sim-panel").hidden && !!byId("alloc-lambda");
+choose("risk");
+r.riskWarningRecovers = byId("alloc-workspace-info").hidden;
 choose("port");
 P.openAllocDetail("sim");
 r.detailSelectsInstitution = byId("alloc-port-panel").hidden && !byId("alloc-sim-panel").hidden;

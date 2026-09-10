@@ -184,6 +184,9 @@
     <div class="alloc-workspace" id="alloc-workspace"></div>
     <!-- 첫 체계는 포트폴리오 구성(§7.14). 다른 체계는 선택 버튼으로 전환한다. -->
     <div class="card" id="alloc-port-panel" style="margin-top:10px"></div>
+    <!-- 리스크연계: 홈페이지 최신 결과 + 월별 점수에 따른 기관배분 경로. -->
+    <div class="card" id="alloc-risk-source" style="margin-top:10px" hidden></div>
+    <div class="card" id="alloc-risk-proc" style="margin-top:14px" hidden></div>
     <!-- ⓪ 포트폴리오 시뮬레이터 — μ·σ 키인 → 최적 배분(막대 ▼·도넛) + 즉시 시뮬레이션.
          화면 최상단 배치는 2026-08-11 사용자 지시(2026-08-05 「요약 먼저」 동선을 대체) -->
     <div class="howto" id="alloc-controls"></div>
@@ -194,10 +197,6 @@
     <div class="card" id="alloc-summary" style="padding:12px 16px"></div>
     <div class="cards" id="alloc-cards"></div>
     <div class="howto" id="alloc-levers"></div>
-    <!-- 투자선·이행 경로·시변·특성·자산군 표·출처 상자·방법론 카드는 2026-08-31
-         사용자 지시로 제거. 아래 통합 프로세스 카드는 2026-09-01 사용자 지시 —
-         리스크 점수(월말) → λ 환산 → 월별 λ-MVO 비중 경로(누적 100%)를 화면이 계산 -->
-    <div class="card" id="alloc-risk-proc" style="margin-top:14px"></div>
   </section>
 
   <section id="rates" class="section">

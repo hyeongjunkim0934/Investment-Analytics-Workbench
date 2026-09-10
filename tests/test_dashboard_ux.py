@@ -1774,12 +1774,12 @@ def test_cma_screen_shows_layer_mapping_and_provenance(probe):
 
 
 def test_alloc_removes_toc_and_preserves_workspace_switch(probe):
-    """중복 목차는 제거하고 체계 2개의 전환은 해시를 바꾸지 않는다."""
+    """중복 목차는 제거하고 세 탭의 전환은 해시를 바꾸지 않는다."""
     c = probe["allocToc"]
     assert c["renderErrors"] == 0
     assert c["tocRemoved"] is True
     assert 'id="alloc-toc"' not in INDEX_HTML.read_text(encoding="utf-8")
-    assert c["workspaceButtons"] == ["포트폴리오", "기관배분·헤지"]
+    assert c["workspaceButtons"] == ["포트폴리오", "리스크연계", "기관배분/헤지"]
     assert c["workspaceSwitchPreservesHash"] is True
 
 
@@ -1804,6 +1804,13 @@ def test_risk_to_optimization_process_card(probe):
     assert c["mapToggleSaved"] is True
     assert c["missingHistMExplains"] is True
     assert c["proxyLayerExplains"] is True
+
+
+def test_risk_workspace_uses_homepage_results_without_relabeling_monthly_scores(probe):
+    c = probe["allocRiskProc"]
+    for key in ("latestSourceMatchesRisk", "monthlyScoreDistinctFromLatest",
+                "riskSelectionSurvivesUpdate", "missingLatestClearsOldScores"):
+        assert c[key], key
 
 
 # ---- 재점검(2026-08-11) 수정 — 축 부재·소독·정직 문구 (실행해서 확인) --------
