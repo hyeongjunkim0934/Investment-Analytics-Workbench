@@ -1183,6 +1183,7 @@ a.kpi-link .kpi-label > span:first-child::after {
 /* Robust frontier: space around the numeric region, using the existing chart palette. */
 .port-frontier { position: relative; min-width: 0; padding: 18px 20px; }
 .port-frontier .card-head { position: relative; }
+.port-frontier .card-actions { align-items: center; flex-wrap: wrap; max-width: 100%; }
 .port-axis { display: flex; align-items: center; }
 .port-axis-controls { position: absolute; right: 0; top: calc(100% + 8px); z-index: 6;
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
@@ -1196,16 +1197,31 @@ a.kpi-link .kpi-label > span:first-child::after {
   font-variant-numeric: tabular-nums; background: var(--surface); color: var(--ink-1);
   border: 1px solid var(--border); border-radius: 6px; }
 .port-axis-status { flex-basis: 100%; }
-.port-frontier .chart-box { margin-top: 12px; border: 1px solid var(--border); border-radius: 8px;
+.port-frontier .chart-box { position: relative; margin-top: 12px; border: 1px solid var(--border); border-radius: 8px;
   background: linear-gradient(160deg, rgba(57,135,229,.04), transparent 65%), var(--page); padding: 8px 0; }
 .port-frontier .chart-box:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 3px; }
 .port-frontier-key { display: flex; flex-wrap: wrap; gap: 10px 20px; color: var(--ink-2); font-size: 12px; margin-top: 8px; }
 .port-marker-key { display: inline-flex; gap: 7px; align-items: center; }
 .port-marker-key b { font-size: 17px; line-height: 1; }
+.port-curve-key { display: inline-block; width: 14px; height: 2px; border-radius: 1px; }
 .port-sharpe-scale { display: flex; align-items: center; gap: 10px; margin-top: 14px;
   color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .port-sharpe-ramp { height: 7px; flex: 1; min-width: 40px; max-width: 280px; border-radius: 4px; }
-.port-frontier .port-hover { min-height: 36px; line-height: 1.7; overflow-wrap: anywhere; }
+.port-frontier .port-portfolio-tooltip { position: absolute; z-index: 5; pointer-events: none;
+  width: 198px; max-width: calc(100% - 12px); box-sizing: border-box; min-height: 0; margin: 0;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface); box-shadow: 0 3px 12px rgba(0,0,0,.24);
+  color: var(--ink-2); font-size: 11px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.port-tooltip-title { color: var(--ink-1); font-weight: 600; margin-bottom: 4px; }
+.port-tooltip-metrics { display: flex; flex-wrap: wrap; gap: 1px 8px;
+  padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.port-tooltip-weight { display: flex; justify-content: space-between; gap: 8px; }
+.port-tooltip-weight b { color: var(--ink-1); font-weight: 500; }
+.port-range-control, .port-range-control label { display: inline-flex; align-items: center; gap: 5px;
+  color: var(--ink-2); font-size: 12px; }
+.port-range-control { flex-wrap: wrap; }
+#alloc-port-panel .port-range-control input { width: 54px; min-height: 30px; padding: 4px 6px; font-size: 12px; }
+.port-range-status { font-size: 11px; }
 @media (max-width: 600px) {
   .port-frontier { padding: 12px 8px; }
 }
