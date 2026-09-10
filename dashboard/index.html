@@ -7,7 +7,7 @@
 <meta name="description" content="금리·크레딧·FX·인플레이션·지수 데이터를 자동 갱신하는 투자 분석 대시보드">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%F0%9F%93%88%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="vendor/uplot.min.css">
-<link rel="stylesheet" href="style.css?v=20260910-frontier-sigma-hover-1">
+<link rel="stylesheet" href="style.css?v=20260910-frontier-contributions-1">
 </head>
 <body>
 
@@ -176,21 +176,18 @@
   <section id="alloc" class="section">
     <h2>자산배분</h2>
     <div class="alloc-workspace" id="alloc-workspace"></div>
-    <!-- 첫 체계는 포트폴리오 구성(§7.14). 다른 체계는 선택 버튼으로 전환한다. -->
+    <!-- 포트폴리오와 리스크연계 두 탭만 표시한다. -->
     <div class="card" id="alloc-port-panel" style="margin-top:10px"></div>
-    <!-- 리스크연계: 홈페이지 최신 결과 + 월별 점수에 따른 기관배분 경로. -->
+    <!-- 리스크연계: 홈페이지 최신 결과 + 주간 점수에 따른 배분 경로. -->
     <div class="card" id="alloc-risk-source" style="margin-top:10px" hidden></div>
     <div class="card" id="alloc-risk-proc" style="margin-top:14px" hidden></div>
-    <!-- ⓪ 포트폴리오 시뮬레이터 — μ·σ 키인 → 최적 배분(막대 ▼·도넛) + 즉시 시뮬레이션.
-         화면 최상단 배치는 2026-08-11 사용자 지시(2026-08-05 「요약 먼저」 동선을 대체) -->
-    <div class="howto" id="alloc-controls"></div>
-    <div class="card" id="alloc-sim-panel" style="margin-top:10px"></div>
-    <div class="qa" id="alloc-headline"></div>
-    <!-- 답을 한 자리에 — 현재 vs 참고치(배분·헤지·수익·위험). 담당자의 첫 질문
-         "그래서 최적이 얼마인데?"가 문단이 아니라 표 하나로 답해지는 자리다. -->
-    <div class="card" id="alloc-summary" style="padding:12px 16px"></div>
-    <div class="cards" id="alloc-cards"></div>
-    <div class="howto" id="alloc-levers"></div>
+    <!-- 리스크연계의 공통 엔진·저장 호환용 패널. 화면에서는 표시하지 않는다. -->
+    <div class="howto" id="alloc-controls" hidden></div>
+    <div class="card" id="alloc-sim-panel" hidden style="margin-top:10px"></div>
+    <div class="qa" id="alloc-headline" hidden></div>
+    <div class="card" id="alloc-summary" hidden style="padding:12px 16px"></div>
+    <div class="cards" id="alloc-cards" hidden></div>
+    <div class="howto" id="alloc-levers" hidden></div>
   </section>
 
   <section id="rates" class="section">
@@ -293,6 +290,6 @@
 <div class="detail-overlay" id="detail-overlay" hidden></div>
 
 <script src="vendor/uplot.min.js"></script>
-<script src="app.js?v=20260910-frontier-sigma-hover-1"></script>
+<script src="app.js?v=20260910-frontier-contributions-1"></script>
 </body>
 </html>

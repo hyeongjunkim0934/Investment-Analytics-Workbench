@@ -5228,12 +5228,7 @@ function renderAllocRiskSource() {
   card.append(el("div", { class: "card-head" },
     el("span", { class: "card-title" }, "리스크 결과"),
     el("span", { class: "card-sub" }, R?.asof ? `기준일 ${R.asof}` : "기준일 없음"),
-    el("a", { href: "#risk" }, "리스크 보기"),
-    el("button", { type: "button", class: "btn-ghost", id: "alloc-risk-settings",
-      onclick: () => {
-        selectAllocWorkspace("institution");
-        document.getElementById("alloc-workspace-institution")?.focus();
-      } }, "배분 설정")));
+    el("a", { href: "#risk" }, "리스크 보기")));
   const scores = el("div", { class: "alloc-risk-scores" });
   [["stress", "현재 위험"], ["vuln", "잠재 위험"]].forEach(([key, label]) => {
     const L = R?.layers?.[key];
@@ -5680,16 +5675,15 @@ function allocDonutSVG(entries, size) {
 
 /* ================= 자산배분 — 화면 ================= */
 
-/* 포트폴리오와 기관배분은 자산 분류·표본·저장 키가 다르다. 리스크연계는 홈페이지
-   리스크 결과와 기관배분 설정을 함께 사용한다. 전환만으로 재계산·저장하지 않는다. */
+/* 화면은 포트폴리오·리스크연계만 표시한다. 리스크연계가 사용하는 기존 기관 엔진과
+   저장값은 유지하되 기관배분/헤지 패널은 모든 화면 전환에서 숨긴다. */
 let allocWorkspace = "port";
 const ALLOC_WORKSPACES = {
   port: { label: "포트폴리오", panels: ["alloc-port-panel"] },
   risk: { label: "리스크연계", panels: ["alloc-risk-source", "alloc-risk-proc"] },
-  institution: { label: "기관배분/헤지",
-    panels: ["alloc-sim-panel", "alloc-headline", "alloc-summary", "alloc-controls",
-      "alloc-cards", "alloc-levers"] },
 };
+const ALLOC_RETIRED_PANELS = ["alloc-sim-panel", "alloc-headline", "alloc-summary",
+  "alloc-controls", "alloc-cards", "alloc-levers"];
 const allocWorkspaceContext = {};
 
 function refreshAllocWorkspaceInfo() {
@@ -5713,6 +5707,10 @@ function selectAllocWorkspace(key) {
       const n = document.getElementById(id);
       if (n) n.hidden = k !== key;
     });
+  });
+  ALLOC_RETIRED_PANELS.forEach((id) => {
+    const n = document.getElementById(id);
+    if (n) n.hidden = true;
   });
   refreshAllocWorkspaceInfo();
 }
@@ -7276,10 +7274,9 @@ function renderAlloc() {
   renderPortPanel(A, { preserveDraft: true });
   renderAllocRiskSource();
   if (!A || !A.sets || !A.sets.length) {
-    allocWorkspaceContext.institution = { warning: "기관 배분·헤지 데이터를 불러오지 못했습니다." };
     allocWorkspaceContext.risk = { warning: "배분 데이터를 불러오지 못해 리스크연계 계산을 보류합니다." };
     $("#alloc-risk-proc").textContent = "배분 데이터 없음 — 리스크연계 계산 보류";
-    ALLOC_WORKSPACES.institution.panels.forEach((id) => {
+    ALLOC_RETIRED_PANELS.forEach((id) => {
       const n = document.getElementById(id);
       if (n) n.textContent = "";
     });
@@ -7301,7 +7298,6 @@ function renderAlloc() {
 
   /* 층·창·매핑 표식용 엔진 한 벌 — recalc 는 매번 새로 만들므로 이건 표시 전용이다 */
   const E0 = allocEngine(A, st);
-  allocWorkspaceContext.institution = { warning: E0.layerNote };
   allocWorkspaceContext.risk = { warning: E0.layerNote };
   refreshAllocWorkspaceInfo();
 
@@ -8190,7 +8186,7 @@ function allocOverlayShell(title) {
 function openAllocDetail(topic) {
   const A = DATA.alloc;
   if (!A || !A.sets || !A.sets.length) { hideDetail(); return; }
-  selectAllocWorkspace("institution");   // 기존 상세 딥링크의 돌아갈 분석 체계
+  selectAllocWorkspace("risk");   // 기존 상세 딥링크도 남아 있는 리스크연계 화면으로 복귀
   const st = allocState(A);
   const E = allocEngine(A, st);
   const pal = palette();

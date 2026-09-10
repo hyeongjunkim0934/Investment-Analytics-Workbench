@@ -949,7 +949,6 @@ def test_hidden_attribute_is_not_defeated_by_display_rules():
 #: 여기에 이름을 더할 때는 아래 테스트가 "실제로 만드는지"까지 확인한다.
 DYNAMIC_IDS = {
     "alloc-workspace-info": 'id: "alloc-workspace-info"',  # renderAllocWorkspace()의 비활성·폴백 사유
-    "alloc-workspace-institution": 'id: `alloc-workspace-${key}`',  # ALLOC_WORKSPACES의 institution 버튼
     "port-axis-apply": 'id: "port-axis-apply"',  # portAxisControls() 재렌더 후 포커스 복원
     "port-axis-auto": 'id: "port-axis-auto"',
     "port-range-sigma": 'id: "port-range-sigma"',  # portSigmaControl() 생성·재렌더 후 포커스 복원
