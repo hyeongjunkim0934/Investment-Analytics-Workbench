@@ -1,4 +1,4 @@
-"""자산배분의 세 탭 전환·입력·저장·표본 표시 계약."""
+"""자산배분의 두 탭 전환·입력·저장·표본 표시 계약."""
 import json
 import shutil
 import subprocess
@@ -19,14 +19,14 @@ def workspace():
 
 def test_workspace_scope_and_metadata(workspace):
     for key in ("noRenderErrors", "defaultPort", "portContext", "institutionContext",
-                "onlyInstitutionVisible", "pressedState", "portTocRemoved",
+                "retiredPanelsHidden", "pressedState", "portTocRemoved",
                 "institutionTocRemoved", "workspaceExplanationRemoved", "hashUntouched"):
         assert workspace[key], key
-    assert workspace["workspaceLabels"] == ["포트폴리오", "리스크연계", "기관배분/헤지"]
+    assert workspace["workspaceLabels"] == ["포트폴리오", "리스크연계"]
 
 
 def test_risk_workspace_is_separate_and_handles_missing_alloc(workspace):
-    for key in ("onlyRiskVisible", "riskSettingsReturnsToInstitution",
+    for key in ("onlyRiskVisible", "retiredSettingsLinkRemoved",
                 "riskMissingAllocClearsOldResult", "riskWarningRecovers"):
         assert workspace[key], key
 
@@ -47,8 +47,8 @@ def test_workspace_reports_existing_save_contract(workspace):
 
 
 def test_workspace_reports_fallback_and_missing_data(workspace):
-    for key in ("fallbackShown", "institutionMissingShown", "portWorksWithoutInstitution",
-                "portMissingShown", "institutionWorksWithoutPort", "detailSelectsInstitution",
+    for key in ("fallbackShown", "riskMissingShown", "portWorksWithoutInstitution",
+                "portMissingShown", "riskWorksWithoutPort", "detailReturnsToRisk",
                 "finalNoRenderErrors"):
         assert workspace[key], key
 
