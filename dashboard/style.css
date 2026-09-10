@@ -1155,12 +1155,18 @@ a.kpi-link .kpi-label > span:first-child::after {
 .rp-hover { font-size: 12px; color: var(--ink-2); margin-top: 6px; min-height: 18px; font-variant-numeric: tabular-nums; }
 
 /* Robust frontier: space around the numeric region, using the existing chart palette. */
-.port-frontier { min-width: 0; padding: 18px 20px; }
-.port-axis-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
-  margin-top: 12px; color: var(--ink-2); font-size: 12px; }
+.port-frontier { position: relative; min-width: 0; padding: 18px 20px; }
+.port-frontier .card-head { position: relative; }
+.port-axis { display: flex; align-items: center; }
+.port-axis-controls { position: absolute; right: 0; top: calc(100% + 8px); z-index: 6;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  width: 348px; max-width: 100%; padding: 12px; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0,0,0,.3); color: var(--ink-2); font-size: 12px; }
 .port-axis-group, .port-axis-group label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.port-axis-group { gap: 10px; }
-.port-axis-group input { width: 82px; min-height: 30px; padding: 4px 6px; font: inherit;
+.port-axis-group { gap: 8px; width: 100%; }
+.port-axis-group > span { width: 84px; }
+.port-axis-group input { width: 65px; min-height: 30px; padding: 4px 6px; font: inherit;
   font-variant-numeric: tabular-nums; background: var(--surface); color: var(--ink-1);
   border: 1px solid var(--border); border-radius: 6px; }
 .port-axis-status { flex-basis: 100%; }
@@ -1200,7 +1206,10 @@ a.kpi-link .kpi-label > span:first-child::after {
 #alloc-port-panel .port-table th { white-space: nowrap; font-size: 13px; }
 #alloc-port-panel .port-table td { padding: 8px; font-variant-numeric: tabular-nums; }
 #alloc-port-panel .port-src { font-size: 12px; }
-#alloc-port-panel .port-grp, #alloc-port-panel .port-axis-controls { font-size: 14px; }
+#alloc-port-panel .port-grp { font-size: 14px; }
+#alloc-port-panel .port-axis-controls { font-size: 12px; }
+#alloc-port-panel .port-axis-toggle { width: 32px; height: 32px; padding: 4px; font-size: 12px; }
+#alloc-port-panel .port-axis-group input { min-height: 28px; padding: 4px; font-size: 12px; }
 .port-result-tabs { display: flex; gap: 6px; margin-top: 20px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
 #alloc-port-panel .port-result-tabs [aria-selected="true"] { color: var(--port-accent); border-color: var(--port-accent); }
 .port-correlation { padding-top: 12px; }
@@ -1224,12 +1233,13 @@ a.kpi-link .kpi-label > span:first-child::after {
   border: 1px solid var(--border); border-radius: 3px; background: var(--page); cursor: pointer; }
 .port-palette-panel .btn-ghost { width: 100%; }
 .port-asset-key { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 14px; padding-top: 12px;
-  border-top: 1px solid var(--border); color: var(--ink-2); font-size: 13px; }
+  border-top: 1px solid var(--border); color: var(--ink-3); font-size: 11px; }
 .port-asset-position { display: inline-flex; align-items: center; gap: 7px; }
 .port-asset-position b { font-size: 16px; line-height: 1; }
 .port-asset-coordinates { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
 #port-risk-status:empty { display: none; }
 @media (max-width: 600px) {
   .port-asset-key { gap: 8px 12px; }
+  .port-axis-group > span { width: 100%; }
   .port-palette-panel { max-width: calc(100vw - 48px); }
 }

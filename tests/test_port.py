@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""포트폴리오 구성(port.py) — 신규 7자산군 프록시 통계·CMA 입력 파일 계약."""
+"""포트폴리오 구성(port.py) — 6자산군 프록시 통계·CMA 입력 파일 계약."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def _full_store(n_me=40, fx_start=1000.0, usd_growth=0.01, fx_growth=0.005):
     dates = pd.date_range("2020-01-31", periods=n_me, freq="ME")
     store = {}
     for a, key in port.PROXY.items():
-        g = 0.004 if a in ("국내채권", "원화유동성") else 0.008
+        g = 0.004 if a in ("국내채권", "국내장부") else 0.008
         store[key] = _mk_series([100.0 * (1 + g) ** k for k in range(n_me)], dates)
     store[port.FX_KEY] = _mk_series([fx_start * (1 + fx_growth) ** k for k in range(n_me)], dates)
     store[port.PROXY["해외주식"]] = _mk_series(
@@ -44,10 +44,12 @@ def test_inactive_without_proxies_or_fx():
 def test_defaults_block_shape():
     groups = port.GROUPS
     flat = [a for g in groups.values() for a in g]
-    assert sorted(flat) == sorted(port.ASSETS) and len(flat) == 7
+    assert port.ASSETS == ["국내채권", "국내장부", "해외채권", "국내주식", "해외주식", "대체투자"]
+    assert sorted(flat) == sorted(port.ASSETS) and len(flat) == 6
     assert sum(port.GROUP_DEFAULT.values()) == 100.0
     assert port.LIQ_RANGE[0] <= port.LIQ_DEFAULT <= port.LIQ_RANGE[1]
-    assert groups["유동성"] == ["달러유동성", "원화유동성"]
+    assert groups["유동성"] == ["국내장부"]
+    assert port.PROXY["국내장부"] == "bb:원화유동성"
 
 
 def test_krw_conversion_via_return_identity():
@@ -61,26 +63,63 @@ def test_krw_conversion_via_return_identity():
     r_krw = (1 + 0.02) * (1 - 0.003) - 1.0
     assert abs(w["mean_pct"][i] - r_krw * 12 * 100) < 1e-2
     assert w["vol_pct"][i] < 1e-6  # 등비 성장 — 수익률 상수라 σ=0
-    j = out["assets"].index("원화유동성")
+    j = out["assets"].index("국내장부")
     assert abs(w["mean_pct"][j] - 0.004 * 12 * 100) < 1e-2
-    kr = [c for c in out["coverage"] if c["asset"] == "달러유동성"][0]
-    assert "벤더 환산" in kr["currency"]  # 재환산 금지 — 환위험 이중계상 방지
+    kr = [c for c in out["coverage"] if c["asset"] == "국내장부"][0]
+    assert kr["currency"] == "KRW"
     us = [c for c in out["coverage"] if c["asset"] == "해외주식"][0]
     assert us["currency"] == "USD→KRW"
 
 
-def test_vendor_krw_liquidity_not_reconverted():
-    """달러유동성은 환율을 다시 곱하지 않는다 — 곱했다면 σ 가 환율 σ 만큼 뜬다."""
+def test_domestic_book_proxy_not_reconverted():
+    """국내장부는 원화유동성 프록시를 유지하고 환율을 곱하지 않는다."""
     store, dates = _full_store()
     rng = np.random.default_rng(7)
     fx = 1000.0 * np.exp(np.cumsum(rng.normal(0, 0.03, 40)))
     store[port.FX_KEY] = _mk_series(fx, dates)
     flat = [100.0 * (1.003) ** k for k in range(40)]
-    store[port.PROXY["달러유동성"]] = _mk_series(flat, dates)
+    store[port.PROXY["국내장부"]] = _mk_series(flat, dates)
     out = port.build(store, lambda m: None)
     w = next(w for w in out["windows"] if w["key"] == "all")
-    i = out["assets"].index("달러유동성")
-    assert w["vol_pct"][i] < 1e-6, "벤더 원화 환산 컬럼에 환율이 다시 곱해졌다"
+    i = out["assets"].index("국내장부")
+    assert w["vol_pct"][i] < 1e-6, "국내장부의 원화 프록시에 환율이 곱해졌다"
+
+
+def test_removed_dollar_liquidity_does_not_gate_sample():
+    """삭제한 계열이 없거나 표본이 짧아도 남은 6자산군 표본에 영향을 주지 않는다."""
+    store, dates = _full_store()
+    assert "bb:달러유동성" not in store
+    out = port.build(store, lambda m: None)
+    assert out["active"] is True
+    assert "달러유동성" not in out["assets"]
+    assert "usd_liq_check" not in out
+    store["bb:달러유동성"] = _mk_series([100.0, 102.0], dates[-2:])
+    with_removed = port.build(store, lambda m: None)
+    assert with_removed == out
+    assert next(w for w in out["windows"] if w["key"] == "all")["n_months"] == 39
+
+
+def test_covariance_keeps_new_asset_order():
+    """정해 둔 수익률에서 NumPy 표본 공분산을 직접 재구성해 행·열 순서를 대조한다."""
+    assets = ["국내채권", "국내장부", "해외채권", "국내주식", "해외주식", "대체투자"]
+    dates = pd.date_range("2020-01-31", periods=41, freq="ME")
+    rng = np.random.default_rng(106)
+    returns = rng.normal(size=(40, 6)) * np.array([0.004, 0.001, 0.01, 0.03, 0.02, 0.025])
+    returns += np.array([0.003, 0.002, 0.004, 0.006, 0.007, 0.005])
+    store = {port.FX_KEY: _mk_series([1000.0] * len(dates), dates)}
+    for i, asset in enumerate(assets):
+        levels = np.r_[100.0, 100.0 * np.cumprod(1.0 + returns[:, i])]
+        store[port.PROXY[asset]] = _mk_series(levels, dates)
+    out = port.build(store, lambda m: None)
+    assert out["assets"] == assets
+    assert [c["asset"] for c in out["coverage"]] == assets
+    w = next(w for w in out["windows"] if w["key"] == "all")
+    C = np.asarray(w["cov"])
+    assert C.shape == (6, 6)
+    np.testing.assert_allclose(C, np.cov(returns, rowvar=False, ddof=1) * 12, atol=5.1e-9)
+    np.testing.assert_allclose(w["corr"], np.corrcoef(returns, rowvar=False), atol=5.1e-9)
+    np.testing.assert_allclose(w["mean_pct"], returns.mean(axis=0) * 1200, atol=5.1e-5)
+    np.testing.assert_allclose(w["vol_pct"], returns.std(axis=0, ddof=1) * np.sqrt(12) * 100, atol=5.1e-5)
 
 
 def test_partial_month_dropped():
@@ -151,6 +190,26 @@ def test_cma_input_flows_into_pipeline(tmp_path):
     )
 
 
+def test_legacy_cma_asset_migration(tmp_path):
+    """기존 Data 입력은 새 6자산 순서로 게시하고 새 이름의 값은 항상 우선한다."""
+    path = tmp_path / "port_cma.json"
+    legacy = {"국내채권": 3.2, "해외채권": 4.0, "국내주식": 8.0,
+              "해외주식": 8.5, "대체투자": 7.0, "달러유동성": 5.0, "원화유동성": 2.7}
+    path.write_text(json.dumps({"asof": "2026-09-01", "mu_pct": legacy}), encoding="utf-8")
+    warns = []
+    got = port.load_cma_input(tmp_path, warns.append)
+    assert list(got["mu_pct"]) == port.ASSETS
+    assert got["mu_pct"]["국내장부"] == 2.7
+    assert got["mu_pct"]["국내채권"] == 3.2
+    assert "달러유동성" not in got["mu_pct"] and "원화유동성" not in got["mu_pct"]
+    assert warns == []
+    for mixed in ({**legacy, "국내장부": 3.1}, {"국내장부": 3.1, **legacy}):
+        path.write_text(json.dumps({"mu_pct": mixed}), encoding="utf-8")
+        got = port.load_cma_input(tmp_path, warns.append)
+        assert got["mu_pct"]["국내장부"] == 3.1
+    assert warns == []
+
+
 def test_krw_liq_cd_reference():
     """CD 적립 참고 — 상수 금리 r 이면 연환산 μ ≈ r, σ ≈ 0. 겹침 검증치도 게시."""
     store, dates = _full_store(n_me=40)
@@ -174,6 +233,6 @@ def test_krw_liq_cd_reference():
 
 
 def test_synth_fixture_has_port_proxies():
-    """픽스처 우주가 프록시 7 + 환율을 전부 덮는다 — 어긋나면 e2e 가 비활성으로 돈다."""
+    """픽스처 우주가 프록시 6 + 환율을 전부 덮는다 — 어긋나면 e2e 가 비활성으로 돈다."""
     for key in list(port.PROXY.values()) + [port.FX_KEY]:
         assert key in synth.BB_KEYS, key

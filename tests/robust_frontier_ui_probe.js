@@ -3,9 +3,47 @@
 const fs = require('node:fs'), path = require('node:path'), Module = require('node:module');
 const repo = process.argv[2] || path.resolve(__dirname, '..');
 const src = fs.readFileSync(path.join(repo, 'tests/dashboard_probe.js'), 'utf8');
-const bootstrap = src.slice(0, src.indexOf('/* ============ P1.'));
+const bootstrap = src.slice(0, src.indexOf('/* ============ P1.')).replace('vm.createContext(sandbox);',
+  'if (process.env.IAW_TEST_AXIS_STATE) shim.localStorage.setItem("iaw-port-axis", process.env.IAW_TEST_AXIS_STATE);\nvm.createContext(sandbox);');
 const fixture = src.slice(src.indexOf('const ALLOC_FIXTURE = (() => {'), src.indexOf('\nsafe("hedgeXe"'));
-const code = String.raw`
+// Preserve the old shared fixture for historical regression coverage elsewhere. Here
+// remove the dollar asset and reorder every vector/matrix by the same explicit map.
+const sixFixture = String.raw`
+const SIX_ASSET_FIXTURE = (() => {
+  const old = ALLOC_FIXTURE.port, indexes = [0, 6, 1, 2, 3, 4];
+  const rename = (a) => a === '원화유동성' ? '국내장부' : a;
+  const assetMap = (m) => Object.fromEntries(Object.entries(m || {})
+    .filter(([a]) => a !== '달러유동성').map(([a,v]) => [rename(a),v]));
+  const port = {
+    ...old, assets: indexes.map(i => rename(old.assets[i])), proxies: assetMap(old.proxies),
+    defaults: {...old.defaults, groups: {주식:['국내주식','해외주식'], 채권:['국내채권','해외채권'],
+      대체:['대체투자'], 유동성:['국내장부']}},
+    coverage: indexes.map(i => ({...old.coverage[i], asset: rename(old.coverage[i].asset)})),
+    ref10y: {...old.ref10y, per_asset: assetMap(old.ref10y.per_asset)},
+    cma_input: {...old.cma_input, mu_pct: assetMap(old.cma_input.mu_pct)},
+    windows: old.windows.map(w => ({...w,
+      mean_pct: indexes.map(i => w.mean_pct[i]), vol_pct: indexes.map(i => w.vol_pct[i]),
+      mdd_pct: indexes.map(i => w.mdd_pct[i]),
+      cov: indexes.map(i => indexes.map(j => w.cov[i][j])),
+      corr: indexes.map(i => indexes.map(j => w.corr[i][j])),
+    })),
+  };
+  return {...ALLOC_FIXTURE, port};
+})();
+`;
+const reloadCode = String.raw`
+const assert = require('node:assert/strict');
+P.DATA.alloc = SIX_ASSET_FIXTURE;
+P.renderPortPanel(SIX_ASSET_FIXTURE);
+const c = shim.UPlotStub.made.filter(n => n.opts.series.some(s => s.label === '경계선')).pop();
+const expected = JSON.parse(process.env.IAW_TEST_AXIS_EXPECTED);
+assert.deepEqual(Array.from(c.opts.scales.x.range), expected.x);
+assert.deepEqual(Array.from(c.opts.scales.y.range()), expected.y);
+assert(DOC.getElementById('alloc-port-panel').querySelector('.port-axis-controls').hidden);
+assert.equal(DOC.getElementById('port-axis-toggle').getAttribute('aria-expanded'), 'false');
+console.log(JSON.stringify({reloadPass:true}));
+`;
+const code = process.argv.includes('--axis-reload') ? reloadCode : String.raw`
 const assert = require('node:assert/strict');
 const inspect = vm.runInContext('({live:()=>uplots})', sandbox);
 const panel = DOC.getElementById('alloc-port-panel');
@@ -30,13 +68,24 @@ function assertContained(c){
   assert(c.data.slice(1).flat().every(y=>y>=yr[0]&&y<=yr[1]));
   assert(Math.min(...c.data.slice(1).flat())>yr[0]);
 }
-P.DATA.alloc=ALLOC_FIXTURE;shim.localStorage.removeItem(P.PORT_LS_KEY);P.renderPortPanel(ALLOC_FIXTURE);
+P.DATA.alloc=SIX_ASSET_FIXTURE;shim.localStorage.removeItem(P.PORT_LS_KEY);P.renderPortPanel(SIX_ASSET_FIXTURE);
 const initial=chart(),allRange=initial.opts.scales.x.range.slice();
+const expectedAssets=['국내채권','국내장부','해외채권','국내주식','해외주식','대체투자'];
+assert.deepEqual(SIX_ASSET_FIXTURE.port.assets,expectedAssets);
+assert.deepEqual(Array.from(panel.querySelectorAll('.port-table tbody tr'),row=>row.querySelector('td').textContent),expectedAssets);
+assert(!/달러유동성|원화유동성/.test(panel.textContent));
 assert(!button('전체')&&!button('강건 구간'));
 assert.equal(card().querySelector('.port-axis-controls').querySelectorAll('input').length,4);
+assert(card().querySelector('.port-axis-controls').hidden);
+assert.equal(DOC.getElementById('port-axis-toggle').getAttribute('aria-expanded'),'false');
+DOC.getElementById('port-axis-toggle').click();
+assert(!card().querySelector('.port-axis-controls').hidden);
+assert.equal(DOC.getElementById('port-axis-toggle').getAttribute('aria-expanded'),'true');
+DOC.getElementById('port-axis-toggle').click();
+assert(card().querySelector('.port-axis-controls').hidden);
 assert(!/오차 강도|합계 100%|공매도 금지|Robust 기준|경계선에 마우스|점선 ·/.test(card().textContent));
 assert(draw(initial).filter(x=>x[0]==='arc').length>5000);
-assert(card().querySelector('.port-sharpe-scale').textContent.includes('6,007'));
+assert(card().querySelector('.port-sharpe-scale').textContent.includes('6,006'));
 assert(card().querySelector('.port-frontier-key').textContent.includes('샤프 최대'));
 assert(draw(initial).filter(x=>x[0]==='arc').every(x=>x.slice(1).every(Number.isFinite)));
 click('표');
@@ -44,17 +93,17 @@ assert(card().querySelector('.chart-table').textContent.includes('최악 기대�
 vm.runInContext('downloadCSV = (...args) => { globalThis.robustCSV = args; }', sandbox);
 click('CSV');
 assert(sandbox.robustCSV[2].some(row=>row[0]==='Robust' && typeof row[2]==='number' && row[4]<=row[3]));
-assert.equal(P.portState(ALLOC_FIXTURE.port).robust_k,1);assertContained(initial);
+assert.equal(P.portState(SIX_ASSET_FIXTURE.port).robust_k,1);assertContained(initial);
 assert.equal(draw(initial).filter(x=>x[0]==='gradient').length,1);assert.equal(draw(initial).filter(x=>x[0]==='stop').length,3);
 // Old saved slider values cannot silently choose a different scenario once the control is gone.
 for(const k of [0,0.75,3]){
-  const saved={...P.portState(ALLOC_FIXTURE.port),robust_k:k};
+  const saved={...P.portState(SIX_ASSET_FIXTURE.port),robust_k:k};
   shim.localStorage.setItem(P.PORT_LS_KEY,JSON.stringify(saved));
-  P.renderPortPanel(ALLOC_FIXTURE);
-  assert.equal(P.portState(ALLOC_FIXTURE.port).robust_k,1);
+  P.renderPortPanel(SIX_ASSET_FIXTURE);
+  assert.equal(P.portState(SIX_ASSET_FIXTURE.port).robust_k,1);
   assert.deepEqual(chart().data,initial.data);
   assert.deepEqual(chart().opts.scales.x.range,allRange);
-  assert.deepEqual(P.portState(ALLOC_FIXTURE.port).mix,saved.mix);
+  assert.deepEqual(P.portState(SIX_ASSET_FIXTURE.port).mix,saved.mix);
 }
 for(const [i,s] of chart().opts.series.entries()){
   assert.equal(s.value(null,1.23456789),i===0?'1.23':'1.23%');
@@ -73,7 +122,14 @@ assert(!/실현 성과\(/.test(panel.textContent));
 
 // View bounds affect only the drawing, including zero/negative bounds and cropped markers.
 const originalData=JSON.stringify(chart().data),originalStore=shim.localStorage.getItem(P.PORT_LS_KEY);
+const reloadWith=(saved,expected)=>{
+  const result=require('node:child_process').execFileSync(process.execPath,[path.join(ROOT,'tests/robust_frontier_ui_probe.js'),ROOT,'--axis-reload'],{
+    encoding:'utf8',env:{...process.env,IAW_TEST_AXIS_STATE:saved||'null',IAW_TEST_AXIS_EXPECTED:JSON.stringify(expected)},
+  });
+  assert(JSON.parse(result).reloadPass);
+};
 const setBounds=(values)=>{
+  if(card().querySelector('.port-axis-controls').hidden) DOC.getElementById('port-axis-toggle').click();
   ['x-min','x-max','y-min','y-max'].forEach((key,i)=>{DOC.getElementById('port-'+key).value=String(values[i]);});
   click('축 적용');
 };
@@ -83,24 +139,52 @@ assert.deepEqual(Array.from(chart().opts.scales.y.range()),[-2,8]);
 assert.equal(JSON.stringify(chart().data),originalData);
 assert.equal(shim.localStorage.getItem(P.PORT_LS_KEY),originalStore);
 assert.equal(DOC.activeElement,DOC.getElementById('port-axis-apply'));
+assert(!card().querySelector('.port-axis-controls').hidden);
+const savedAxis=shim.localStorage.getItem('iaw-port-axis');
+assert.deepEqual(JSON.parse(savedAxis),{x:[0,12],y:[-2,8]});
+reloadWith(savedAxis,{x:[0,12],y:[-2,8]});
 draw(chart());
 const applied=chart();
 for(const bad of [[12,0,-2,8],[0,12,8,8],['',12,-2,8],[0,'Infinity',-2,8]]){
   setBounds(bad);
   assert.equal(chart(),applied);
   assert(!DOC.getElementById('port-axis-status').hidden);
+  assert.equal(shim.localStorage.getItem('iaw-port-axis'),savedAxis);
 }
 setBounds([-5,15,-10,15]);
 assert.deepEqual(Array.from(chart().opts.scales.x.range),[-5,15]);
-P.renderPortPanel(ALLOC_FIXTURE,{preserveDraft:true});
+P.renderPortPanel(SIX_ASSET_FIXTURE,{preserveDraft:true});
 assert.deepEqual(Array.from(chart().opts.scales.x.range),[-5,15]);
 assert.deepEqual(Array.from(chart().opts.scales.y.range()),[-10,15]);
+reloadWith(shim.localStorage.getItem('iaw-port-axis'),{x:[-5,15],y:[-10,15]});
 click('자동');
 assert.deepEqual(chart().opts.scales.x.range,allRange);
 assert.deepEqual(chart().opts.scales.y.range(),initial.opts.scales.y.range());
 assert.equal(JSON.stringify(chart().data),originalData);
 assert.equal(shim.localStorage.getItem(P.PORT_LS_KEY),originalStore);
 assert.equal(DOC.activeElement,DOC.getElementById('port-axis-auto'));
+assert.equal(shim.localStorage.getItem('iaw-port-axis'),null);
+reloadWith(null,{x:allRange,y:Array.from(initial.opts.scales.y.range())});
+for(const invalid of ['{broken',JSON.stringify({x:[12,0],y:[-2,8]}),JSON.stringify({x:[0,null],y:[-2,8]}),JSON.stringify({x:[0,12,15],y:[-2,8]})]){
+  reloadWith(invalid,{x:allRange,y:Array.from(initial.opts.scales.y.range())});
+}
+// External axis titles consume plot space. Both titles must instead paint within
+// the chart's pixel bounding box (50,10)–(700,310), without an outer axis label.
+assert.equal(chart().opts.axes[0].label,undefined);
+assert.equal(chart().opts.axes[1].label,undefined);
+for(const label of ['변동성 · 연 %','기대수익 · 연 %']){
+  const paintedTitle=draw(chart()).find(c=>c[0]==='fillText'&&c[1]===label);
+  assert(paintedTitle,label+' missing inside plot');
+  assert(paintedTitle[2]>50&&paintedTitle[2]<700&&paintedTitle[3]>10&&paintedTitle[3]<310);
+}
+DOC.getElementById('port-axis-toggle').click();
+assert(card().querySelector('.port-axis-controls').hidden);
+assert.equal(DOC.getElementById('port-axis-toggle').getAttribute('aria-expanded'),'false');
+DOC.getElementById('port-axis-toggle').click();
+assert.equal(DOC.activeElement,DOC.getElementById('port-x-min'));
+card().querySelector('.port-axis').dispatchEvent({type:'keydown',key:'Escape',preventDefault(){}});
+assert(card().querySelector('.port-axis-controls').hidden);
+assert.equal(DOC.activeElement,DOC.getElementById('port-axis-toggle'));
 assert.equal(live().length,1);assert.equal(inspect.live().length,1);assert(live().every(c=>DOC.contains(c.root)));
 // Independent two-asset identities: annual percent inputs, no extra 12 or 10,000 factor.
 const R=vm.runInContext('({portRiskInputs,portCorrKey,portChartColors,portRobustModel})',sandbox);
@@ -123,16 +207,16 @@ for(const v of [-1,Infinity,NaN,'',true]) assert(!R.portRiskInputs(pair,pair.win
 const triple={assets:['A','B','C']},tw={cov:[[.01,0,0],[0,.04,0],[0,0,.09]]};
 const badCorr=Object.fromEntries([['A','B',.9],['A','C',.9],['B','C',-.9]].map(([a,b,v])=>[R.portCorrKey(a,b),v]));
 assert(!R.portRiskInputs(triple,tw,{sig:{A:0},corr:badCorr}).valid);
-const base=P.portEngine(ALLOC_FIXTURE.port,P.portDefaults(ALLOC_FIXTURE.port));
+const base=P.portEngine(SIX_ASSET_FIXTURE.port,P.portDefaults(SIX_ASSET_FIXTURE.port));
 assert.equal(JSON.stringify(base.risk.C),JSON.stringify(base.W.cov.map(row=>row.map(v=>v*1e4))));
 // Asset labels are drawn at model coordinates and all assets appear in the exact-value table.
-assert.equal(card().querySelectorAll('.port-asset-position').length,7);
+assert.equal(card().querySelectorAll('.port-asset-position').length,6);
 const painted=draw(chart());
-for(const a of ALLOC_FIXTURE.port.assets) assert(painted.some(c=>c[0]==='fillText'&&c[1]===a));
+for(const a of SIX_ASSET_FIXTURE.port.assets) assert(painted.some(c=>c[0]==='fillText'&&c[1]===a));
 click('CSV');assert(sandbox.robustCSV[2].some(row=>row[0]==='국내채권'&&Math.abs(row[2]-base.risk.sig[0])<1e-12));
 const field=(label)=>Array.from(panel.querySelectorAll('input')).find(n=>n.getAttribute('aria-label')===label);
 const edit=(label,v)=>{const n=field(label);assert(n,label);n.value=String(v);n.dispatchEvent({type:'input'});return n;};
-const state=()=>P.portState(ALLOC_FIXTURE.port);
+const state=()=>P.portState(SIX_ASSET_FIXTURE.port);
 edit('국내채권 변동성',10);
 assert.equal(state().sig.국내채권,10);assert.notEqual(JSON.stringify(chart().data),originalData);
 assert(card().querySelector('.port-asset-key').textContent.includes('10.00'));
@@ -144,14 +228,14 @@ edit('국내채권 변동성','');assert.equal(state().sig.국내채권,undefine
 DOC.getElementById('port-tab-corr').click();
 assert(DOC.getElementById('port-frontier-panel').hidden&&!DOC.getElementById('port-correlation-panel').hidden);
 assert.equal(DOC.getElementById('port-tab-corr').getAttribute('aria-selected'),'true');
-assert.equal(panel.querySelectorAll('.port-corr-table input').length,21);
+assert.equal(panel.querySelectorAll('.port-corr-table input').length,15);
 edit('국내채권 · 해외채권 상관계수',.1234);
-P.renderPortPanel(ALLOC_FIXTURE,{preserveDraft:true});
+P.renderPortPanel(SIX_ASSET_FIXTURE,{preserveDraft:true});
 assert.equal(field('국내채권 · 해외채권 상관계수').value,'0.1234');
 assert.equal(DOC.getElementById('port-corr-status').textContent,'미적용');
 const unfinished=field('국내채권 · 해외채권 상관계수');
 unfinished.value='';unfinished.validity={badInput:true};unfinished.dispatchEvent({type:'input'});
-P.renderPortPanel(ALLOC_FIXTURE,{preserveDraft:true});
+P.renderPortPanel(SIX_ASSET_FIXTURE,{preserveDraft:true});
 const beforeBadNumber=shim.localStorage.getItem(P.PORT_LS_KEY);
 DOC.getElementById('port-corr-apply').click();
 assert.equal(field('국내채권 · 해외채권 상관계수').getAttribute('aria-invalid'),'true');
@@ -165,10 +249,10 @@ assert(/조합이 유효하지/.test(DOC.getElementById('port-corr-status').text
 assert.equal(shim.localStorage.getItem(P.PORT_LS_KEY),beforeInvalid);
 edit('국내채권 · 해외채권 상관계수',0);edit('국내채권 · 국내주식 상관계수',0);edit('해외채권 · 국내주식 상관계수',0);
 DOC.getElementById('port-corr-apply').click();
-assert.equal(Object.keys(state().corr).length,21);assert(Object.values(state().corr).every(v=>v===0));
-assert.equal(P.portEngine(ALLOC_FIXTURE.port,state()).risk.C[0][1],0);
+assert.equal(Object.keys(state().corr).length,15);assert(Object.values(state().corr).every(v=>v===0));
+assert.equal(P.portEngine(SIX_ASSET_FIXTURE.port,state()).risk.C[0][1],0);
 edit('국내채권 변동성',10);
-P.renderPortPanel(ALLOC_FIXTURE,{preserveDraft:true});
+P.renderPortPanel(SIX_ASSET_FIXTURE,{preserveDraft:true});
 assert.equal(field('국내채권 변동성').value,'10');assert.equal(field('국내채권 · 해외채권 상관계수').value,'0');
 DOC.getElementById('port-tab-frontier').click();
 // Palette mutations only affect drawing and persist separately from financial inputs.
@@ -181,8 +265,50 @@ assert.equal(R.portChartColors().nominal,'#55aaff');
 card().querySelector('.port-palette').dispatchEvent({type:'keydown',key:'Escape',preventDefault(){}});
 assert(DOC.getElementById('port-palette-panel').hidden);assert.equal(DOC.activeElement,DOC.getElementById('port-palette-toggle'));
 assert.equal(live().length,1);assert.equal(inspect.live().length,1);
-console.log(JSON.stringify({pass:true,allRange,liveCharts:live().length,hoverDecimals:2}));
+// Previously entered KRW assumptions follow the renamed asset. Removing a 5%
+// dollar position must leave 95%, without silently redistributing the other rows.
+const legacySaved={...P.portDefaults(ALLOC_FIXTURE.port),
+  mix:{국내채권:30,해외채권:15,국내주식:10,해외주식:20,대체투자:15,달러유동성:5,원화유동성:5},
+  mu:{국내채권:3.4,원화유동성:2.25,달러유동성:9},
+  sig:{해외채권:9.25,원화유동성:.6,달러유동성:22},
+  corr:{[R.portCorrKey('원화유동성','국내채권')]:.11,
+    [R.portCorrKey('달러유동성','국내채권')]:-.2,[R.portCorrKey('국내채권','해외채권')]:.3},
+};
+shim.localStorage.setItem(P.PORT_LS_KEY,JSON.stringify(legacySaved));
+P.renderPortPanel(SIX_ASSET_FIXTURE);
+const migrated=state();
+assert.deepEqual(JSON.parse(JSON.stringify(migrated.mix)),{국내채권:30,국내장부:5,해외채권:15,국내주식:10,해외주식:20,대체투자:15});
+assert.equal(Object.values(migrated.mix).reduce((a,b)=>a+b,0),95);
+assert.equal(migrated.mu.국내장부,2.25);assert.equal(migrated.sig.국내장부,.6);
+assert.equal(migrated.corr[R.portCorrKey('국내장부','국내채권')],.11);
+assert.equal(migrated.corr[R.portCorrKey('국내채권','해외채권')],.3);
+for(const key of ['mix','mu','sig','corr']) assert(!/달러유동성|원화유동성/.test(JSON.stringify(migrated[key])));
+assert.equal(field('국내장부 비중').value,'5');assert.equal(field('국내장부 기대수익').value,'2.25');
+assert.equal(field('국내장부 변동성').value,'0.6');
+assert(!Array.from(card().querySelectorAll('.port-marker-key')).some(n=>n.textContent.endsWith('현재')));
+assert(!panel.querySelector('.port-benchmark').textContent.includes('현재 배분'));
+click('CSV');assert(!sandbox.robustCSV[2].some(row=>row[0]==='현재'));
+assert(sandbox.robustCSV[2].some(row=>row[0]==='국내장부'&&row[2]===.6&&row[3]===2.25));
+edit('국내장부 비중',10);
+assert(Array.from(card().querySelectorAll('.port-marker-key')).some(n=>n.textContent.endsWith('현재')));
+assert(panel.querySelector('.port-benchmark').textContent.includes('현재 배분'));
+edit('국내장부 기대수익',2.3);
+const savedMigration=JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY));
+for(const key of ['mix','mu','sig','corr']) assert(!/달러유동성|원화유동성/.test(JSON.stringify(savedMigration[key])));
+assert.equal(savedMigration.mu.국내장부,2.3);assert.equal(savedMigration.mix.국내채권,30);
+assert.equal(savedMigration.mix.국내장부,10);
+P.renderPortPanel(SIX_ASSET_FIXTURE);
+assert.equal(field('국내장부 기대수익').value,'2.3');
+// Already saved new names win if an imported legacy copy contains both aliases.
+const canonicalPair=R.portCorrKey('국내장부','국내채권');
+shim.localStorage.setItem(P.PORT_LS_KEY,JSON.stringify({...legacySaved,
+  mu:{...legacySaved.mu,국내장부:2.8},sig:{...legacySaved.sig,국내장부:.8},
+  corr:{...legacySaved.corr,[canonicalPair]:.22}}));
+assert.equal(state().mu.국내장부,2.8);assert.equal(state().sig.국내장부,.8);
+assert.equal(state().corr[canonicalPair],.22);
+assert.equal(live().length,1);assert.equal(inspect.live().length,1);
+console.log(JSON.stringify({pass:true,allRange,liveCharts:live().length,hoverDecimals:2,assets:expectedAssets,axisReload:true,legacyMigration:true}));
 `;
 const filename = path.join(repo, 'tests/robust_frontier_ui_regression.js');
 const m = new Module(filename, module); m.filename = filename; m.paths = Module._nodeModulePaths(path.dirname(filename));
-m._compile(bootstrap + '\n' + fixture + '\n' + code, filename);
+m._compile(bootstrap + '\n' + fixture + '\n' + sixFixture + '\n' + code, filename);
