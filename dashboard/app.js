@@ -5945,7 +5945,6 @@ function portLoadAxisLimits() {
 }
 let portAxisLimits = portLoadAxisLimits(); // 화면 범위만 저장 — 투자 입력과 분리
 let portAxisOpen = false;
-let portRiskTab = "frontier";
 let portPaletteOpen = false;
 const PORT_CHART_LS_KEY = "iaw-port-chart";
 
@@ -6545,7 +6544,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   box.append(el("div", { class: "port-sec-title" },
     "제약조건"), gWrap);
 
-  /* ② 자산군 표 — 비중(시뮬레이션·저장 안 함) + CMA μ 키인(모형 입력·즉시 저장) */
+  /* ② 자산군 입력 — 표 안에 별도 스크롤을 만들지 않고 전체 행을 펼친다. */
   const E0 = portEngine(P, st);
   const mixInputs = {}, srcCells = {}, sigInputs = {};
   const riskStatus = el("div", { id: "port-risk-status", class: "port-warn d-up", role: "status" });
@@ -6553,9 +6552,9 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   /* μ 출처는 열이 아니라 키인 칸 아래 주석(.port-src)이다 — 그 자리에 실현 μ(선택 창)를
      싣는다(2026-08-23 사용자 지시. 벤치마크 60/40 수익률은 행 단위가 아니라 포트폴리오
      하나의 수라 행에 넣지 않는다 — 아래 리뷰 카드가 정본). */
-  table.append(el("thead", {}, el("tr", {},
-    ...["자산군", "비중 %", "기대수익 %", "변동성 %", `실현수익 % (${portWinLabel(W.key)})`,
-        `실현변동성 % (${portWinLabel(W.key)})`, "10년 참고 μ/σ"].map((h) => el("th", {}, h)))));
+  const assetHeaders = ["자산군", "비중 %", "기대수익 %", "변동성 %", `실현수익 % (${portWinLabel(W.key)})`,
+    `실현변동성 % (${portWinLabel(W.key)})`, "10년 참고 μ/σ"];
+  table.append(el("thead", {}, el("tr", {}, ...assetHeaders.map((h) => el("th", { scope: "col" }, h)))));
   const tbody = el("tbody");
   P.assets.forEach((a, i) => {
     const wInp = el("input", { type: "number", step: "0.1", min: "0", max: "100",
@@ -6610,12 +6609,12 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       : "–";
     tbody.append(el("tr", {},
       el("td", {}, a),
-      el("td", { class: "num" }, wInp),
-      el("td", { class: "num" }, muInp, srcNote),
-      el("td", { class: "num" }, sigInp, sigNote),
-      el("td", { class: "num" }, fmtNum(W.mean_pct[i], 2)),
-      el("td", { class: "num" }, fmtNum(W.vol_pct[i], 2)),
-      el("td", { class: "num" }, refCell)));
+      el("td", { class: "num", "data-label": assetHeaders[1] }, wInp),
+      el("td", { class: "num", "data-label": assetHeaders[2] }, muInp, srcNote),
+      el("td", { class: "num", "data-label": assetHeaders[3] }, sigInp, sigNote),
+      el("td", { class: "num", "data-label": assetHeaders[4] }, fmtNum(W.mean_pct[i], 2)),
+      el("td", { class: "num", "data-label": assetHeaders[5] }, fmtNum(W.vol_pct[i], 2)),
+      el("td", { class: "num", "data-label": assetHeaders[6] }, refCell)));
   });
   table.append(tbody);
   const sumBadge = el("span", { class: "port-badge" });
@@ -6637,7 +6636,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       "CMA JSON 내보내기"),
     saveNote);
   box.append(el("div", { class: "port-sec-title" }, "자산군"),
-    el("div", { class: "table-wrap" }, table), btnRow, riskStatus);
+    el("div", { class: "table-wrap port-input-table-wrap" }, table), btnRow, riskStatus);
 
   const expTa = el("textarea", { class: "port-export", readonly: "", rows: "11",
                                  "aria-label": "CMA JSON" });
@@ -6648,31 +6647,14 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   expWrap.hidden = true;
   box.append(expWrap);
 
-  /* ③ 효율적 경계선 + ④ 벤치마크 성과 리뷰 */
+  /* ③ 상관계수 → ④ 효율적 경계선·벤치마크를 한 흐름으로 표시한다. */
   const frontCard = el("div", { class: "card port-sub-card port-frontier" });
   const reviewCard = el("div", { class: "card port-sub-card" });
-  const results = el("div", { id: "port-frontier-panel", class: "port-two", role: "tabpanel", "aria-labelledby": "port-tab-frontier" }, frontCard, reviewCard);
-  const correlation = el("div", { id: "port-correlation-panel", role: "tabpanel", "aria-labelledby": "port-tab-corr" },
+  const results = el("div", { id: "port-frontier-panel", class: "port-two" }, frontCard, reviewCard);
+  const correlation = el("section", { id: "port-correlation-panel", "aria-labelledby": "port-correlation-title" },
+    el("h3", { id: "port-correlation-title", class: "port-sec-title" }, "상관계수"),
     portCorrelationControl(P, W, st, recalc, portPanelDraft));
-  const tabs = el("div", { class: "port-result-tabs", role: "tablist", "aria-label": "자산배분 분석" });
-  const tabButtons = [];
-  const selectTab = (key) => {
-    portRiskTab = key; results.hidden = key !== "frontier"; correlation.hidden = key !== "corr";
-    tabButtons.forEach((b) => { const active = b.id === `port-tab-${key}`;
-      b.setAttribute("aria-selected", String(active)); b.setAttribute("tabindex", active ? "0" : "-1"); });
-  };
-  [["frontier", "효율적 경계선", results.id], ["corr", "상관계수", correlation.id]].forEach(([key, label, id]) => {
-    const button = el("button", { id: `port-tab-${key}`, type: "button", role: "tab", "aria-controls": id,
-      onclick: () => { selectTab(key); if (key === "frontier") recalc(); } }, label);
-    button.addEventListener("keydown", (ev) => {
-      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(ev.key)) return;
-      ev.preventDefault(); const i = ev.key === "Home" ? 0 : ev.key === "End" ? 1 : 1 - tabButtons.indexOf(button);
-      tabButtons[i].click(); tabButtons[i].focus();
-    });
-    tabButtons.push(button); tabs.append(button);
-  });
-  selectTab(portRiskTab);
-  box.append(tabs, correlation, results);
+  box.append(correlation, results);
 
   function recalc() {
     refreshAllocWorkspaceInfo();

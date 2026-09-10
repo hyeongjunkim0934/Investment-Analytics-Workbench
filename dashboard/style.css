@@ -1136,7 +1136,7 @@ a.kpi-link .kpi-label > span:first-child::after {
 /* 이 표만 가운데 정렬 — 열 제목과 그 아래 키인 칸이 세로로 맞아 보이게
    (2026-08-23 사용자 지시). 전역 td.num 우측 정렬을 여기서만 이긴다. */
 .port-table thead th, .port-table tbody td, .port-table tbody td.num { text-align: center; }
-.port-table input[type="number"] { width: 86px; text-align: center; }
+.port-table input[type="number"] { width: min(86px, 100%); min-width: 0; text-align: center; }
 /* μ 출처는 열이 아니라 키인 칸 아래 주석이다 */
 .port-src { display: block; font-size: 11px; color: var(--ink-3); margin-top: 2px; }
 .port-badge { font-size: 12.5px; padding: 2px 8px; border: 1px solid var(--border);
@@ -1191,8 +1191,7 @@ a.kpi-link .kpi-label > span:first-child::after {
 /* Portfolio working surface: compact terminal controls with one geometric language. */
 #alloc-port-panel { --port-accent: #edb45d; --port-input: #111820; }
 [data-theme="light"] #alloc-port-panel { --port-accent: #995800; --port-input: #fff; }
-#alloc-port-panel .btn-ghost, #alloc-port-panel .card-actions button,
-#alloc-port-panel .port-result-tabs button {
+#alloc-port-panel .btn-ghost, #alloc-port-panel .card-actions button {
   min-height: 32px; padding: 5px 11px; border: 1px solid var(--border); border-radius: 4px;
   background: var(--surface); color: var(--ink-2); font: inherit; font-size: 13px;
 }
@@ -1207,16 +1206,19 @@ a.kpi-link .kpi-label > span:first-child::after {
 }
 #alloc-port-panel input[aria-invalid="true"] { border-color: var(--up-ink); }
 #alloc-port-panel .table-wrap, #alloc-port-panel .card, #alloc-port-panel .chart-box { border-radius: 4px; }
-#alloc-port-panel .port-table th { white-space: nowrap; font-size: 13px; }
-#alloc-port-panel .port-table td { padding: 8px; font-variant-numeric: tabular-nums; }
+#alloc-port-panel .port-input-table-wrap { max-height: none; overflow: visible; min-width: 0; }
+#alloc-port-panel .port-table { table-layout: fixed; }
+#alloc-port-panel .port-table th { position: static; white-space: normal; overflow-wrap: anywhere; font-size: 13px; }
+#alloc-port-panel .port-table td { padding: 8px; white-space: normal; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+#alloc-port-panel .port-table input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+#alloc-port-panel .port-table input[type="number"]::-webkit-inner-spin-button,
+#alloc-port-panel .port-table input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 #alloc-port-panel .port-src { font-size: 12px; }
 #alloc-port-panel .port-grp { font-size: 14px; }
 #alloc-port-panel .port-axis-controls { font-size: 12px; }
 #alloc-port-panel .port-axis-toggle { width: 32px; height: 32px; padding: 4px; font-size: 12px; }
 #alloc-port-panel .port-axis-group input { min-height: 28px; padding: 4px; font-size: 12px; }
-.port-result-tabs { display: flex; gap: 6px; margin-top: 20px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-#alloc-port-panel .port-result-tabs [aria-selected="true"] { color: var(--port-accent); border-color: var(--port-accent); }
-.port-correlation { padding-top: 12px; }
+.port-correlation .table-wrap { max-height: none; }
 .port-corr-table { width: 100%; min-width: 780px; font-size: 13px; font-variant-numeric: tabular-nums; }
 .port-corr-table th, .port-corr-table td { padding: 9px 8px; text-align: center; white-space: nowrap; }
 .port-corr-table thead th { color: var(--ink-2); }
@@ -1242,6 +1244,17 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-asset-position b { font-size: 16px; line-height: 1; }
 .port-asset-coordinates { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
 #port-risk-status:empty { display: none; }
+@media (max-width: 700px) {
+  #alloc-port-panel .port-table thead { position: absolute; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); }
+  #alloc-port-panel .port-table, #alloc-port-panel .port-table tbody { display: block; }
+  #alloc-port-panel .port-table tbody tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 8px; border-bottom: 1px solid var(--border); }
+  #alloc-port-panel .port-table tbody td { display: block; min-width: 0; padding: 6px 4px; border: 0; }
+  #alloc-port-panel .port-table tbody td:first-child { grid-column: 1 / -1; text-align: left; font-weight: 600; }
+  #alloc-port-panel .port-table td[data-label]::before { content: attr(data-label); display: block;
+    margin-bottom: 6px; color: var(--ink-2); font-size: 12px; }
+}
 @media (max-width: 600px) {
   .port-asset-key { gap: 8px 12px; }
   .port-axis-group > span { width: 100%; }
