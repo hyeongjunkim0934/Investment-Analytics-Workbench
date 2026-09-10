@@ -1,4 +1,4 @@
-"""분류가 다른 두 자산배분 체계의 전환·입력·저장·표본 표시 계약."""
+"""자산배분의 세 탭 전환·입력·저장·표본 표시 계약."""
 import json
 import shutil
 import subprocess
@@ -22,7 +22,13 @@ def test_workspace_scope_and_metadata(workspace):
                 "onlyInstitutionVisible", "pressedState", "portTocRemoved",
                 "institutionTocRemoved", "workspaceExplanationRemoved", "hashUntouched"):
         assert workspace[key], key
-    assert workspace["workspaceLabels"] == ["포트폴리오", "기관배분·헤지"]
+    assert workspace["workspaceLabels"] == ["포트폴리오", "리스크연계", "기관배분/헤지"]
+
+
+def test_risk_workspace_is_separate_and_handles_missing_alloc(workspace):
+    for key in ("onlyRiskVisible", "riskSettingsReturnsToInstitution",
+                "riskMissingAllocClearsOldResult", "riskWarningRecovers"):
+        assert workspace[key], key
 
 
 def test_workspace_preserves_calculations_and_drafts(workspace):

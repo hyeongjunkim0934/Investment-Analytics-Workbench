@@ -992,7 +992,7 @@ details.explain[open] > summary { color: var(--ink-2); }
 }
 .sec-toc:empty { display: none; }
 
-/* 자산배분: 두 체계는 탭, 표본 선택은 각 패널의 콤보박스. */
+/* 자산배분: 포트폴리오 / 리스크연계 / 기관배분·헤지. */
 .alloc-workspace {
   margin: 8px 0 10px;
 }
@@ -1007,6 +1007,10 @@ details.explain[open] > summary { color: var(--ink-2); }
 .alloc-workspace-info {
   margin-top: 8px; font-size: 12px; overflow-wrap: anywhere;
 }
+.alloc-risk-scores { display: flex; flex-wrap: wrap; gap: 12px 28px; align-items: center; }
+.alloc-risk-scores > div { display: flex; gap: 8px; align-items: center; color: var(--ink-2); }
+.alloc-risk-scores strong { color: var(--ink-1); font-size: 20px; font-variant-numeric: tabular-nums; }
+#alloc-risk-source .card-head a { font-size: 13px; }
 .alloc-period { display: flex; gap: 8px 14px; flex-wrap: wrap; align-items: center; font-size: 12px; }
 .alloc-period label { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); }
 .alloc-period select, .alloc-period input[type="date"] {

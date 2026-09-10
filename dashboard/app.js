@@ -5073,6 +5073,32 @@ function allocFeasibility(E) {
    백테스트가 아니고 화면이 그 사실을 적는다. 반복 1200회는 3000회 대비 최대
    0.006%p(실측 — 표시 0.1%p 단위 아래)라 근사가 아니라 동일 해다. */
 const RP_ITERS = 1200;
+function renderAllocRiskSource() {
+  const card = $("#alloc-risk-source");
+  if (!card) return;
+  const R = DATA.risk;
+  card.textContent = "";
+  card.append(el("div", { class: "card-head" },
+    el("span", { class: "card-title" }, "리스크 결과"),
+    el("span", { class: "card-sub" }, R?.asof ? `기준일 ${R.asof}` : "기준일 없음"),
+    el("a", { href: "#risk" }, "리스크 보기"),
+    el("button", { type: "button", class: "btn-ghost", id: "alloc-risk-settings",
+      onclick: () => {
+        selectAllocWorkspace("institution");
+        document.getElementById("alloc-workspace-institution")?.focus();
+      } }, "배분 설정")));
+  const scores = el("div", { class: "alloc-risk-scores" });
+  [["stress", "현재 위험"], ["vuln", "잠재 위험"]].forEach(([key, label]) => {
+    const L = R?.layers?.[key];
+    const available = L?.score != null && Number.isFinite(+L.score);
+    scores.append(el("div", {}, label, " ",
+      el("strong", { id: `alloc-risk-score-${key}` }, available ? String(Math.round(+L.score)) : "—"),
+      " ", gradeChip(available ? L.grade : null)));
+  });
+  card.append(scores);
+  if (!R?.layers) card.append(el("div", { class: "card-sub" }, "리스크 데이터를 불러오지 못했습니다."));
+}
+
 function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
   card.textContent = "";
   const title = "리스크 연계";
@@ -5086,7 +5112,8 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
   const R = DATA.risk;
   const L = R && R.layers && R.layers[st.rp_layer];
   const hm = L && L.hist_m;
-  if (!hm || !Array.isArray(hm.t) || hm.t.length < 2) {
+  if (!hm || !Array.isArray(hm.t) || !Array.isArray(hm.v)
+      || hm.t.length !== hm.v.length || hm.t.length < 2) {
     return bail("리스크 점수 월별 이력(hist_m)이 없습니다 — 파이프라인 갱신 후 자동으로 복구됩니다.");
   }
 
@@ -5484,14 +5511,15 @@ function allocDonutSVG(entries, size) {
 
 /* ================= 자산배분 — 화면 ================= */
 
-/* 두 분석 체계는 자산 분류·표본·저장 키가 다르다. 선택은 화면 수명 동안만 유지하며,
-   전환할 때 패널을 다시 그리지 않아 저장 전 입력과 기존 계산을 그대로 보존한다. */
+/* 포트폴리오와 기관배분은 자산 분류·표본·저장 키가 다르다. 리스크연계는 홈페이지
+   리스크 결과와 기관배분 설정을 함께 사용한다. 전환만으로 재계산·저장하지 않는다. */
 let allocWorkspace = "port";
 const ALLOC_WORKSPACES = {
   port: { label: "포트폴리오", panels: ["alloc-port-panel"] },
-  institution: { label: "기관배분·헤지",
+  risk: { label: "리스크연계", panels: ["alloc-risk-source", "alloc-risk-proc"] },
+  institution: { label: "기관배분/헤지",
     panels: ["alloc-sim-panel", "alloc-headline", "alloc-summary", "alloc-controls",
-      "alloc-cards", "alloc-levers", "alloc-risk-proc"] },
+      "alloc-cards", "alloc-levers"] },
 };
 const allocWorkspaceContext = {};
 
@@ -6772,8 +6800,11 @@ function renderAlloc() {
   if (!$("#alloc")) return;
   renderAllocWorkspace();
   renderPortPanel(A, { preserveDraft: true });
+  renderAllocRiskSource();
   if (!A || !A.sets || !A.sets.length) {
     allocWorkspaceContext.institution = { warning: "기관 배분·헤지 데이터를 불러오지 못했습니다." };
+    allocWorkspaceContext.risk = { warning: "배분 데이터를 불러오지 못해 리스크연계 계산을 보류합니다." };
+    $("#alloc-risk-proc").textContent = "배분 데이터 없음 — 리스크연계 계산 보류";
     ALLOC_WORKSPACES.institution.panels.forEach((id) => {
       const n = document.getElementById(id);
       if (n) n.textContent = "";
@@ -6797,6 +6828,7 @@ function renderAlloc() {
   /* 층·창·매핑 표식용 엔진 한 벌 — recalc 는 매번 새로 만들므로 이건 표시 전용이다 */
   const E0 = allocEngine(A, st);
   allocWorkspaceContext.institution = { warning: E0.layerNote };
+  allocWorkspaceContext.risk = { warning: E0.layerNote };
   refreshAllocWorkspaceInfo();
 
   /* ---- ⓪ 포트폴리오 시뮬레이터 (§7.7.8 — 화면 최상단, 2026-08-11 사용자 지시) ----
