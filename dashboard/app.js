@@ -3353,8 +3353,28 @@ function makeRatioChart(box, opts) {
     legend: { live: true },
   };
   if (yRange) cfg.scales.y = { range: () => yRange };
-  if (band != null || zeroLine) {
+  // Annual return dispersion (mu +/- sigma), not uncertainty of the estimated mean.
+  // Draw behind the cloud/curves and clip to the user's selected axes.
+  if (opts.intervals?.length) {
     cfg.hooks = { drawClear: [(u) => {
+      const { ctx, bbox } = u, dpr = devicePixelRatio || 1;
+      ctx.save(); ctx.beginPath(); ctx.rect(bbox.left, bbox.top, bbox.width, bbox.height); ctx.clip();
+      ctx.lineWidth = dpr; ctx.setLineDash([]);
+      opts.intervals.forEach((m) => {
+        if (![m.x, m.low, m.high].every(Number.isFinite) || m.low > m.high) return;
+        const x = u.valToPos(m.x, "x", true), top = u.valToPos(m.high, "y", true), bottom = u.valToPos(m.low, "y", true);
+        if (![x, top, bottom].every(Number.isFinite)) return;
+        ctx.strokeStyle = hexA(m.color || pal.ink3, 0.25);
+        ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom);
+        [top, bottom].forEach((y) => { ctx.moveTo(x - 4 * dpr, y); ctx.lineTo(x + 4 * dpr, y); });
+        ctx.stroke();
+      });
+      ctx.restore();
+    }] };
+  }
+  if (band != null || zeroLine) {
+    cfg.hooks = cfg.hooks || {};
+    (cfg.hooks.drawClear = cfg.hooks.drawClear || []).push((u) => {
       const { ctx, bbox } = u;
       ctx.save();
       if (zeroLine) {
@@ -3373,7 +3393,7 @@ function makeRatioChart(box, opts) {
         ctx.setLineDash([]);
       }
       ctx.restore();
-    }] };
+    });
   }
   if (opts.area || opts.reference || opts.cloud) {
     cfg.hooks = cfg.hooks || {};
@@ -3448,7 +3468,14 @@ function makeRatioChart(box, opts) {
       const dpr = devicePixelRatio || 1;
       ctx.save();
       ctx.font = `${11 * dpr}px sans-serif`;
+      // uPlot's axis renderer can leave right/center alignment on the canvas.
+      ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
       const labelBoxes = [];
+      const pendingLabels = [];
+      const markerBoxes = opts.markers.map((m) => {
+        const x = u.valToPos(m.x, "x", true), y = u.valToPos(m.y, "y", true), r = ((m.size || 5) + 5) * dpr;
+        return { x: x - r, y: y - r, w: 2 * r, h: 2 * r };
+      });
       const markerBackground = cssVar("--page");
       opts.markers.forEach((m) => {
         const px = u.valToPos(m.x, "x", true), py = u.valToPos(m.y, "y", true);
@@ -3482,25 +3509,40 @@ function makeRatioChart(box, opts) {
           ctx.arc(px, py, r * 0.8, 0, Math.PI * 2); ctx.fill();
         }
         if (m.label && (!opts.markerLegend || m.inlineLabel)) {
+          pendingLabels.push({ m, px, py, r });
+        }
+      });
+      // Paint labels after every point; reserve space around all point symbols.
+      pendingLabels.forEach(({ m, px, py, r }) => {
           let lx = px + r + 4 * dpr, ly = py + 4 * dpr;
           if (m.inlineLabel && bbox) {
             const fontSize = m.asset ? 10 : 12;
             ctx.font = `${fontSize * dpr}px system-ui, sans-serif`;
             const width = ctx.measureText(m.label)?.width || m.label.length * fontSize * dpr;
-            lx = Math.max(bbox.left + 3 * dpr, Math.min(lx, bbox.left + bbox.width - width - 3 * dpr));
-            const overlaps = (y) => labelBoxes.some((b) => lx < b.x + b.w + 4 * dpr && lx + width + 4 * dpr > b.x && Math.abs(y - b.y) < 16 * dpr);
-            for (let k = 0; k < 16; k++) {
-              const offset = k === 0 ? 0 : Math.ceil(k / 2) * 17 * dpr * (k % 2 ? -1 : 1);
-              const y = Math.max(bbox.top + 14 * dpr, Math.min(py + 4 * dpr + offset, bbox.top + bbox.height - 4 * dpr));
-              if (!overlaps(y)) { ly = y; break; }
+            const h = (fontSize + 4) * dpr, gap = 9 * dpr, inset = 4 * dpr;
+            const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+            let placed = null;
+            for (let k = 0; k < 16 && !placed; k++) {
+              const offset = k === 0 ? 0 : Math.ceil(k / 2) * (h + 3 * dpr) * (k % 2 ? -1 : 1);
+              for (const x of [px + r + gap, px - r - gap - width]) {
+                const b = {
+                  x: Math.max(bbox.left + inset, Math.min(x, bbox.left + bbox.width - width - inset)),
+                  y: Math.max(bbox.top + inset, Math.min(py - h / 2 + offset, bbox.top + bbox.height - h - inset)),
+                  w: width, h,
+                };
+                if (!markerBoxes.concat(labelBoxes).some((other) => overlaps(b, other))) { placed = b; break; }
+              }
             }
-            labelBoxes.push({ x: lx, y: ly, w: width });
+            // Extremely crowded/cropped views retain exact names in the asset key below.
+            if (!placed) return;
+            lx = placed.x; ly = placed.y + fontSize * dpr;
+            labelBoxes.push({ x: placed.x - 3 * dpr, y: placed.y - 2 * dpr, w: width + 6 * dpr, h: h + 4 * dpr });
             ctx.strokeStyle = markerBackground;
             ctx.lineWidth = 3 * dpr; ctx.strokeText(m.label, lx, ly);
             ctx.fillStyle = m.asset ? hexA(m.color || pal.ink, 0.62) : m.color || pal.ink;
           }
+          else ctx.fillStyle = m.color || pal.ink;
           ctx.fillText(m.label, lx, ly);
-        }
       });
       ctx.restore();
     });
@@ -6702,6 +6744,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     frontCard.querySelector(".card-actions").append(portPaletteControl(recalc));
     const markers = P.assets.map((a, i) => ({ x: E.risk.sig[i], y: E.mu[i], kind: "ring", size: 5,
       label: a, symbol: "○", color: colors.asset, inlineLabel: true, asset: true }));
+    const intervals = markers.map((m) => ({ ...m, low: m.y - m.x, high: m.y + m.x }));
     if (E.minVar) markers.push({ x: E.minVar.sig, y: E.minVar.mu, kind: "diamond", size: 7,
                                  label: "최소위험", symbol: "◆", color: colors.min });
     if (E.maxSharpe) markers.push({ x: E.maxSharpe.sig, y: E.maxSharpe.mu, kind: "diamond", size: 7,
@@ -6719,7 +6762,10 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const minY = allY.length ? Math.min(...allY) : 0, maxY = allY.length ? Math.max(...allY) : 1;
     const spanX = Math.max(0.005, maxX - minX), spanY = Math.max(0.2, maxY - minY);
     const xRange = portAxisLimits?.x || [Math.max(0, minX - spanX * 0.14), maxX + spanX * 0.18];
-    const yRange = portAxisLimits?.y || [minY - spanY * 0.32, maxY + spanY * 0.28];
+    const intervalLow = Math.min(...intervals.map((m) => m.low)), intervalHigh = Math.max(...intervals.map((m) => m.high));
+    const intervalPad = Math.max(0.2, intervalHigh - intervalLow) * 0.06;
+    const yRange = portAxisLimits?.y || [Math.min(minY - spanY * 0.32, intervalLow - intervalPad),
+      Math.max(maxY + spanY * 0.28, intervalHigh + intervalPad)];
     const actions = frontCard.querySelector(".card-actions");
     actions.insertBefore(portAxisControls(xRange, yRange, recalc), actions.querySelector(".port-palette"));
     const visibleMarkers = markers.filter((m) => m.x >= xRange[0] && m.x <= xRange[1]
@@ -6752,7 +6798,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       area: E.robustOk && E.kappa > 0 ? { x: xsF, upper: ysF, lower, color: colors.robust, opacity: [0.025, 0.06, 0.12] } : null,
       reference: E.front, referenceColor: colors.nominal, cloud: E.cloud, cloudOpacity: 0.25,
       xLabel: "변동성 · 연 %", axisTitles: { y: "기대수익 · 연 %", inside: true }, unit: "%", height: 470,
-      markers: visibleMarkers, markerLegend: true,
+      markers: visibleMarkers, markerLegend: true, intervals,
       xRange, yRange, hoverDecimals: 2,
       onCursor: showPoint,
     }));
@@ -6760,9 +6806,12 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     markers.filter((m) => !m.asset).forEach((m) => key.append(el("span", { class: "port-marker-key",
       style: visibleMarkers.includes(m) ? "" : "opacity:.45" },
       el("b", { style: `color:${m.color}` }, m.symbol), m.label)));
+    key.append(el("span", { class: "port-marker-key", title: "연 기대수익률 ± 연 변동성 · 평균 추정치의 신뢰구간이 아님" },
+      el("b", { style: `color:${hexA(colors.asset, 0.4)}` }, "↕"), "자산 ±1σ"));
     frontCard.append(key);
     const assetKey = el("div", { class: "port-asset-key", "aria-label": "자산 위치 · 변동성 / 기대수익 · 연 %" });
     markers.filter((m) => m.asset).forEach((m) => assetKey.append(el("span", { class: "port-asset-position",
+      title: `±1σ · ${fmtNum(m.y - m.x, 2)}% ~ ${fmtNum(m.y + m.x, 2)}% · 연`,
       style: visibleMarkers.includes(m) ? "" : "opacity:.45" },
       el("b", { style: `color:${m.color}` }, m.symbol), m.label,
       el("span", { class: "port-asset-coordinates" }, `${fmtNum(m.x, 2)} / ${fmtNum(m.y, 2)}`))));

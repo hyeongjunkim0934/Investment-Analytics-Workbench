@@ -53,13 +53,55 @@ const click=(text)=>{const n=button(text);assert(n,text+' missing');n.click();};
 shim.UPlotStub.prototype.destroy=function(){this.dead=true;};
 const chart=()=>shim.UPlotStub.made.filter(n=>!n.dead&&n.opts.series.some(s=>s.label==='경계선')).pop();
 const live=()=>shim.UPlotStub.made.filter(n=>!n.dead);
-function draw(c){
-  const commands=[],bbox={left:50,top:10,width:650,height:300};
-  const ctx=new Proxy({createLinearGradient(...a){commands.push(['gradient',...a]);return {addColorStop(...b){commands.push(['stop',...b]);}};}},{get(o,k){return k in o?o[k]:(...a)=>commands.push([k,...a]);},set(o,k,v){o[k]=v;return true;}});
+function draw(c,dpr=1){
+  const commands=[],bbox={left:50*dpr,top:10*dpr,width:650*dpr,height:300*dpr};
+  const textBounds=[],strokes=[],symbols=[],stack=[];
+  let path=[],stage='drawClear';
+  // Model Canvas state instead of merely recording save/restore. Real uPlot leaves
+  // its left y-axis alignment (right/middle) behind before custom draw hooks run.
+  const state={textAlign:'right',textBaseline:'middle',font:'12px sans-serif',
+    fillStyle:'#000000',strokeStyle:'#000000',lineWidth:1,globalAlpha:1,clipBox:null};
+  const metrics=(text)=>{
+    const size=parseFloat(ctx.font),width=Array.from(text).reduce((n,ch)=>n+(ch.charCodeAt(0)>255?1:.58)*size,0);
+    return {width,actualBoundingBoxAscent:size*.8,actualBoundingBoxDescent:size*.2};
+  };
+  const recordShape=(kind)=>{
+    commands.push([kind]);
+    if(kind==='stroke')strokes.push({path:path.map(p=>p.slice()),stage,color:ctx.strokeStyle,
+      width:ctx.lineWidth,alpha:ctx.globalAlpha,clip:ctx.clipBox&&{...ctx.clipBox}});
+    if(stage!=='draw')return;
+    const points=path.flatMap(p=>p[0]==='arc'?[[p[1]-p[3],p[2]-p[3]],[p[1]+p[3],p[2]+p[3]]]
+      :['moveTo','lineTo'].includes(p[0])?[[p[1],p[2]]]:[]);
+    if(points.length){const xs=points.map(p=>p[0]),ys=points.map(p=>p[1]);
+      symbols.push({x:Math.min(...xs),y:Math.min(...ys),w:Math.max(...xs)-Math.min(...xs),h:Math.max(...ys)-Math.min(...ys)});}
+  };
+  const target={...state,
+    save(){stack.push(Object.fromEntries(Object.keys(state).map(k=>[k,this[k]])));commands.push(['save']);},
+    restore(){Object.assign(this,stack.pop());commands.push(['restore']);},
+    beginPath(){path=[];commands.push(['beginPath']);},
+    measureText:metrics,
+    stroke(){recordShape('stroke');},fill(){recordShape('fill');},
+    fillText(text,x,y){
+      const m=metrics(text),size=parseFloat(this.font);
+      const left=x-(['right','end'].includes(this.textAlign)?m.width:this.textAlign==='center'?m.width/2:0);
+      const top=y-(this.textBaseline==='middle'?size/2:this.textBaseline==='top'?0:this.textBaseline==='bottom'?size:m.actualBoundingBoxAscent);
+      textBounds.push({text,x:left,y:top,w:m.width,h:size,align:this.textAlign,baseline:this.textBaseline});
+      commands.push(['fillText',text,x,y]);
+    },
+    createLinearGradient(...a){commands.push(['gradient',...a]);return {addColorStop(...b){commands.push(['stop',...b]);}};},
+  };
+  target.clip=function(){const r=path.find(p=>p[0]==='rect');this.clipBox=r?{left:r[1],top:r[2],width:r[3],height:r[4]}:this.clipBox;commands.push(['clip']);};
+  const ctx=new Proxy(target,{get(o,k){return k in o?o[k]:(...a)=>{
+    commands.push([k,...a]);if(['moveTo','lineTo','rect','arc','closePath'].includes(k))path.push([k,...a]);
+  };},set(o,k,v){o[k]=v;return true;}});
   const xr=c.opts.scales.x.range,yr=c.opts.scales.y.range();
   const u={ctx,bbox,valToPos(v,axis){return axis==='x'?bbox.left+(v-xr[0])/(xr[1]-xr[0])*bbox.width:bbox.top+(yr[1]-v)/(yr[1]-yr[0])*bbox.height;}};
-  (c.opts.hooks.drawClear||[]).forEach(fn=>fn(u));(c.opts.hooks.draw||[]).forEach(fn=>fn(u));
+  const oldDpr=sandbox.devicePixelRatio;sandbox.devicePixelRatio=dpr;
+  try{(c.opts.hooks.drawClear||[]).forEach(fn=>fn(u));stage='draw';(c.opts.hooks.draw||[]).forEach(fn=>fn(u));}
+  finally{sandbox.devicePixelRatio=oldDpr;}
   assert(commands.filter(x=>['lineTo','moveTo'].includes(x[0])).every(x=>x.slice(1).every(Number.isFinite)));
+  Object.assign(commands,{textBounds,strokes,symbols,bbox,
+    value:(p)=>[xr[0]+(p[0]-bbox.left)/bbox.width*(xr[1]-xr[0]),yr[1]-(p[1]-bbox.top)/bbox.height*(yr[1]-yr[0])]});
   return commands;
 }
 function assertContained(c){
@@ -308,6 +350,55 @@ shim.localStorage.setItem(P.PORT_LS_KEY,JSON.stringify({...legacySaved,
   corr:{...legacySaved.corr,[canonicalPair]:.22}}));
 assert.equal(state().mu.국내장부,2.8);assert.equal(state().sig.국내장부,.8);
 assert.equal(state().corr[canonicalPair],.22);
+// Annual percentage endpoints are checked from painted coordinates, independently
+// of the interval objects. Equal asset coordinates exercise collision placement.
+const dispersionState={...P.portDefaults(SIX_ASSET_FIXTURE.port),
+  mu:{국내채권:4,국내장부:3,해외채권:4,국내주식:8,해외주식:8,대체투자:11},
+  sig:{국내채권:4.41,국내장부:2,해외채권:4.41,국내주식:25,해외주식:13.75,대체투자:22.15}};
+shim.localStorage.setItem(P.PORT_LS_KEY,JSON.stringify(dispersionState));P.renderPortPanel(SIX_ASSET_FIXTURE);
+const expectedIntervals=[[4.41,-.41,8.41],[2,1,5],[4.41,-.41,8.41],[25,-17,33],[13.75,-5.75,21.75],[22.15,-11.15,33.15]];
+const intervalStrokes=(paint)=>paint.strokes.filter(s=>s.stage==='drawClear'&&s.path.length===6
+  &&s.path.every((p,i)=>p[0]===(i%2?'lineTo':'moveTo')));
+const near=(actual,expected)=>assert(Math.abs(actual-expected)<1e-9,actual+' differs from '+expected);
+for(const dpr of [1,2]){
+  const paint=draw(chart(),dpr),bars=intervalStrokes(paint);
+  assert.equal(bars.length,6);
+  bars.forEach((s,i)=>{
+    const top=paint.value(s.path[0].slice(1)),bottom=paint.value(s.path[1].slice(1));
+    near(top[0],expectedIntervals[i][0]);near(bottom[0],expectedIntervals[i][0]);
+    near(top[1],expectedIntervals[i][2]);near(bottom[1],expectedIntervals[i][1]);
+    assert.deepEqual(s.clip,paint.bbox);assert(s.width<=dpr);assert(/,0\.25\)$/.test(s.color));
+  });
+  const labels=paint.textBounds.filter(t=>expectedAssets.includes(t.text));
+  assert.equal(labels.length,6);
+  const overlaps=(a,b)=>Math.min(a.x+a.w,b.x+b.w)>Math.max(a.x,b.x)
+    &&Math.min(a.y+a.h,b.y+b.h)>Math.max(a.y,b.y);
+  labels.forEach((t,i)=>{
+    assert.equal(t.align,'left');assert.equal(t.baseline,'alphabetic');
+    assert(!paint.symbols.some(s=>overlaps(t,s)),t.text+' overlaps a painted marker');
+    assert(!labels.slice(i+1).some(other=>overlaps(t,other)),t.text+' overlaps another label');
+    assert(t.x>=paint.bbox.left&&t.x+t.w<=paint.bbox.left+paint.bbox.width);
+    assert(t.y>=paint.bbox.top&&t.y+t.h<=paint.bbox.top+paint.bbox.height);
+  });
+}
+assert(chart().opts.scales.y.range()[0]<-17&&chart().opts.scales.y.range()[1]>33.15);
+const dispersionData=JSON.stringify(chart().data),dispersionSaved=shim.localStorage.getItem(P.PORT_LS_KEY);
+setBounds([0,30,20,22]);
+const cropped=draw(chart()),croppedBars=intervalStrokes(cropped);
+// No mean is in this view, but three return-dispersion bars still cross it.
+assert.equal(cropped.textBounds.filter(t=>expectedAssets.includes(t.text)).length,0);
+assert.equal(croppedBars.length,6);
+const stockBar=croppedBars.find(s=>Math.abs(cropped.value(s.path[0].slice(1))[0]-25)<1e-9);
+assert(stockBar.path[0][2]<cropped.bbox.top&&stockBar.path[1][2]>cropped.bbox.top+cropped.bbox.height);
+assert.deepEqual(stockBar.clip,cropped.bbox);
+assert.deepEqual(Array.from(chart().opts.scales.y.range()),[20,22]);
+assert.equal(JSON.stringify(chart().data),dispersionData);
+assert.equal(shim.localStorage.getItem(P.PORT_LS_KEY),dispersionSaved);
+edit('국내주식 변동성',0);
+assert.deepEqual(Array.from(chart().opts.scales.y.range()),[20,22]);
+const zeroPaint=draw(chart()),zeroBar=intervalStrokes(zeroPaint).find(s=>Math.abs(zeroPaint.value(s.path[0].slice(1))[0])<1e-9);
+assert(zeroBar);near(zeroPaint.value(zeroBar.path[0].slice(1))[1],8);near(zeroPaint.value(zeroBar.path[1].slice(1))[1],8);
+click('자동');assert(shim.localStorage.getItem('iaw-port-axis')===null);
 assert.equal(live().length,1);assert.equal(inspect.live().length,1);
 console.log(JSON.stringify({pass:true,allRange,liveCharts:live().length,hoverDecimals:2,assets:expectedAssets,axisReload:true,legacyMigration:true}));
 `;
