@@ -1221,6 +1221,7 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-tooltip-columns > :not(:first-child), .port-tooltip-weight > :not(:first-child) { text-align: right; }
 .port-tooltip-weight > * { min-width: 0; overflow-wrap: anywhere; }
 .port-tooltip-weight b { color: var(--ink-1); font-weight: 500; }
+.port-tooltip-return, .port-tooltip-risk { color: var(--ink-2); font-weight: 400; }
 .port-tooltip-basis { font-size: 10px; margin: 3px 0; }
 .port-tooltip-range { display: flex; flex-wrap: wrap; gap: 2px 8px; margin-bottom: 4px; }
 .port-tooltip-bound { display: flex; justify-content: space-between; gap: 8px; }

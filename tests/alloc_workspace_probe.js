@@ -43,23 +43,22 @@ P.renderSection("alloc");
 r.noRenderErrors = byId("alloc").querySelectorAll(".render-error").length === 0;
 r.defaultPort = !byId("alloc-port-panel").hidden && byId("alloc-sim-panel").hidden;
 r.portContext = byId("alloc-workspace-info").hidden
-  && byId("alloc-workspace").textContent === "포트폴리오리스크연계기관배분/헤지"
+  && byId("alloc-workspace").textContent === "포트폴리오리스크연계"
   && /2027-01-31~2030-06-30/.test(periodText("alloc-port-panel"))
   && /42개월/.test(periodText("alloc-port-panel"));
 r.workspaceExplanationRemoved = !/대체 통합|달러\/원화 유동성|체계별 입력 별도 저장|브라우저 저장값/.test(
   byId("alloc-workspace").textContent);
 r.portTocRemoved = byId("alloc-toc") === null;
 const beforeSelect = snapshot();
-choose("institution");
+choose("risk");
 r.institutionContext = byId("alloc-workspace-info").hidden
   && /2026-01-31~2030-06-30/.test(periodText("alloc-sim-panel"))
   && /54개월/.test(periodText("alloc-sim-panel"));
 const institutionPanels = ["alloc-sim-panel", "alloc-headline", "alloc-summary", "alloc-controls",
   "alloc-cards", "alloc-levers"];
-r.onlyInstitutionVisible = byId("alloc-port-panel").hidden
-  && institutionPanels.every((id) => !byId(id).hidden)
-  && byId("alloc-risk-source").hidden && byId("alloc-risk-proc").hidden;
-const activeButton = byId("alloc-workspace-institution");
+r.retiredPanelsHidden = institutionPanels.every((id) => byId(id).hidden)
+  && byId("alloc-workspace-institution") === null;
+const activeButton = byId("alloc-workspace-risk");
 r.pressedState = activeButton.getAttribute("aria-pressed") === "true"
   && byId("alloc-workspace-port").getAttribute("aria-pressed") === "false";
 r.institutionTocRemoved = byId("alloc-toc") === null;
@@ -69,31 +68,30 @@ choose("risk");
 r.onlyRiskVisible = !byId("alloc-risk-source").hidden && !byId("alloc-risk-proc").hidden
   && byId("alloc-port-panel").hidden && institutionPanels.every((id) => byId(id).hidden)
   && byId("alloc-workspace-risk").getAttribute("aria-pressed") === "true";
-byId("alloc-risk-settings").click();
-r.riskSettingsReturnsToInstitution = !byId("alloc-sim-panel").hidden
-  && byId("alloc-risk-proc").hidden && DOC.activeElement === byId("alloc-workspace-institution");
+r.retiredSettingsLinkRemoved = byId("alloc-risk-settings") === null;
 choose("port");
 r.switchDoesNotSave = snapshot() === beforeSelect;
 r.switchDoesNotRecalculateNumbers = engineValues() === originalNumbers;
 r.hashUntouched = shim.location.hash === "#alloc";
 
-/* 저장 전 초안은 전환만으로 버려지거나 다른 체계로 섞이지 않아야 한다. */
+/* 기관 패널은 숨겨진 DOM에서 기존 저장/엔진 호환만 검사한다.
+   사용자 전환은 포트폴리오/리스크연계 두 탭으로만 수행한다. */
 const portWeight = input("alloc-port-panel", "국내채권 비중");
 change(portWeight, 31.2);
 r.portDirty = +portWeight.value === 31.2 && shim.localStorage.getItem("iaw-port") === null;
-choose("institution");
+choose("risk");
 const instWeight = byId("sim-mix-국내채권");
 const instOriginal = +instWeight.value;
 change(instWeight, instOriginal + 1);
 r.institutionDirty = +instWeight.value === instOriginal + 1 && shim.localStorage.getItem("iaw-alloc") === null;
 choose("port");
 r.portDraftPreserved = input("alloc-port-panel", "국내채권 비중") === portWeight && +portWeight.value === 31.2;
+choose("port");
 choose("risk");
-choose("institution");
 r.institutionDraftPreserved = byId("sim-mix-국내채권") === instWeight && +instWeight.value === instOriginal + 1;
 P.renderSection("alloc");
-r.selectionSurvivesRerender = byId("alloc-port-panel").hidden && !byId("alloc-sim-panel").hidden
-  && byId("alloc-workspace-institution").getAttribute("aria-pressed") === "true";
+r.selectionSurvivesRerender = byId("alloc-port-panel").hidden && byId("alloc-sim-panel").hidden
+  && byId("alloc-workspace-risk").getAttribute("aria-pressed") === "true";
 r.portDraftSurvivesRerender = +input("alloc-port-panel", "국내채권 비중").value === 31.2;
 
 /* 기존 저장 규약 그대로: λ·μ 변경이 현재 입력을 함께 저장한다. */
@@ -130,11 +128,11 @@ r.newDatasetStartsFromSaved = +input("alloc-port-panel", "국내채권 비중").
 /* 비활성/대체 이유를 상단에서도 보이며, 한 체계의 누락이 다른 체계를 막지 않는다. */
 P.DATA.alloc = ALLOC_FIXTURE;
 P.renderSection("alloc");
-choose("institution");
+choose("risk");
 r.fallbackShown = /프록시로 계산/.test(info()) && /벤치마크 CMA 없음/.test(info());
 P.DATA.alloc = { ...CMA_ALLOC, sets: [] };
 P.renderSection("alloc");
-r.institutionMissingShown = /기관\s?배분·헤지 데이터를 불러오지 못했습니다/.test(info());
+r.riskMissingShown = /배분 데이터를 불러오지 못해 리스크연계 계산을 보류/.test(info());
 choose("risk");
 r.riskMissingAllocClearsOldResult = /보류/.test(info())
   && /배분 데이터 없음/.test(byId("alloc-risk-proc").textContent)
@@ -145,13 +143,14 @@ r.portWorksWithoutInstitution = !byId("alloc-port-panel").hidden
 P.DATA.alloc = { ...CMA_ALLOC, port: { active: false, reason: "합성 데이터 없음" } };
 P.renderSection("alloc");
 r.portMissingShown = /합성 데이터 없음/.test(info());
-choose("institution");
-r.institutionWorksWithoutPort = !byId("alloc-sim-panel").hidden && !!byId("alloc-lambda");
+choose("risk");
+r.riskWorksWithoutPort = !byId("alloc-risk-proc").hidden && !!byId("alloc-lambda");
 choose("risk");
 r.riskWarningRecovers = byId("alloc-workspace-info").hidden;
 choose("port");
 P.openAllocDetail("sim");
-r.detailSelectsInstitution = byId("alloc-port-panel").hidden && !byId("alloc-sim-panel").hidden;
+r.detailReturnsToRisk = byId("alloc-port-panel").hidden && byId("alloc-sim-panel").hidden
+  && !byId("alloc-risk-proc").hidden && byId("alloc-workspace-institution") === null;
 P.hideDetail();
 
 /* 서로 다른 창 통계로 선택값·표·차트·저장을 연결해서 확인한다. */
@@ -187,7 +186,7 @@ const savedPortPeriod = shim.localStorage.getItem("iaw-port");
 change(byId("port-period"), "10", "change");
 r.unavailablePeriodIgnored = byId("port-period").value === "3"
   && shim.localStorage.getItem("iaw-port") === savedPortPeriod;
-choose("institution");
+choose("risk");
 const instWindow = sampled.cma.windows.find((w) => w.key !== byId("institution-period").value);
 change(byId("institution-period"), instWindow.key, "change");
 r.institutionPeriodSelected = JSON.parse(shim.localStorage.getItem("iaw-alloc")).cma_win === instWindow.key
@@ -235,7 +234,7 @@ P.renderPortPanel(sampled);
 r.unavailableSavedPeriodFallsBack = byId("port-period").value === "all";
 P.DATA.alloc = ALLOC_FIXTURE;
 P.renderSection("alloc");
-choose("institution");
+choose("risk");
 change(byId("institution-period"), "y2015", "change");
 r.proxyPeriodSelected = JSON.parse(shim.localStorage.getItem("iaw-alloc")).start_key === "y2015"
   && P.allocEngine(ALLOC_FIXTURE, P.allocState(ALLOC_FIXTURE)).set.key === "y2015"
@@ -246,7 +245,7 @@ r.finalNoRenderErrors = byId("alloc").querySelectorAll(".render-error").length =
 P.DATA.alloc = CMA_ALLOC;
 shim.localStorage.removeItem("iaw-alloc");
 P.renderSection("alloc");
-choose("institution");
+choose("risk");
 const selectValue = (id, value) => {
   const n = byId(id);
   if (!n || n.tagName !== "SELECT") throw new Error(`missing select: ${id}`);

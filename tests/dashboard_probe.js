@@ -1771,14 +1771,14 @@ safe("allocToc", () => {
   shim.localStorage.removeItem("iaw-alloc");
   P.DATA.alloc = CMA_ALLOC;
   P.renderSection("alloc");
-  DOC.getElementById("alloc-workspace-institution").click();
+  DOC.getElementById("alloc-workspace-risk").click();
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
   r.tocRemoved = DOC.getElementById("alloc-toc") === null;
   r.workspaceButtons = [...DOC.getElementById("alloc-workspace").querySelectorAll("button")]
     .map((b) => b.textContent);
   const hash = shim.location.hash;
   DOC.getElementById("alloc-workspace-port").click();
-  DOC.getElementById("alloc-workspace-institution").click();
+  DOC.getElementById("alloc-workspace-risk").click();
   r.workspaceSwitchPreservesHash = shim.location.hash === hash;
   shim.localStorage.removeItem("iaw-alloc");
   return r;
@@ -2105,9 +2105,9 @@ safe("simPanel", () => {
   shim.localStorage.removeItem("iaw-alloc");
   P.renderSection("alloc");
   const panel = DOC.getElementById("alloc-sim-panel");
-  DOC.getElementById("alloc-workspace-institution").click();
+  DOC.getElementById("alloc-workspace-risk").click();
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  r.institutionPanelVisible = !panel.hidden && DOC.getElementById("alloc-port-panel").hidden;
+  r.institutionPanelHidden = panel.hidden && DOC.getElementById("alloc-port-panel").hidden;
   /* **비중 막대만** 센다 — §7.7.15 에서 헤지 슬라이더도 같은 .sim-bar-wrap 래퍼를
      쓰게 되어(최적 ▼ 마커 공유) 패널 전체 셀렉터는 9개를 세게 됐다. 축이 다른 둘을
      한 수로 묶으면 어느 쪽이 깨져도 이 검사가 거짓말한다 — 행(.sim8-row)으로 좁힌다.
