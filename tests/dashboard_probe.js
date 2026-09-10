@@ -101,11 +101,10 @@ secNodes.events.append(elem("details", "events-rules"));
 /* 환헤지 뼈대 — index.html 의 #hedge 안 구조를 그대로 흉내 낸다.
    renderHedge() 가 만지는 컨테이너가 하나라도 없으면 그 자리에서 죽으므로,
    이 목록 자체가 index.html 과의 계약이다. */
-["hedge-headline", "hedge-views", "hedge-lead", "hedge-matrix",
+["hedge-headline", "hedge-period", "hedge-lead", "hedge-matrix",
  "hedge-curve-card", "hedge-bt-card", "hedge-cost-card", "hedge-mtm-card",
  "hedge-ts-card", "hedge-merit-card"]
   .forEach((id) => secNodes.hedge.append(elem("div", id, "card")));
-secNodes.hedge.append(elem("details", "hedge-method"));
 
 /* ACWI 뼈대 — 시장 폭 카드 포함 */
 ["acwi-stats", "card-acwi-price", "card-acwi-dd", "card-breadth"]
@@ -118,6 +117,7 @@ secNodes.macro.append(elem("div", "macro-grid"));
 let REDUCED = false;        // prefers-reduced-motion 스위치 (아래 sceneCycle 프로브가 쓴다)
 const INTERVALS = [];       // app.js 가 건 setInterval 기록 (실제로 걸지는 않는다)
 const FETCH_CALLS = [];     // 네트워크 호출 기록 (시뮬레이터 유출 검사용)
+const CSV_DOWNLOADS = [];   // CSV 버튼이 실제로 내보낸 원시 문자열
 
 /* 브리핑 TTS 스텁 — speak/cancel 을 기록만 한다. voices 배열을 프로브가 갈아 끼우며
    "기기 내(localService) 한국어 음성만 쓴다" 규약을 실행으로 확인한다(아래 eventsBrief). */
@@ -166,6 +166,8 @@ const sandbox = {
      여기서도 전역으로 넣어 준다(노드 22 내장, 외부 의존성 0). */
   crypto: globalThis.crypto,
   TextEncoder, TextDecoder,
+  Blob: class { constructor(parts) { this.text = parts.join(""); } },
+  URL: { createObjectURL: (blob) => { CSV_DOWNLOADS.push(blob.text); return "blob:probe"; } },
   speechSynthesis: speechStub,
   SpeechSynthesisUtterance: UtterStub,
 };
@@ -187,6 +189,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "bandInk", "relLum", "deltaText", "factorRow", "renderEvents", "renderMetaLine",
   "cardScaffold", "el", "registry", "DATA", "BANDS", "SECTION_IDS", "palette",
   "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY",
+  "HEDGE_PERIOD", "hedgePeriodData", "applyRange", "bindRangeButtons", "state",
   "SCENE_CYCLE_MS", "sceneCycleAllowed", "restartSceneCycle", "stopSceneCycle",
   "renderVillage", "allocSaveState", "villageNotesInvalidate", "allocRefModel", "VILLAGE_NOTES", "VILLAGE_ZONES", "VILLAGE_BANNER",
   "currentScene", "currentTheme", "syncThemeButton",
@@ -622,6 +625,7 @@ safe("hedgeScreen", () => {
     signKey: P.COST_SIGN_KEY,
     headline: txt("hedge-headline"),
     views: txt("hedge-views"),
+    explanationCount: DOC.getElementById("hedge").querySelectorAll(".explain").length,
     lead: txt("hedge-lead"),
     matrixHeader: mxRows[0].children.map((c) => c.textContent),
     matrixSub: DOC.getElementById("hedge-matrix").querySelector(".card-sub").textContent,
@@ -682,12 +686,13 @@ safe("hedgeMerit", () => {
   const card = DOC.getElementById("hedge-merit-card");
   const txt = card ? card.textContent : "";
   r.renderErrors = DOC.getElementById("hedge").querySelectorAll(".render-error").length;
-  r.cardRendered = /미국채 투자 메리트/.test(txt);
-  r.tilesShowSpread = /메리트 스프레드/.test(txt) && /백분위 75%/.test(txt);
-  r.statesSignKey = txt.includes(P.COST_SIGN_KEY);
-  r.statesTenorSplit = /HP 12M/.test(txt) && /3M 스왑레이트|3개월 스왑레이트/.test(txt);
-  r.subtractionExplained = /차감/.test(txt);
-  r.panelLinkFallback = /관계분석/.test(txt) && !/13주 변화 기준 상관/.test(txt);
+  r.cardRendered = /미국채 메리트/.test(txt);
+  r.tilesShowSpread = /스프레드/.test(txt) && /백분위 75%/.test(txt);
+  r.statesCostTenor = /헤지비용 3M/.test(txt) && /SMB/.test(txt);
+  r.tileValues = card.querySelectorAll(".card").map((tile) => tile.children[1].textContent);
+  const plotted = shim.UPlotStub.made.findLast((u) => card.contains(u.root));
+  r.chartValues = plotted.data;
+  r.hasExplanation = card.querySelectorAll(".explain").length > 0;
   /* ③ 위험 연동 — 패널(주간 stress)이 있으면 13주 변화 상관 문장이 붙는다.
      40주 합성: 위험과 비용이 정확히 반대로 움직이게 만들어 부호를 고정 관측한다. */
   const N = 60;   // 13주 차분 후 47쌍 — 렌더 최소 표본(30쌍)을 넘겨야 한다
@@ -705,18 +710,90 @@ safe("hedgeMerit", () => {
   P.DATA.panel = { t: t40, risk: { stress } };
   P.renderSection("hedge");
   const txt2 = DOC.getElementById("hedge-merit-card").textContent;
-  r.riskCorrRendered = /13주 변화 기준 상관/.test(txt2);
-  /* fmtNum(toLocaleString ko-KR)은 음수 부호가 U+2212(−)일 수 있다 — 둘 다 허용 */
-  const mCorr = txt2.match(/위험지수↔헤지비용 ([-\u2212]?[\d.]+)/);
-  r.riskCostCorrIsNegative = !!mCorr && +mCorr[1].replace("\u2212", "-") < -0.9;
+  r.riskExplanationRemoved = !/13주 변화 기준 상관|위험지수↔|관계분석/.test(txt2);
   /* ④ active:false — 사유를 적고 죽지 않는다 */
   P.DATA.hedge = { ...HEDGE_FIXTURE, ust_merit: { active: false, reason: "프로브 사유" } };
   P.renderSection("hedge");
   const txt3 = DOC.getElementById("hedge-merit-card").textContent;
-  r.inactiveExplains = /데이터 없음/.test(txt3) && /프로브 사유/.test(txt3);
+  r.inactiveExplains = /프로브 사유/.test(txt3);
   r.inactiveRenderErrors = DOC.getElementById("hedge").querySelectorAll(".render-error").length;
   P.DATA.hedge = HEDGE_FIXTURE;
   P.DATA.panel = null;
+  return r;
+});
+
+/* 날짜 입력 이벤트 → uPlot 축·열린 표·CSV를 함께 확인한다. 통계 표본은 고정이다. */
+safe("hedgePeriod", () => {
+  const previous = { ...P.HEDGE_PERIOD }, oldYears = P.state.years;
+  const oldRegistry = P.registry.slice();
+  const fixture = JSON.parse(JSON.stringify(HEDGE_FIXTURE));
+  fixture.cost_hist_usd.v = [0.5, -0.200123, -5.501234, 0.1];
+  P.DATA.hedge = fixture;
+  P.registry.length = 0;
+  Object.assign(P.HEDGE_PERIOD, { start: "", end: "" });
+  P.renderHedge();
+  const byId = (id) => DOC.getElementById(`hedge-period-${id}`);
+  const input = (id, value) => { byId(id).value = value; byId(id).dispatchEvent({ type: "input" }); };
+  const costCard = DOC.getElementById("hedge-cost-card");
+  const costTable = () => costCard.querySelector(".chart-table");
+  const tableRows = (card) => card.querySelector(".chart-table").querySelectorAll("tbody tr")
+    .map((row) => row.children.map((cell) => cell.textContent));
+  const beforeStats = ["hedge-matrix", "hedge-bt-card", "hedge-mtm-card"]
+    .map((id) => DOC.getElementById(id).textContent);
+  const entries = P.registry.filter((entry) => entry.range === P.HEDGE_PERIOD);
+  entries.forEach((entry) => { entry.u.setScale = (axis, value) => { entry.u.lastScale = { axis, ...value }; }; });
+  costCard.querySelectorAll(".card-actions button")[0].click();
+  const r = { defaultRange: { ...P.HEDGE_PERIOD }, rangedCharts: entries.length,
+    inputLabels: [byId("start"), byId("end")].map((n) => n.getAttribute("aria-label")),
+    suggestions: [byId("start-options"), byId("end-options")].map((n) => n.children.length) };
+  input("start", "2021-06-30"); input("end", "2021-07-31"); byId("apply").click();
+  r.applied = { ...P.HEDGE_PERIOD };
+  r.scales = entries.map((entry) => entry.u.lastScale);
+  r.chartData = entries.find((entry) => costCard.contains(entry.u.root)).u.data;
+  r.rows = tableRows(costCard);
+  costCard.querySelectorAll(".card-actions button")[1].click();
+  r.csv = CSV_DOWNLOADS.at(-1);
+  r.statsUnchanged = beforeStats.every((text, i) =>
+    text === DOC.getElementById(["hedge-matrix", "hedge-bt-card", "hedge-mtm-card"][i]).textContent);
+  // Another tab's year button must still change its own chart and leave hedge dates intact.
+  const other = { isTime: true, tmin: 0, tmax: 2000000000, u: { setScale(axis, value) { this.lastScale = { axis, ...value }; } } };
+  P.registry.push(other);
+  const yearButton = P.el("button", { "data-range": "1" }, "1년");
+  yearButton.dataset.range = "1"; // DOM shim does not reflect data-* attributes into dataset.
+  rangeGroup.append(yearButton); P.bindRangeButtons(); yearButton.click();
+  r.afterOtherRange = entries.map((entry) => entry.u.lastScale);
+  r.otherRange = other.u.lastScale;
+  const chartBeforeError = JSON.stringify(r.afterOtherRange);
+  input("start", "2021-07-31"); input("end", "2021-06-30"); byId("apply").click();
+  r.reverseRejected = !byId("status").hidden && /늦/.test(byId("status").textContent)
+    && P.HEDGE_PERIOD.start === "2021-06-30" && P.HEDGE_PERIOD.end === "2021-07-31"
+    && JSON.stringify(entries.map((entry) => entry.u.lastScale)) === chartBeforeError;
+  input("start", "2021-02-30"); input("end", "2021-07-31"); byId("apply").click();
+  r.invalidRejected = !byId("status").hidden && P.HEDGE_PERIOD.start === "2021-06-30";
+  input("start", "2020-01-01"); byId("apply").click();
+  r.outsideRejected = !byId("status").hidden && /조회 가능/.test(byId("status").textContent);
+  // A single calendar day is inclusive, with a nonzero chart width.
+  input("start", "2021-07-31"); input("end", "2021-07-31");
+  byId("end").dispatchEvent({ type: "keydown", key: "Enter", preventDefault() {} });
+  r.singleDayRows = tableRows(costCard);
+  r.singleDayScale = entries[0].u.lastScale;
+  const costPlot = entries.find((entry) => costCard.contains(entry.u.root)).u;
+  r.singlePointVisible = costPlot.opts.series[1].points.show(costPlot, 1);
+  r.missingPointHidden = !costPlot.opts.series[2].points.show(costPlot, 2);
+  input("start", "2022-01-01"); input("end", "2022-01-31"); byId("apply").click();
+  r.emptyRows = tableRows(costCard);
+  r.emptyChartPoints = entries.map((entry) => entry.u.data[0].length);
+  costCard.querySelectorAll(".card-actions button")[1].click();
+  r.emptyCsv = CSV_DOWNLOADS.at(-1);
+  input("start", "2021-06-30"); input("end", "2021-07-31"); byId("apply").click();
+  P.renderHedge();
+  r.afterRerender = [byId("start").value, byId("end").value, byId("range").textContent];
+  shim.location.hash = "#hedge"; P.routeView(); r.globalFilterHidden = filterRow.hidden;
+  yearButton.remove();
+  P.state.years = oldYears;
+  Object.assign(P.HEDGE_PERIOD, previous);
+  P.registry.length = 0; P.registry.push(...oldRegistry);
+  P.DATA.hedge = HEDGE_FIXTURE;
   return r;
 });
 

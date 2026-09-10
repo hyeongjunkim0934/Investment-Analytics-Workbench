@@ -22,6 +22,7 @@ import math
 import re
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -809,9 +810,10 @@ def test_hedge_reference_numbers_all_come_from_the_payload(probe):
     h = probe["hedgeScreen"]
     assert "71~118%" in h["headline"] and "15%" in h["headline"]
     assert "88~102" not in h["headline"] and "10~30" not in h["headline"]
-    assert "71~118%" in h["views"] and "15%" in h["views"]
+    assert h["views"] == "" and h["method"] == ""
+    assert h["explanationCount"] == 0
     assert "채권 50% · 주식 15%" in h["curveSub"]
-    assert "2021-07" in h["costSub"] and "2008" not in h["costSub"]
+    assert "전체 평균 0.10%" in h["costSub"] and "2008" not in h["costSub"]
     assert "2019-03" in " ".join(h["mtmHeader"])
     assert h["boldRowText"].startswith("6개월"), h["boldRowText"]
     assert probe["hedgeSim"]["eqRef"] == "경제 15% (변동성 최소)"
@@ -841,8 +843,8 @@ def test_mtm_tau_is_half_the_tenor_everywhere(probe):
     """τ(잔존만기) = 만기 ÷ 2. 표·캡션·시뮬레이터가 같은 정의를 쓴다."""
     h = probe["hedgeScreen"]
     assert h["mtmTau"] == ["0.125", "0.250", "0.375", "0.500"], h["mtmTau"]
-    assert "만기 ÷ 2" in " ".join(h["mtmHeader"])
-    assert "만기 ÷ 2" in h["method"]
+    assert "잔존만기 τ" in " ".join(h["mtmHeader"]) and "년" in " ".join(h["mtmHeader"])
+    assert h["method"] == ""
     # 최악의 달 평가손도 τ 에 정비례한다: 3.3%p × τ
     worst = [float(v.replace("−", "").replace("%", "")) for v in h["mtmWorst"]]
     for tau, w in zip((0.125, 0.25, 0.375, 0.5), worst):
@@ -865,6 +867,48 @@ def test_mtm_normal_vol_is_annualized_with_sqrt12(probe):
         assert abs(val - expect) < 0.006, (   # toFixed(2) 반올림 폭
             f"{m}개월: 화면 {shown} vs τ·σ·√12 = {expect:.4f} — 연율화가 어긋난다")
         assert shown.startswith("±"), f"{m}개월: 변동 표기가 ± 가 아니다: {shown}"
+
+
+def test_hedge_period_inputs_filter_charts_tables_and_raw_csv(probe):
+    """선택기간의 양 끝을 포함하며 실제 차트·열린 표·원시 CSV가 일치한다."""
+    h = probe["hedgePeriod"]
+    epoch = lambda value: datetime.fromisoformat(value).replace(tzinfo=timezone.utc).timestamp()
+    assert h["rangedCharts"] == 3
+    assert h["inputLabels"] == ["시작기간", "종료기간"]
+    assert all(count > 1 for count in h["suggestions"])
+    assert h["applied"] == {"start": "2021-06-30", "end": "2021-07-31"}
+    expected_scale = {"axis": "x", "min": epoch("2021-06-30"), "max": epoch("2021-08-01")}
+    assert h["scales"] == [expected_scale] * 3
+    assert h["rows"] == [["2021-07-31", "-5.50", "–"], ["2021-06-30", "-0.20", "–"]]
+    assert h["chartData"] == [[epoch("2021-06-30"), epoch("2021-07-31")],
+                              [-0.200123, -5.501234], [None, None]]
+    lines = h["csv"].lstrip("\ufeff").splitlines()
+    assert "SMB" in lines[0] and "HP" in lines[0] and "%" in lines[0]
+    assert lines[1:] == ["2021-07-31,-5.501234,", "2021-06-30,-0.200123,"]
+    assert h["statsUnchanged"] is True
+
+
+def test_hedge_period_rejects_bad_ranges_and_preserves_valid_state(probe):
+    h = probe["hedgePeriod"]
+    assert h["reverseRejected"] and h["invalidRejected"] and h["outsideRejected"]
+    assert h["singleDayRows"] == [["2021-07-31", "-5.50", "–"]]
+    assert h["singleDayScale"]["max"] - h["singleDayScale"]["min"] == 86400
+    assert h["singlePointVisible"] is True and h["missingPointHidden"] is True
+    assert h["emptyRows"] == [] and h["emptyChartPoints"] == [0, 0, 0]
+    assert len(h["emptyCsv"].splitlines()) == 1
+    assert h["afterOtherRange"] == h["scales"]
+    assert h["otherRange"] == {"axis": "x", "min": 2000000000 - 31557600, "max": 2000000000}
+    assert h["afterRerender"] == ["2021-06-30", "2021-07-31", "2021-06-30~2021-07-31"]
+    assert h["globalFilterHidden"] is True
+
+
+def test_hedge_main_screen_has_no_explanations_or_simulator_cta(probe):
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    section = html.split('<section id="hedge"', 1)[1].split("</section>", 1)[0]
+    for removed in ("hedge-sim-btn", "hedge-method", "hedge-views", "우리 포트폴리오 숫자로"):
+        assert removed not in section
+    assert 'id="hedge-period"' in section
+    assert probe["hedgeScreen"]["explanationCount"] == 0
 
 
 def test_amount_line_matches_its_own_stated_formula(probe):
@@ -927,7 +971,7 @@ def test_every_worked_number_names_the_tenor_it_used(probe):
     """
     h, s = probe["hedgeScreen"], probe["hedgeSim"]
     assert "12개월" in " ".join(h["matrixHeader"])
-    assert "12개월 만기로 헤지한다면" in h["lead"]
+    assert "12개월" in h["lead"]
     assert "만기 6개월" in s["atDefault"]["costHead"]
     assert "만기 12개월" in s["at12"]["costHead"], "만기를 바꾸면 열 제목이 따라와야 한다"
     assert "만기 6개월로 양 끝을" in s["atDefault"]["span"]
@@ -962,8 +1006,6 @@ def test_hedge_cost_is_called_the_same_thing_on_every_screen():
     app = APP_JS.read_text(encoding="utf-8")
     assert "헤지 손익" not in app, "파이프라인이 쓰지 않는 이름이 화면에 생겼다"
     assert 'const COST_SIGN_KEY = "＋받음 −지불"' in app
-    # 부호 열쇠가 네 화면 모두에 닿는지 — 상수를 참조하는 자리 수로 확인한다
-    assert app.count("COST_SIGN_KEY") >= 8, app.count("COST_SIGN_KEY")
     hedge_py = (ROOT / "pipeline" / "hedge.py").read_text(encoding="utf-8")
     assert "헤지비용" in hedge_py, "파이프라인 어휘가 바뀌었다면 화면 이름도 함께 봐야 한다"
 
@@ -1048,18 +1090,12 @@ def test_matrix_states_its_own_sample_per_row(probe):
     assert h["cnySample"].startswith("변동성") and "MVH" not in h["cnySample"], h["cnySample"]
 
 
-def test_migrated_curve_card_says_what_it_is_for(probe):
-    """이관된 커브 카드는 "왜 여기 있는지"를 스스로 말해야 한다.
-
-    시세로 읽히면 #fx 로 되돌아갈 이유가 생긴다. 이 카드가 여기 있는 이유는
-    세 계열이 **시뮬레이터의 만기 보간이 쓰는 곡선의 원자료**이기 때문이고,
-    그러므로 기본 만기(픽스처 6개월)를 문장이 들고 있어야 한다.
-    """
+def test_migrated_curve_card_uses_short_labels_and_units(probe):
+    """만기별 비용 카드에서 제목·단위·부호는 유지하고 보간 해설은 제거한다."""
     t = probe["hedgeScreen"]["tsCardText"]
-    assert "커브 추이" in t, t[:80]
-    assert "3·6·12개월" in t or "3개월" in t
-    assert "6개월을 보간" in t, "무엇에 쓰는 원자료인지 말하지 않는다"
-    assert "＋받음 −지불" in t, "부호 규약이 카드에 없다"
+    assert "달러 만기별 비용" in t, t[:80]
+    assert "연 %" in t and "＋받음 −지불" in t
+    assert "보간" not in t
 
 
 def test_inactive_row_state_is_not_conveyed_by_opacity_alone(probe):
@@ -1067,7 +1103,7 @@ def test_inactive_row_state_is_not_conveyed_by_opacity_alone(probe):
     h = probe["hedgeScreen"]
     assert h["cnyClass"] == "row-off"
     assert not h["cnyStyle"] or "opacity" not in h["cnyStyle"]
-    assert "계산 대상 아님" in h["cnyText"]
+    assert "데이터 없음" in h["cnyText"]
     css = STYLE_CSS.read_text(encoding="utf-8")
     assert re.search(r"\.mini-table tr\.row-off td\s*\{[^}]*var\(--ink-3\)", css)
     assert not re.search(r"\.grid-inp tr\.dis\s*\{\s*opacity", css)
@@ -1173,9 +1209,6 @@ def test_screen_says_how_the_cost_curve_was_read(probe):
         f"매트릭스 부제가 파이프라인의 읽는 법을 쓰지 않는다: {h['matrixSub']}"
     )
     assert "최신 호가" not in h["matrixSub"], "읽는 법이 화면에 박혀 있다"
-    assert "프로브전용읽기" in h["costNote"], (
-        f"비용 이력 카드가 읽는 법을 박아 두고 있다: {h['costNote'][:120]}"
-    )
 
 
 def test_screen_falls_back_when_the_read_method_is_missing(probe):
@@ -1184,18 +1217,12 @@ def test_screen_falls_back_when_the_read_method_is_missing(probe):
     assert not m["hasUndefined"], m["where"]
 
 
-def test_cost_history_card_states_its_series_and_span(probe):
-    """「25년 평균」은 **하드코딩이었다.**
-
-    표본이 늘거나 줄어도 문장이 25년에 멈춰 있으면 거짓이 된다 — 이 저장소는
-    「주식 10%는 어느 산식에서도 나오지 않는 수」로 같은 사고를 한 번 겪었다.
-    픽스처는 실데이터(25.2년 · 303개월)와 **일부러 다른** 값을 태운다.
-    """
+def test_cost_history_card_keeps_the_full_sample_mean_label(probe):
+    """차트 범위 조정과 구별되도록 평균을 전체 집계값으로 표시한다."""
     h = probe["hedgeScreen"]
-    assert "25년" not in h["costSub"], f"표본 길이가 화면에 박혀 있다: {h['costSub']}"
-    assert "3년 평균" in h["costSub"], h["costSub"]
-    assert "프로브전용계열" in h["costSub"], "계열명을 payload 에서 가져오지 않는다"
-    assert "2027-01~2029-12" in h["costSub"] and "36개월" in h["costSub"], h["costSub"]
+    assert "25년" not in h["costSub"], h["costSub"]
+    assert "전체 평균 0.10%" in h["costSub"], h["costSub"]
+    assert "3개월" in h["costSub"] and "연 %" in h["costSub"]
 
 
 def test_mtm_card_states_its_own_sample(probe):
@@ -1211,17 +1238,8 @@ def test_mtm_card_states_its_own_sample(probe):
 
 
 def test_cost_history_overlays_the_hp_series(probe):
-    """"같은 성격, 다른 계열" 이라는 주장을 그림이 증명해야 한다.
-
-    이 카드는 SMB 월말, 바로 위 표는 HP 일별이라 숫자가 다르다. 문장만 있으면
-    독자는 둘 중 하나가 틀렸다고 읽는다 — HP 3M 을 보조선으로 겹치고, 겹치는
-    구간의 실측 상관·평균차를 함께 적는다(추가 공개 없음 — 같은 값이 옆 카드에 있다).
-    """
+    """간소화 후에도 SMB 월말과 HP 일별을 서로 다른 두 계열로 그린다."""
     h = probe["hedgeScreen"]
-    t = h["costNote"]
-    assert "보조선으로 겹쳐" in t, "HP 보조선 설명이 없다"
-    assert "0.9644" in t, "겹치는 구간의 실측 상관이 없다"
-    assert "수준은 HP, 이력은 SMB" in t, "역할 분담을 말하지 않는다"
     # 문장이 아니라 **차트에 실제로 그려진 계열**을 센다 — "겹쳐 그렸다"고 적어 두고
     # 안 그리는 변경은 문장 검사로는 통과한다(뮤테이션으로 실제로 확인했다).
     cost_chart = next((c for c in h["chartSeries"]
@@ -2007,22 +2025,18 @@ def test_loss_limit_inputs_have_no_default_and_apply_to_lambda(probe):
 
 
 def test_hedge_ust_merit_monitor(probe):
-    """미국채 투자 메리트 모니터(§7.7.14) — 헤지비용이 수익률에서 차감되는 관계의
-    상시 감시. 항등식(헤지 후 = UST + 스왑, 스프레드 = 헤지 후 − 국고)이 픽스처
-    손계산과 맞고, 부호 규약·만기 구분(이력 SMB 3M vs 수준 HP 12M)을 화면이 밝히며,
-    위험수준 연동은 13주 변화 상관으로만 말한다(수준 상관은 허구 상관 위험).
-    패널이 없으면 상관 문장 대신 관계분석 링크로 물러난다."""
+    """해설을 제거한 메리트 카드도 타일과 차트에서 같은 수치를 표시한다."""
     c = probe["hedgeMerit"]
     assert c["identityHolds"] is True
     assert c["renderErrors"] == 0 and c["inactiveRenderErrors"] == 0
-    assert c["cardRendered"] is True
-    assert c["tilesShowSpread"] is True
-    assert c["statesSignKey"] is True, "부호 규약(양수=받음) 열쇠가 카드에 없다"
-    assert c["statesTenorSplit"] is True, "이력(3M)과 수준(HP 12M)의 만기 구분이 없다"
-    assert c["subtractionExplained"] is True
-    assert c["panelLinkFallback"] is True
-    assert c["riskCorrRendered"] is True
-    assert c["riskCostCorrIsNegative"] is True, "합성 역행 표본에서 상관 부호가 틀렸다"
+    assert c["cardRendered"] is True and c["tilesShowSpread"] is True
+    assert c["statesCostTenor"] is True
+    assert c["tileValues"] == ["-1.50%", "2.90%", "3.10%", "-0.20%p"]
+    _, hedged, ktb, spread = c["chartValues"]
+    for i, (ust, cost) in enumerate(zip([4.2, 4.25, 4.3, 4.4], [-1.5, -1.4, -1.6, -1.5])):
+        assert hedged[i] == pytest.approx(ust + cost)
+        assert spread[i] == pytest.approx(ust + cost - ktb[i])
+    assert c["hasExplanation"] is False and c["riskExplanationRemoved"] is True
     assert c["inactiveExplains"] is True
 
 

@@ -329,8 +329,8 @@ function makeTimeChart(box, cfg) {
     const color = cfg.colors[i];
     const s = {
       label: lbl, stroke: color, width: 2, spanGaps: true,
-      points: { show: false },
-      value: (u, v) => v == null ? "–" : fmtNum(v, dec) + (cfg.unit || ""),
+      points: { show: cfg.range ? (u, si) => u.data[si].filter(Number.isFinite).length === 1 : false },
+      value: (u, v) => v == null ? "–" : fmtNum(v, dec) + (cfg.units?.[i] ?? cfg.unit ?? ""),
     };
     if (cfg.fill) s.fill = color + "1a";                       // ~10% wash
     if (cfg.stepped) s.paths = uPlot.paths.stepped({ align: 1 });
@@ -354,10 +354,11 @@ function makeTimeChart(box, cfg) {
   };
 
   const u = new uPlot(opts, cfg.data, box);
-  stampLatest(box, cfg);
+  if (!cfg.range) stampLatest(box, cfg);
 
   const xs = cfg.data[0];
-  const rangeEntry = { u, tmin: xs[0], tmax: xs[xs.length - 1], isTime: true };
+  const rangeEntry = { u, tmin: xs[0], tmax: xs[xs.length - 1], isTime: true,
+    range: cfg.range, rangeData: cfg.range ? cfg.data : null, emptyState: cfg.emptyState };
   registry.push(rangeEntry);
   applyRange(rangeEntry);
 
@@ -414,6 +415,18 @@ function makeOrdinalChart(box, cfg) {
 function applyRange(entry) {
   if (!entry.isTime) return;
   const { u, tmin, tmax } = entry;
+  // A section-owned interval is independent of the market-wide year buttons.
+  if (entry.range && entry.range.start && entry.range.end) {
+    const min = Date.parse(entry.range.start) / 1000;
+    const max = Date.parse(entry.range.end) / 1000 + 86400;
+    if (entry.rangeData) {
+      const selected = timeRangeData(entry.rangeData, min, max);
+      u.setData(selected, false);
+      if (entry.emptyState) entry.emptyState.hidden = selected.slice(1).some((ys) => ys.some(Number.isFinite));
+    }
+    u.setScale("x", { min, max });
+    return;
+  }
   const min = state.years === 0 ? tmin
     : Math.max(tmin, tmax - state.years * 31557600);
   u.setScale("x", { min, max: tmax });
@@ -2553,7 +2566,7 @@ function routeView() {
   $("#village").hidden = !showVillage;
   $("#village-frame").classList.remove("vz-enter");   // 입장 연출 중 해시가 먼저 바뀌어도 잔상 없게
   const filter = document.querySelector(".filter-row");
-  if (filter) filter.hidden = showVillage || !sectionHasRangedChart(sec);
+  if (filter) filter.hidden = showVillage || sec === "hedge" || !sectionHasRangedChart(sec);
   SECTION_IDS.forEach((id) => {
     const node = document.getElementById(id);
     if (node) node.hidden = showVillage || id !== sec;
@@ -3584,6 +3597,75 @@ function sampleTxt(sample) {
   return el("span", {}, `변동성 ${vol}`, el("br"), `MVH·상관 ${fit}`);
 }
 
+// Chart dates live across theme/section rerenders; published statistics keep their own samples.
+const HEDGE_PERIOD = { start: "", end: "" };
+
+function timeRangeData(data, from, to) {
+  const indices = data[0].map((t, i) => t >= from && t < to ? i : -1).filter((i) => i >= 0);
+  return data.map((series) => indices.map((i) => series[i]));
+}
+
+function hedgePeriodData(data) {
+  if (!HEDGE_PERIOD.start || !HEDGE_PERIOD.end) return data;
+  const from = Date.parse(HEDGE_PERIOD.start) / 1000;
+  const to = Date.parse(HEDGE_PERIOD.end) / 1000 + 86400;
+  return timeRangeData(data, from, to);
+}
+
+function renderHedgePeriod(H2, onChange) {
+  const host = $("#hedge-period");
+  if (!host) return;
+  host.textContent = "";
+  const histories = [H2.cost_hist_usd, ...Object.values(H2.cost_hist_curve || {}),
+    H2.ust_merit && H2.ust_merit.active ? H2.ust_merit : null];
+  const dates = [...new Set(histories.flatMap((series) => (series && series.t || [])
+    .filter(Number.isFinite).map(tsToDate)))].sort();
+  if (!dates.length) return;
+  const first = dates[0], last = dates[dates.length - 1];
+  if (!HEDGE_PERIOD.start || !HEDGE_PERIOD.end) {
+    HEDGE_PERIOD.start = first;
+    HEDGE_PERIOD.end = last;
+  }
+  const options = [...new Map(dates.map((date) => [date.slice(0, 7), date])).values()];
+  if (options[0] !== first) options.unshift(first);
+  const status = el("span", { id: "hedge-period-status", class: "alloc-period-status d-up", role: "status" });
+  status.hidden = true;
+  const inputFor = (key, label) => {
+    const id = `hedge-period-${key}`;
+    const input = el("input", { type: "date", id, value: HEDGE_PERIOD[key],
+      min: first, max: last, list: `${id}-options`, "aria-label": label,
+      "aria-describedby": "hedge-period-status" });
+    input.addEventListener("input", () => { status.hidden = true; });
+    const list = el("datalist", { id: `${id}-options` }, options.map((value) => el("option", { value })));
+    return { input, label: el("label", { for: id }, label, input, list) };
+  };
+  const start = inputFor("start", "시작기간"), end = inputFor("end", "종료기간");
+  const applied = el("span", { class: "alloc-period-range", id: "hedge-period-range" });
+  const showApplied = () => { applied.textContent = `${HEDGE_PERIOD.start}~${HEDGE_PERIOD.end}`; };
+  showApplied();
+  const valid = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value))
+    && new Date(value).toISOString().slice(0, 10) === value;
+  const apply = () => {
+    const from = start.input.value, to = end.input.value;
+    let error = "";
+    if (!valid(from) || !valid(to)) error = "시작·종료기간을 입력하십시오.";
+    else if (from > to) error = "시작기간이 종료기간보다 늦습니다.";
+    else if (from < first || to > last) error = `조회 가능: ${first}~${last}`;
+    if (error) { status.textContent = error; status.hidden = false; return; }
+    HEDGE_PERIOD.start = from;
+    HEDGE_PERIOD.end = to;
+    status.hidden = true;
+    showApplied();
+    onChange();
+  };
+  [start.input, end.input].forEach((input) => input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); apply(); }
+  }));
+  host.append(el("div", { class: "alloc-period" }, el("span", {}, "차트 기간"),
+    start.label, end.label, el("button", { type: "button", id: "hedge-period-apply",
+      class: "btn-ghost", onclick: apply }, "기간 적용"), applied, status));
+}
+
 function renderHedge() {
   const H2 = DATA.hedge;
   if (!$("#hedge")) return;
@@ -3619,7 +3701,6 @@ function renderHedge() {
   const mvhLo = mvhs.length ? Math.min(...mvhs) : null;
   const mvhHi = mvhs.length ? Math.max(...mvhs) : null;
   const mvhTxt = mvhs.length ? (mvhLo === mvhHi ? `${mvhLo}%` : `${mvhLo}~${mvhHi}%`) : "—";
-  const usdMvh = (H2.matrix.find((m) => m.c === "USD") || {}).mvh;
   const tenorM = H2.default_tenor_m;                    // 없으면 아래에서 문장 자체를 뺀다
   /* τ(잔존만기, 년) = 만기 ÷ 2 → 개월 만기 m 이면 m/24. hedge.py 의 정의와 같은 식이고
      시뮬레이터의 `tau = tenor / 24` 와도 같은 식이다. 한 자리에서만 정의한다. */
@@ -3627,53 +3708,48 @@ function renderHedge() {
   const MTM = H2.mtm || {};
 
   const hl = $("#hedge-headline");
-  hl.textContent = "";
-  hl.append(el("div", { class: "q" }, "이 화면이 답하는 질문"));
-  const a = el("div", { class: "a" }, "통화별로 환위험을 얼마나 열어 둘 것인가 ");
-  a.append(el("small", {}, `관점이 답을 바꿉니다 — 경제(시가) 관점은 통화별 채권 ${mvhTxt} · 달러주식 ${eqTxt}, `
-    + "회계(손익) 관점은 장부가 채권이라면 언제나 100%가 손익변동 최소이고 남는 판단은 비용뿐입니다."));
-  hl.append(a);
-
-  /* 결론 두 줄 — 표보다 먼저. 만기를 반드시 밝힌다(아래 표·시뮬레이터와 만기가 다르면
-     같은 통화가 다른 숫자로 보이기 때문이다: 엔 12개월 +2.30% vs 9개월 +2.36%). */
+  hl.textContent = `채권 MVH ${mvhTxt} · 달러주식 ${eqTxt}`;
   const lead = $("#hedge-lead");
   if (lead) {
+    const listOf = (rows) => rows.map((m) => `${m.name} ${m.cost_12m > 0 ? "+" : "−"}${fmtNum(Math.abs(m.cost_12m), 2)}%`).join(" · ") || "—";
     lead.textContent = "";
-    const listOf = (arr) => arr.map((m) => `${m.name} ${m.cost_12m > 0 ? "+" : "−"}${fmtNum(Math.abs(m.cost_12m), 2)}%`).join(" · ") || "없음";
-    const recv = H2.matrix.filter((m) => m.cost_12m != null && m.cost_12m > 0);
-    const paid = H2.matrix.filter((m) => m.cost_12m != null && m.cost_12m < 0);
-    const box = el("div", { class: "hl-box", style: "margin:12px 0 0" });
-    box.append(el("b", {}, `지금 12개월 만기로 헤지한다면 (${H2.asof} 기준)`), el("br"),
-      "· 헤지하면 ", el("b", { class: "pos" }, "받는 통화"), " — ", listOf(recv), el("br"),
-      "· 헤지하면 ", el("b", { class: "neg" }, "내는 통화"), " — ", listOf(paid), el("br"),
-      explainBox("hedge-lead-read",
-        "읽는 법 — 금액 × 이 비율 = 1년치 금액. ",
-        el("b", {}, "다른 만기에는 다른 값입니다"), " — 3·6·12개월 커브와 만기 보간은 ",
-        el("a", { href: "#hedge-sim" }, "시뮬레이터"), " 와 아래 표·커브 카드에 있습니다."));
-    lead.append(box);
+    lead.append(el("span", { class: "card-sub" }, `12개월 · ${H2.asof || "—"}`),
+      el("div", {}, el("b", { class: "pos" }, "받는 통화"), " · ", listOf(H2.matrix.filter((m) => m.cost_12m > 0))),
+      el("div", {}, el("b", { class: "neg" }, "내는 통화"), " · ", listOf(H2.matrix.filter((m) => m.cost_12m < 0))));
   }
+  const periodTables = [];
+  renderHedgePeriod(H2, () => {
+    registry.filter((entry) => entry.range === HEDGE_PERIOD).forEach(applyRange);
+    periodTables.forEach(({ wrap, tableFn }) => {
+      if (!wrap.classList.contains("hidden")) renderTable(wrap, tableFn());
+    });
+  });
+  const timeCard = (container, cfg) => {
+    const units = cfg.units || cfg.labels.map(() => "%");
+    const tableLabels = cfg.labels.map((label, i) => `${label} (${units[i]})`);
+    const tableFn = (cap, raw) => tsTableFn(tableLabels, hedgePeriodData(cfg.data), 2)(cap, raw);
+    const box = cardScaffold(container, { ...cfg, tableFn });
+    const emptyState = el("p", { class: "hedge-empty card-sub", role: "status" }, "기간 내 데이터 없음");
+    emptyState.hidden = true;
+    box.append(emptyState);
+    periodTables.push({ wrap: container.querySelector(".chart-table"), tableFn });
+    makeTimeChart(box, { ...cfg, range: HEDGE_PERIOD, emptyState, units, dec: 2, unit: "%" });
+  };
 
   /* 읽는 법 문자열 — 파이프라인 값. 없으면(옛 payload) 문장을 짧게 줄인다. */
   const costRead = (H2.cost_read && H2.cost_read.label) || "실측 커브";
 
   const mx = $("#hedge-matrix");
   mx.textContent = "";
-  /* 기준일이 하나가 아니다 — 월간 통계(변동성·MVH·상관)와 헤지비용 커브와 환율
-     최종 관측일이 서로 다른 날짜다. "기준일 …" 한 줄로 뭉뚱그리면 헤지비용 열이 그날
-     값인 줄로 읽힌다. 셋을 그대로 적는다.
-     읽는 법(최신 호가 / N영업일 중앙값)은 **파이프라인이 정해서 실어 준다** — 화면에
-     박아 두면 산식을 되돌려도 문장만 남는다. */
   mx.append(el("div", { class: "card-head" },
-    el("span", { class: "card-title" }, "통화별 한눈에 보기 (7통화)"),
-    el("span", { class: "card-sub" },
-      `변동성·MVH·상관 = 월간 수익률(완성된 달까지) · 헤지비용 = ${costRead}`
-      + ` · 환율 최종 관측 ${H2.asof}`)));
+    el("span", { class: "card-title" }, "통화"),
+    el("span", { class: "card-sub" }, `${H2.asof || "—"} · ${costRead}`)));
   const t = el("table", { class: "mini-table" },
     el("tr", {},
       el("th", {}, "통화"),
-      el("th", {}, "환변동성", el("small", { class: "th-sub" }, "연 %, 클수록 환위험 큼")),
-      el("th", {}, "채권 MVH", el("small", { class: "th-sub" }, "경제 관점 참고치")),
-      el("th", {}, "환-채권 상관", el("small", { class: "th-sub" }, "−면 환쿠션 있음")),
+      el("th", {}, "환변동성", el("small", { class: "th-sub" }, "연 %")),
+      el("th", {}, "채권 MVH", el("small", { class: "th-sub" }, "%")),
+      el("th", {}, "환·채권 상관"),
       /* 부호 열쇠를 **열 제목에** 붙인다. 예전에는 이 규약이 표에서 한참 위의 회색 한 줄
          ("비용 양수 = 프리미엄 수취")에만 있었고, 그 문장 자체가 "비용인데 양수면 받는다"는
          모순 표현이었다. 만기도 열 제목이 스스로 들고 있어야 한다(다른 만기에는 다른 값).
@@ -3703,61 +3779,19 @@ function renderHedge() {
       el("td", { class: "num" }, fmtCost(m.cost_curve ? m.cost_curve["6M"] : null)),
       el("td", { class: "num" }, fmtCost(m.cost_12m, true)),
       el("td", { style: "text-align:left;font-size:11.5px" },
-        off ? "헤지비용·단기금리 데이터 확보 전 — 계산 대상 아님"
+        off ? "데이터 없음"
             : `${m.src}${m.bond_kind ? " · 채권 " + m.bond_kind : ""}`),
       el("td", { style: "text-align:left;font-size:11.5px" }, sampleTxt(m.sample))));
   });
   mx.append(wrapTable(t));
-  mx.append(explainBox("hedge-matrix-read", { label: "표 읽는 법" },
-    el("b", {}, "환변동성"), ": 그 통화가 원화 대비 1년에 몇 % 흔들렸나. ",
-    el("b", {}, "채권 MVH"), ": 경제 관점에서 변동이 가장 작아지는 헤지비율(100%보다 낮으면 그만큼 환율이 완충해 준다는 뜻). ",
-    el("b", {}, "환-채권 상관"), ": 음수면 환율이 오를 때 그 나라 채권 수익이 낮아져 서로 상쇄된다는 뜻이고, MVH 가 100% 아래로 내려가는 이유입니다. ",
-    el("b", {}, "헤지비용"), `: 헤지할 때 해마다 주고받는 연율 %, ${COST_SIGN_KEY}. `,
-    el("b", {}, "표본"), ": 이 행의 통계를 뽑은 구간과 월 수입니다. ",
-    "변동성은 환율만 쓰므로 길고, MVH·상관은 채권 프록시와 겹치는 구간만 쓰므로 짧습니다 ",
-    "— 두 값이 다른 행에는 둘 다 적었습니다. ",
-    "달러 3·6·12개월의 일별 이력은 아래 ", el("b", {}, "「헤지비용 커브 추이」"), " 카드에 있습니다."));
-
-  /* 두 관점 설명은 원래 9개 용어가 든 231자 산문 한 덩어리였다. 같은 내용을 4행 비교표로
-     세운다 — "나는 어느 쪽을 봐야 하나"에 줄 하나로 답한다. 위치는 표 **뒤**다: 찾아온
-     숫자보다 해설이 먼저 나오면 정작 표가 화면 아래로 밀린다(실측). */
-  const hv = $("#hedge-views");
-  hv.textContent = "";
-  /* §7.13 — 비교표·용어 전체를 접는다. 요점(관점별 최소 헤지비율)은 헤드라인 답에
-     이미 있으므로, 여기는 「왜 그런가」를 찾는 사람이 여는 자리다. */
-  const hvFold = explainBox("hedge-views", { label: "위 표를 어느 관점으로 읽을 것인가 — 관점이 답을 바꿉니다" });
-  hv.append(hvFold);
-  const hvBody = hvFold.querySelector(".explain-body");
-  const vt = el("table", { class: "mini-table view-table" },
-    el("tr", {}, el("th", {}, ""),
-      el("th", {}, "경제(시가) 관점"), el("th", {}, "회계(손익) 관점")));
-  [["누가 보는 숫자인가", "시가평가 자산의 원화 가치", "장부가(만기보유) 해외채권의 회계 손익"],
-   ["환율 손실을 상쇄해 줄 상대", "있다 — 자산가격이 반대로 움직임(자연 쿠션)", "없다 — 채권 가격변동을 손익에 안 잡음"],
-   ["그래서 변동이 최소가 되는 헤지비율", `채권 ${mvhTxt} · 달러주식 ${eqTxt}`, "100% (모형상 언제나)"],
-   ["남는 판단", "환위험을 얼마나 열어 둘까", "비용을 낼까 / 받을까"],
-  ].forEach(([k, a1, a2]) => vt.append(el("tr", {},
-    el("th", { class: "rowhead" }, k), el("td", {}, a1), el("td", {}, a2))));
-  hvBody.append(wrapTable(vt));
-  /* 용어는 접어 둔다 — 필요한 사람만 펼치고, 첫 화면은 숫자로 남는다. */
-  const terms = el("details", { class: "terms" });
-  terms.append(el("summary", {}, "이 화면에 나오는 말 다섯 개 (펼쳐 보기)"));
-  [["헤지비율", "외화 자산 중 선물환·스왑으로 환위험을 덮은 비율. 0% = 환율에 그대로 노출, 100% = 환율이 움직여도 원화 손익은 그대로."],
-   ["헤지비용 (= 스왑레이트 = 스왑포인트)", `헤지할 때 해마다 주고받는 연율 %. ${COST_SIGN_KEY} — 이름은 '비용'이지만 부호가 양수면 받습니다. 자산배분·시뮬레이터도 같은 부호 규약입니다.`],
-   ["MVH (최소분산 헤지비율)", "경제 관점에서 변동성이 가장 작아지는 헤지비율. 산식은 1 + Cov(자산수익, 환율변화) ÷ Var(환율변화)."],
-   ["스왑 MTM (평가손익)", "이미 체결한 스왑의 평가손익. 시장 스왑레이트가 오르면 평가손실입니다(민감도 = 잔존만기 τ = 만기 ÷ 2)."],
-   ["장부가 비중", "보유 채권 중 만기보유로 분류돼 가격변동이 손익에 안 잡히는 비율. 회계 관점 계산에만 씁니다."],
-  ].forEach(([k, v]) => terms.append(el("div", { class: "term" }, el("b", {}, k), " — ", v)));
-  hvBody.append(terms);
-
   const cc = $("#hedge-curve-card");
   cc.textContent = "";
   /* 곡선이 없으면 카드를 통째로 건너뛴다 — 없는 배열을 훑어 "undefined" 를 그리지 않는다. */
   if (bMin != null && eMin != null) {
   const xs = Array.from({ length: 21 }, (_, i) => i * 5);
   const curveBox = cardScaffold(cc, {
-    title: "헤지비율을 올리면 변동성은 — 달러 (경제 관점)",
-    sub: `가로 = 헤지비율, 세로 = 연 변동성(%) · 가장 낮은 점: 채권 ${bMin}% · 주식 ${eqTxt}`
-      + (usdMvh != null ? ` (곡선은 5%p 격자로 읽은 값이라 표의 달러 MVH ${usdMvh}% 와 한 칸 차이가 날 수 있습니다)` : ""),
+    title: "헤지비율·변동성",
+    sub: `달러 · 최소점: 채권 ${bMin}% · 주식 ${eqTxt} · 연 %`,
     csvName: "헤지비율-변동성.csv",
     tableFn: (cap, raw) => ({
       headers: ["헤지비율", "채권 변동성(%)", "주식 변동성(%)"],
@@ -3768,9 +3802,6 @@ function renderHedge() {
     { label: "미국 채권(종합)", color: pal.series[0], x: xs, v: curves.bond },
     { label: "미국 주식(S&P500 TR)", color: pal.series[1], x: xs, v: curves.equity },
   ] });
-  cc.append(explainBox("hedge-curve-read",
-    `선이 아래로 내려갈수록 변동이 작습니다. 채권은 ${bMin}% 까지 내리다가 다시 오르고, `
-    + `주식은 ${eqTxt} 를 지나면 헤지를 늘릴수록 오히려 변동이 커집니다 — 환율이 주가 하락을 상쇄해 주던 몫(자연 쿠션)이 사라지기 때문입니다.`));
   }
 
   const bt = $("#hedge-bt-card");
@@ -3779,19 +3810,19 @@ function renderHedge() {
      구간이 갈리는 날 조용히 틀린 라벨이 된다 — 같을 때만 적는다. */
   const btPeriods = [...new Set(Object.values(H2.backtest || {}).map((x) => x.period))];
   bt.append(el("div", { class: "card-head" },
-    el("span", { class: "card-title" }, "실제로 그렇게 했다면 — 달러자산 헤지비율별"),
+    el("span", { class: "card-title" }, "백테스트"),
     el("span", { class: "card-sub" },
-      btPeriods.length === 1 ? `${btPeriods[0]} 월간, 헤지비용 반영` : "표본 구간이 자산별로 다름 — 방법론 참조")));
+      btPeriods.length === 1 ? `${btPeriods[0]} 월간, 헤지비용 반영` : "자산별 표본")));
   const bthead = el("tr", {},
     el("th", {}, "자산"), el("th", {}, "헤지비율"),
-    el("th", {}, "CAGR", el("small", { class: "th-sub" }, "연평균 수익률")),
-    el("th", {}, "변동성", el("small", { class: "th-sub" }, "연 표준편차")),
-    el("th", {}, "MDD", el("small", { class: "th-sub" }, "고점 대비 최대 낙폭")));
+    el("th", {}, "CAGR (%)"),
+    el("th", {}, "변동성 (연 %)"),
+    el("th", {}, "MDD (%)"));
   const btt = el("table", { class: "mini-table" }, bthead);
   Object.entries(H2.backtest || {}).forEach(([name, b]) => {
     b.rows.forEach((r, i) => {
       const tr = el("tr", {});
-      if (i === 0) tr.append(el("td", { rowspan: "3" }, name));
+      if (i === 0) tr.append(el("td", { rowspan: String(b.rows.length) }, name, el("small", { class: "th-sub" }, b.period || "")));
       tr.append(el("td", { class: "num" }, `${r.h}%`),
                 el("td", { class: "num" }, `${fmtNum(r.cagr, 2)}%`),
                 el("td", { class: "num" }, `${fmtNum(r.vol, 1)}%`),
@@ -3799,59 +3830,25 @@ function renderHedge() {
       btt.append(tr);
     });
   });
-  bt.append(wrapTable(btt),
-    el("div", { class: "card-sub", style: "margin-top:6px;line-height:1.7" },
-      el("b", {}, "주식을 100% 헤지하면 낙폭이 오히려 커집니다"),
-      " — 위기에 환율이 올라 주가 하락을 덜어 주던 몫(자연 쿠션)까지 없애기 때문입니다. 헤지비용은 3개월 스왑레이트 실측을 반영했습니다."));
+  bt.append(wrapTable(btt));
 
   const cost = $("#hedge-cost-card");
   cost.textContent = "";
   const cs = H2.cost_stats || {};
-  /* "최악(2008)" 은 연도가 코드에 박혀 있었다 — 실제 최저월을 계열에서 찾아 적는다.
-     실측하면 스왑레이트 최저월과 아래 MTM 표의 최악의 달(최대 급등월)은 **다른 달**이다.
-     두 수를 같은 화면에서 "2008" 로만 부르면 섞여 읽힌다. */
   const ch = H2.cost_hist_usd || { t: [], v: [] };
-  const minI = argMin(ch.v);
-  const minYm = minI >= 0 ? tsToDate(ch.t[minI]).slice(0, 7) : null;
-  const nowYm = ch.t.length ? tsToDate(ch.t[ch.t.length - 1]).slice(0, 7) : null;
-  const sgn = (x) => (x == null ? "—" : `${x > 0 ? "+" : ""}${fmtNum(x, 2)}%`);
-  const costBox = cardScaffold(cost, {
-    title: "달러 헤지비용 이력 — 3개월 스왑레이트(월말)",
-    /* 「25년 평균」은 **하드코딩이었다.** 표본이 늘거나 줄어도 문장이 25년에 멈춰
-       있으면 거짓이 된다 — 파이프라인이 실어 주는 표본 길이를 쓴다. */
-    sub: `${COST_SIGN_KEY} · ${cs.years ? cs.years + "년" : "장기"} 평균 ${sgn(cs.mean)}`
-      + (nowYm ? ` · ${nowYm} ${sgn(cs.now)}` : "")
-      + (minYm ? ` · 가장 많이 낸 달 ${minYm} ${sgn(cs.min)}` : "")
-      + (cs.start ? ` · ${cs.series || "이력"} ${cs.start}~${cs.end} (${cs.n_months}개월)` : ""),
-    csvName: "달러-헤지비용.csv",
-    tableFn: tsTableFn(["헤지비용 3개월 스왑레이트(%)"], [ch.t, ch.v], 2),
-  });
-  /* HP 3M(2024-10~)을 보조 계열로 겹친다 — "같은 성격, 다른 계열"이라는 아래 문장을
-     그림이 증명한다. 추가 공개는 없다(같은 값이 바로 옆 커브 카드에 이미 있다). */
   const hp3 = (H2.cost_hist_curve || {})["3M"];
-  const costGroups = [{ label: "3개월 스왑레이트(SMB, 월말)", t: ch.t, v: ch.v }];
+  const costGroups = [{ label: "SMB 3개월 · 월말", t: ch.t, v: ch.v }];
   if (hp3 && hp3.t && hp3.t.length) {
-    costGroups.push({ label: `HP 3개월(일별, ${costRead})`, t: hp3.t, v: hp3.v });
+    costGroups.push({ label: "HP 3개월 · 일별", t: hp3.t, v: hp3.v });
   }
-  makeTimeChart(costBox, {
+  timeCard(cost, {
+    title: "달러 헤지비용",
+    sub: `3개월 · 연 % · ${COST_SIGN_KEY}` + (cs.mean != null ? ` · SMB 전체 평균 ${fmtNum(cs.mean, 2)}%` : ""),
+    csvName: "달러-헤지비용.csv",
     labels: costGroups.map((g) => g.label),
     colors: costGroups.map((_, i) => pal.series[i === 0 ? 0 : 3]),
-    data: joinSeries(costGroups), dec: 2, unit: "%",
-    fill: costGroups.length === 1, height: 230,
+    data: joinSeries(costGroups), fill: costGroups.length === 1, height: 230,
   });
-  /* 같은 화면에 「헤지비용」이 두 개 있고 값이 다르다 — 위 표는 인포맥스 실측 스왑포인트
-     (HP), 이 차트는 3개월 스왑레이트(SMB, 월말)다. 어느 쪽을 보고 있는지
-     화면이 말해 주지 않으면 두 숫자가 충돌한다(실측: 달러 3M −1.15% vs 월말 −0.45%). */
-  cost.append(explainBox("hedge-hp-smb", { label: "이 차트의 「헤지비용」과 위 표의 값이 다른 이유" },
-    "위 「통화별 한눈에 보기」의 헤지비용 열은 ", el("b", {}, `일별 스왑포인트 ${costRead}`),
-    " 이고, 이 차트는 ", el("b", {}, "3개월 스왑레이트 월말값"),
-    " 입니다 — 같은 성격의 값이지만 계열과 시점이 달라 숫자가 일치하지 않습니다. ",
-    hp3 ? el("span", {}, "위 차트에 ", el("b", {}, "HP 3개월을 보조선으로 겹쳐"),
-      " 두 계열이 같이 움직인다는 것을 그림으로 확인할 수 있습니다 — ",
-      "겹치는 구간 421일에서 상관 0.9644, 평균차 +0.04%p(sd 0.13, 범위 −1.35~+0.70)입니다. ") : null,
-    "수준은 HP, 이력은 SMB 로 역할이 나뉩니다 — HP 는 2024-10 시작이라 이력이 없고, ",
-    "공분산의 스왑레이트 요인은 그래서 SMB(2001~)를 씁니다. 일별 호가 추이는 ",
-    el("b", {}, "옆의 「헤지비용 커브 추이」"), " 카드에 있습니다."));
 
   /* ── 이관 카드(2026-08-04): 달러 헤지비용 3·6·12개월 일별 커브 ─────────────
      예전에는 FX 화면에 "달러/원 스왑포인트 추이"로 있었다. 여기 있어야 하는 이유는
@@ -3867,45 +3864,27 @@ function renderHedge() {
     .map(([k, label]) => ({ label, t: CH[k].t, v: CH[k].v }));
   if (curveGroups.length) {
     const cdata = joinSeries(curveGroups);
-    const cbox = cardScaffold(tsCardEl, {
-      title: "달러 헤지비용 커브 추이 (3·6·12개월)",
-      /* 만기를 모르면 그 조각을 통째로 뺀다 — "undefined개월" 을 내보내지 않는다.
-         이 화면의 다른 문장들도 같은 규약이다(tenorM 이 없으면 문장 자체를 뺀다). */
-      sub: `연율 %, ${COST_SIGN_KEY}`
-        + (H2.default_tenor_m ? ` · 시뮬레이터가 ${H2.default_tenor_m}개월을 보간할 때 쓰는 원자료` : ""),
+    timeCard(tsCardEl, {
+      title: "달러 만기별 비용",
+      sub: `연 % · ${COST_SIGN_KEY}`,
       csvName: "달러-헤지비용-커브.csv",
-      tableFn: tsTableFn(curveGroups.map((g) => g.label), cdata, 2),
-    });
-    makeTimeChart(cbox, {
       labels: curveGroups.map((g) => g.label),
       colors: curveGroups.map((_, i) => pal.series[i % 8]),
-      data: cdata, dec: 2, unit: "%", height: 230,
+      data: cdata, height: 230,
     });
-    tsCardEl.append(explainBox("hedge-ts-read",
-      "세 선이 벌어져 있으면 만기에 따라 비용이 크게 다르다는 뜻입니다 — ",
-      el("a", { href: "#hedge-sim" }, "시뮬레이터"),
-      H2.default_tenor_m
-        ? ` 는 이 커브 위에서 ${H2.default_tenor_m}개월을 보간하므로, 위 표의 12개월 값과 다른 숫자가 나옵니다.`
-        : " 는 이 커브 위에서 만기를 보간하므로, 위 표의 12개월 값과 다른 숫자가 나옵니다."));
   } else {
     tsCardEl.append(el("p", { class: "card-sub" }, "헤지비용 커브 이력을 불러오지 못했습니다."));
   }
 
-  /* ── 미국채 투자 메리트 모니터(§7.7.14 — 2026-08-12 사용자 요청) ─────────────
-     "헤지비용은 미국채 수익률에서 차감된다 → 비용이 오르면(더 내면) 미국채 메리트가
-     준다"는 관계와, 위험수준과 비용의 연동을 한 카드에서 상시 감시한다.
-     산식은 파이프라인 항등식(헤지 후 UST = UST10y + 스왑레이트 — 부호 규약상 덧셈,
-     내는 국면은 음수라 차감이 된다). 위험 연동은 관계분석과 같은 pearson 을 쓰되,
-     수준이 아니라 **13주 변화**로 잰다 — 둘 다 추세가 강한 수준 계열이라 수준 상관은
-     허구 상관이 되기 쉽다(정식 통계는 관계분석 화면으로 안내). */
+  // Published hedged UST yield and spread; no estimation in this view.
   const meritCard = $("#hedge-merit-card");
   if (meritCard) {
     meritCard.textContent = "";
     const M = H2.ust_merit;
     if (!M || !M.active) {
-      meritCard.append(el("div", { class: "card-title" }, "미국채 투자 메리트 — 데이터 없음"),
+      meritCard.append(el("div", { class: "card-title" }, "미국채 메리트"),
         el("p", { class: "card-sub" },
-          (M && M.reason ? M.reason + " — " : "") + "원천 시리즈가 들어오면 자동으로 복구됩니다."));
+          (M && M.reason) || "데이터 없음"));
     } else {
       const now = M.now || {};
       const tile = (label, val, sub, cls) => el("div",
@@ -3915,73 +3894,30 @@ function renderHedge() {
         el("div", { style: "color:var(--ink-3);font-size:11px" }, sub));
       const sgn2 = (x, d) => (x == null ? "—" : `${x > 0 ? "+" : ""}${fmtNum(x, d == null ? 2 : d)}%`);
       meritCard.append(el("div", { class: "card-head" },
-        el("span", { class: "card-title" }, "미국채 투자 메리트 — 헤지 후 원화수익률 vs 국고"),
-        el("span", { class: "card-sub" }, `주간(W-FRI) · ${M.start}~ (${M.n_weeks}주)`)));
-      meritCard.append(explainBox("hedge-merit-formula",
-        `헤지 후 미국채 = 미국채 10년 + 3개월 스왑레이트(연율) · ${COST_SIGN_KEY} — ` +
-        "내는 국면에서는 스왑레이트가 음수라 수익률에서 차감됩니다."));
+        el("span", { class: "card-title" }, "미국채 메리트"),
+        el("span", { class: "card-sub" }, `최근 ${M.t && M.t.length ? tsToDate(M.t[M.t.length - 1]) : "—"}`)));
       const tiles = el("div", { style: "display:flex;gap:10px;flex-wrap:wrap;margin:8px 0" });
       tiles.append(
-        tile("헤지비용 (3M 스왑레이트)", sgn2(now.cost), "이력 축 — 현재 수준 정본은 위 매트릭스(HP 12M)와 만기가 다릅니다"),
-        tile("헤지 후 미국채 10년", fmtNum(now.hedged, 2) + "%", `미국채 ${fmtNum(now.ust, 2)}% + 스왑 ${sgn2(now.cost)}`),
-        tile("국고 10년", fmtNum(now.ktb, 2) + "%", "비교 기준"),
-        tile("메리트 스프레드", sgn2(now.spread) + "p",
-          `헤지 후 미국채 − 국고 · 자기 이력 백분위 ${fmtNum(now.spread_pctile, 0)}%`,
+        tile("헤지비용 3M", sgn2(now.cost), "SMB · 연 %"),
+        tile("헤지 후 미국채 10년", fmtNum(now.hedged, 2) + "%", "헤지 후"),
+        tile("국고 10년", fmtNum(now.ktb, 2) + "%", "연 %"),
+        tile("스프레드", sgn2(now.spread) + "p",
+          `백분위 ${fmtNum(now.spread_pctile, 0)}%`,
           now.spread > 0 ? "d-down" : "d-up"));
       meritCard.append(tiles);
       /* cardScaffold 는 컨테이너를 **비우고** 시작한다(container.textContent = "") —
          카드에 직접 걸면 위의 머리글·타일이 지워진다(실측). 차트 전용 호스트를 분리. */
       const chartHost = el("div", {});
       meritCard.append(chartHost);
-      const mbox = cardScaffold(chartHost, {
-        title: "헤지 후 미국채 10년 vs 국고 10년 — 메리트 스프레드",
-        sub: "스프레드 > 0 이면 헤지하고도 미국채가 국고보다 수익률이 높다는 뜻",
+      timeCard(chartHost, {
+        title: "미국채·국고 10년",
+        sub: "금리 % · 스프레드 %p",
         csvName: "미국채-메리트.csv",
-        tableFn: tsTableFn(["헤지 후 미국채(%)", "국고 10년(%)", "메리트 스프레드(%p)"],
-          [M.t, M.hedged, M.ktb, M.spread], 2),
-      });
-      makeTimeChart(mbox, {
-        labels: ["헤지 후 미국채 10년", "국고 10년", "메리트 스프레드"],
+        labels: ["헤지 후 미국채 10년", "국고 10년", "스프레드"],
+        units: ["%", "%", "%p"],
         colors: [pal.series[0], pal.series[1], pal.series[3]],
-        data: [M.t, M.hedged, M.ktb, M.spread], dec: 2, unit: "%", height: 240,
+        data: [M.t, M.hedged, M.ktb, M.spread], height: 240,
       });
-      /* 위험수준 연동 — 관계분석 패널의 주간 위험 점수(stress)와 13주 변화 상관.
-         패널이 없으면 문장을 빼고 관계분석 링크만 남긴다(없는 수를 만들지 않는다). */
-      const P13 = 13;
-      const chg = (arr) => arr.map((v, i) => (i >= P13 && v != null && arr[i - P13] != null
-        ? v - arr[i - P13] : null));
-      let riskLine = null;
-      const PN = DATA.panel;
-      if (PN && PN.risk && PN.risk.stress && PN.t) {
-        const byT = new Map();
-        PN.t.forEach((t, i) => byT.set(t, PN.risk.stress[i]));
-        const riskOnMerit = M.t.map((t) => (byT.has(t) ? byT.get(t) : null));
-        const dRisk = chg(riskOnMerit), dCost = chg(M.cost), dSpr = chg(M.spread);
-        const pairs = (a, b) => {
-          const xs = [], ys = [];
-          a.forEach((x, i) => { if (x != null && b[i] != null) { xs.push(x); ys.push(b[i]); } });
-          return [xs, ys];
-        };
-        const [x1, y1] = pairs(dRisk, dCost);
-        const [x2, y2] = pairs(dRisk, dSpr);
-        if (x1.length >= 30) {
-          /* pearson 은 {r, n} 을 돌려준다(관계분석 엔진과 공유) — r 만 뽑는다 */
-          const c1 = pearson(x1, y1).r, c2 = pearson(x2, y2).r;
-          riskLine = explainBox("hedge-merit-risk", { label: "위험수준과의 관계" },
-            `13주 변화 기준 상관: 위험지수↔헤지비용 ${fmtNum(c1, 2)}, ` +
-            `위험지수↔메리트 스프레드 ${fmtNum(c2, 2)} (겹치는 표본 ${x1.length}주). `,
-            c1 < -0.1
-              ? "음(−)이면 위험이 오를 때 비용이 더 내는 쪽으로 움직여 미국채 메리트가 함께 준다는 뜻입니다. "
-              : "이 표본에서는 위험 상승과 비용 악화의 동행이 뚜렷하지 않습니다. ",
-            "지연·교차상관·회귀(HAC)는 ",
-            el("a", { href: "#panel" }, "관계분석"),
-            " 에서 「환헤지 비용 (3개월 스왑레이트)」 변수로 보십시오.");
-        }
-      }
-      meritCard.append(riskLine || el("div", { class: "card-sub", style: "margin-top:6px" },
-        "위험수준과의 정식 통계(상관·교차상관·회귀)는 ",
-        el("a", { href: "#panel" }, "관계분석"),
-        " 에서 「환헤지 비용 (3개월 스왑레이트)」 변수로 보십시오."));
     }
   }
 
@@ -3991,8 +3927,8 @@ function renderHedge() {
   if (MTM.sigma_ds_3m != null && MTM.worst_ds != null) {
   const worstYm = String(MTM.worst_date || "").slice(0, 7);
   mtm.append(el("div", { class: "card-head" },
-    el("span", { class: "card-title" }, "스왑을 몇 개월짜리로 굴릴 것인가 — 스왑 MTM"),
-    el("span", { class: "card-sub" }, "이미 체결한 스왑의 평가손익 — 회계 손익에 그대로 잡힙니다"
+    el("span", { class: "card-title" }, "스왑 MTM"),
+    el("span", { class: "card-sub" }, "명목 대비"
       + (MTM.start ? ` · ${MTM.series || "표본"} ${MTM.start}~${MTM.end} (${MTM.n_months}개월)` : ""))));
   /* 부호가 이 표의 전부다. MTM = 잔존만기 × (−Δ스왑레이트) 이므로 **스왑레이트가 오르는
      달에 평가손**이 난다(hedge.py 주석과 동일). 예전 표는 최악월을 부호 없는 양수로 찍어
@@ -4000,44 +3936,23 @@ function renderHedge() {
   const mt = el("table", { class: "mini-table" },
     el("tr", {},
       el("th", {}, "스왑 만기"),
-      el("th", {}, "잔존만기 τ", el("small", { class: "th-sub" }, "= 만기 ÷ 2, 년")),
-      el("th", {}, "평상시 MTM 변동", el("small", { class: "th-sub" }, "연 %, 헤지 명목 대비")),
-      el("th", {}, "최악의 달 평가손", el("small", { class: "th-sub" }, `${worstYm || "관측 최대 급등월"}, 명목 대비`))));
+      el("th", {}, "잔존만기 τ", el("small", { class: "th-sub" }, "년")),
+      el("th", {}, "MTM 변동성", el("small", { class: "th-sub" }, "연 %")),
+      el("th", {}, "최대 월손실", el("small", { class: "th-sub" }, `${worstYm || "—"} · %`))));
   [3, 6, 9, 12].forEach((m) => {
     const tau = tauOf(m);
     const vol = (tau * MTM.sigma_ds_3m * Math.sqrt(12)).toFixed(2);
     const worst = (tau * Math.abs(MTM.worst_ds)).toFixed(2);
     const isDefault = m === tenorM;
     mt.append(el("tr", { style: isDefault ? "font-weight:700" : "" },
-      el("td", {}, `${m}개월${isDefault ? " ← 우리 평균" : ""}`),
+      el("td", {}, `${m}개월`),
       el("td", { class: "num" }, fmtNum(tau, 3)),
       el("td", { class: "num" }, `±${vol}%`),
       el("td", { class: "num" }, el("span", { class: "neg" }, `−${worst}%`))));
   });
-  mtm.append(wrapTable(mt),
-    explainBox("hedge-mtm-read", { label: "읽는 법" },
-      "평가손은 시장 스왑레이트가 ", el("b", {}, "오를"),
-      " 때 납니다(MTM = 잔존만기 τ × −Δ스왑레이트). 만기를 늘리면 조건을 오래 고정하는 대신"
-      + " τ 가 커져 평가손익이 그만큼 크게 흔들립니다 — 위 두 열이 만기에 정비례하는 이유입니다."
-      + ` 근거: 스왑레이트 월간 변동 σ ${MTM.sigma_ds_3m}%p, 관측 최대 상승 +${MTM.worst_ds}%p`
-      + `${MTM.worst_date ? ` (${MTM.worst_date})` : ""}`
-      + `${MTM.corr_ds_e != null ? `, 달러/원 변화와의 상관 ${MTM.corr_ds_e}` : ""}.`
-      + " (%p = 스왑레이트 자체가 몇 %포인트 움직였나)"));
+  mtm.append(wrapTable(mt));
   }
 
-  const mth = $("#hedge-method");
-  mth.textContent = "";
-  mth.append(el("summary", {}, "산식 · 회계 모형 · 한계 (방법론)"));
-  mth.append(el("p", {}, el("b", {}, "회계 손익 모형 (장부가 해외채권 + FX스왑)")));
-  (H2.acct_model || []).forEach((s) => mth.append(el("div", { style: "font-size:12.5px" }, s)));
-  mth.append(el("p", {}, el("b", {}, "경제 관점"),
-    " — 원화수익 = 자산수익 + (1−h)×환율변화 + h×헤지비용. MVH = 1 + Cov(자산,환율)/Var(환율). ",
-    `공분산 표본 ${H2.sim.sample} (${H2.sim.n_months}개월).`));
-  mth.append(el("p", {}, el("b", {}, "부호 규약"),
-    ` — 헤지비용(= 스왑레이트 = 스왑포인트)은 ${COST_SIGN_KEY}. 스왑 MTM 은 잔존만기 τ = 만기 ÷ 2 를 곱한 τ×(−Δ스왑레이트) 이므로 `,
-    el("b", {}, "스왑레이트가 오르는 달에 평가손실"),
-    "입니다. 이 규약은 이 화면·FX 화면·자산배분·시뮬레이터가 모두 같습니다."));
-  mth.append(el("p", {}, el("b", {}, "한계"), ` — ${H2.limits}`));
 }
 
 /* ---------------- 환헤지 시뮬레이터 (오버레이) ---------------- */
