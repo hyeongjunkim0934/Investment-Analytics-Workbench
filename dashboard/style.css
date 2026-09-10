@@ -1021,6 +1021,10 @@ details.explain[open] > summary { color: var(--ink-2); }
 .alloc-period input[type="date"] { width: 144px; color-scheme: dark; }
 [data-theme="light"] .alloc-period input[type="date"] { color-scheme: light; }
 .alloc-period-status { flex-basis: 100%; }
+#hedge-lead { display: grid; gap: 4px; margin-top: 10px; font-size: 12px; }
+#hedge-period { margin: 14px 0; }
+#hedge .chart-box { position: relative; }
+.hedge-empty { position: absolute; inset: 42% 0 auto; text-align: center; pointer-events: none; }
 #alloc-headline:empty { display: none; }
 .alloc-select { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; }
 .alloc-select select {

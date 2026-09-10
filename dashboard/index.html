@@ -155,14 +155,10 @@
 
   <section id="hedge" class="section">
     <h2>환헤지</h2>
-    <div class="qa" id="hedge-headline"></div>
-    <!-- 순서가 이 화면의 절반이다. ① 질문·답 → ② 결론 두 줄(#hedge-lead) → ③ 통화별 표
-         → ④ 관점 비교표·용어(#hedge-views). 예전에는 231자 산문이 표 위에, 결론 상자가
-         표 아래에 있어서 첫 화면이 결론도 숫자도 아닌 해설이었다. 순서를 되돌리려면
-         아래 세 줄의 자리만 맞바꾸면 된다 — 렌더 코드는 위치에 의존하지 않는다. -->
+    <div class="card-sub" id="hedge-headline"></div>
     <div id="hedge-lead"></div>
     <div class="card" id="hedge-matrix" style="margin:12px 0 14px"></div>
-    <div class="howto" id="hedge-views"></div>
+    <div id="hedge-period"></div>
     <div class="grid-2" style="margin-top:14px">
       <div class="card" id="hedge-curve-card"></div>
       <div class="card" id="hedge-bt-card"></div>
@@ -175,8 +171,6 @@
     <!-- 미국채 투자 메리트 모니터(§7.7.14) — 헤지비용이 미국채 원화수익률에서
          차감되는 관계와 위험수준의 연동을 한 카드에서 상시 감시한다. -->
     <div class="card" id="hedge-merit-card" style="margin-top:14px"></div>
-    <p style="margin-top:14px"><a id="hedge-sim-btn" href="#hedge-sim" class="btn-primary" title="통화별 금액·헤지비율을 넣으면 두 관점의 변동성과 연간 헤지 캐리가 바로 나옵니다">우리 포트폴리오 숫자로 계산해 보기 (7통화 시뮬레이터) →</a></p>
-    <details class="method" id="hedge-method"></details>
   </section>
 
   <section id="alloc" class="section">
