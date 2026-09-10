@@ -952,6 +952,7 @@ DYNAMIC_IDS = {
     "alloc-workspace-institution": 'id: `alloc-workspace-${key}`',  # ALLOC_WORKSPACES의 institution 버튼
     "port-axis-apply": 'id: "port-axis-apply"',  # portAxisControls() 재렌더 후 포커스 복원
     "port-axis-auto": 'id: "port-axis-auto"',
+    "port-range-sigma": 'id: "port-range-sigma"',  # portSigmaControl() 생성·재렌더 후 포커스 복원
     "port-palette-toggle": 'id: "port-palette-toggle"',  # portPaletteControl() 색상 초기화 후 포커스 복원
     "village-fx":  'setAttribute("id", "village-fx")',   # 마을 앰비언트 SVG 레이어
     "hg-econ":     'tile("hg-econ"',                     # 시뮬레이터 결과 타일 3개

@@ -2282,12 +2282,23 @@ safe("portPanel", () => {
     && chart.opts.hooks.setCursor[0];
   r.hoverHookPresent = typeof hook === "function";
   if (hook) {
-    hook({ cursor: { idx: 2 } });
+    const E = P.portEngine(ALLOC_FIXTURE.port, P.portState(ALLOC_FIXTURE.port));
+    const xr = chart.opts.scales.x.range, yr = chart.opts.scales.y.range();
+    const ctx = new Proxy({measureText: text => ({width: text.length * 10}),
+      createLinearGradient: () => ({addColorStop() {}})}, {get: (o, key) => key in o ? o[key] : () => {}});
+    const fake = {ctx, bbox: {left: 50, top: 10, width: 650, height: 300},
+      valToPos(v, axis, canvas = false) {
+        const pos = axis === "x" ? (v - xr[0]) / (xr[1] - xr[0]) * 650 : (yr[1] - v) / (yr[1] - yr[0]) * 300;
+        return pos + (canvas ? axis === "x" ? 50 : 10 : 0);
+      }};
+    (chart.opts.hooks.draw || []).forEach(fn => fn(fake));
+    fake.cursor = {left: fake.valToPos(E.minVar.sig, "x"), top: fake.valToPos(E.minVar.mu, "y")};
+    hook(fake);
     const hv = panel.querySelector(".port-hover");
-    r.hoverShowsDetail = /배분/.test(hv.textContent) && /국내채권/.test(hv.textContent)
-      && /위험/.test(hv.textContent);
-    hook({ cursor: { idx: null } });
-    r.hoverResets = hv.textContent === "";
+    r.hoverShowsDetail = !hv.hidden && /배분/.test(hv.textContent) && /국내채권/.test(hv.textContent)
+      && /변동성/.test(hv.textContent);
+    fake.cursor = {left: -1, top: -1}; hook(fake);
+    r.hoverResets = hv.hidden && hv.textContent === "";
   }
   /* 경계선 점들이 위험 오름차순·수익 비내림인가 (게시가 아니라 엔진 실행으로) */
   const E = P.portEngine(ALLOC_FIXTURE.port, P.portState(ALLOC_FIXTURE.port));
