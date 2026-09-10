@@ -1792,12 +1792,12 @@ def test_cma_screen_shows_layer_mapping_and_provenance(probe):
 
 
 def test_alloc_removes_toc_and_preserves_workspace_switch(probe):
-    """중복 목차는 제거하고 세 탭의 전환은 해시를 바꾸지 않는다."""
+    """중복 목차는 제거하고 두 탭의 전환은 해시를 바꾸지 않는다."""
     c = probe["allocToc"]
     assert c["renderErrors"] == 0
     assert c["tocRemoved"] is True
     assert 'id="alloc-toc"' not in INDEX_HTML.read_text(encoding="utf-8")
-    assert c["workspaceButtons"] == ["포트폴리오", "리스크연계", "기관배분/헤지"]
+    assert c["workspaceButtons"] == ["포트폴리오", "리스크연계"]
     assert c["workspaceSwitchPreservesHash"] is True
 
 
@@ -1898,10 +1898,10 @@ def test_sim_panel_sigma_keyin_scales_variance_not_correlation(probe):
 
 
 def test_sim_panel_renders_bars_markers_donuts_cards(probe):
-    """기관 선택·막대 7·λ-MVO 마커·도넛 2·카드 2, 반복 설명 제거."""
+    """기관 패널 숨김·공통 엔진의 막대/마커/도넛 계산 호환 유지."""
     c = probe["simPanel"]
     assert c["renderErrors"] == 0
-    assert c["institutionPanelVisible"] is True
+    assert c["institutionPanelHidden"] is True
     assert c["barCount"] == 7 and c["markerVisibleCount"] == 7
     assert c["donutCount"] == 2
     assert c["hasOptCard"] is True and c["hasSimCard"] is True
