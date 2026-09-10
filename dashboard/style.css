@@ -1208,15 +1208,27 @@ a.kpi-link .kpi-label > span:first-child::after {
   color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .port-sharpe-ramp { height: 7px; flex: 1; min-width: 40px; max-width: 280px; border-radius: 4px; }
 .port-frontier .port-portfolio-tooltip { position: absolute; z-index: 5; pointer-events: none;
-  width: 198px; max-width: calc(100% - 12px); box-sizing: border-box; min-height: 0; margin: 0;
+  width: 304px; max-width: calc(100% - 12px); box-sizing: border-box; min-height: 0; margin: 0;
   padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px;
   background: var(--surface); box-shadow: 0 3px 12px rgba(0,0,0,.24);
   color: var(--ink-2); font-size: 11px; line-height: 1.45; font-variant-numeric: tabular-nums; }
 .port-tooltip-title { color: var(--ink-1); font-weight: 600; margin-bottom: 4px; }
 .port-tooltip-metrics { display: flex; flex-wrap: wrap; gap: 1px 8px;
   padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
-.port-tooltip-weight { display: flex; justify-content: space-between; gap: 8px; }
-.port-tooltip-weight b { color: var(--ink-1); font-weight: 500; }
+.port-frontier .port-asset-tooltip { width: 218px; }
+.port-tooltip-basis { margin-bottom: 5px; font-size: 10px; }
+.port-tooltip-contributions { display: table; width: 100%; table-layout: fixed; border-collapse: collapse; }
+.port-tooltip-columns, .port-tooltip-weight { display: table-row; }
+.port-tooltip-columns > span, .port-tooltip-weight > * { display: table-cell; text-align: right;
+  white-space: nowrap; padding: 1px 0 1px 6px; }
+.port-tooltip-columns > span:first-child, .port-tooltip-asset-name { text-align: left; padding-left: 0; }
+.port-tooltip-weight-value, .port-tooltip-return, .port-tooltip-risk {
+  white-space: normal; overflow-wrap: anywhere; color: var(--ink-1); font-weight: 500; }
+.port-tooltip-columns { font-size: 10px; color: var(--ink-3); }
+.port-tooltip-columns > span { padding-bottom: 4px; }
+.port-tooltip-range { line-height: 1.6; }
+.port-tooltip-range-values { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; color: var(--ink-1); }
+.port-tooltip-contribution-note { font-size: 10px; margin-top: 4px; }
 .port-range-control, .port-range-control label { display: inline-flex; align-items: center; gap: 5px;
   color: var(--ink-2); font-size: 12px; }
 .port-range-control { flex-wrap: wrap; }
