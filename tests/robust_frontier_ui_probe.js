@@ -47,6 +47,7 @@ const sigmaReloadCode = String.raw`
 const assert = require('node:assert/strict');
 P.DATA.alloc = SIX_ASSET_FIXTURE;P.renderPortPanel(SIX_ASSET_FIXTURE);
 assert.equal(Number(DOC.getElementById('port-range-sigma').value),Number(process.env.IAW_TEST_SIGMA_EXPECTED));
+assert.equal(DOC.getElementById('port-range-sigma').getAttribute('step'),'0.25');
 console.log(JSON.stringify({reloadPass:true}));
 `;
 const code = process.argv.includes('--axis-reload') ? reloadCode : process.argv.includes('--sigma-reload') ? sigmaReloadCode : String.raw`
@@ -129,6 +130,7 @@ function assertContained(c){
 P.DATA.alloc=SIX_ASSET_FIXTURE;shim.localStorage.removeItem(P.PORT_LS_KEY);P.renderPortPanel(SIX_ASSET_FIXTURE);
 const initial=chart(),allRange=initial.opts.scales.x.range.slice();
 assert.equal(DOC.getElementById('port-range-sigma').value,'0.5');
+assert.equal(DOC.getElementById('port-range-sigma').getAttribute('step'),'0.25');
 const expectedAssets=['국내채권','국내장부','해외채권','국내주식','해외주식','대체투자'];
 assert.deepEqual(SIX_ASSET_FIXTURE.port.assets,expectedAssets);
 assert.deepEqual(Array.from(panel.querySelectorAll('.port-table tbody tr'),row=>row.querySelector('td').textContent),expectedAssets);
@@ -187,12 +189,23 @@ for(const [i,s] of chart().opts.series.entries()){
 const hover=card().querySelector('.port-hover.port-portfolio-tooltip');assert(hover&&hover.hidden);
 assert.equal(chart().opts.cursor.x,false);assert.equal(chart().opts.cursor.y,false);
 assert.equal(chart().opts.cursor.points.show,false);assert.equal(chart().opts.legend.show,false);
-const hoverWeights=(tip)=>Array.from(tip.querySelectorAll('.port-tooltip-weight'),row=>parseFloat(row.querySelector('b').textContent));
-const checkPortfolio=(tip,p,y=p.mu)=>{
+const hoverWeights=(tip)=>Array.from(tip.querySelectorAll('.port-tooltip-weight'),row=>parseFloat(row.querySelector('.port-tooltip-weight-value').textContent));
+const checkPortfolio=(tip,p,y=p.mu,engine=E0)=>{
   assert(!tip.hidden);assert(/배분/.test(tip.textContent));
   assert.deepEqual(hoverWeights(tip),Array.from(p.w,v=>+Number(v*100).toFixed(2)));
   assert(tip.querySelector('.port-tooltip-metrics').textContent.includes('기대수익 '+Number(y).toFixed(2)+'%'));
   assert(tip.querySelector('.port-tooltip-metrics').textContent.includes('변동성 '+Number(p.sig).toFixed(2)+'%'));
+  const means=Array.from(p.w,(wi,i)=>wi*engine.mu[i]);
+  const varianceParts=Array.from(p.w,(wi,i)=>wi*p.w.reduce((s,wj,j)=>s+engine.risk.C[i][j]*wj,0));
+  const totalMean=means.reduce((s,v)=>s+v,0),variance=varianceParts.reduce((s,v)=>s+v,0);
+  assert(tip.querySelector('.port-tooltip-basis').textContent.includes('입력 기대수익 '+totalMean.toFixed(2)+'%'));
+  assert(tip.querySelector('.port-tooltip-columns').textContent.includes('수익 기여'));
+  assert(tip.querySelector('.port-tooltip-columns').textContent.includes('위험 기여'));
+  const percent=(v,total)=>total===0?'—':Number(100*v/total).toFixed(2)+'%';
+  Array.from(tip.querySelectorAll('.port-tooltip-weight')).forEach((row,i)=>{
+    assert.equal(row.querySelector('.port-tooltip-return').textContent,percent(means[i],totalMean));
+    assert.equal(row.querySelector('.port-tooltip-risk').textContent,percent(varianceParts[i],variance));
+  });
 };
 for(const dpr of [1,2]){
   const paint=draw(chart(),dpr),p=E0.minVar;
@@ -236,7 +249,8 @@ draw(chart());
 const curveScreens=[...E0.front.map(p=>screen(p)),...E0.robust.map(p=>screen(p,p.worst)),...E0.optimistic.map(p=>screen(p,p.best))];
 const cloudPoint=E0.cloud.points.find(p=>{
   const xy=screen(p),dist=(other)=>(xy[0]-other[0])**2+(xy[1]-other[1])**2;
-  return symbols.every(q=>dist(screen(q))>16**2)&&curveScreens.every(q=>dist(q)>16**2);
+  return symbols.every(q=>dist(screen(q))>16**2)&&curveScreens.every(q=>dist(q)>16**2)
+    &&E0.risk.sig.every(sig=>Math.abs(xy[0]-cloudPaint.u.valToPos(sig,'x'))>6);
 });
 assert(cloudPoint,'no isolated feasible point in synthetic fixture');
 assert(Math.abs(cloudPoint.w.reduce((a,b)=>a+b,0)-1)<1e-12);
@@ -348,6 +362,8 @@ for(const dpr of [1,2]){
     isolatedHooks.draw(u);
     const at=(x,y)=>{u.cursor={left:x*28,top:(10-y)*18};isolatedHooks.setCursor(u);};
     at(3,2);assert.deepEqual(hoverWeights(isolatedTip),[80,20]);assert(isolatedTip.textContent.startsWith('Conservative'));
+    assert(Array.from(isolatedTip.querySelectorAll('.port-tooltip-return')).every(n=>n.textContent==='—'));
+    assert(Array.from(isolatedTip.querySelectorAll('.port-tooltip-risk')).every(n=>n.textContent==='—'));
     at(3,7);assert.deepEqual(hoverWeights(isolatedTip),[20,80]);assert(isolatedTip.textContent.startsWith('Optimistic'));
     at(7,5);assert.deepEqual(hoverWeights(isolatedTip),[60,40]);assert(isolatedTip.textContent.startsWith('현재'));
     at(9.99,5);assert(isolatedTip.hidden,'cropped candidate selected across plot boundary');
@@ -363,6 +379,24 @@ for(const dpr of [1,2]){
   }finally{sandbox.devicePixelRatio=oldDpr;}
 }
 isolatedHooks.destroy();assert(!hoverHost.querySelector('.port-portfolio-tooltip'));hoverHost.remove();
+// Undefined denominators remain visible as unavailable shares, while signed
+// return and diversification contributions survive their actual DOM formatting.
+for(const specimen of [
+  {mu:[4,-4],C:[[100,0],[0,400]],w:[.5,.5],returns:['—','—'],risk:['20.00%','80.00%'],note:'수익 합계 0'},
+  {mu:[4,8],C:[[0,0],[0,0]],w:[.5,.5],returns:['33.33%','66.67%'],risk:['—','—'],note:'위험 합계 0'},
+  {mu:[-8,4],C:[[100,-180],[-180,400]],w:[.2,.8],returns:['-100.00%','200.00%'],risk:['-12.25%','112.25%']},
+  {mu:[-8,2],C:[[100,0],[0,400]],w:[.75,.25],returns:['109.09%','-9.09%'],risk:['69.23%','30.77%'],note:'총손실 대비'},
+]){
+  const host=DOC.createElement('div');DOC.body.append(host);host.clientWidth=340;host.clientHeight=260;
+  const hooks=makeHover(host,['A','B'],[{x:5,y:5,label:'포트폴리오',w:specimen.w}],specimen);
+  const u={bbox:{left:0,top:0,width:300,height:220},valToPos:(v,axis)=>v*(axis==='x'?30:22),cursor:{left:150,top:110}};
+  hooks.draw(u);hooks.setCursor(u);
+  const tip=host.querySelector('.port-portfolio-tooltip');assert(!tip.hidden);
+  assert.deepEqual(Array.from(tip.querySelectorAll('.port-tooltip-return'),n=>n.textContent),specimen.returns);
+  assert.deepEqual(Array.from(tip.querySelectorAll('.port-tooltip-risk'),n=>n.textContent),specimen.risk);
+  if(specimen.note)assert(tip.querySelector('.port-tooltip-contribution-note').textContent.includes(specimen.note));
+  hooks.destroy();host.remove();
+}
 const pair={assets:['A','B'],windows:[{key:'all',n_months:60,cov:[[.01,.005],[.005,.04]],mean_pct:[4,8]}]};
 const two={mu:{},sig:{A:10,B:20},corr:{[R.portCorrKey('A','B')]:.25}};
 const risk=R.portRiskInputs(pair,pair.windows[0],two);
@@ -392,14 +426,21 @@ click('CSV');assert(sandbox.robustCSV[2].some(row=>row[0]==='국내채권'&&Math
 const field=(label)=>Array.from(panel.querySelectorAll('input')).find(n=>n.getAttribute('aria-label')===label);
 const edit=(label,v)=>{const n=field(label);assert(n,label);n.value=String(v);n.dispatchEvent({type:'input'});return n;};
 const state=()=>P.portState(SIX_ASSET_FIXTURE.port);
+const checkEditedContributions=()=>{
+  const engine=P.portEngine(SIX_ASSET_FIXTURE.port,state()),p=engine.minVar,paint=draw(chart());
+  moveCursor(chart(),paint,paint.u.valToPos(p.sig,'x'),paint.u.valToPos(p.mu,'y'));
+  checkPortfolio(card().querySelector('.port-portfolio-tooltip'),p,p.mu,engine);
+};
 edit('국내채권 변동성',10);
 assert.equal(state().sig.국내채권,10);assert.notEqual(JSON.stringify(chart().data),originalData);
 assert(card().querySelector('.port-asset-key').textContent.includes('10.00'));
+checkEditedContributions();
 const validData=JSON.stringify(chart().data),validSaved=shim.localStorage.getItem(P.PORT_LS_KEY);
 const bad=edit('국내채권 변동성',-2);
 assert.equal(bad.getAttribute('aria-invalid'),'true');assert.equal(JSON.stringify(chart().data),validData);
 assert.equal(shim.localStorage.getItem(P.PORT_LS_KEY),validSaved);assert(/마지막 적용값/.test(DOC.getElementById('port-risk-status').textContent));
 edit('국내채권 변동성','');assert.equal(state().sig.국내채권,undefined);
+edit('국내채권 기대수익',9.5);checkEditedContributions();edit('국내채권 기대수익','');
 assert(!DOC.getElementById('port-frontier-panel').hidden&&!DOC.getElementById('port-correlation-panel').hidden);
 const flow=Array.from(panel.children);
 assert(flow.indexOf(panel.querySelector('.port-input-table-wrap'))<flow.indexOf(DOC.getElementById('port-correlation-panel')));
@@ -428,6 +469,7 @@ edit('국내채권 · 해외채권 상관계수',0);edit('국내채권 · 국내
 DOC.getElementById('port-corr-apply').click();
 assert.equal(Object.keys(state().corr).length,15);assert(Object.values(state().corr).every(v=>v===0));
 assert.equal(P.portEngine(SIX_ASSET_FIXTURE.port,state()).risk.C[0][1],0);
+checkEditedContributions();
 edit('국내채권 변동성',10);
 P.renderPortPanel(SIX_ASSET_FIXTURE,{preserveDraft:true});
 assert.equal(field('국내채권 변동성').value,'10');assert.equal(field('국내채권 · 해외채권 상관계수').value,'0');
@@ -500,6 +542,20 @@ const expectedIntervals=[[4.41,1.795,6.205],[2,2,4],[4.41,1.795,6.205],[25,-4.5,
 const intervalStrokes=(paint)=>paint.strokes.filter(s=>s.stage==='drawClear'&&s.path.length===6
   &&s.path.every((p,i)=>p[0]===(i%2?'lineTo':'moveTo')));
 const near=(actual,expected)=>assert(Math.abs(actual-expected)<1e-9,actual+' differs from '+expected);
+const checkAssetHover=(paint,i,sigma,atRangeEnd=false)=>{
+  const a=expectedAssets[i],mu=dispersionState.mu[a],sig=dispersionState.sig[a];
+  const ordinate=mu+(atRangeEnd?sigma*sig:0);
+  moveCursor(chart(),paint,paint.u.valToPos(sig,'x'),paint.u.valToPos(ordinate,'y'));
+  const tip=card().querySelector('.port-portfolio-tooltip');assert(!tip.hidden);
+  assert(tip.classList.contains('port-asset-tooltip'));
+  assert.equal(tip.querySelector('.port-tooltip-title').textContent,a);
+  const range=tip.querySelector('.port-tooltip-range');assert(range);
+  assert(range.textContent.includes('±'+sigma+'σ'));
+  assert(range.textContent.includes('가산폭 ±'+Number(sigma*sig).toFixed(2)+'%p'));
+  assert(range.textContent.includes('하단 '+Number(mu-sigma*sig).toFixed(2)+'%'));
+  assert(range.textContent.includes('상단 '+Number(mu+sigma*sig).toFixed(2)+'%'));
+  assert.equal(tip.querySelectorAll('.port-tooltip-weight').length,0);
+};
 for(const dpr of [1,2]){
   const paint=draw(chart(),dpr),bars=intervalStrokes(paint);
   assert.equal(bars.length,6);
@@ -520,6 +576,7 @@ for(const dpr of [1,2]){
     assert(t.x>=paint.bbox.left&&t.x+t.w<=paint.bbox.left+paint.bbox.width);
     assert(t.y>=paint.bbox.top&&t.y+t.h<=paint.bbox.top+paint.bbox.height);
   });
+  checkAssetHover(paint,3,.5);checkAssetHover(paint,3,.5,true);
 }
 assert(chart().opts.scales.y.range()[0]<-4.5&&chart().opts.scales.y.range()[1]>22.075);
 // Sigma controls only the asset dispersion display, including 0 and fractional
@@ -530,7 +587,7 @@ const setSigma=(value,enter=false)=>{
   const input=DOC.getElementById('port-range-sigma');input.value=String(value);
   input.dispatchEvent(enter?{type:'keydown',key:'Enter',preventDefault(){}}:{type:'change'});
 };
-for(const value of [1.25,0,1]){
+for(const value of [.25,.75,1.25,0,1]){
   setSigma(value,value===1.25);
   assert.equal(DOC.getElementById('port-range-sigma').value,String(value));
   assert.equal(JSON.parse(shim.localStorage.getItem('iaw-port-range-sigma')),value);
@@ -542,15 +599,16 @@ for(const value of [1.25,0,1]){
     near(paint.value(bar.path[0].slice(1))[1],mu+value*sig);
     near(paint.value(bar.path[1].slice(1))[1],mu-value*sig);
   });
+  checkAssetHover(paint,3,value);checkAssetHover(paint,3,value,true);
 }
 const sigmaApplied=chart(),sigmaValid=shim.localStorage.getItem('iaw-port-range-sigma');
-for(const value of ['',-1,'Infinity',11]){
+for(const value of ['',-1,'Infinity',11,.1,.3,1.1]){
   setSigma(value);assert.equal(chart(),sigmaApplied);
   assert.equal(DOC.getElementById('port-range-sigma').getAttribute('aria-invalid'),'true');
   assert.equal(shim.localStorage.getItem('iaw-port-range-sigma'),sigmaValid);
 }
 P.renderPortPanel(SIX_ASSET_FIXTURE,{preserveDraft:true});assert.equal(DOC.getElementById('port-range-sigma').value,'1');
-for(const [saved,expected] of [['1.25',1.25],['0',0],['-1',.5],['null',.5],['"2"',.5],['{broken',.5]]){
+for(const [saved,expected] of [['1.25',1.25],['0',0],['0.6',.5],['0.625',.75],['1.1',1],['-1',.5],['null',.5],['"2"',.5],['{broken',.5]]){
   const output=require('node:child_process').execFileSync(process.execPath,[path.join(ROOT,'tests/robust_frontier_ui_probe.js'),ROOT,'--sigma-reload'],{
     encoding:'utf8',env:{...process.env,IAW_TEST_SIGMA_STATE:saved,IAW_TEST_SIGMA_EXPECTED:String(expected)},
   });assert(JSON.parse(output).reloadPass);
