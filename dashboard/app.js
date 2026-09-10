@@ -5040,16 +5040,179 @@ function allocFeasibility(E) {
   return probs;
 }
 
-/* ---- 리스크 → 최적화 통합 프로세스 (§7.16 — 2026-09-01 사용자 지시) --------------
-   리스크 모듈의 월말 점수(risk.json layers.*.hist_m — 전 구간)를 λ 로 환산해 매월
-   λ-효용 MVO 를 다시 풀고, 그 비중 경로를 누적 100% 스택으로 그린다. 연구 하네스
-   `pipeline/research/risk_lambda_alloc.py`(HANDOVER §5.1 실험)의 메커니즘을 화면으로
-   옮긴 것 — **참고 표시 전용**이다: 등급·경보·이벤트·λ 키인 어디에도 자동 반영되지
-   않는다(§5.1 ⓑ 미채택 유지). λ 앵커는 사용자의 화면 λ 다(점수 50 = 백분위 중앙 ↔
-   화면 λ — λ 소유권 §7.7.12 유지, 새 권장값 없음). μ·Σ 는 현재 설정 고정이라
-   백테스트가 아니고 화면이 그 사실을 적는다. 반복 1200회는 3000회 대비 최대
-   0.006%p(실측 — 표시 0.1%p 단위 아래)라 근사가 아니라 동일 해다. */
-const RP_ITERS = 1200;
+/* Weekly risk observations and the latest published snapshot are mapped to λ.
+   Current CMA / constraints stay fixed: this is a scenario path, not a backtest.
+   Cache only exact λ solutions with identical optimizer inputs. */
+const RP_SOLVER_VERSION = 1;
+/* Risk-history QP only. Certify the original objective and constraints before publishing.
+   Annual input units: mu %, C %^2; utility = mu'w/100 - lambda*w'Cw/20000.
+   Feasible active-set iterations avoid thousands of fixed projected-gradient steps.
+   The 1e-10 scaled diagonal stabilizer is numerical; certification uses unmodified C. */
+function allocRiskOptimize(E, lambda) {
+  if (!E || !Number.isFinite(lambda) || lambda < 0) return null;
+  const mu = E.V?.mu, C = E.V?.C, lo0 = E.lo, hi0 = E.hi;
+  const n = mu?.length;
+  if (!n || n > 12 || !Array.isArray(C) || C.length !== n
+      || !Array.isArray(lo0) || !Array.isArray(hi0) || lo0.length !== n || hi0.length !== n
+      || mu.some((x) => !Number.isFinite(x)) || lo0.some((x) => !Number.isFinite(x))
+      || hi0.some((x) => !Number.isFinite(x))
+      || C.some((r, i) => !Array.isArray(r) || r.length !== n || r.some((x, j) =>
+        !Number.isFinite(x) || Math.abs(x - C[j]?.[i]) > 1e-8))) return null;
+  const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+  const groups = (E.groups || []).filter((g) => g.cap != null && g.idx?.length);
+  if (groups.some((g) => !Number.isFinite(g.cap) || g.idx.some((i) => !Number.isInteger(i) || i < 0 || i >= n)
+      || new Set(g.idx).size !== g.idx.length)) return null;
+  const key = JSON.stringify([mu, C, lo0, hi0, groups.map((g) => [g.idx, g.cap])]);
+  const cache = allocRiskOptimize.cache || (allocRiskOptimize.cache = new WeakMap());
+  let prepared = cache.get(E);
+  const feasTol = 2e-9, dualTol = 2e-8;
+  const feasible = (w) => Array.isArray(w) && w.every(Number.isFinite)
+    && Math.abs(w.reduce((a, b) => a + b, 0) - 1) <= feasTol
+    && w.every((x, i) => x >= lo0[i] - feasTol && x <= hi0[i] + feasTol)
+    && groups.every((g) => g.idx.reduce((a, i) => a + w[i], 0) <= g.cap + feasTol);
+  // Partial-pivot Gaussian elimination; dimensions are at most twice the asset count.
+  const solve = (M, rhs) => {
+    const a = M.map((r, i) => [...r, rhs[i]]), d = a.length;
+    for (let c = 0; c < d; c++) {
+      let p = c;
+      for (let r = c + 1; r < d; r++) if (Math.abs(a[r][c]) > Math.abs(a[p][c])) p = r;
+      if (!(Math.abs(a[p][c]) > 1e-14)) return null;
+      [a[c], a[p]] = [a[p], a[c]];
+      for (let r = c + 1; r < d; r++) {
+        const f = a[r][c] / a[c][c];
+        for (let j = c + 1; j <= d; j++) a[r][j] -= f * a[c][j];
+        a[r][c] = 0;
+      }
+    }
+    const x = new Array(d);
+    for (let i = d - 1; i >= 0; i--) {
+      let b = a[i][d]; for (let j = i + 1; j < d; j++) b -= a[i][j] * x[j];
+      x[i] = b / a[i][i];
+      if (!Number.isFinite(x[i])) return null;
+    }
+    return x;
+  };
+  const independent = (rows, row) => {
+    const basis = [];
+    for (const source of [...rows, row]) {
+      const v = source.slice();
+      for (const b of basis) { const s = dot(v, b); for (let i = 0; i < n; i++) v[i] -= s * b[i]; }
+      const norm = Math.sqrt(dot(v, v));
+      if (norm <= 1e-9) return false;
+      basis.push(v.map((x) => x / norm));
+    }
+    return true;
+  };
+  if (!prepared || prepared.key !== key) {
+    const lo = lo0.slice(), hi = hi0.slice();
+    if (lo.some((x, i) => x > hi[i] + 1e-12) || lo.reduce((a, b) => a + b, 0) > 1 + 1e-12
+        || hi.reduce((a, b) => a + b, 0) < 1 - 1e-12) return null;
+    // Check PSD once per model, including singular covariance matrices.
+    const cScale = Math.max(1e-12, ...C.map((r) => r.reduce((a, x) => a + Math.abs(x), 0)));
+    const chol = Array.from({ length: n }, () => new Array(n).fill(0));
+    for (let i = 0; i < n; i++) for (let j = 0; j <= i; j++) {
+      let v = C[i][j] / cScale + (i === j ? 1e-12 : 0);
+      for (let k = 0; k < j; k++) v -= chol[i][k] * chol[j][k];
+      if (i === j && !(v > 0)) return null;
+      chol[i][j] = i === j ? Math.sqrt(v) : v / chol[j][j];
+    }
+    for (const g of groups) {
+      const floor = g.idx.reduce((a, i) => a + lo[i], 0);
+      if (floor > g.cap + 1e-12) return null;
+      if (g.cap - floor <= 1e-12) g.idx.forEach((i) => { hi[i] = lo[i]; });
+    }
+    if (hi.reduce((a, b) => a + b, 0) < 1 - 1e-12) return null;
+    const constraints = [];
+    const eq = [new Array(n).fill(1)];
+    for (let i = 0; i < n; i++) {
+      const unit = new Array(n).fill(0); unit[i] = 1;
+      if (hi[i] - lo[i] <= 1e-12) { if (independent(eq, unit)) eq.push(unit); }
+      else constraints.push({ a: unit, b: hi[i] }, { a: unit.map((x) => -x), b: -lo[i] });
+    }
+    for (const g of groups) {
+      const a = new Array(n).fill(0); g.idx.forEach((i) => { a[i] = 1; });
+      constraints.push({ a, b: g.cap });
+    }
+    const projectBox = (w) => {
+      let a = Math.min(...w.map((x, i) => lo[i] - x));
+      let b = Math.max(...w.map((x, i) => hi[i] - x));
+      for (let k = 0; k < 45; k++) {
+        const m = (a + b) / 2;
+        let sum = 0; for (let i = 0; i < n; i++) sum += Math.min(hi[i], Math.max(lo[i], w[i] + m));
+        if (sum > 1) b = m; else a = m;
+      }
+      return w.map((x, i) => Math.min(hi[i], Math.max(lo[i], x + (a + b) / 2)));
+    };
+    let w = projectBox(new Array(n).fill(1 / n));
+    if (!feasible(w)) {
+      const corrections = Array.from({ length: groups.length + 1 }, () => new Array(n).fill(0));
+      for (let k = 0; k < 4000; k++) {
+        const prev = w;
+        for (let s = 0; s <= groups.length; s++) {
+          const y = w.map((x, i) => x + corrections[s][i]);
+          let z;
+          if (!s) z = projectBox(y);
+          else {
+            const g = groups[s - 1], excess = g.idx.reduce((a, i) => a + y[i], 0) - g.cap;
+            z = y.slice(); if (excess > 0) g.idx.forEach((i) => { z[i] -= excess / g.idx.length; });
+          }
+          corrections[s] = y.map((x, i) => x - z[i]); w = z;
+        }
+        if (Math.max(...w.map((x, i) => Math.abs(x - prev[i]))) < 1e-12 && feasible(w)) break;
+      }
+    }
+    if (!feasible(w)) return null;
+    prepared = { key, constraints, eq, w, cScale };
+    cache.set(E, prepared);
+  }
+  const { constraints, eq, cScale } = prepared;
+  const scale = Math.max(1e-12, lambda * cScale / 1e4, ...mu.map((x) => Math.abs(x) / 100));
+  if (!Number.isFinite(scale)) return null;
+  const H = C.map((r) => r.map((x) => (lambda / scale) * (x / 1e4)));
+  const q = mu.map((x) => -x / 100 / scale);
+  const Hr = H.map((r, i) => r.map((x, j) => x + (i === j ? 1e-10 : 0)));
+  let w = prepared.w.slice();
+  const active = [];
+  for (let j = 0; j < constraints.length; j++) {
+    const c = constraints[j];
+    if (c.b - dot(c.a, w) < 1e-8 && independent([...eq, ...active.map((i) => constraints[i].a)], c.a)) active.push(j);
+  }
+  for (let iter = 0; iter < 160; iter++) {
+    const rows = [...eq, ...active.map((j) => constraints[j].a)], m = rows.length;
+    const g = H.map((r, i) => dot(r, w) + q[i]);
+    const M = Hr.map((r, i) => [...r, ...rows.map((a) => a[i])]);
+    rows.forEach((a) => M.push([...a, ...new Array(m).fill(0)]));
+    const solution = solve(M, [...g.map((x) => -x), ...new Array(m).fill(0)]);
+    if (!solution) return null;
+    const p = solution.slice(0, n), nu = solution.slice(n);
+    if (Math.max(...p.map(Math.abs)) < 1e-8) {
+      let remove = -1, worst = -dualTol;
+      for (let j = 0; j < active.length; j++) if (nu[eq.length + j] < worst) {
+        worst = nu[eq.length + j]; remove = j;
+      }
+      if (remove >= 0) { active.splice(remove, 1); continue; }
+      const residual = g.map((x, i) => x + rows.reduce((a, row, j) => a + row[i] * nu[j], 0));
+      if (!feasible(w) || Math.max(...residual.map(Math.abs)) > dualTol
+          || active.some((j, k) => Math.abs((constraints[j].b - dot(constraints[j].a, w)) * nu[eq.length + k]) > dualTol)) return null;
+      prepared.w = w.slice();
+      return w;
+    }
+    let alpha = 1, block = -1;
+    for (let j = 0; j < constraints.length; j++) {
+      if (active.includes(j)) continue;
+      const c = constraints[j], direction = dot(c.a, p);
+      if (direction <= 1e-12) continue;
+      const step = Math.max(0, (c.b - dot(c.a, w)) / direction);
+      if (step < alpha && independent(rows, c.a)) { alpha = step; block = j; }
+    }
+    w = w.map((x, i) => x + alpha * p[i]);
+    if (!feasible(w)) return null;
+    if (block >= 0 && alpha < 1 - 1e-12) active.push(block);
+  }
+  return null;
+}
+
+let allocRiskCache = { signature: null, solutions: new Map() };
 function renderAllocRiskSource() {
   const card = $("#alloc-risk-source");
   if (!card) return;
@@ -5078,168 +5241,190 @@ function renderAllocRiskSource() {
 
 function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
   card.textContent = "";
-  const title = "리스크 연계";
+  card.classList.add("port-frontier");
+  const redraw = () => renderAllocRiskProc(card, E, st, palette(), rerender, infeas);
+  // Observation controls redraw only this card, leaving institutional input drafts intact.
+  const select = (key, value, focusId) => {
+    st[key] = value; allocSaveState(st); redraw();
+    if (focusId) document.getElementById(focusId)?.focus();
+  };
+  const layers = [["stress", "현재"], ["vuln", "잠재"]];
+  const tabs = el("div", { class: "alloc-tabs rp-tabs", role: "tablist", "aria-label": "리스크 구분" });
+  layers.forEach(([key, label], i) => {
+    const id = `alloc-rp-tab-${key}`, active = st.rp_layer === key;
+    const button = el("button", { id, type: "button", role: "tab", class: active ? "active" : "",
+      "aria-selected": String(active), "aria-controls": "alloc-rp-panel", tabindex: active ? "0" : "-1",
+      onclick: () => select("rp_layer", key, id) }, label);
+    button.addEventListener("keydown", (ev) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(ev.key)) return;
+      ev.preventDefault();
+      const next = ev.key === "Home" ? 0 : ev.key === "End" ? 1 : 1 - i;
+      select("rp_layer", layers[next][0], `alloc-rp-tab-${layers[next][0]}`);
+    });
+    tabs.append(button);
+  });
+  const panel = el("div", { id: "alloc-rp-panel", role: "tabpanel",
+    "aria-labelledby": `alloc-rp-tab-${st.rp_layer}` });
+  card.append(tabs, panel);
+  const range = ["1", "3", "5", "all"].includes(st.rp_range) ? st.rp_range : "3";
+  const controls = el("div", { class: "rp-controls" });
+  const ranges = el("div", { class: "rp-ranges", role: "group", "aria-label": "리스크 기간" });
+  [["1", "1Y"], ["3", "3Y"], ["5", "5Y"], ["all", "전체"]].forEach(([value, label]) => {
+    const id = `alloc-rp-range-${value}`;
+    ranges.append(el("button", { id, type: "button", class: "btn-ghost", "aria-pressed": String(range === value),
+      onclick: () => select("rp_range", value, id) }, label));
+  });
+  controls.append(ranges, allocSelect("alloc-rp-map", "변환", [["로그", "log"], ["선형", "lin"]], st.rp_map,
+    (value) => select("rp_map", value, "alloc-rp-map")));
   const bail = (why) => {
-    card.append(el("div", { class: "card-head" },
-      el("span", { class: "card-title" }, `${title} — 보류`)),
-      el("div", { class: "card-sub" }, why));
+    panel.textContent = "";
+    panel.append(el("div", { class: "card-head" }, el("span", { class: "card-title" }, "리스크 연계 — 보류")),
+      controls, el("div", { class: "card-sub", role: "status" }, why));
   };
   if (E.layer !== "cma") return bail("벤치마크 층 전용 — 위험 원천을 기관 벤치마크(CMA)로 두면 계산됩니다.");
   if (infeas && infeas.length) return bail("제약 모순으로 보류 — 수기 입력에서 밴드·상한을 확인하십시오.");
-  const R = DATA.risk;
-  const L = R && R.layers && R.layers[st.rp_layer];
-  const hm = L && L.hist_m;
-  if (!hm || !Array.isArray(hm.t) || !Array.isArray(hm.v)
-      || hm.t.length !== hm.v.length || hm.t.length < 2) {
-    return bail("리스크 점수 월별 이력(hist_m)이 없습니다 — 파이프라인 갱신 후 자동으로 복구됩니다.");
-  }
+  const R = DATA.risk, L = R?.layers?.[st.rp_layer], hist = L?.hist_alloc;
+  const asof = Date.parse(R?.asof) / 1000;
+  if (!hist || !Array.isArray(hist.t) || !Array.isArray(hist.v) || hist.t.length !== hist.v.length
+      || hist.t.length < 2) return bail("리스크 주간 이력이 없습니다 — 데이터 갱신 후 복구됩니다.");
+  if (!Number.isFinite(asof) || hist.t.some((t, i) => !Number.isFinite(t) || t > asof
+      || (i > 0 && t <= hist.t[i - 1])) || hist.v.some((v) => !Number.isFinite(v) || v < 0 || v > 100))
+    return bail("리스크 주간 이력의 날짜·점수를 확인하십시오.");
 
-  /* 점수 → λ — 앵커는 사용자의 화면 λ (점수 50 ↔ 화면 λ). 로그 = 등급 한 칸(25점)당
-     ×10 (연구 하네스 매핑 ②) / 선형 = 점수/50 (매핑 ① — 실험상 λ≲2.5 구간은 코너
-     고정이라 경로가 평평할 수 있고, 그 자체가 정보다). */
   const lamBase = +st.mvo_lambda || 1;
   const lamOf = st.rp_map === "lin"
-    ? (s) => lamBase * Math.max(s, 0) / 50
-    : (s) => lamBase * Math.pow(10, (s - 50) / 25);
+    ? (v) => lamBase * v / 50 : (v) => lamBase * Math.pow(10, (v - 50) / 25);
+  const all = hist.t.map((t, i) => ({ t, s: hist.v[i], lam: lamOf(hist.v[i]) }));
+  const cutoffDate = new Date(all[all.length - 1].t * 1000);
+  cutoffDate.setUTCFullYear(cutoffDate.getUTCFullYear() - (range === "all" ? 0 : +range));
+  const cutoff = range === "all" ? -Infinity : cutoffDate.getTime() / 1000;
+  const observations = all.filter((m) => m.t >= cutoff);
+  if (observations.length < 2) return bail("선택 기간의 리스크 이력이 부족합니다.");
+  const { V } = E, keys = V.keys;
+  const signature = JSON.stringify([V.keys, V.mu, V.C, E.lo, E.hi, E.groups, RP_SOLVER_VERSION]);
+  if (allocRiskCache.signature !== signature) allocRiskCache = { signature, solutions: new Map() };
+  const solve = (m) => {
+    if (!allocRiskCache.solutions.has(m.lam))
+      allocRiskCache.solutions.set(m.lam, allocRiskOptimize(E, m.lam));
+    return allocRiskCache.solutions.get(m.lam);
+  };
+  observations.forEach((m) => { m.w = solve(m); });
+  if (observations.some((m) => !Array.isArray(m.w) || m.w.some((v, i) => !Number.isFinite(v)
+      || v < E.lo[i] - 1e-5 || v > E.hi[i] + 1e-5)
+      || Math.abs(m.w.reduce((a, b) => a + b, 0) - 1) > 1e-5
+      || E.groups.some((g) => g.cap != null && g.idx.reduce((sum, i) => sum + m.w[i], 0) > g.cap + 1e-5)))
+    return bail("최적화 수렴·제약을 확인하지 못했습니다 — 배분 설정을 확인하십시오.");
 
-  const months = [];
-  for (let i = 0; i < hm.t.length; i++) {
-    if (hm.v[i] == null || !isFinite(+hm.v[i])) continue;
-    months.push({ t: hm.t[i], s: +hm.v[i], lam: lamOf(+hm.v[i]) });
-  }
-  if (months.length < 2) return bail("리스크 점수 월별 이력이 부족합니다.");
-  const { V } = E;
-  const keys = V.keys;
-  const cache = new Map();
-  months.forEach((m) => {
-    const ck = m.lam.toPrecision(6);
-    if (!cache.has(ck)) cache.set(ck, E.optimizeUtilAt(V.mu, V.C, m.lam, 1, RP_ITERS));
-    m.w = cache.get(ck);
-  });
-
-  /* 컨트롤 — 층·매핑은 관측 설정(즉시 저장, src 와 같은 규약) */
-  const choose = (id, label, pairs, key) => allocSelect(id, label, pairs, st[key], (v) => {
-    st[key] = v; allocSaveState(st); rerender();
-  });
-  const controls = el("span", { style: "display:inline-flex;gap:10px;flex-wrap:wrap;align-items:center" },
-    choose("alloc-rp-layer", "리스크", [["현재", "stress"], ["잠재", "vuln"]], "rp_layer"),
-    choose("alloc-rp-map", "λ 변환", [["로그", "log"], ["선형", "lin"]], "rp_map"));
-
-  const mLabel = (t) => tsToDate(t).slice(0, 7);
-  const box = cardScaffold(card, {
-    title,
-    sub: `${L.name} 점수(월말) → λ → 최적 배분 · ${mLabel(months[0].t)}~${mLabel(months[months.length - 1].t)} (${months.length}개월)`,
-    csvName: "리스크λ배분경로.csv",
-    controls,
+  const box = cardScaffold(panel, {
+    title: "리스크 연계",
+    sub: `주간 · 기준일 ${tsToDate(observations[observations.length - 1].t)} · ${observations.length}개`,
+    controls, csvName: `리스크배분경로_${st.rp_layer}.csv`,
     tableFn: (cap = 400, raw = false) => {
-      const rows = [];
-      for (let i = months.length - 1; i >= 0 && rows.length < cap; i--) {
-        const m = months[i];
-        rows.push([mLabel(m.t), fmtNum(m.s, 1),
-          m.lam < 0.1 ? m.lam.toFixed(3) : fmtNum(m.lam, 2),
-          ...m.w.map((x) => raw ? x * 100 : fmtNum(x * 100, 1))]);
-      }
-      return { headers: ["월", "점수", "λ", ...keys.map(allocShortK)], rows,
-               note: cap < months.length ? `최근 ${Math.min(cap, months.length)}개월만 표시 — 전체는 CSV.` : null };
+      const num = (v) => raw ? v : fmtNum(v, 2);
+      const rows = observations.slice().reverse().slice(0, cap).map((m) =>
+        [tsToDate(m.t), num(m.s), num(m.lam), ...m.w.map((v) => num(v * 100))]);
+      return { headers: ["날짜", "점수", "λ", ...keys.map(allocShortK)], rows,
+        note: cap < observations.length ? `최근 ${cap}개 표시 · 전체는 CSV` : null };
     },
   });
-
-  /* ---- 누적 100% 스택 SVG + 점수 스트립 (연구 아티팩트와 같은 기하) ---- */
+  box.classList.add("rp-chart");
+  box.setAttribute("tabindex", "0");
+  box.setAttribute("role", "group");
+  box.setAttribute("aria-label", `${L.name} 배분 경로. 좌우 화살표로 조회. 전체 수치는 표 버튼.`);
+  const colors = portChartColors(), scoreColor = st.rp_layer === "stress" ? colors.nominal : colors.robust;
   const NS = "http://www.w3.org/2000/svg";
-  const mk = (tag, at, parent) => {
-    const n = document.createElementNS(NS, tag);
-    for (const k in at) {
-      if (k === "fill" || k === "stroke") n.style[k] = at[k];   // var() 는 style 로만 받는다
-      else n.setAttribute(k, at[k]);
+  const mk = (tag, attrs, parent) => {
+    const node = document.createElementNS(NS, tag);
+    for (const key in attrs) {
+      if (key === "fill" || key === "stroke") node.style[key] = attrs[key];
+      else node.setAttribute(key, attrs[key]);
     }
-    if (parent) parent.appendChild(n);
-    return n;
+    if (parent) parent.appendChild(node);
+    return node;
   };
-  const W = 1000, padL = 40, padR = 14, topH = 64, gapH = 20, mainH = 250, padB = 22;
-  const Ht = topH + gapH + mainH + padB;
-  const n = months.length;
-  const svg = mk("svg", { viewBox: `0 0 ${W} ${Ht}`, style: "display:block;width:100%;height:auto" }, null);
-  const X = (i) => padL + (W - padL - padR) * (n === 1 ? 0.5 : i / (n - 1));
-  const Ys = (v) => topH - (topH - 12) * (v / 100);
-  const Y = (v) => topH + gapH + mainH - mainH * (v / 100);
+  const W = 1000, padL = 42, padR = 22, topH = 100, gapH = 28, mainH = 292, padB = 32;
+  const H = topH + gapH + mainH + padB, n = observations.length;
+  const first = observations[0].t, last = observations[n - 1].t;
+  const X = (t) => padL + (W - padL - padR) * (t - first) / (last - first);
+  const Ys = (v) => topH - (topH - 24) * v / 100;
+  const Y = (v) => topH + gapH + mainH - mainH * v / 100;
+  const svg = mk("svg", { id: "alloc-rp-svg", viewBox: `0 0 ${W} ${H}`, "aria-hidden": "true" }, box);
   [0, 25, 50, 75, 100].forEach((g) => {
-    mk("line", { x1: padL, x2: W - padR, y1: Ys(g), y2: Ys(g), stroke: pal.grid, "stroke-width": 1 }, svg);
-    mk("line", { x1: padL, x2: W - padR, y1: Y(g), y2: Y(g), stroke: pal.grid, "stroke-width": 1 }, svg);
-    mk("text", { x: padL - 5, y: Y(g) + 3.5, "text-anchor": "end", "font-size": 10, fill: pal.ink3 }, svg)
-      .textContent = g;
+    [Ys(g), Y(g)].forEach((y) => mk("line", { x1: padL, x2: W - padR, y1: y, y2: y,
+      stroke: pal.grid, "stroke-width": .65, "stroke-opacity": .65 }, svg));
+    mk("text", { x: padL - 9, y: Y(g) + 3.5, "text-anchor": "end", "font-size": 10, fill: pal.ink3 }, svg).textContent = g;
   });
-  [25, 50, 75].forEach((g) => {
-    mk("text", { x: padL - 5, y: Ys(g) + 3.5, "text-anchor": "end", "font-size": 9.5, fill: pal.ink3 }, svg)
-      .textContent = g;
-  });
-  const sPath = months.map((m, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Ys(m.s).toFixed(1)}`).join("");
-  mk("path", { d: sPath, fill: "none", stroke: pal.ink2, "stroke-width": 2,
+  [25, 50, 75].forEach((g) => mk("text", { x: padL - 9, y: Ys(g) + 3.5,
+    "text-anchor": "end", "font-size": 10, fill: pal.ink3 }, svg).textContent = g);
+  mk("text", { x: padL + 8, y: 15, "font-size": 11, fill: pal.ink2 }, svg).textContent = `${L.name} 점수`;
+  mk("text", { x: padL + 8, y: topH + gapH - 10, "font-size": 11, fill: pal.ink2 }, svg).textContent = "배분 · %";
+  const pathOf = (ys) => observations.map((m, i) => `${i ? "L" : "M"}${X(m.t).toFixed(2)},${ys(i).toFixed(2)}`).join("");
+  const sPath = pathOf((i) => Ys(observations[i].s));
+  mk("path", { d: sPath, fill: "none", stroke: scoreColor, "stroke-width": 1.6,
     "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
-  mk("text", { x: padL, y: 9, "font-size": 10.5, fill: pal.ink2, "font-weight": 600 }, svg)
-    .textContent = `${L.name} 점수 (월말 · 0~100)`;
-  const cum = months.map((m) => {
-    const c = [0]; let s = 0;
-    for (let j = 0; j < keys.length; j++) { s += m.w[j]; c.push(s * 100); }
-    return c;
+  const cum = observations.map((m) => {
+    let sum = 0;
+    return [0, ...m.w.map((v) => (sum += v * 100))];
   });
   for (let j = 0; j < keys.length; j++) {
-    let up = "", dn = "";
-    for (let i = 0; i < n; i++) up += `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(cum[i][j + 1]).toFixed(1)}`;
-    for (let i = n - 1; i >= 0; i--) dn += `L${X(i).toFixed(1)},${Y(cum[i][j]).toFixed(1)}`;
-    mk("path", { d: up + dn + "Z", fill: pal.series[j % pal.series.length] }, svg);
+    const up = pathOf((i) => Y(cum[i][j + 1]));
+    const down = observations.slice().reverse().map((m, rev) =>
+      `L${X(m.t).toFixed(2)},${Y(cum[n - 1 - rev][j]).toFixed(2)}`).join("");
+    mk("path", { d: up + down + "Z", fill: pal.series[j % pal.series.length], "fill-opacity": .4, stroke: "none" }, svg);
   }
-  /* 밴드 경계 2px 표면 간격 — 테두리 대신 흰 여백이 가른다 */
-  for (let j = 1; j < keys.length; j++) {
-    let d = "";
-    for (let i = 0; i < n; i++) d += `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(cum[i][j]).toFixed(1)}`;
-    mk("path", { d, fill: "none", stroke: pal.surface, "stroke-width": 2 }, svg);
+  for (let j = 1; j < keys.length; j++) mk("path", { d: pathOf((i) => Y(cum[i][j])),
+    fill: "none", stroke: pal.series[(j - 1) % pal.series.length], "stroke-width": .7, "stroke-opacity": .8 }, svg);
+  // Actual dates govern geometry, including missing weeks and the final partial week.
+  for (let i = 0; i <= 5; i++) {
+    const t = first + (last - first) * i / 5, x = X(t);
+    mk("line", { x1: x, x2: x, y1: Y(0), y2: Y(0) + 4, stroke: pal.baseline, "stroke-width": .7 }, svg);
+    mk("text", { x, y: Y(0) + 20, "text-anchor": i === 0 ? "start" : i === 5 ? "end" : "middle",
+      "font-size": 10, fill: pal.ink3 }, svg).textContent = tsToDate(t).slice(0, 7);
   }
-  let lastYr = "";
-  const sparse = (months[months.length - 1].t - months[0].t) / 31557600 > 12;
-  months.forEach((m, i) => {
-    const yr = tsToDate(m.t).slice(0, 4);
-    if (yr === lastYr) return;
-    lastYr = yr;
-    if (sparse && +yr % 2 !== 0) return;
-    mk("line", { x1: X(i), x2: X(i), y1: Y(0), y2: Y(0) + 4, stroke: pal.baseline, "stroke-width": 1 }, svg);
-    mk("text", { x: X(i), y: Y(0) + 15, "text-anchor": "middle", "font-size": 10, fill: pal.ink3 }, svg)
-      .textContent = yr;
-  });
-  mk("line", { x1: padL, x2: W - padR, y1: Y(0), y2: Y(0), stroke: pal.baseline, "stroke-width": 1 }, svg);
-  const cross = mk("line", { y1: 12, y2: Y(0), stroke: pal.baseline, "stroke-width": 1, opacity: 0 }, svg);
-  box.append(svg);
-
-  /* 판독 줄 — 기본은 최근 월, 올리면 그 월(툴팁이 아니라 고정 줄 — 표가 전체 대체 경로) */
-  const legend = el("div", { class: "sim8-legend" },
-    ...keys.map((k, i) => el("span", {},
-      el("i", { class: "sim-dot", style: `background:${pal.series[i % pal.series.length]}` }), ` ${allocShortK(k)}`)));
-  const hover = el("div", { class: "rp-hover" });
-  const readout = (i) => {
-    const m = months[i];
-    hover.textContent = `${mLabel(m.t)} · 점수 ${fmtNum(m.s, 1)} → λ ` +
-      (m.lam < 0.1 ? m.lam.toFixed(3) : fmtNum(m.lam, 2)) + " → " +
-      keys.map((k, j) => `${allocShortK(k)} ${fmtNum(m.w[j] * 100, 1)}`).join(" · ");
+  mk("line", { x1: padL, x2: W - padR, y1: Y(0), y2: Y(0), stroke: pal.baseline, "stroke-width": .8 }, svg);
+  mk("circle", { cx: X(last), cy: Ys(observations[n - 1].s), r: 3.2, fill: pal.surface,
+    stroke: scoreColor, "stroke-width": 1.4 }, svg);
+  const cross = mk("line", { id: "alloc-rp-cross", y1: 22, y2: Y(0), stroke: pal.baseline,
+    "stroke-width": 1, "stroke-dasharray": "3 4", opacity: 0 }, svg);
+  const tooltip = el("div", { id: "alloc-rp-tooltip", class: "rp-tooltip", role: "status" });
+  tooltip.hidden = true;
+  box.append(tooltip);
+  let selected = n - 1;
+  const show = (i) => {
+    selected = i;
+    const m = observations[i];
+    tooltip.textContent = "";
+    tooltip.append(el("strong", {}, `${tsToDate(m.t)} · 점수 ${fmtNum(m.s, 2)}`),
+      ...keys.map((key, j) => el("span", {}, allocShortK(key),
+        el("b", {}, `${fmtNum(m.w[j] * 100, 2)}%`))));
+    tooltip.hidden = false;
+    tooltip.style.left = X(m.t) > W / 2 ? "12px" : "auto";
+    tooltip.style.right = X(m.t) > W / 2 ? "auto" : "12px";
+    cross.setAttribute("x1", X(m.t)); cross.setAttribute("x2", X(m.t)); cross.setAttribute("opacity", 1);
   };
-  const hit = mk("rect", { x: padL, y: 0, width: W - padL - padR, height: Ht, fill: "transparent" }, svg);
+  const hide = () => { tooltip.hidden = true; cross.setAttribute("opacity", 0); };
+  const hit = mk("rect", { x: padL, y: 0, width: W - padL - padR, height: H, fill: "transparent" }, svg);
   hit.addEventListener("pointermove", (ev) => {
     const r = svg.getBoundingClientRect();
     if (!r.width) return;
-    const fx = (ev.clientX - r.left) / r.width * W;
-    const i = Math.max(0, Math.min(n - 1, Math.round((fx - padL) / (W - padL - padR) * (n - 1))));
-    cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i));
-    cross.setAttribute("opacity", 1);
-    readout(i);
+    const t = first + ((ev.clientX - r.left) / r.width * W - padL) / (W - padL - padR) * (last - first);
+    let lo = 0, hi = n - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (observations[mid].t < t) lo = mid + 1; else hi = mid; }
+    const i = lo > 0 && t - observations[lo - 1].t < observations[lo].t - t ? lo - 1 : lo;
+    show(i);
   });
-  hit.addEventListener("pointerleave", () => { cross.setAttribute("opacity", 0); readout(n - 1); });
-  readout(n - 1);
-  card.append(legend, hover,
-    el("div", { class: "card-sub", style: "margin-top:4px" },
-      el("b", {}, st.rp_map === "lin"
-        ? `λ = 화면 λ(${fmtNum(lamBase, 2)}) × 점수/50`
-        : `λ = 화면 λ(${fmtNum(lamBase, 2)}) × 10^((점수−50)/25)`),
-      " — 점수 50 ↔ 화면 λ · μ·Σ·밴드 = 현재 설정 고정(백테스트 아님) · ",
-      el("b", {}, "참고 표시 — 등급·경보·λ 키인에 자동 반영 없음"),
-      " · 마지막 달 = 월중"));
+  hit.addEventListener("pointerleave", hide);
+  box.addEventListener("blur", hide);
+  box.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") { hide(); return; }
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(ev.key)) return;
+    ev.preventDefault();
+    show(ev.key === "Home" ? 0 : ev.key === "End" ? n - 1
+      : Math.max(0, Math.min(n - 1, selected + (ev.key === "ArrowRight" ? 1 : -1))));
+  });
+  panel.append(el("div", { class: "port-frontier-key rp-legend" }, ...keys.map((key, i) =>
+    el("span", { class: "port-marker-key" },
+      el("i", { class: "sim-dot", style: `background:${pal.series[i % pal.series.length]};opacity:.65` }), allocShortK(key)))));
 }
 
 
@@ -5648,7 +5833,7 @@ function allocDefaults(A) {
        **기본값을 두지 않는다** — 손실 한도는 기관의 결정이지 코드가 정할 수가 아니다. */
     loss_h: null, loss_a: null,
     /* 통합 프로세스 카드(§7.16) — 관측 설정이라 즉시 저장(src·cma_win 과 같은 규약) */
-    rp_layer: "stress", rp_map: "log",
+    rp_layer: "stress", rp_map: "log", rp_range: "3",
     /* 시뮬레이터(§7.7.8) — 자산군별 위험 키인(연 %, 대체투자 두 분류 제외 5키).
        null = 벤치마크 실측. **상관은 항상 벤치마크 실측 ρ 를 유지**하고 σ 만
        갈아끼운다(키인 σ × 실측 ρ — 표준 CMA 관행). 그래야 특성 카드·효율선·시변이
@@ -5691,6 +5876,7 @@ function allocState(A) {
   if (st.tv_mode !== "win" && st.tv_mode !== "roll") st.tv_mode = "roll";
   if (st.rp_layer !== "stress" && st.rp_layer !== "vuln") st.rp_layer = "stress";
   if (st.rp_map !== "log" && st.rp_map !== "lin") st.rp_map = "log";
+  if (!["1", "3", "5", "all"].includes(st.rp_range)) st.rp_range = "3";
   if (!st.alt_map || typeof st.alt_map !== "object") st.alt_map = d.alt_map;
   if (st.alt_map.mode !== "bm" && st.alt_map.mode !== "factor") st.alt_map.mode = "factor";
   /* §7.7.9 이관 — 구 저장분의 단일 「대체투자」 매핑(w_eq/w_bd)은 북 전체용이라

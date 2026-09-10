@@ -1160,7 +1160,25 @@ a.kpi-link .kpi-label > span:first-child::after {
 }
 .port-benchmark th:first-child, .port-benchmark td:first-child { text-align: left; }
 .port-hover { font-size: 12.5px; color: var(--ink-2); margin-top: 6px; min-height: 18px; }
-.rp-hover { font-size: 12px; color: var(--ink-2); margin-top: 6px; min-height: 18px; font-variant-numeric: tabular-nums; }
+/* Risk paths share the frontier card, typography and restrained chart treatment. */
+.rp-tabs { margin: -4px 0 14px; }
+.rp-controls, .rp-ranges { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.rp-controls { gap: 12px; }
+.rp-ranges button[aria-pressed="true"] { color: var(--ink-1); border-color: var(--accent-solid); }
+.rp-chart { position: relative; }
+.rp-chart > svg { display: block; width: 100%; height: auto; font-family: inherit; }
+.rp-tooltip { position: absolute; top: 18px; width: 214px; max-width: calc(100% - 24px);
+  padding: 10px 12px; box-sizing: border-box; pointer-events: none;
+  color: var(--ink-2); background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+  font-size: 12px; font-variant-numeric: tabular-nums; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
+.rp-tooltip > strong { display: block; margin-bottom: 8px; color: var(--ink-1); }
+.rp-tooltip > span { display: flex; justify-content: space-between; gap: 10px; margin-top: 3px; }
+.rp-tooltip b { font-weight: 500; }
+.rp-legend { justify-content: center; }
+@media (max-width: 720px) {
+  #alloc-risk-proc.port-frontier { padding: 12px 10px; }
+  .rp-legend { gap: 6px 12px; font-size: 11px; }
+}
 
 /* Robust frontier: space around the numeric region, using the existing chart palette. */
 .port-frontier { position: relative; min-width: 0; padding: 18px 20px; }

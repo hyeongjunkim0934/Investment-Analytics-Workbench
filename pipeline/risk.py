@@ -88,6 +88,23 @@ def pack_series(s: pd.Series, round_to: int = 1) -> dict:
     return common.pack_values(s, round_to)
 
 
+def pack_alloc_history(weekly: pd.Series, asof: pd.Timestamp, current: float | None) -> dict:
+    """배분 경로용 전체 주간 이력 + 리스크 헤더와 동일한 최신 스냅숏.
+
+    W-FRI 재표본화는 월~목 관측에도 다음 금요일 라벨을 붙인다. 아직 오지 않은
+    라벨은 제외하고, 최신 점수는 실제 기준일에 한 번만 싣는다. 과거 점수는
+    다시 계산하거나 보간하지 않는다. 현재 CMA를 적용할 시나리오 재료이며,
+    원자료의 발표 시점·개정 이력을 복원한 point-in-time 백테스트는 아니다.
+    """
+    asof = pd.Timestamp(asof)
+    history = weekly.loc[weekly.index <= asof].dropna().copy()
+    history = history[~history.index.duplicated(keep="last")].sort_index()
+    if current is not None and math.isfinite(current):
+        history.loc[asof] = float(current)
+    return {**pack_series(history), "frequency": "weekly+latest",
+            "asof": asof.strftime("%Y-%m-%d")}
+
+
 # ---------------------------------------------------------------------------
 # 지표 점수화
 # ---------------------------------------------------------------------------
@@ -593,16 +610,16 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
                   "수준인지(백분위)를 나타냅니다. 0 = 가장 안전했던 수준, 100 = 가장 위험했던 수준, "
                   "50 = 딱 중간. 등급은 점수를 4등분한 것입니다."),
         "layers": {
-            # hist_m = 월말(각 달 마지막 주간 관측) 점수 **전 구간** — 자산배분 탭
-            # 「리스크 → 최적화 통합 프로세스」 카드(2026-09-01 사용자 지시)가 브라우저에서
-            # 월별 λ-MVO 경로를 계산하는 재료다. hist(주간)가 이미 공개하는 합성 점수의
-            # 표본 주기·구간만 다른 파생 통계라 공개 범위 성격은 같다(원본 값 아님).
+            # hist_alloc = 전체 주간 + 실제 기준일 최신 점수(배분 경로).
+            # hist(최근 주간)·hist_m(전체 월말)은 기존 소비자용으로 유지한다.
+            # 모두 합성 점수의 표본 주기·구간만 다른 파생 통계(원본 값 아님).
             "stress": {"name": "현재 위험", "question": "지금 시장이 흔들리고 있는가",
                        "score": stress_cur, "grade": grade(stress_cur), "delta": stress_delta,
                        "chg": stress_chg, "rank5y": rank5y(comp_ic, stress_cur),
                        "method": "IC가중 + 최소바닥 8% (walk-forward 재학습)",
                        "hist": pack_series(comp_ic.tail(HIST_WEEKS)),
-                       "hist_m": pack_series(comp_ic.resample("ME").last().dropna())},
+                       "hist_m": pack_series(comp_ic.resample("ME").last().dropna()),
+                       "hist_alloc": pack_alloc_history(comp_ic, asof, stress_cur)},
             "vuln": {"name": "잠재 위험", "question": "문제가 터지면 크게 다칠 상태인가",
                      "score": vuln_cur, "grade": grade(vuln_cur), "delta": vuln_delta,
                      "chg": vuln_chg,
@@ -611,7 +628,8 @@ def build(series_store: dict, warn) -> tuple[dict, dict]:
                      "active": len(vuln_active),
                      "total": len([f for f in FACTORS if f["layer"] == "vuln"]),
                      "hist": pack_series(vuln_weekly.tail(HIST_WEEKS)),
-                     "hist_m": pack_series(vuln_weekly.resample("ME").last().dropna())},
+                     "hist_m": pack_series(vuln_weekly.resample("ME").last().dropna()),
+                     "hist_alloc": pack_alloc_history(vuln_weekly, asof, vuln_cur)},
         },
         "grade_band_stats": grade_band_stats,
         "kospi10": kospi10,

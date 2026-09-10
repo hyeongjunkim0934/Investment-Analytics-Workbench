@@ -1784,23 +1784,26 @@ safe("allocToc", () => {
   return r;
 });
 
-/* ====== P20-f. 리스크 → 최적화 통합 프로세스 (§7.16 — 2026-09-01 사용자 지시) ====
-   risk.json 의 월말 점수(hist_m) → λ(화면 λ 앵커) → 월별 λ-MVO → 누적 100% 스택.
-   ① 합계 100 유지 ② 점수↑ → λ↑ → 위험↓(단조) ③ 참고 표시 계약(자동 반영 없음 문구,
-   화면 λ 불변) ④ 층·매핑 토글 ⑤ hist_m 부재·프록시 층의 보류 사유를 실행으로 잰다. */
+/* ====== P20-f. 리스크 → 최적화 통합 프로세스 ================================
+   주간 관측 + 최신 점수 → λ-MVO. 비중 합계·위험 단조성·입력 λ 소유권과
+   현재/잠재 탭 전환을 실행 검증한다. 월말 이력으로 최신 점수를 대체하지 않는다. */
 safe("allocRiskProc", () => {
   const r = {};
   shim.localStorage.removeItem("iaw-alloc");
   const prevRisk = P.DATA.risk;
-  const RISK_M = { asof: "2020-09-08", layers: {
-    stress: { name: "현재 위험", score: 67.3, grade: "주의", hist_m: {
-      t: [1580428800, 1583020800, 1585699200, 1588291200, 1590969600, 1593561600, 1596240000, 1598918400],
-      v: [20.0, 35.5, 50.0, 62.3, 78.1, 90.4, 55.0, 41.2] } },
-    vuln: { name: "잠재 위험", score: 48.2, grade: "보통", hist_m: {
-      t: [1580428800, 1583020800, 1585699200, 1588291200, 1590969600, 1593561600, 1596240000, 1598918400],
-      v: [30.0, 30.5, 44.0, 51.0, 60.2, 70.9, 66.0, 58.8] } },
+  const dates = ["2020-07-24", "2020-07-31", "2020-08-07", "2020-08-14",
+    "2020-08-21", "2020-08-28", "2020-09-04", "2020-09-08"];
+  const history = (v) => ({ t: dates.map((d) => Date.parse(d + "T00:00:00Z") / 1000),
+    v, frequency: "weekly+latest", asof: "2020-09-08" });
+  const RISK_WEEKLY = { asof: "2020-09-08", layers: {
+    stress: { name: "현재 위험", score: 67.3, grade: "주의",
+      hist_alloc: history([20.0, 35.5, 50.0, 62.3, 78.1, 90.4, 55.0, 67.3]),
+      hist_m: { t: [1598918400], v: [41.2] } },
+    vuln: { name: "잠재 위험", score: 48.2, grade: "보통",
+      hist_alloc: history([30.0, 30.5, 44.0, 51.0, 60.2, 70.9, 66.0, 48.2]),
+      hist_m: { t: [1598918400], v: [58.8] } },
   } };
-  P.DATA.risk = RISK_M;
+  P.DATA.risk = RISK_WEEKLY;
   P.DATA.alloc = CMA_ALLOC;
   P.renderSection("alloc");
   const boxEl = () => DOC.getElementById("alloc-risk-proc");
@@ -1813,57 +1816,53 @@ safe("allocRiskProc", () => {
     && sourceEl().querySelector("a").getAttribute("href") === "#risk";
   let txt = boxEl().textContent;
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  r.cardRendered = /리스크 연계/.test(txt) && /λ → 최적 배분/.test(txt) && /현재 위험 점수/.test(txt);
-  /* 스택 기하 — 밴드 7 + 경계 6 + 점수선 1 = path 14개 */
+  r.cardRendered = /리스크 연계/.test(txt) && /현재 위험/.test(txt)
+    && !!DOC.getElementById("alloc-rp-tab-stress") && !!DOC.getElementById("alloc-rp-tab-vuln");
   r.pathCount = boxEl().querySelectorAll("svg path").length;
-  /* 표 버튼 → 각 월의 비중 7칸 합계 = 100 (0.1 반올림 오차 허용) */
   const tbtn = [...boxEl().querySelectorAll("button")].find((b) => b.textContent === "표");
   if (tbtn) tbtn.click();
   const rows = [...boxEl().querySelectorAll(".chart-table tbody tr")];
-  r.tableMonths = rows.length;
-  r.monthlyScoreDistinctFromLatest = rows[0].children[1].textContent === "41.2";
+  r.tableObservations = rows.length;
+  r.latestTableMatchesRisk = rows[0].children[0].textContent === "2020-09-08"
+    && +rows[0].children[1].textContent === 67.3
+    && rows[1].children[0].textContent === "2020-09-04"
+    && +rows[1].children[1].textContent === 55;
   r.sumsTo100 = rows.length > 0 && rows.every((tr) => {
     const cells = [...tr.children].slice(3).map((td) => parseFloat(td.textContent));
-    const sum = cells.reduce((a, b) => a + b, 0);
-    return Math.abs(sum - 100) < 0.35;
+    return Math.abs(cells.reduce((a, b) => a + b, 0) - 100) < 0.04;
   });
-  /* 메커니즘 — 점수 90 의 λ 최적해는 점수 20 보다 위험이 크지 않다(σ*(λ) 단조) */
   const E = P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC));
   const lam = (sc) => Math.pow(10, (sc - 50) / 25);
   const wLo = E.optimizeUtilAt(E.V.mu, E.V.C, lam(20), 1, 1200);
   const wHi = E.optimizeUtilAt(E.V.mu, E.V.C, lam(90), 1, 1200);
-  r.higherRiskScoreLowersSigma =
-    E.sigmaW(wHi, E.V.C) <= E.sigmaW(wLo, E.V.C) + 1e-9;
-  /* 참고 표시 계약 — 자동 반영 없음 문구 + 화면 λ 불변(λ 키인을 건드리지 않는다) */
-  r.saysReferenceOnly = /자동 반영 없음/.test(txt);
+  r.higherRiskScoreLowersSigma = E.sigmaW(wHi, E.V.C) <= E.sigmaW(wLo, E.V.C) + 1e-9;
+  r.noBottomNotes = !/화면 λ|점수−50|백테스트|자동 반영 없음|마지막 달|λ → 최적 배분/.test(txt)
+    && boxEl().querySelectorAll(".rp-hover").length === 0;
   r.lambdaKeyinUntouched = +P.allocState(CMA_ALLOC).mvo_lambda === 1;
-  /* 층·매핑 콤보박스 — 즉시 저장(관측 설정 규약) + 재렌더 */
-  const selectValue = (id, value) => {
-    const input = DOC.getElementById(id);
-    if (!input || input.tagName !== "SELECT") throw new Error(`missing select: ${id}`);
-    input.value = value;
-    input.dispatchEvent({ type: "change", target: input });
-  };
-  selectValue("alloc-rp-layer", "vuln");
+  DOC.getElementById("alloc-rp-tab-vuln").click();
   txt = boxEl().textContent;
-  r.layerToggleWorks = /잠재 위험 점수/.test(txt);
+  r.layerToggleWorks = /잠재 위험/.test(txt)
+    && DOC.getElementById("alloc-rp-tab-vuln").getAttribute("aria-selected") === "true"
+    && DOC.getElementById("alloc-rp-tab-stress").getAttribute("aria-selected") === "false";
   r.layerToggleSaved = P.allocState(CMA_ALLOC).rp_layer === "vuln";
   r.riskSelectionSurvivesUpdate = !boxEl().hidden && !sourceEl().hidden
     && DOC.getElementById("alloc-sim-panel").hidden
     && DOC.getElementById("alloc-workspace-risk").getAttribute("aria-pressed") === "true";
-  selectValue("alloc-rp-map", "lin");
-  r.mapToggleShowsFormula = /점수\/50/.test(boxEl().textContent);
+  const input = DOC.getElementById("alloc-rp-map");
+  input.value = "lin";
+  input.dispatchEvent({ type: "change", target: input });
+  r.mapToggleKeepsNotesRemoved = !/점수\/50|화면 λ|자동 반영 없음/.test(boxEl().textContent);
   r.mapToggleSaved = P.allocState(CMA_ALLOC).rp_map === "lin";
-  /* 보류 사유 — hist_m 부재 / 프록시 층 (조용한 대체 금지) */
+  r.lambdaKeyinUntouched = r.lambdaKeyinUntouched && +P.allocState(CMA_ALLOC).mvo_lambda === 1;
   P.DATA.risk = { layers: {} };
   shim.localStorage.removeItem("iaw-alloc");
   P.renderSection("alloc");
-  r.missingHistMExplains = /hist_m/.test(boxEl().textContent) && /보류/.test(boxEl().textContent);
+  r.missingWeeklyHistoryExplains = /주간 이력/.test(boxEl().textContent) && /보류/.test(boxEl().textContent);
   r.missingLatestClearsOldScores = DOC.getElementById("alloc-risk-score-stress").textContent === "—"
     && DOC.getElementById("alloc-risk-score-vuln").textContent === "—"
     && !/2020-09-08/.test(sourceEl().textContent);
-  P.DATA.risk = RISK_M;
-  P.DATA.alloc = ALLOC_FIXTURE;   // CMA 없는 픽스처 → 프록시 층
+  P.DATA.risk = RISK_WEEKLY;
+  P.DATA.alloc = ALLOC_FIXTURE;
   P.renderSection("alloc");
   r.proxyLayerExplains = /벤치마크 층 전용/.test(boxEl().textContent);
   P.DATA.alloc = CMA_ALLOC;

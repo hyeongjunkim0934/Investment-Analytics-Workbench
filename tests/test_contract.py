@@ -108,6 +108,16 @@ def test_risk_and_hedge_actually_ran(built):
         hm = layer["hist_m"]
         assert len(hm["t"]) == len(hm["v"]) > 0, f"{lk}: hist_m 이 비었다"
         assert all(v is None or 0 <= v <= 100 for v in hm["v"]), f"{lk}: hist_m 값역 위반"
+        # 2026-09-10 — 배분 경로는 전체 주간 + 실제 기준일 최신 점수를 사용한다.
+        ha = layer["hist_alloc"]
+        assert ha["frequency"] == "weekly+latest" and ha["asof"] == risk["asof"]
+        assert len(ha["t"]) == len(ha["v"]) > 3 * len(hm["t"])
+        assert ha["t"] == sorted(set(ha["t"])), f"{lk}: 중복·역순 관측일"
+        actual_dates = pd.to_datetime(ha["t"], unit="s")
+        assert actual_dates[-1] == pd.Timestamp(risk["asof"]), f"{lk}: 최신 기준일 누락"
+        assert (actual_dates <= pd.Timestamp(risk["asof"])).all(), f"{lk}: 미래 관측일"
+        assert ha["v"][-1] == layer["score"], f"{lk}: 헤더와 최신 점수 불일치"
+        assert all(0 <= v <= 100 for v in ha["v"]), f"{lk}: hist_alloc 값역 위반"
     gbs = risk["grade_band_stats"]
     assert [r_["grade"] for r_ in gbs["rows"]] == ["낮음", "보통", "주의", "경계"]
     n_sum = sum(r_["n_weeks"] for r_ in gbs["rows"])
