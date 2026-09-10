@@ -129,6 +129,9 @@ function assertContained(c){
 P.DATA.alloc=SIX_ASSET_FIXTURE;shim.localStorage.removeItem(P.PORT_LS_KEY);P.renderPortPanel(SIX_ASSET_FIXTURE);
 const initial=chart(),allRange=initial.opts.scales.x.range.slice();
 assert.equal(DOC.getElementById('port-range-sigma').value,'0.5');
+assert.equal(DOC.getElementById('port-range-sigma').getAttribute('step'),'0.25');
+assert.equal(DOC.getElementById('port-range-sigma').getAttribute('min'),'0');
+assert.equal(DOC.getElementById('port-range-sigma').getAttribute('max'),'10');
 const expectedAssets=['국내채권','국내장부','해외채권','국내주식','해외주식','대체투자'];
 assert.deepEqual(SIX_ASSET_FIXTURE.port.assets,expectedAssets);
 assert.deepEqual(Array.from(panel.querySelectorAll('.port-table tbody tr'),row=>row.querySelector('td').textContent),expectedAssets);
@@ -188,11 +191,57 @@ const hover=card().querySelector('.port-hover.port-portfolio-tooltip');assert(ho
 assert.equal(chart().opts.cursor.x,false);assert.equal(chart().opts.cursor.y,false);
 assert.equal(chart().opts.cursor.points.show,false);assert.equal(chart().opts.legend.show,false);
 const hoverWeights=(tip)=>Array.from(tip.querySelectorAll('.port-tooltip-weight'),row=>parseFloat(row.querySelector('b').textContent));
-const checkPortfolio=(tip,p,y=p.mu)=>{
+// A separate finite-difference oracle verifies Euler volatility contributions,
+// including their sign. It does not call the implementation's new helper.
+const contributionOracle=(w,mu,C)=>{
+  const mean=(v)=>v.reduce((sum,x,i)=>sum+x*mu[i],0);
+  const volatility=(v)=>Math.sqrt(Math.max(0,v.reduce((sum,wi,i)=>sum+
+    v.reduce((part,wj,j)=>part+wi*wj*C[i][j],0),0)));
+  const m=mean(w),s=volatility(w),eps=1e-6;
+  const marginal=(fn,i)=>{const up=Array.from(w),down=Array.from(w);up[i]+=eps;down[i]-=eps;
+    return (fn(up)-fn(down))/(2*eps);};
+  return {mu:m,sig:s,
+    returnPct:m===0?null:Array.from(w,(wi,i)=>100*wi*marginal(mean,i)/m),
+    riskPct:s===0?null:Array.from(w,(wi,i)=>100*wi*marginal(volatility,i)/s)};
+};
+const checkContributions=(tip,w,mu,C)=>{
+  const expected=contributionOracle(w,mu,C),rows=Array.from(tip.querySelectorAll('.port-tooltip-weight'));
+  assert.equal(rows.length,w.length);
+  for(const [field,key] of [['return','returnPct'],['risk','riskPct']]){
+    const actual=rows.map(row=>{const cell=row.querySelector('.port-tooltip-'+field);
+      assert(cell,field+' contribution missing');
+      if(expected[key]===null){assert.equal(cell.textContent,'—');return null;}
+      assert(/^-?\d+\.\d{2}%$/.test(cell.textContent),cell.textContent);
+      return parseFloat(cell.textContent);});
+    if(expected[key]!==null){
+      actual.forEach((v,i)=>assert(Math.abs(v-expected[key][i])<=.00501,
+        field+' contribution '+v+' differs from '+expected[key][i]));
+      assert(Math.abs(actual.reduce((a,b)=>a+b,0)-100)<=rows.length*.00501);
+    }
+  }
+};
+const checkPortfolio=(tip,p,y=p.mu,E=E0)=>{
   assert(!tip.hidden);assert(/배분/.test(tip.textContent));
   assert.deepEqual(hoverWeights(tip),Array.from(p.w,v=>+Number(v*100).toFixed(2)));
   assert(tip.querySelector('.port-tooltip-metrics').textContent.includes('기대수익 '+Number(y).toFixed(2)+'%'));
   assert(tip.querySelector('.port-tooltip-metrics').textContent.includes('변동성 '+Number(p.sig).toFixed(2)+'%'));
+  checkContributions(tip,p.w,E.mu,E.risk.C);
+};
+const checkAsset=(tip,label,mu,sig,k)=>{
+  assert(!tip.hidden&&tip.classList.contains('port-asset-tooltip'));
+  assert.equal(tip.querySelector('.port-tooltip-title').textContent,label);
+  assert(tip.querySelector('.port-tooltip-metrics').textContent.includes('기대수익 '+mu.toFixed(2)+'%'));
+  assert(tip.querySelector('.port-tooltip-metrics').textContent.includes('변동성 '+sig.toFixed(2)+'%'));
+  assert(tip.querySelector('.port-tooltip-range').textContent.includes('범위 ±'+k.toFixed(2)+'σ'));
+  const increment=tip.querySelector('.port-tooltip-range').textContent.match(/가산폭 ±(\d+\.\d{2})%p/);
+  assert(increment&&Math.abs(Number(increment[1])-k*sig)<=.00501);
+  const bounds=Object.fromEntries(Array.from(tip.querySelectorAll('.port-tooltip-bound'),row=>
+    [row.querySelector('span').textContent,row.querySelector('b').textContent]));
+  for(const [key,value] of [['하단',mu-k*sig],['상단',mu+k*sig]]){
+    assert(/^-?\d+\.\d{2}%$/.test(bounds[key]));
+    assert(Math.abs(parseFloat(bounds[key])-value)<=.00501);
+  }
+  assert.equal(tip.querySelectorAll('.port-tooltip-weight').length,0);
 };
 for(const dpr of [1,2]){
   const paint=draw(chart(),dpr),p=E0.minVar;
@@ -221,6 +270,7 @@ for(const [label,curve,field] of [['Conservative',E0.robust,'worst'],['Optimisti
     const paint=draw(c);
     moveCursor(c,paint,paint.u.valToPos(p.sig,'x'),paint.u.valToPos(p[field],'y'));
     checkPortfolio(hover,p,p[field]);assert(hover.querySelector('.port-tooltip-title').textContent.startsWith(label));
+    assert(hover.textContent.includes('입력 기대수익 '+p.mu.toFixed(2)+'% · 기여율 기준'));
   }finally{c.opts.scales.x.range=oldX;c.opts.scales.y.range=oldY;}
 }
 const currentPoint={w:currentW,mu:E0.muOf(currentW),sig:E0.sig(currentW)};
@@ -318,7 +368,29 @@ assert(card().querySelector('.port-axis-controls').hidden);
 assert.equal(DOC.activeElement,DOC.getElementById('port-axis-toggle'));
 assert.equal(live().length,1);assert.equal(inspect.live().length,1);assert(live().every(c=>DOC.contains(c.root)));
 // Independent two-asset identities: annual percent inputs, no extra 12 or 10,000 factor.
-const R=vm.runInContext('({portRiskInputs,portCorrKey,portChartColors,portRobustModel})',sandbox);
+const R=vm.runInContext('({portRiskInputs,portCorrKey,portChartColors,portRobustModel,portContributions})',sandbox);
+// Exact two-asset examples and independent directional derivatives test the
+// percent-point units, cancellation, negative risk budgets and Euler identity.
+const contributionCases=[
+  {w:[.5,.5],mu:[4,8],C:[[100,50],[50,400]],r:[100/3,200/3],s:[25,75]},
+  {w:[.1,.9],mu:[4,8],C:[[100,-30],[-30,25]],s:[-1.7/15.85*100,17.55/15.85*100]},
+  {w:[.5,.5],mu:[-4,4],C:[[100,50],[50,400]],r:null},
+  {w:[.5,.5],mu:[-4,-8],C:[[100,50],[50,400]],r:[100/3,200/3]},
+  {w:[.5,.5],mu:[4,8],C:[[0,0],[0,0]],s:null},
+  {w:[1,0],mu:[4,8],C:[[100,50],[50,400]],r:[100,0],s:[100,0]},
+  {w:[.2,.3,.5],mu:[-2,5,9],C:[[9,-1,2],[-1,4,.5],[2,.5,16]]},
+];
+for(const c of contributionCases){
+  const got=R.portContributions(c.w,c.mu,c.C),expected=contributionOracle(c.w,c.mu,c.C);
+  assert(Math.abs(got.mu-expected.mu)<1e-10);assert(Math.abs(got.sig-expected.sig)<1e-10);
+  for(const [key,exact] of [['returnPct','r'],['riskPct','s']]){
+    const want=Object.hasOwn(c,exact)?c[exact]:expected[key];
+    if(want===null){assert.deepEqual(Array.from(got[key]),c.w.map(()=>null));continue;}
+    assert.equal(got[key].length,c.w.length);
+    Array.from(got[key]).forEach((v,i)=>assert(Math.abs(v-want[i])<2e-7,key+' mismatch'));
+    assert(Math.abs(Array.from(got[key]).reduce((a,b)=>a+b,0)-100)<1e-8);
+  }
+}
 // Isolated screen geometry distinguishes same-x scenarios and verifies clamping
 // without relying on the optimizer's placement or the existing plot's x array.
 const makeHover=vm.runInContext('portPortfolioHover',sandbox);
@@ -333,7 +405,7 @@ const isolatedPoints=[
   {x:10.05,y:5,label:'범위 밖',w:[1,0]},
   ...[[0,0],[0,10],[10,0],[10,10]].map(([x,y])=>({x,y,label:'모서리',w:[.45,.55]})),
 ];
-const isolatedHooks=makeHover(hoverHost,['A','B'],isolatedPoints);
+const isolatedHooks=makeHover(hoverHost,['A','B'],isolatedPoints,{mu:[4,8],C:[[100,50],[50,400]]});
 const isolatedTip=hoverHost.querySelector('.port-portfolio-tooltip');
 isolatedTip.offsetWidth=120;isolatedTip.offsetHeight=100;
 for(const dpr of [1,2]){
@@ -363,6 +435,22 @@ for(const dpr of [1,2]){
   }finally{sandbox.devicePixelRatio=oldDpr;}
 }
 isolatedHooks.destroy();assert(!hoverHost.querySelector('.port-portfolio-tooltip'));hoverHost.remove();
+// Zero denominators must render unavailable shares; hedging assets retain a
+// negative risk share in the actual tooltip, rather than being clipped to zero.
+for(const c of contributionCases){
+  const host=DOC.createElement('div');DOC.body.append(host);
+  host.clientWidth=400;host.clientHeight=300;
+  const expected=contributionOracle(c.w,c.mu,c.C);
+  const hooks=makeHover(host,c.w.map((_,i)=>'자산'+i),
+    [{x:expected.sig,y:expected.mu,label:'현재',w:c.w}],{mu:c.mu,C:c.C});
+  const u={bbox:{left:0,top:0,width:400,height:300},
+    valToPos:(_,axis)=>axis==='x'?40:60,cursor:{left:40,top:60}};
+  hooks.draw(u);hooks.setCursor(u);
+  const tip=host.querySelector('.port-portfolio-tooltip');
+  assert(!tip.hidden);checkContributions(tip,c.w,c.mu,c.C);
+  assert.deepEqual(hoverWeights(tip),c.w.map(v=>v*100));
+  hooks.destroy();host.remove();
+}
 const pair={assets:['A','B'],windows:[{key:'all',n_months:60,cov:[[.01,.005],[.005,.04]],mean_pct:[4,8]}]};
 const two={mu:{},sig:{A:10,B:20},corr:{[R.portCorrKey('A','B')]:.25}};
 const risk=R.portRiskInputs(pair,pair.windows[0],two);
@@ -392,9 +480,19 @@ click('CSV');assert(sandbox.robustCSV[2].some(row=>row[0]==='국내채권'&&Math
 const field=(label)=>Array.from(panel.querySelectorAll('input')).find(n=>n.getAttribute('aria-label')===label);
 const edit=(label,v)=>{const n=field(label);assert(n,label);n.value=String(v);n.dispatchEvent({type:'input'});return n;};
 const state=()=>P.portState(SIX_ASSET_FIXTURE.port);
+const currentSnapshot=()=>{
+  const E=P.portEngine(SIX_ASSET_FIXTURE.port,state());
+  const w=expectedAssets.map(a=>(state().mix[a]||0)/100),p={w,mu:E.muOf(w),sig:E.sig(w)};
+  const paint=draw(chart());moveCursor(chart(),paint,paint.u.valToPos(p.sig,'x'),paint.u.valToPos(p.mu,'y'));
+  const tip=card().querySelector('.port-portfolio-tooltip');
+  checkPortfolio(tip,p,p.mu,E);
+  return {E,w,returns:Array.from(tip.querySelectorAll('.port-tooltip-return'),n=>n.textContent),
+    risks:Array.from(tip.querySelectorAll('.port-tooltip-risk'),n=>n.textContent)};
+};
 edit('국내채권 변동성',10);
 assert.equal(state().sig.국내채권,10);assert.notEqual(JSON.stringify(chart().data),originalData);
 assert(card().querySelector('.port-asset-key').textContent.includes('10.00'));
+currentSnapshot();
 const validData=JSON.stringify(chart().data),validSaved=shim.localStorage.getItem(P.PORT_LS_KEY);
 const bad=edit('국내채권 변동성',-2);
 assert.equal(bad.getAttribute('aria-invalid'),'true');assert.equal(JSON.stringify(chart().data),validData);
@@ -432,6 +530,19 @@ edit('국내채권 변동성',10);
 P.renderPortPanel(SIX_ASSET_FIXTURE,{preserveDraft:true});
 assert.equal(field('국내채권 변동성').value,'10');assert.equal(field('국내채권 · 해외채권 상관계수').value,'0');
 assert(!DOC.getElementById('port-frontier-panel').hidden&&!DOC.getElementById('port-correlation-panel').hidden);
+const beforeMean=currentSnapshot();
+edit('국내채권 기대수익',6.25);
+assert.equal(state().mu.국내채권,6.25);
+const afterMean=currentSnapshot();
+assert.notDeepEqual(afterMean.returns,beforeMean.returns);
+assert.deepEqual(afterMean.risks,beforeMean.risks);
+edit('국내채권 · 해외채권 상관계수',.35);
+assert.deepEqual(currentSnapshot().risks,afterMean.risks,'unapplied correlation changed contributions');
+DOC.getElementById('port-corr-apply').click();
+const afterCorr=currentSnapshot();
+assert.notDeepEqual(afterCorr.risks,afterMean.risks);
+assert.deepEqual(afterCorr.returns,afterMean.returns);
+assert(Math.abs(afterCorr.E.risk.C[0][2]-.35*10*afterCorr.E.risk.sig[2])<1e-10);
 // Palette mutations only affect drawing and persist separately from financial inputs.
 const financial=shim.localStorage.getItem(P.PORT_LS_KEY),chartValues=JSON.stringify(chart().data);
 DOC.getElementById('port-palette-toggle').click();assert(!DOC.getElementById('port-palette-panel').hidden);
@@ -520,6 +631,14 @@ for(const dpr of [1,2]){
     assert(t.x>=paint.bbox.left&&t.x+t.w<=paint.bbox.left+paint.bbox.width);
     assert(t.y>=paint.bbox.top&&t.y+t.h<=paint.bbox.top+paint.bbox.height);
   });
+  const tip=card().querySelector('.port-portfolio-tooltip');
+  for(const a of ['국내주식','해외주식','대체투자']){
+    const mu=dispersionState.mu[a],sig=dispersionState.sig[a];
+    for(const ordinate of [mu,mu-.5*sig,mu+.5*sig,mu+.35*sig]){
+      moveCursor(chart(),paint,paint.u.valToPos(sig,'x'),paint.u.valToPos(ordinate,'y'));
+      checkAsset(tip,a,mu,sig,.5);
+    }
+  }
 }
 assert(chart().opts.scales.y.range()[0]<-4.5&&chart().opts.scales.y.range()[1]>22.075);
 // Sigma controls only the asset dispersion display, including 0 and fractional
@@ -530,7 +649,7 @@ const setSigma=(value,enter=false)=>{
   const input=DOC.getElementById('port-range-sigma');input.value=String(value);
   input.dispatchEvent(enter?{type:'keydown',key:'Enter',preventDefault(){}}:{type:'change'});
 };
-for(const value of [1.25,0,1]){
+for(const value of [.25,.5,.75,1.25,0,10,.7,1]){
   setSigma(value,value===1.25);
   assert.equal(DOC.getElementById('port-range-sigma').value,String(value));
   assert.equal(JSON.parse(shim.localStorage.getItem('iaw-port-range-sigma')),value);
@@ -566,6 +685,8 @@ assert.equal(croppedBars.length,6);
 const stockBar=croppedBars.find(s=>Math.abs(cropped.value(s.path[0].slice(1))[0]-25)<1e-9);
 assert(stockBar.path[0][2]<cropped.bbox.top&&stockBar.path[1][2]>cropped.bbox.top+cropped.bbox.height);
 assert.deepEqual(stockBar.clip,cropped.bbox);
+moveCursor(chart(),cropped,cropped.u.valToPos(25,'x'),cropped.u.valToPos(21,'y'));
+checkAsset(card().querySelector('.port-portfolio-tooltip'),'국내주식',8,25,1);
 assert.deepEqual(Array.from(chart().opts.scales.y.range()),[20,22]);
 assert.equal(JSON.stringify(chart().data),dispersionData);
 assert.equal(shim.localStorage.getItem(P.PORT_LS_KEY),dispersionSaved);
