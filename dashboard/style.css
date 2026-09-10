@@ -1206,6 +1206,8 @@ a.kpi-link .kpi-label > span:first-child::after {
 }
 #alloc-port-panel input[aria-invalid="true"] { border-color: var(--up-ink); }
 #alloc-port-panel .table-wrap, #alloc-port-panel .card, #alloc-port-panel .chart-box { border-radius: 4px; }
+/* Match the table as well as its wrapper so older markup also expands every asset row. */
+.table-wrap:has(> .port-table),
 #alloc-port-panel .port-input-table-wrap { max-height: none; overflow: visible; min-width: 0; }
 #alloc-port-panel .port-table { table-layout: fixed; }
 #alloc-port-panel .port-table th { position: static; white-space: normal; overflow-wrap: anywhere; font-size: 13px; }
