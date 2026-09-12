@@ -1812,7 +1812,7 @@ def test_risk_to_optimization_process_card(probe):
     assert c["higherRiskScoreLowersSigma"] is True
     assert c["noBottomNotes"] is True
     assert c["lambdaKeyinUntouched"] is True, "카드가 사용자 λ 입력을 변경했다"
-    assert c["layerToggleWorks"] is True and c["layerToggleSaved"] is True
+    assert c["bothLayersVisible"] is True and c["scaleSaved"] is True
     assert c["mapControlRemoved"] is True
     assert c["directLambdaMatchesEveryScore"] is True
     assert c["directLambdaVisible"] is True

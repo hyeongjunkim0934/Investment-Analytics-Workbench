@@ -222,7 +222,9 @@ class Document {
   createElement(t) { return new Node(t); }
   createTextNode(t) { return new TextNode(t); }
   createElementNS(_ns, t) { return new Node(t); }
-  getElementById(id) { return this.body.querySelectorAll(`#${id}`)[0] || null; }
+  // HTML ids may contain '.', unlike an unescaped CSS #id selector.
+  getElementById(id) { return this.body.id === String(id) ? this.body
+    : this.body.querySelectorAll("*").find((node) => node.id === String(id)) || null; }
   querySelector(sel) { return this.body.querySelector(sel); }
   querySelectorAll(sel) { return this.body.querySelectorAll(sel); }
   contains(n) { return this.body.contains(n) || n === this.body; }

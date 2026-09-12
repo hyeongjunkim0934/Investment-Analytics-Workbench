@@ -1161,7 +1161,19 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-benchmark th:first-child, .port-benchmark td:first-child { text-align: left; }
 .port-hover { font-size: 12.5px; color: var(--ink-2); margin-top: 6px; min-height: 18px; }
 /* Risk paths share the frontier card, typography and restrained chart treatment. */
-.rp-tabs { margin: -4px 0 14px; }
+.rp-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 22px; }
+.rp-layer { min-width: 0; }
+.rp-layer .card-head { align-items: flex-start; flex-wrap: wrap; }
+.rp-comparison { margin-top: 18px; }
+.rp-comparison svg { display: block; width: 100%; height: auto; font-family: inherit; }
+.rp-limits { margin-top: 16px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.rp-limits summary { cursor: pointer; color: var(--ink-2); font-size: 12px; }
+.rp-limit-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 24px; margin: 14px 0; }
+.rp-limit-grid > div { display: flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 12px; }
+.rp-limit-grid > div > span:first-child { flex: 1; }
+.rp-limit-grid input { width: 58px; min-width: 0; padding: 5px; border: 1px solid var(--border); border-radius: 3px;
+  background: var(--surface); color: var(--ink-1); font: inherit; font-variant-numeric: tabular-nums; }
+.rp-scope { margin-top: 16px; font-size: 11px; }
 .rp-controls, .rp-ranges { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .rp-controls { gap: 12px; }
 .rp-ranges button[aria-pressed="true"] { color: var(--ink-1); border-color: var(--accent-solid); }
@@ -1176,6 +1188,7 @@ a.kpi-link .kpi-label > span:first-child::after {
 .rp-tooltip b { font-weight: 500; }
 .rp-legend { justify-content: center; }
 @media (max-width: 720px) {
+  .rp-panels, .rp-limit-grid { grid-template-columns: 1fr; }
   #alloc-risk-proc.port-frontier { padding: 12px 10px; }
   .rp-legend { gap: 6px 12px; font-size: 11px; }
 }

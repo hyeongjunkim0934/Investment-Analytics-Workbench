@@ -5047,7 +5047,7 @@ function allocFeasibility(E) {
   return probs;
 }
 
-/* Each weekly risk score and latest snapshot IS λ (user request 2026-09-12).
+/* Each weekly risk score and latest snapshot sets λ (default ×1, optional ×0.1).
    Current portfolio μ / Σ stay fixed: this is a scenario path, not a backtest.
    Cache only exact λ solutions with identical optimizer inputs. */
 const RP_SOLVER_VERSION = 1;
@@ -5219,12 +5219,16 @@ function allocRiskOptimize(E, lambda) {
   return null;
 }
 
-let allocRiskCache = { signature: null, solutions: new Map() };
+const allocRiskCache = new Map();
+const allocRiskLimitDrafts = new WeakMap();
 function allocRiskViewState() {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(ALLOC_LS_KEY)) || {}; } catch {}
   return { rp_layer: saved.rp_layer === "vuln" ? "vuln" : "stress",
-    rp_range: ["1", "3", "5", "all"].includes(saved.rp_range) ? saved.rp_range : "3" };
+    rp_range: ["1", "3", "5", "all"].includes(saved.rp_range) ? saved.rp_range : "3",
+    rp_scale: saved.rp_scale === .1 ? .1 : 1,
+    rp_mode: saved.rp_mode === "free" ? "free" : "constrained",
+    rp_bounds: saved.rp_bounds && typeof saved.rp_bounds === "object" ? saved.rp_bounds : {} };
 }
 function renderAllocRiskSource() {
   const card = $("#alloc-risk-source");
@@ -5247,11 +5251,56 @@ function renderAllocRiskSource() {
   if (!R?.layers) card.append(el("div", { class: "card-sub" }, "리스크 데이터를 불러오지 못했습니다."));
 }
 
+// Asset-specific limits are local risk-scenario inputs, expressed in percent.
+// "Free" releases these limits only; it remains fully invested and long-only.
+function allocRiskBoundedEngine(E, bounds = {}) {
+  if (!E || E.error) return E;
+  const bands = E.V.keys.map((key, i) => bounds[key] ?? [E.lo[i] * 100, E.hi[i] * 100]);
+  if (bands.some((b) => !Array.isArray(b) || b.length !== 2 || b.some((v) => !Number.isFinite(v))
+      || b[0] < 0 || b[1] > 100 || b[0] > b[1]))
+    return { error: "투자한도는 0~100% 안에서 하한 ≤ 상한으로 입력하십시오." };
+  const bounded = { ...E, lo: bands.map((b) => b[0] / 100), hi: bands.map((b) => b[1] / 100), total: 1 };
+  const errors = allocFeasibility(bounded);
+  return errors.length ? { error: errors.join(" · ") } : bounded;
+}
+
+function allocRiskObservations(E, st, layer) {
+  if (!E || E.error) return { error: E?.error || "포트폴리오 데이터를 불러오지 못했습니다." };
+  const R = DATA.risk, hist = R?.layers?.[layer]?.hist_alloc;
+  const asof = Date.parse(R?.asof) / 1000;
+  if (!hist || !Array.isArray(hist.t) || !Array.isArray(hist.v) || hist.t.length !== hist.v.length || hist.t.length < 2)
+    return { error: "리스크 주간 이력이 없습니다 — 데이터 갱신 후 복구됩니다." };
+  if (!Number.isFinite(asof) || hist.t.some((t, i) => !Number.isFinite(t) || t > asof || (i > 0 && t <= hist.t[i - 1]))
+      || hist.v.some((v) => !Number.isFinite(v) || v < 0 || v > 100))
+    return { error: "리스크 주간 이력의 날짜·점수를 확인하십시오." };
+  const range = ["1", "3", "5", "all"].includes(st.rp_range) ? st.rp_range : "3";
+  const cutoff = new Date(asof * 1000);
+  cutoff.setUTCFullYear(cutoff.getUTCFullYear() - (range === "all" ? 0 : +range));
+  const observations = hist.t.map((t, i) => ({t, s: hist.v[i], lam: hist.v[i] * (st.rp_scale === .1 ? .1 : 1)}))
+    .filter((m) => range === "all" || m.t >= cutoff.getTime() / 1000);
+  if (observations.length < 2) return { error: "선택 기간의 리스크 이력이 부족합니다." };
+  const {V} = E, signature = JSON.stringify([V.keys, V.mu, V.C, E.lo, E.hi, E.groups, RP_SOLVER_VERSION]);
+  if (!allocRiskCache.has(signature)) {
+    if (allocRiskCache.size >= 4) allocRiskCache.delete(allocRiskCache.keys().next().value);
+    allocRiskCache.set(signature, new Map());
+  }
+  const solutions = allocRiskCache.get(signature);
+  observations.forEach((m) => {
+    if (!solutions.has(m.lam)) solutions.set(m.lam, allocRiskOptimize(E, m.lam));
+    m.w = solutions.get(m.lam);
+  });
+  if (observations.some((m) => !Array.isArray(m.w) || m.w.some((v, i) => !Number.isFinite(v)
+      || v < E.lo[i] - 1e-5 || v > E.hi[i] + 1e-5)
+      || Math.abs(m.w.reduce((a, b) => a + b, 0) - 1) > 1e-5
+      || E.groups.some((g) => g.cap != null && g.idx.reduce((sum, i) => sum + m.w[i], 0) > g.cap + 1e-5)))
+    return { error: "최적화 수렴·제약을 확인하지 못했습니다 — 투자한도를 확인하십시오." };
+  return {observations, keys: V.keys};
+}
+
 function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
   card.textContent = "";
   card.classList.add("port-frontier");
   const redraw = () => renderAllocRiskProc(card, E, st, palette(), rerender, infeas);
-  // Persist only view keys; never save another workspace's inputs as a side effect.
   const select = (key, value, focusId) => {
     st[key] = value;
     try {
@@ -5261,74 +5310,137 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
     redraw();
     if (focusId) document.getElementById(focusId)?.focus();
   };
-  const layers = [["stress", "현재"], ["vuln", "잠재"]];
-  const tabs = el("div", { class: "alloc-tabs rp-tabs", role: "tablist", "aria-label": "리스크 구분" });
-  layers.forEach(([key, label], i) => {
-    const id = `alloc-rp-tab-${key}`, active = st.rp_layer === key;
-    const button = el("button", { id, type: "button", role: "tab", class: active ? "active" : "",
-      "aria-selected": String(active), "aria-controls": "alloc-rp-panel", tabindex: active ? "0" : "-1",
-      onclick: () => select("rp_layer", key, id) }, label);
-    button.addEventListener("keydown", (ev) => {
-      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(ev.key)) return;
-      ev.preventDefault();
-      const next = ev.key === "Home" ? 0 : ev.key === "End" ? 1 : 1 - i;
-      select("rp_layer", layers[next][0], `alloc-rp-tab-${layers[next][0]}`);
+  const controls = el("div", {class: "rp-controls"});
+  const choices = (key, options, active, prefix, label) => {
+    const group = el("div", {class: "rp-ranges", role: "group", "aria-label": label}, el("span", {class: "card-sub"}, label));
+    options.forEach(([value, text]) => {
+      const id = `alloc-rp-${prefix}-${value}`;
+      group.append(el("button", {id, type: "button", class: "btn-ghost", "aria-pressed": String(active === value),
+        onclick: () => select(key, value, id)}, text));
     });
-    tabs.append(button);
-  });
-  const panel = el("div", { id: "alloc-rp-panel", role: "tabpanel",
-    "aria-labelledby": `alloc-rp-tab-${st.rp_layer}` });
-  card.append(tabs, panel);
-  const range = ["1", "3", "5", "all"].includes(st.rp_range) ? st.rp_range : "3";
-  const controls = el("div", { class: "rp-controls" });
-  const ranges = el("div", { class: "rp-ranges", role: "group", "aria-label": "리스크 기간" });
-  [["1", "1Y"], ["3", "3Y"], ["5", "5Y"], ["all", "전체"]].forEach(([value, label]) => {
-    const id = `alloc-rp-range-${value}`;
-    ranges.append(el("button", { id, type: "button", class: "btn-ghost", "aria-pressed": String(range === value),
-      onclick: () => select("rp_range", value, id) }, label));
-  });
-  controls.append(ranges);
-  const bail = (why) => {
-    panel.textContent = "";
-    panel.append(el("div", { class: "card-head" }, el("span", { class: "card-title" }, "리스크 연계 — 보류")),
-      controls, el("div", { class: "card-sub", role: "status" }, why));
+    controls.append(group);
   };
-  if (!E || E.error) return bail(E?.error || "포트폴리오 데이터를 불러오지 못했습니다.");
-  if (infeas && infeas.length) return bail("제약 모순으로 보류 — 수기 입력에서 밴드·상한을 확인하십시오.");
-  const R = DATA.risk, L = R?.layers?.[st.rp_layer], hist = L?.hist_alloc;
-  const asof = Date.parse(R?.asof) / 1000;
-  if (!hist || !Array.isArray(hist.t) || !Array.isArray(hist.v) || hist.t.length !== hist.v.length
-      || hist.t.length < 2) return bail("리스크 주간 이력이 없습니다 — 데이터 갱신 후 복구됩니다.");
-  if (!Number.isFinite(asof) || hist.t.some((t, i) => !Number.isFinite(t) || t > asof
-      || (i > 0 && t <= hist.t[i - 1])) || hist.v.some((v) => !Number.isFinite(v) || v < 0 || v > 100))
-    return bail("리스크 주간 이력의 날짜·점수를 확인하십시오.");
+  choices("rp_range", [["1","1Y"],["3","3Y"],["5","5Y"],["all","전체"]], st.rp_range || "3", "range", "기간");
+  choices("rp_scale", [[1,"×1"],[.1,"×0.1"]], st.rp_scale === .1 ? .1 : 1, "scale", "λ 배율");
+  choices("rp_mode", [["constrained","제약적용"],["free","무제약"]], st.rp_mode === "free" ? "free" : "constrained", "mode", "비중 경로");
+  card.append(controls);
+  if (!E || E.error || infeas?.length) {
+    card.append(el("div", {class: "card-sub", role: "status"}, `리스크 연계 — 보류 · ${E?.error || infeas?.join(" · ") || "포트폴리오 데이터가 없습니다."}`));
+    return;
+  }
+  const bounds = st.rp_bounds && typeof st.rp_bounds === "object" ? st.rp_bounds : {};
+  const bounded = allocRiskBoundedEngine(E, bounds);
+  const free = {...E, lo: E.V.keys.map(() => 0), hi: E.V.keys.map(() => 1), groups: []};
+  const results = {};
+  ["stress", "vuln"].forEach((layer) => {
+    results[layer] = {constrained: allocRiskObservations(bounded, st, layer), free: allocRiskObservations(free, st, layer)};
+  });
+  const limitBox = el("details", {class: "rp-limits"}, el("summary", {}, "투자한도"));
+  const draftKey = JSON.stringify([E.V.keys, bounds]);
+  const previousDraft = allocRiskLimitDrafts.get(card);
+  const draft = previousDraft?.key === draftKey ? previousDraft : {key: draftKey, values: null, dirty: false, open: previousDraft?.open || false};
+  allocRiskLimitDrafts.set(card, draft);
+  limitBox.open = draft.open || !!bounded.error;
+  limitBox.addEventListener("toggle", () => {draft.open = limitBox.open;});
+  const inputs = [], grid = el("div", {class: "rp-limit-grid"});
+  const error = el("div", {class: "card-sub", role: "status"}, bounded.error || (draft.dirty ? "미적용" : ""));
+  E.V.keys.forEach((key, i) => {
+    const b = Array.isArray(bounds[key]) ? bounds[key] : [E.lo[i] * 100, E.hi[i] * 100];
+    const pair = ["lo", "hi"].map((side, j) => el("input", {id: `alloc-rp-${side}-${i}`, type: "number", min: 0, max: 100,
+      step: .1, value: draft.values?.[i]?.[j] ?? String(b[j] ?? ""), "aria-label": `${allocShortK(key)} ${j ? "상한" : "하한"} %`}));
+    const remember = () => {
+      draft.values = inputs.map((p) => p.map((input) => input.value));
+      draft.dirty = true; draft.open = true; error.textContent = "미적용";
+    };
+    pair.forEach((input) => {input.addEventListener("input", remember); input.addEventListener("change", remember);});
+    inputs.push(pair);
+    grid.append(el("div", {}, el("span", {}, allocShortK(key)), pair[0], el("span", {}, "~"), pair[1], el("span", {}, "%")));
+  });
+  limitBox.append(grid, el("div", {class: "rp-controls"},
+    el("button", {id: "alloc-rp-bounds-apply", type: "button", class: "btn-ghost", onclick: () => {
+      const next = Object.fromEntries(E.V.keys.map((key, i) => [key, inputs[i].map((input) => input.value.trim() === "" ? NaN : Number(input.value))]));
+      const checked = allocRiskBoundedEngine(E, next);
+      if (checked.error) {error.textContent = `미적용 · ${checked.error}`; return;}
+      draft.open = true; draft.key = null;
+      select("rp_bounds", next, "alloc-rp-bounds-apply");
+    }}, "제약 적용"),
+    el("button", {id: "alloc-rp-bounds-reset", type: "button", class: "btn-ghost", onclick: () => {
+      draft.open = true; draft.key = null; select("rp_bounds", {}, "alloc-rp-bounds-reset");
+    }}, "한도 초기화")), error);
+  card.append(limitBox);
+  renderAllocRiskComparison(card, E, bounded, results, pal);
+  const mode = st.rp_mode === "free" ? "free" : "constrained";
+  const dates = ["stress", "vuln"].flatMap((layer) => (results[layer][mode].observations || []).map((m) => m.t));
+  const extent = dates.length ? [Math.min(...dates), Math.max(...dates)] : null;
+  const panels = el("div", {class: "rp-panels"});
+  ["stress", "vuln"].forEach((layer) => {
+    const panel = el("section", {id: `alloc-rp-panel-${layer}`, class: "rp-layer", "aria-label": layer === "stress" ? "현재" : "잠재"});
+    panels.append(panel);
+    renderAllocRiskLayer(panel, mode === "free" ? free : bounded, {...st, rp_layer: layer, rp_extent: extent}, pal, results[layer][mode]);
+  });
+  card.append(panels, el("div", {class: "card-sub rp-scope"}, "무제약: 개별 투자한도 해제 · 공매도 금지 · 합계 100%"));
+}
 
-  // Do not normalize, round, exponentiate, or multiply by the retired institutional λ.
-  const all = hist.t.map((t, i) => ({ t, s: hist.v[i], lam: hist.v[i] }));
-  const cutoffDate = new Date(all[all.length - 1].t * 1000);
-  cutoffDate.setUTCFullYear(cutoffDate.getUTCFullYear() - (range === "all" ? 0 : +range));
-  const cutoff = range === "all" ? -Infinity : cutoffDate.getTime() / 1000;
-  const observations = all.filter((m) => m.t >= cutoff);
-  if (observations.length < 2) return bail("선택 기간의 리스크 이력이 부족합니다.");
-  const { V } = E, keys = V.keys;
-  const signature = JSON.stringify([V.keys, V.mu, V.C, E.lo, E.hi, E.groups, RP_SOLVER_VERSION]);
-  if (allocRiskCache.signature !== signature) allocRiskCache = { signature, solutions: new Map() };
-  const solve = (m) => {
-    if (!allocRiskCache.solutions.has(m.lam))
-      allocRiskCache.solutions.set(m.lam, allocRiskOptimize(E, m.lam));
-    return allocRiskCache.solutions.get(m.lam);
+function renderAllocRiskComparison(card, E, bounded, results, pal) {
+  const keys = E.V.keys, colors = portChartColors();
+  const specs = [["stress", "constrained", "현재", colors.nominal], ["vuln", "constrained", "잠재", colors.robust],
+    ["stress", "free", "현재 무제약", colors.nominal], ["vuln", "free", "잠재 무제약", colors.robust]];
+  const latest = specs.map(([layer, mode]) => results[layer][mode].observations?.at(-1));
+  const rows = keys.map((key, i) => [allocShortK(key), bounded.error ? null : bounded.lo[i] * 100,
+    bounded.error ? null : bounded.hi[i] * 100, ...latest.map((m) => m ? m.w[i] * 100 : null)]);
+  const box = el("div", {id: "alloc-rp-comparison", class: "rp-comparison"});
+  card.append(box);
+  const labels = specs.map((spec, j) => `${spec[2]}${latest[j] ? ` · ${tsToDate(latest[j].t)} · λ ${fmtNum(latest[j].lam, 2)}` : " · 보류"}`);
+  const chart = cardScaffold(box, {title: "투자한도 · 최적비중", sub: "실선 범위 · ● 제약적용 · ○ 무제약",
+    csvName: "리스크_투자한도_최적비중.csv", tableFn: (cap = 400, raw = false) => ({
+      headers: ["자산", "하한 %", "상한 %", ...labels.map((label) => `${label} %`)],
+      rows: rows.map((row) => row.map((v, i) => i === 0 ? v : v == null ? (raw ? "" : "—") : raw ? v : fmtNum(v, 2)))})});
+  const mk = (tag, attrs, parent) => {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, v));
+    parent?.append(node); return node;
   };
-  observations.forEach((m) => { m.w = solve(m); });
-  if (observations.some((m) => !Array.isArray(m.w) || m.w.some((v, i) => !Number.isFinite(v)
-      || v < E.lo[i] - 1e-5 || v > E.hi[i] + 1e-5)
-      || Math.abs(m.w.reduce((a, b) => a + b, 0) - 1) > 1e-5
-      || E.groups.some((g) => g.cap != null && g.idx.reduce((sum, i) => sum + m.w[i], 0) > g.cap + 1e-5)))
-    return bail("최적화 수렴·제약을 확인하지 못했습니다 — 배분 설정을 확인하십시오.");
+  const W = 1000, left = 115, right = 40, top = 30, rowH = 58, H = top + keys.length * rowH + 24;
+  const X = (v) => left + (W - left - right) * v / 100;
+  const svg = mk("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "자산별 투자한도와 현재·잠재의 제약 및 무제약 최적비중"}, chart);
+  [0, 25, 50, 75, 100].forEach((v) => {
+    mk("line", {x1: X(v), x2: X(v), y1: top - 12, y2: H - 28, stroke: pal.grid, "stroke-width": .7}, svg);
+    mk("text", {x: X(v), y: H - 8, fill: pal.ink3, "text-anchor": "middle", "font-size": 11}, svg).textContent = `${v}%`;
+  });
+  rows.forEach((row, i) => {
+    const y = top + i * rowH + 16;
+    mk("text", {x: left - 14, y: y + 4, fill: pal.ink2, "text-anchor": "end", "font-size": 12}, svg).textContent = row[0];
+    if (row[1] != null) {
+      const line = mk("line", {x1: X(row[1]), x2: X(row[2]), y1: y, y2: y, stroke: pal.ink3, "stroke-width": 5,
+        "stroke-opacity": .35, "data-asset": keys[i], "data-lo": row[1], "data-hi": row[2]}, svg);
+      mk("title", {}, line).textContent = `${row[0]} ${fmtNum(row[1], 2)}~${fmtNum(row[2], 2)}%`;
+      [row[1], row[2]].forEach((v) => mk("line", {x1: X(v), x2: X(v), y1: y - 6, y2: y + 6, stroke: pal.ink3}, svg));
+      mk("text", {x: (X(row[1]) + X(row[2])) / 2, y: y + 29, fill: pal.ink3, "text-anchor": "middle", "font-size": 10}, svg)
+        .textContent = `${fmtNum(row[1], 2)}–${fmtNum(row[2], 2)}%`;
+    }
+    specs.forEach(([layer, mode, label, color], j) => {
+      const value = row[j + 3]; if (value == null) return;
+      const dot = mk("circle", {cx: X(value), cy: y + [-15, -5, 5, 15][j], r: 4,
+        fill: mode === "free" ? pal.surface : color, stroke: color, "stroke-width": 1.5,
+        "data-asset": keys[i], "data-layer": layer, "data-mode": mode, "data-weight": value}, svg);
+      mk("title", {}, dot).textContent = `${row[0]} · ${label} ${fmtNum(value, 2)}%`;
+    });
+  });
+  box.append(el("div", {class: "port-frontier-key rp-legend"}, ...specs.map((spec, j) =>
+    el("span", {class: "port-marker-key", style: `color:${spec[3]}`}, `${spec[1] === "free" ? "○" : "●"} ${labels[j]}`))));
+}
 
+function renderAllocRiskLayer(panel, E, st, pal, result = allocRiskObservations(E, st, st.rp_layer)) {
+  if (result.error) {
+    panel.append(el("div", {class: "card-head"}, el("span", {class: "card-title"}, `${st.rp_layer === "stress" ? "현재" : "잠재"} — 보류`)),
+      el("div", {class: "card-sub", role: "status"}, result.error));
+    return;
+  }
+  const {observations, keys} = result;
   const box = cardScaffold(panel, {
-    title: "최적 비중 변화",
+    title: st.rp_layer === "stress" ? "현재" : "잠재",
     sub: `주간 · 기준일 ${tsToDate(observations[observations.length - 1].t)} · ${observations.length}개`,
-    controls, csvName: `리스크배분경로_${st.rp_layer}.csv`,
+    csvName: `리스크배분경로_${st.rp_layer}_${st.rp_mode || "constrained"}_x${st.rp_scale === .1 ? "0.1" : "1"}.csv`,
     tableFn: (cap = 400, raw = false) => {
       const num = (v) => raw ? v : fmtNum(v, 2);
       const rows = observations.slice().reverse().slice(0, cap).map((m) =>
@@ -5340,7 +5452,7 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
   box.classList.add("rp-chart");
   box.setAttribute("tabindex", "0");
   box.setAttribute("role", "group");
-  box.setAttribute("aria-label", `${L.name} 배분 경로. 좌우 화살표로 조회. 전체 수치는 표 버튼.`);
+  box.setAttribute("aria-label", `${st.rp_layer === "stress" ? "현재" : "잠재"} 배분 경로. 좌우 화살표로 조회. 전체 수치는 표 버튼.`);
   const colors = portChartColors(), scoreColor = st.rp_layer === "stress" ? colors.nominal : colors.robust;
   const NS = "http://www.w3.org/2000/svg";
   const mk = (tag, attrs, parent) => {
@@ -5352,13 +5464,13 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
     if (parent) parent.appendChild(node);
     return node;
   };
-  const W = 1000, padL = 42, padR = 22, topH = 100, gapH = 28, mainH = 292, padB = 32;
+  const W = 640, padL = 36, padR = 18, topH = 88, gapH = 28, mainH = 230, padB = 32;
   const H = topH + gapH + mainH + padB, n = observations.length;
-  const first = observations[0].t, last = observations[n - 1].t;
+  const first = st.rp_extent?.[0] ?? observations[0].t, last = st.rp_extent?.[1] ?? observations[n - 1].t;
   const X = (t) => padL + (W - padL - padR) * (t - first) / (last - first);
   const Ys = (v) => topH - (topH - 24) * v / 100;
   const Y = (v) => topH + gapH + mainH - mainH * v / 100;
-  const svg = mk("svg", { id: "alloc-rp-svg", viewBox: `0 0 ${W} ${H}`, "aria-hidden": "true" }, box);
+  const svg = mk("svg", { id: `alloc-rp-svg-${st.rp_layer}`, viewBox: `0 0 ${W} ${H}`, "aria-hidden": "true" }, box);
   [0, 25, 50, 75, 100].forEach((g) => {
     [Ys(g), Y(g)].forEach((y) => mk("line", { x1: padL, x2: W - padR, y1: y, y2: y,
       stroke: pal.grid, "stroke-width": .65, "stroke-opacity": .65 }, svg));
@@ -5366,7 +5478,7 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
   });
   [25, 50, 75].forEach((g) => mk("text", { x: padL - 9, y: Ys(g) + 3.5,
     "text-anchor": "end", "font-size": 10, fill: pal.ink3 }, svg).textContent = g);
-  mk("text", { x: padL + 8, y: 15, "font-size": 11, fill: pal.ink2 }, svg).textContent = `${L.name} · 점수 = λ`;
+  mk("text", { x: padL + 8, y: 15, "font-size": 11, fill: pal.ink2 }, svg).textContent = `${st.rp_layer === "stress" ? "현재" : "잠재"} · 점수 × ${st.rp_scale === .1 ? "0.1" : "1"} = λ`;
   mk("text", { x: padL + 8, y: topH + gapH - 10, "font-size": 11, fill: pal.ink2 }, svg).textContent = "배분 · %";
   const pathOf = (ys, step = false) => observations.map((m, i) => i && step
     ? `H${X(m.t).toFixed(2)}V${ys(i).toFixed(2)}`
@@ -5397,11 +5509,11 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
       "font-size": 10, fill: pal.ink3 }, svg).textContent = tsToDate(t).slice(0, 7);
   }
   mk("line", { x1: padL, x2: W - padR, y1: Y(0), y2: Y(0), stroke: pal.baseline, "stroke-width": .8 }, svg);
-  mk("circle", { cx: X(last), cy: Ys(observations[n - 1].s), r: 3.2, fill: pal.surface,
+  mk("circle", { cx: X(observations[n - 1].t), cy: Ys(observations[n - 1].s), r: 3.2, fill: pal.surface,
     stroke: scoreColor, "stroke-width": 1.4 }, svg);
-  const cross = mk("line", { id: "alloc-rp-cross", y1: 22, y2: Y(0), stroke: pal.baseline,
+  const cross = mk("line", { id: `alloc-rp-cross-${st.rp_layer}`, y1: 22, y2: Y(0), stroke: pal.baseline,
     "stroke-width": 1, "stroke-dasharray": "3 4", opacity: 0 }, svg);
-  const tooltip = el("div", { id: "alloc-rp-tooltip", class: "rp-tooltip", role: "status" });
+  const tooltip = el("div", { id: `alloc-rp-tooltip-${st.rp_layer}`, class: "rp-tooltip", role: "status" });
   tooltip.hidden = true;
   box.append(tooltip);
   let selected = n - 1;
