@@ -27,7 +27,7 @@ def test_workspace_scope_and_metadata(workspace):
 
 def test_risk_workspace_is_separate_and_handles_missing_alloc(workspace):
     for key in ("onlyRiskVisible", "retiredSettingsLinkRemoved",
-                "riskMissingAllocClearsOldResult", "riskWarningRecovers"):
+                "riskMissingPortClearsOldResult", "riskWarningRecovers"):
         assert workspace[key], key
 
 
@@ -47,8 +47,8 @@ def test_workspace_reports_existing_save_contract(workspace):
 
 
 def test_workspace_reports_fallback_and_missing_data(workspace):
-    for key in ("fallbackShown", "riskMissingShown", "portWorksWithoutInstitution",
-                "portMissingShown", "riskWorksWithoutPort", "detailReturnsToRisk",
+    for key in ("riskUsesPortWithoutCma", "riskWorksWithoutInstitution", "portWorksWithoutInstitution",
+                "portMissingShown", "riskMissingPortClearsOldResult", "detailReturnsToRisk",
                 "finalNoRenderErrors"):
         assert workspace[key], key
 

@@ -5047,8 +5047,8 @@ function allocFeasibility(E) {
   return probs;
 }
 
-/* Weekly risk observations and the latest published snapshot are mapped to λ.
-   Current CMA / constraints stay fixed: this is a scenario path, not a backtest.
+/* Each weekly risk score and latest snapshot IS λ (user request 2026-09-12).
+   Current portfolio μ / Σ stay fixed: this is a scenario path, not a backtest.
    Cache only exact λ solutions with identical optimizer inputs. */
 const RP_SOLVER_VERSION = 1;
 /* Risk-history QP only. Certify the original objective and constraints before publishing.
@@ -5220,6 +5220,12 @@ function allocRiskOptimize(E, lambda) {
 }
 
 let allocRiskCache = { signature: null, solutions: new Map() };
+function allocRiskViewState() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(ALLOC_LS_KEY)) || {}; } catch {}
+  return { rp_layer: saved.rp_layer === "vuln" ? "vuln" : "stress",
+    rp_range: ["1", "3", "5", "all"].includes(saved.rp_range) ? saved.rp_range : "3" };
+}
 function renderAllocRiskSource() {
   const card = $("#alloc-risk-source");
   if (!card) return;
@@ -5245,9 +5251,14 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
   card.textContent = "";
   card.classList.add("port-frontier");
   const redraw = () => renderAllocRiskProc(card, E, st, palette(), rerender, infeas);
-  // Observation controls redraw only this card, leaving institutional input drafts intact.
+  // Persist only view keys; never save another workspace's inputs as a side effect.
   const select = (key, value, focusId) => {
-    st[key] = value; allocSaveState(st); redraw();
+    st[key] = value;
+    try {
+      const saved = JSON.parse(localStorage.getItem(ALLOC_LS_KEY)) || {};
+      localStorage.setItem(ALLOC_LS_KEY, JSON.stringify({ ...saved, [key]: value }));
+    } catch {}
+    redraw();
     if (focusId) document.getElementById(focusId)?.focus();
   };
   const layers = [["stress", "현재"], ["vuln", "잠재"]];
@@ -5276,14 +5287,13 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
     ranges.append(el("button", { id, type: "button", class: "btn-ghost", "aria-pressed": String(range === value),
       onclick: () => select("rp_range", value, id) }, label));
   });
-  controls.append(ranges, allocSelect("alloc-rp-map", "변환", [["로그", "log"], ["선형", "lin"]], st.rp_map,
-    (value) => select("rp_map", value, "alloc-rp-map")));
+  controls.append(ranges);
   const bail = (why) => {
     panel.textContent = "";
     panel.append(el("div", { class: "card-head" }, el("span", { class: "card-title" }, "리스크 연계 — 보류")),
       controls, el("div", { class: "card-sub", role: "status" }, why));
   };
-  if (E.layer !== "cma") return bail("벤치마크 층 전용 — 위험 원천을 기관 벤치마크(CMA)로 두면 계산됩니다.");
+  if (!E || E.error) return bail(E?.error || "포트폴리오 데이터를 불러오지 못했습니다.");
   if (infeas && infeas.length) return bail("제약 모순으로 보류 — 수기 입력에서 밴드·상한을 확인하십시오.");
   const R = DATA.risk, L = R?.layers?.[st.rp_layer], hist = L?.hist_alloc;
   const asof = Date.parse(R?.asof) / 1000;
@@ -5293,10 +5303,8 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
       || (i > 0 && t <= hist.t[i - 1])) || hist.v.some((v) => !Number.isFinite(v) || v < 0 || v > 100))
     return bail("리스크 주간 이력의 날짜·점수를 확인하십시오.");
 
-  const lamBase = +st.mvo_lambda || 1;
-  const lamOf = st.rp_map === "lin"
-    ? (v) => lamBase * v / 50 : (v) => lamBase * Math.pow(10, (v - 50) / 25);
-  const all = hist.t.map((t, i) => ({ t, s: hist.v[i], lam: lamOf(hist.v[i]) }));
+  // Do not normalize, round, exponentiate, or multiply by the retired institutional λ.
+  const all = hist.t.map((t, i) => ({ t, s: hist.v[i], lam: hist.v[i] }));
   const cutoffDate = new Date(all[all.length - 1].t * 1000);
   cutoffDate.setUTCFullYear(cutoffDate.getUTCFullYear() - (range === "all" ? 0 : +range));
   const cutoff = range === "all" ? -Infinity : cutoffDate.getTime() / 1000;
@@ -5318,7 +5326,7 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
     return bail("최적화 수렴·제약을 확인하지 못했습니다 — 배분 설정을 확인하십시오.");
 
   const box = cardScaffold(panel, {
-    title: "리스크 연계",
+    title: "최적 비중 변화",
     sub: `주간 · 기준일 ${tsToDate(observations[observations.length - 1].t)} · ${observations.length}개`,
     controls, csvName: `리스크배분경로_${st.rp_layer}.csv`,
     tableFn: (cap = 400, raw = false) => {
@@ -5358,9 +5366,11 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
   });
   [25, 50, 75].forEach((g) => mk("text", { x: padL - 9, y: Ys(g) + 3.5,
     "text-anchor": "end", "font-size": 10, fill: pal.ink3 }, svg).textContent = g);
-  mk("text", { x: padL + 8, y: 15, "font-size": 11, fill: pal.ink2 }, svg).textContent = `${L.name} 점수`;
+  mk("text", { x: padL + 8, y: 15, "font-size": 11, fill: pal.ink2 }, svg).textContent = `${L.name} · 점수 = λ`;
   mk("text", { x: padL + 8, y: topH + gapH - 10, "font-size": 11, fill: pal.ink2 }, svg).textContent = "배분 · %";
-  const pathOf = (ys) => observations.map((m, i) => `${i ? "L" : "M"}${X(m.t).toFixed(2)},${ys(i).toFixed(2)}`).join("");
+  const pathOf = (ys, step = false) => observations.map((m, i) => i && step
+    ? `H${X(m.t).toFixed(2)}V${ys(i).toFixed(2)}`
+    : `${i ? "L" : "M"}${X(m.t).toFixed(2)},${ys(i).toFixed(2)}`).join("");
   const sPath = pathOf((i) => Ys(observations[i].s));
   mk("path", { d: sPath, fill: "none", stroke: scoreColor, "stroke-width": 1.6,
     "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
@@ -5369,12 +5379,15 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
     return [0, ...m.w.map((v) => (sum += v * 100))];
   });
   for (let j = 0; j < keys.length; j++) {
-    const up = pathOf((i) => Y(cum[i][j + 1]));
-    const down = observations.slice().reverse().map((m, rev) =>
-      `L${X(m.t).toFixed(2)},${Y(cum[n - 1 - rev][j]).toFixed(2)}`).join("");
+    const up = pathOf((i) => Y(cum[i][j + 1]), true);
+    const down = observations.slice().reverse().map((m, rev) => {
+      const i = n - 1 - rev;
+      return `L${X(m.t).toFixed(2)},${Y(cum[i][j]).toFixed(2)}`
+        + (i ? `V${Y(cum[i - 1][j]).toFixed(2)}` : "");
+    }).join("");
     mk("path", { d: up + down + "Z", fill: pal.series[j % pal.series.length], "fill-opacity": .4, stroke: "none" }, svg);
   }
-  for (let j = 1; j < keys.length; j++) mk("path", { d: pathOf((i) => Y(cum[i][j])),
+  for (let j = 1; j < keys.length; j++) mk("path", { d: pathOf((i) => Y(cum[i][j]), true),
     fill: "none", stroke: pal.series[(j - 1) % pal.series.length], "stroke-width": .7, "stroke-opacity": .8 }, svg);
   // Actual dates govern geometry, including missing weeks and the final partial week.
   for (let i = 0; i <= 5; i++) {
@@ -5396,7 +5409,7 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
     selected = i;
     const m = observations[i];
     tooltip.textContent = "";
-    tooltip.append(el("strong", {}, `${tsToDate(m.t)} · 점수 ${fmtNum(m.s, 2)}`),
+    tooltip.append(el("strong", {}, `${tsToDate(m.t)} · λ ${fmtNum(m.lam, 2)}`),
       ...keys.map((key, j) => el("span", {}, allocShortK(key),
         el("b", {}, `${fmtNum(m.w[j] * 100, 2)}%`))));
     tooltip.hidden = false;
@@ -5713,6 +5726,7 @@ function selectAllocWorkspace(key) {
     if (n) n.hidden = true;
   });
   refreshAllocWorkspaceInfo();
+  if (key === "risk") renderLinkedAllocRisk();
 }
 
 function renderAllocWorkspace() {
@@ -6751,10 +6765,10 @@ function portRiskInputs(P, W, st) {
   return { C, sig, corr, baseSig, baseCorr, error, valid: !error, manual };
 }
 
-function portEngine(P, st) {
+// Shared input resolution: risk linkage must use precisely the visible portfolio assumptions.
+function portModelInputs(P, st) {
   const wins = P.windows || [];
   const W = wins.find((w) => w.key === st.win) || wins[wins.length - 1];
-  const n = P.assets.length;
   const risk = portRiskInputs(P, W, st), C = risk.C;
   const fileMu = (P.cma_input && P.cma_input.mu_pct) || {};
   const mu = [], src = [];
@@ -6764,6 +6778,36 @@ function portEngine(P, st) {
     else if (fileMu[a] != null && isFinite(+fileMu[a])) { mu.push(+fileMu[a]); src.push("CMA 파일"); }
     else { mu.push(W.mean_pct[i]); src.push("과거 평균(참고)"); }
   });
+  return { W, risk, C, mu, src };
+}
+
+function portRiskAllocationEngine(A) {
+  const P = A?.port;
+  if (!P?.active || !P.assets?.length || !P.windows?.length)
+    return { error: "포트폴리오 데이터가 없습니다 — 데이터 갱신 후 복구됩니다." };
+  const st = portPanelDraft?.source === P ? portPanelDraft.st : portState(P);
+  const { W, risk, C, mu } = portModelInputs(P, st);
+  if (!risk.valid || mu.some((v) => !Number.isFinite(v)))
+    return { error: risk.error || "포트폴리오 기대수익 입력을 확인하십시오." };
+  // Same long-only, fully invested feasible set as the nominal portfolio frontier.
+  // The portfolio's group inputs initialize the current mix, not optimizer bounds.
+  return { layer: "port", V: { keys: P.assets.slice(), mu, C },
+    lo: P.assets.map(() => 0), hi: P.assets.map(() => 1), groups: [],
+    source: P, window: W.key };
+}
+
+function renderLinkedAllocRisk() {
+  const card = $("#alloc-risk-proc");
+  if (!card) return;
+  const E = portRiskAllocationEngine(DATA.alloc);
+  allocWorkspaceContext.risk = { warning: E.error || "" };
+  refreshAllocWorkspaceInfo();
+  renderAllocRiskProc(card, E, allocRiskViewState(), palette(), renderLinkedAllocRisk, []);
+}
+
+function portEngine(P, st) {
+  const { W, risk, C, mu, src } = portModelInputs(P, st);
+  const n = P.assets.length;
   const dot = (a, b) => a.reduce((s, x, i) => s + x * b[i], 0);
   const mv = (M, v) => M.map((r) => dot(r, v));
   const sig = (w) => risk.valid ? Math.sqrt(Math.max(0, dot(w, mv(C, w)))) : null;
@@ -7039,6 +7083,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   function recalc() {
     refreshAllocWorkspaceInfo();
     const E = portEngine(P, st);
+    renderLinkedAllocRisk();
     const sum = P.assets.reduce((s, a) => s + (+st.mix[a] || 0), 0);
     const sumOk = Math.abs(sum - 100) <= 0.05;
     sumBadge.textContent = `합계 ${fmtNum(sum, 1)}%` + (sumOk ? "" : " — 100% 아님");
@@ -7267,9 +7312,8 @@ function renderAlloc() {
   renderAllocWorkspace();
   renderPortPanel(A, { preserveDraft: true });
   renderAllocRiskSource();
+  renderLinkedAllocRisk();
   if (!A || !A.sets || !A.sets.length) {
-    allocWorkspaceContext.risk = { warning: "배분 데이터를 불러오지 못해 리스크연계 계산을 보류합니다." };
-    $("#alloc-risk-proc").textContent = "배분 데이터 없음 — 리스크연계 계산 보류";
     ALLOC_RETIRED_PANELS.forEach((id) => {
       const n = document.getElementById(id);
       if (n) n.textContent = "";
@@ -7292,7 +7336,6 @@ function renderAlloc() {
 
   /* 층·창·매핑 표식용 엔진 한 벌 — recalc 는 매번 새로 만들므로 이건 표시 전용이다 */
   const E0 = allocEngine(A, st);
-  allocWorkspaceContext.risk = { warning: E0.layerNote };
   refreshAllocWorkspaceInfo();
 
   /* ---- ⓪ 포트폴리오 시뮬레이터 (§7.7.8 — 화면 최상단, 2026-08-11 사용자 지시) ----
@@ -8156,11 +8199,7 @@ function renderAlloc() {
         "");
     }
 
-    /* ----- 통합 프로세스 (§7.16) — 드래그 중(recalc(false))에는 다시 계산하지 않는다.
-       시변 카드와 같은 이유로 타이머 밖 동기 렌더(셰이드 프로브가 타이머를 흘리지 않음). */
-    if (withCharts) {
-      renderAllocRiskProc($("#alloc-risk-proc"), E, st, pal, () => recalc(true), infeas);
-    }
+    // Risk linkage is rendered from the visible portfolio inputs by renderLinkedAllocRisk.
   }
   recalc(true);
 

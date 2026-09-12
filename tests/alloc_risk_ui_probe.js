@@ -11,9 +11,9 @@ const fixture = (name) => {
 };
 const bootEnd = source.indexOf("const out = {};");
 const load = new Function("require", "__dirname", source.slice(0, bootEnd)
-  + fixture("ALLOC_FIXTURE") + fixture("CMA_ALLOC")
-  + '\nreturn {P, DOC, shim, sandbox, CMA_ALLOC, render:vm.runInContext("renderAllocRiskProc",sandbox)};');
-const { P, DOC, shim, sandbox, CMA_ALLOC, render } = load(require, __dirname);
+  + fixture("ALLOC_FIXTURE") + fixture("CMA_ALLOC") + fixture("RISK_PORT_ALLOC")
+  + '\nreturn {P, DOC, shim, sandbox, CMA_ALLOC, RISK_PORT_ALLOC, render:vm.runInContext("renderAllocRiskProc",sandbox)};');
+const { P, DOC, shim, sandbox, CMA_ALLOC, RISK_PORT_ALLOC, render } = load(require, __dirname);
 const byId = (id) => DOC.getElementById(id);
 const card = byId("alloc-risk-proc");
 const asof = "2026-09-08";
@@ -33,7 +33,7 @@ const risk = {
     vuln: {name: "잠재 위험", score: 62.34567, hist_alloc: history(5)},
   },
 };
-const engine = P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC));
+const engine = P.portRiskAllocationEngine(RISK_PORT_ALLOC);
 let state;
 const draw = () => render(card, engine, state, P.palette(), draw, []);
 const reset = (data = risk, saved = {}) => {
@@ -110,8 +110,11 @@ const csv = captured.replace(/^\uFEFF/, "").split("\n").map((line) => line.split
 assert.equal(csv.length, timestamps.length + 1);
 assert.equal(csv[1][0], asof);
 assert.equal(+csv[1][1], risk.layers.stress.score, "CSV score was rounded");
-const expectedLambda = Math.pow(10, (risk.layers.stress.score - 50) / 25);
-assert(Math.abs(+csv[1][2] - expectedLambda) < 1e-12, "CSV λ was rounded");
+const expectedLambda = risk.layers.stress.score;
+assert.equal(+csv[1][2], expectedLambda, "CSV λ differs from raw score");
+assert(csv.slice(1).every((row) => +row[1] === +row[2]), "some observation λ values were transformed");
+assert.equal(byId("alloc-rp-map"), null, "obsolete risk-to-λ selector remains");
+assert.deepEqual(csv[0].slice(3), ["국내채권", "국내장부", "해외채권", "국내주식", "해외주식", "대체투자"]);
 assert(csv.slice(1).every((row) => Math.abs(row.slice(3).reduce((n, v) => n + +v, 0) - 100) < 1e-8));
 assert.deepEqual(csv.slice(1).map((row) => row[0]), allRows.map((row) => row[0]));
 result.rawExports = true;
@@ -130,6 +133,20 @@ assert(Math.abs(lastGap / priorGap - 4 / 7) < .08, "x axis spaces unequal period
 assert(card.classList.contains("port-frontier"), "risk plot does not share frontier card styling");
 assert.equal(card.querySelectorAll(".rp-hover").length, 0, "old bottom readout remains");
 assert(!/화면 λ|λ →|점수−50|점수\/50|마지막 달|자동 반영 없음|백테스트/.test(card.textContent));
+const holdingPaths = paths.filter((node) => node !== scorePath);
+assert.equal(holdingPaths.length, 11, "six assets must have six bands and five boundaries");
+for (const node of holdingPaths) {
+  const d = node.getAttribute("d");
+  assert.equal((d.match(/H/g) || []).length, timestamps.length - 1, "weights must stay constant until next observation");
+  let x = 0, y = 0;
+  for (const m of d.matchAll(/([MLHV])([\d.e+-]+)(?:,([\d.e+-]+))?/g)) {
+    const op = m[1], a = +m[2], b = +m[3];
+    if (op === "L") assert(a === x || b === y, "allocation band interpolates between rebalance dates");
+    if (op === "M" || op === "L") { x = a; y = b; }
+    else if (op === "H") x = a;
+    else if (op === "V") y = a;
+  }
+}
 result.chartGeometryAndCleanNotes = true;
 
 // Tooltip is a chart-local, initially empty readout. Keyboard/pointer paths must agree.
@@ -144,7 +161,7 @@ keyboard(chartSurface, "End");
 assert(!tooltip.hidden);
 assert(tooltip.textContent.includes(asof));
 assert(tooltip.textContent.includes("67.35"));
-assert(!tooltip.textContent.includes("λ"));
+assert(tooltip.textContent.includes("λ 67.35"), "tooltip omits actual MVO λ");
 keyboard(chartSurface, "Home");
 assert(tooltip.textContent.includes("2020-01-03"));
 keyboard(chartSurface, "ArrowRight");
@@ -159,13 +176,13 @@ hit.dispatchEvent({type: "pointerleave"});
 assert(tooltip.hidden);
 result.tooltipInteraction = true;
 
-// A redraw with revised CMA inputs must invalidate previously solved allocations.
+// A redraw with revised portfolio inputs must invalidate previously solved allocations.
 const beforeMu = engine.V.mu[2], beforeCap = engine.hi[2];
 const beforeWeights = table()[0].slice(3).map(Number);
 engine.V.mu[2] = beforeMu + 40;
 draw();
 const revisedWeights = table()[0].slice(3).map(Number);
-assert(revisedWeights.some((w, i) => Math.abs(w - beforeWeights[i]) > .01), "CMA change reused old weights");
+assert(revisedWeights.some((w, i) => Math.abs(w - beforeWeights[i]) > .01), "portfolio mean change reused old weights");
 engine.hi[2] = .03;
 draw();
 assert(table().every((row) => +row[5] <= 3.001), "revised asset cap reused old weights");
@@ -201,4 +218,47 @@ click("전체");
 assert(card.querySelector("svg"), "range controls disappear when the selected interval is sparse");
 assert.equal(table().length, 2);
 result.rejectsBrokenFutureAndMonthlyFallback = true;
+// Production wiring must consume the visible portfolio and ignore retired institutional preferences.
+shim.localStorage.removeItem("iaw-port");
+shim.localStorage.removeItem("iaw-alloc");
+P.DATA.alloc = RISK_PORT_ALLOC;
+P.DATA.risk = risk;
+P.renderSection("alloc");
+byId("alloc-workspace-risk").click();
+click("전체");
+const original = table().map((row) => row.slice(3));
+const legacy = { ...P.allocDefaults(CMA_ALLOC), mvo_lambda: 29.7, rp_map: "lin", rp_range: "all",
+  source: "proxy", h_bond: 0, h_eq: 0, h_alt: 0,
+  bands: Object.fromEntries(Object.keys(P.allocDefaults(CMA_ALLOC).bands).map((key) => [key, [0, 0]])) };
+shim.localStorage.setItem("iaw-alloc", JSON.stringify(legacy));
+P.renderSection("alloc");
+assert.deepEqual(table().map((row) => row.slice(3)), original, "retired institutional state changed risk weights");
+assert(table().every((row) => +row[1] === +row[2]), "legacy λ preference changed score passthrough");
+const editVisible = (label, value) => {
+  byId("alloc-workspace-port").click();
+  const input = [...byId("alloc-port-panel").querySelectorAll("input")]
+    .find((n) => n.getAttribute("aria-label") === label);
+  assert(input, `visible portfolio input ${label}`);
+  input.value = String(value);
+  input.dispatchEvent({ type: "input", target: input });
+  if (label.endsWith("상관계수")) byId("port-corr-apply").click();
+  byId("alloc-workspace-risk").click();
+};
+const latestWeights = () => table()[0].slice(3).map(Number);
+const changed = (before, after) => before.some((v, i) => Math.abs(v - after[i]) > .001);
+let before = latestWeights();
+editVisible("해외채권 기대수익", 8.5);
+assert(changed(before, latestWeights()), "visible expected return does not update risk allocation");
+before = latestWeights();
+editVisible("해외채권 변동성", 8);
+assert(changed(before, latestWeights()), "visible volatility does not update risk allocation");
+before = latestWeights();
+editVisible("국내장부 · 해외채권 상관계수", .85);
+assert(changed(before, latestWeights()), "applied visible correlation does not update risk allocation");
+const E = P.portRiskAllocationEngine(RISK_PORT_ALLOC);
+assert.equal(E.V.mu[2], 8.5);
+assert.equal(E.V.C[2][2], 64);
+assert(Math.abs(E.V.C[1][2] - .2 * 8 * .85) < 1e-12);
+assert(byId("alloc-workspace-info").hidden, "retired infeasible bounds block valid portfolio inputs");
+result.visiblePortfolioInputsDriveRisk = true;
 console.log(JSON.stringify(result));

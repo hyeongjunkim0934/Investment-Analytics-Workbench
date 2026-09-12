@@ -38,6 +38,14 @@ const engineValues = () => {
 };
 shim.location.hash = "#alloc";
 P.DATA.alloc = CMA_ALLOC;
+P.DATA.risk = { asof: "2026-09-08", layers: {
+  stress: { name: "현재 위험", score: 67.3, hist_alloc: {
+    t: ["2026-09-04", "2026-09-08"].map((d) => Date.parse(d + "T00:00:00Z") / 1000),
+    v: [55, 67.3], frequency: "weekly+latest", asof: "2026-09-08" } },
+  vuln: { name: "잠재 위험", score: 48.2, hist_alloc: {
+    t: ["2026-09-04", "2026-09-08"].map((d) => Date.parse(d + "T00:00:00Z") / 1000),
+    v: [60, 48.2], frequency: "weekly+latest", asof: "2026-09-08" } },
+} };
 const originalNumbers = engineValues();
 P.renderSection("alloc");
 r.noRenderErrors = byId("alloc").querySelectorAll(".render-error").length === 0;
@@ -129,14 +137,12 @@ r.newDatasetStartsFromSaved = +input("alloc-port-panel", "국내채권 비중").
 P.DATA.alloc = ALLOC_FIXTURE;
 P.renderSection("alloc");
 choose("risk");
-r.fallbackShown = /프록시로 계산/.test(info()) && /벤치마크 CMA 없음/.test(info());
+r.riskUsesPortWithoutCma = byId("alloc-workspace-info").hidden && !!byId("alloc-risk-proc").querySelector("svg");
 P.DATA.alloc = { ...CMA_ALLOC, sets: [] };
 P.renderSection("alloc");
-r.riskMissingShown = /배분 데이터를 불러오지 못해 리스크연계 계산을 보류/.test(info());
 choose("risk");
-r.riskMissingAllocClearsOldResult = /보류/.test(info())
-  && /배분 데이터 없음/.test(byId("alloc-risk-proc").textContent)
-  && byId("alloc-risk-proc").querySelectorAll("svg").length === 0;
+r.riskWorksWithoutInstitution = byId("alloc-workspace-info").hidden
+  && !!byId("alloc-risk-proc").querySelector("svg");
 choose("port");
 r.portWorksWithoutInstitution = !byId("alloc-port-panel").hidden
   && !!input("alloc-port-panel", "국내채권 비중") && /42개월/.test(periodText("alloc-port-panel"));
@@ -144,9 +150,14 @@ P.DATA.alloc = { ...CMA_ALLOC, port: { active: false, reason: "합성 데이터 
 P.renderSection("alloc");
 r.portMissingShown = /합성 데이터 없음/.test(info());
 choose("risk");
-r.riskWorksWithoutPort = !byId("alloc-risk-proc").hidden && !!byId("alloc-lambda");
+r.riskMissingPortClearsOldResult = /포트폴리오 데이터/.test(info())
+  && /보류/.test(byId("alloc-risk-proc").textContent)
+  && byId("alloc-risk-proc").querySelectorAll("svg").length === 0;
+P.DATA.alloc = CMA_ALLOC;
+P.renderSection("alloc");
 choose("risk");
-r.riskWarningRecovers = byId("alloc-workspace-info").hidden;
+r.riskWarningRecovers = byId("alloc-workspace-info").hidden
+  && !!byId("alloc-risk-proc").querySelector("svg");
 choose("port");
 P.openAllocDetail("sim");
 r.detailReturnsToRisk = byId("alloc-port-panel").hidden && byId("alloc-sim-panel").hidden
