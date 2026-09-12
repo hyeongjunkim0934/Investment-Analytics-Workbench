@@ -1806,17 +1806,19 @@ def test_risk_to_optimization_process_card(probe):
     c = probe["allocRiskProc"]
     assert c["renderErrors"] == 0
     assert c["cardRendered"] is True
-    assert c["pathCount"] == 14, "스택 밴드 7 + 경계 6 + 점수선 1 이 아니다"
+    assert c["pathCount"] == 12, "현재 6자산 스택 밴드 6 + 경계 5 + 점수선 1 이 아니다"
     assert c["tableObservations"] == 8
     assert c["sumsTo100"] is True, "관측별 최적 비중 합계가 100 이 아니다"
     assert c["higherRiskScoreLowersSigma"] is True
     assert c["noBottomNotes"] is True
     assert c["lambdaKeyinUntouched"] is True, "카드가 사용자 λ 입력을 변경했다"
     assert c["layerToggleWorks"] is True and c["layerToggleSaved"] is True
-    assert c["mapToggleKeepsNotesRemoved"] is True
-    assert c["mapToggleSaved"] is True
+    assert c["mapControlRemoved"] is True
+    assert c["directLambdaMatchesEveryScore"] is True
+    assert c["directLambdaVisible"] is True
+    assert c["currentSixAssetLabels"] is True
     assert c["missingWeeklyHistoryExplains"] is True
-    assert c["proxyLayerExplains"] is True
+    assert c["worksWithoutInstitutionCma"] is True
 
 
 def test_risk_workspace_uses_latest_homepage_result_and_weekly_dates(probe):

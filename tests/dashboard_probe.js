@@ -202,7 +202,8 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "SECTION_LABELS", "sectionLink",
   "explainBox", "EXPLAIN_OPEN",
   "renderPortPanel", "portState", "portDefaults", "portMixFromGroups", "portEngine",
-  "portRound01", "projSimplex", "PORT_LS_KEY", "openDetail", "deltaTriplet"];
+  "portRound01", "projSimplex", "PORT_LS_KEY", "openDetail", "deltaTriplet",
+  "portRiskAllocationEngine", "allocRiskOptimize"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,
   { filename: "dashboard/app.js" });
 const P = sandbox.__probe;
@@ -1505,6 +1506,29 @@ const CMA_ALLOC = (() => {
   };
 })();
 
+/* Current visible portfolio universe; institutional fixtures stay independent. */
+const RISK_PORT_ALLOC = (() => {
+  const A = JSON.parse(JSON.stringify(CMA_ALLOC)), P = A.port;
+  const old = P.assets, keep = [0, 6, 1, 2, 3, 4];
+  const rename = (a) => a === "원화유동성" ? "국내장부" : a;
+  const record = (r) => Object.fromEntries(Object.entries(r || {})
+    .filter(([a]) => a !== "달러유동성").map(([a, v]) => [rename(a), v]));
+  P.assets = keep.map((i) => rename(old[i]));
+  P.windows.forEach((w) => {
+    for (const field of ["mean_pct", "vol_pct", "mdd_pct"]) w[field] = keep.map((i) => w[field][i]);
+    for (const field of ["cov", "corr"]) w[field] = keep.map((i) => keep.map((j) => w[field][i][j]));
+  });
+  P.proxies = record(P.proxies);
+  P.bench_w = record(P.bench_w);
+  P.cma_input.mu_pct = record(P.cma_input.mu_pct);
+  P.ref10y.per_asset = record(P.ref10y.per_asset);
+  P.coverage = P.coverage.filter((c) => c.asset !== "달러유동성")
+    .map((c) => ({ ...c, asset: rename(c.asset) }));
+  for (const key in P.defaults.groups) P.defaults.groups[key] = P.defaults.groups[key]
+    .filter((a) => a !== "달러유동성").map(rename);
+  return A;
+})();
+
 safe("cmaLayer", () => {
   const r = {};
   const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
@@ -1804,7 +1828,7 @@ safe("allocRiskProc", () => {
       hist_m: { t: [1598918400], v: [58.8] } },
   } };
   P.DATA.risk = RISK_WEEKLY;
-  P.DATA.alloc = CMA_ALLOC;
+  P.DATA.alloc = RISK_PORT_ALLOC;
   P.renderSection("alloc");
   const boxEl = () => DOC.getElementById("alloc-risk-proc");
   DOC.getElementById("alloc-workspace-risk").click();
@@ -1816,7 +1840,7 @@ safe("allocRiskProc", () => {
     && sourceEl().querySelector("a").getAttribute("href") === "#risk";
   let txt = boxEl().textContent;
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  r.cardRendered = /리스크 연계/.test(txt) && /현재 위험/.test(txt)
+  r.cardRendered = /최적 비중 변화/.test(txt) && /현재 위험/.test(txt)
     && !!DOC.getElementById("alloc-rp-tab-stress") && !!DOC.getElementById("alloc-rp-tab-vuln");
   r.pathCount = boxEl().querySelectorAll("svg path").length;
   const tbtn = [...boxEl().querySelectorAll("button")].find((b) => b.textContent === "표");
@@ -1831,11 +1855,13 @@ safe("allocRiskProc", () => {
     const cells = [...tr.children].slice(3).map((td) => parseFloat(td.textContent));
     return Math.abs(cells.reduce((a, b) => a + b, 0) - 100) < 0.04;
   });
-  const E = P.allocEngine(CMA_ALLOC, P.allocDefaults(CMA_ALLOC));
-  const lam = (sc) => Math.pow(10, (sc - 50) / 25);
-  const wLo = E.optimizeUtilAt(E.V.mu, E.V.C, lam(20), 1, 1200);
-  const wHi = E.optimizeUtilAt(E.V.mu, E.V.C, lam(90), 1, 1200);
-  r.higherRiskScoreLowersSigma = E.sigmaW(wHi, E.V.C) <= E.sigmaW(wLo, E.V.C) + 1e-9;
+  const E = P.portRiskAllocationEngine(RISK_PORT_ALLOC);
+  const wLo = P.allocRiskOptimize(E, 20), wHi = P.allocRiskOptimize(E, 90);
+  const variance = (w) => w.reduce((sum, wi, i) => sum + wi * E.V.C[i].reduce((v, cij, j) => v + cij * w[j], 0), 0);
+  r.higherRiskScoreLowersSigma = variance(wHi) <= variance(wLo) + 1e-9;
+  r.directLambdaMatchesEveryScore = rows.every((row) => +row.children[1].textContent === +row.children[2].textContent);
+  r.currentSixAssetLabels = [...boxEl().querySelectorAll(".rp-legend .port-marker-key")]
+    .map((n) => n.textContent).join(",") === "국내채권,국내장부,해외채권,국내주식,해외주식,대체투자";
   r.noBottomNotes = !/화면 λ|점수−50|백테스트|자동 반영 없음|마지막 달|λ → 최적 배분/.test(txt)
     && boxEl().querySelectorAll(".rp-hover").length === 0;
   r.lambdaKeyinUntouched = +P.allocState(CMA_ALLOC).mvo_lambda === 1;
@@ -1848,11 +1874,8 @@ safe("allocRiskProc", () => {
   r.riskSelectionSurvivesUpdate = !boxEl().hidden && !sourceEl().hidden
     && DOC.getElementById("alloc-sim-panel").hidden
     && DOC.getElementById("alloc-workspace-risk").getAttribute("aria-pressed") === "true";
-  const input = DOC.getElementById("alloc-rp-map");
-  input.value = "lin";
-  input.dispatchEvent({ type: "change", target: input });
-  r.mapToggleKeepsNotesRemoved = !/점수\/50|화면 λ|자동 반영 없음/.test(boxEl().textContent);
-  r.mapToggleSaved = P.allocState(CMA_ALLOC).rp_map === "lin";
+  r.mapControlRemoved = DOC.getElementById("alloc-rp-map") === null;
+  r.directLambdaVisible = /점수\s*=\s*λ|λ\s*=\s*점수/.test(boxEl().textContent);
   r.lambdaKeyinUntouched = r.lambdaKeyinUntouched && +P.allocState(CMA_ALLOC).mvo_lambda === 1;
   P.DATA.risk = { layers: {} };
   shim.localStorage.removeItem("iaw-alloc");
@@ -1864,7 +1887,7 @@ safe("allocRiskProc", () => {
   P.DATA.risk = RISK_WEEKLY;
   P.DATA.alloc = ALLOC_FIXTURE;
   P.renderSection("alloc");
-  r.proxyLayerExplains = /벤치마크 층 전용/.test(boxEl().textContent);
+  r.worksWithoutInstitutionCma = !!boxEl().querySelector("svg") && !/벤치마크 층 전용/.test(boxEl().textContent);
   P.DATA.alloc = CMA_ALLOC;
   P.DATA.risk = prevRisk;
   shim.localStorage.removeItem("iaw-alloc");

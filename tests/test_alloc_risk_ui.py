@@ -37,3 +37,4 @@ def test_risk_invalid_history_never_leaks_stale_or_monthly_results(risk_ui):
 
 def test_risk_recomputes_for_changed_cma_and_asset_constraints(risk_ui):
     assert risk_ui["cacheRespondsToInputs"]
+    assert risk_ui["visiblePortfolioInputsDriveRisk"]
