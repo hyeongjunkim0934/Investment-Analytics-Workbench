@@ -1,4 +1,4 @@
-"""리스크 연계의 탭·실제 관측 빈도·시계열 기하·내보내기 검증."""
+"""리스크 동시 비교·한도·배율·실제 관측 빈도·시계열 기하 검증."""
 import json
 import shutil
 import subprocess
@@ -17,9 +17,13 @@ def risk_ui():
     return json.loads(result.stdout)
 
 
-def test_risk_tabs_and_range_preserve_accessible_state(risk_ui):
-    assert risk_ui["tabsAndFocus"]
+def test_both_risk_layers_share_period_controls(risk_ui):
+    assert risk_ui["combinedLayers"]
     assert risk_ui["weeklyLatestAndRange"]
+
+
+def test_risk_scale_limits_and_unconstrained_comparison_preserve_state(risk_ui):
+    assert risk_ui["scaleBoundsAndFreeComparison"]
 
 
 def test_risk_exports_preserve_actual_dates_raw_precision_and_complete_allocations(risk_ui):

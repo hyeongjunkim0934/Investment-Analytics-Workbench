@@ -1810,7 +1810,7 @@ safe("allocToc", () => {
 
 /* ====== P20-f. 리스크 → 최적화 통합 프로세스 ================================
    주간 관측 + 최신 점수 → λ-MVO. 비중 합계·위험 단조성·입력 λ 소유권과
-   현재/잠재 탭 전환을 실행 검증한다. 월말 이력으로 최신 점수를 대체하지 않는다. */
+   현재/잠재 동시 표시를 실행 검증한다. 월말 이력으로 최신 점수를 대체하지 않는다. */
 safe("allocRiskProc", () => {
   const r = {};
   shim.localStorage.removeItem("iaw-alloc");
@@ -1831,6 +1831,7 @@ safe("allocRiskProc", () => {
   P.DATA.alloc = RISK_PORT_ALLOC;
   P.renderSection("alloc");
   const boxEl = () => DOC.getElementById("alloc-risk-proc");
+  const riskPanel = (layer = "stress") => DOC.getElementById(`alloc-rp-panel-${layer}`);
   DOC.getElementById("alloc-workspace-risk").click();
   const sourceEl = () => DOC.getElementById("alloc-risk-source");
   r.latestSourceMatchesRisk = /기준일 2020-09-08/.test(sourceEl().textContent)
@@ -1840,12 +1841,12 @@ safe("allocRiskProc", () => {
     && sourceEl().querySelector("a").getAttribute("href") === "#risk";
   let txt = boxEl().textContent;
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  r.cardRendered = /최적 비중 변화/.test(txt) && /현재 위험/.test(txt)
-    && !!DOC.getElementById("alloc-rp-tab-stress") && !!DOC.getElementById("alloc-rp-tab-vuln");
-  r.pathCount = boxEl().querySelectorAll("svg path").length;
-  const tbtn = [...boxEl().querySelectorAll("button")].find((b) => b.textContent === "표");
+  r.cardRendered = /투자한도 · 최적비중/.test(txt)
+    && !!riskPanel() && !!riskPanel("vuln") && !riskPanel().hidden && !riskPanel("vuln").hidden;
+  r.pathCount = riskPanel().querySelectorAll("svg path").length;
+  const tbtn = [...riskPanel().querySelectorAll("button")].find((b) => b.textContent === "표");
   if (tbtn) tbtn.click();
-  const rows = [...boxEl().querySelectorAll(".chart-table tbody tr")];
+  const rows = [...riskPanel().querySelectorAll(".chart-table tbody tr")];
   r.tableObservations = rows.length;
   r.latestTableMatchesRisk = rows[0].children[0].textContent === "2020-09-08"
     && +rows[0].children[1].textContent === 67.3
@@ -1860,22 +1861,27 @@ safe("allocRiskProc", () => {
   const variance = (w) => w.reduce((sum, wi, i) => sum + wi * E.V.C[i].reduce((v, cij, j) => v + cij * w[j], 0), 0);
   r.higherRiskScoreLowersSigma = variance(wHi) <= variance(wLo) + 1e-9;
   r.directLambdaMatchesEveryScore = rows.every((row) => +row.children[1].textContent === +row.children[2].textContent);
-  r.currentSixAssetLabels = [...boxEl().querySelectorAll(".rp-legend .port-marker-key")]
+  r.currentSixAssetLabels = [...riskPanel().querySelectorAll(".rp-legend .port-marker-key")]
     .map((n) => n.textContent).join(",") === "국내채권,국내장부,해외채권,국내주식,해외주식,대체투자";
   r.noBottomNotes = !/화면 λ|점수−50|백테스트|자동 반영 없음|마지막 달|λ → 최적 배분/.test(txt)
     && boxEl().querySelectorAll(".rp-hover").length === 0;
   r.lambdaKeyinUntouched = +P.allocState(CMA_ALLOC).mvo_lambda === 1;
-  DOC.getElementById("alloc-rp-tab-vuln").click();
+  const potentialTableButton = [...riskPanel("vuln").querySelectorAll("button")].find((b) => b.textContent === "표");
+  potentialTableButton.click();
+  const potentialRows = [...riskPanel("vuln").querySelectorAll(".chart-table tbody tr")];
+  r.bothLayersVisible = !!riskPanel().querySelector("svg") && !!riskPanel("vuln").querySelector("svg")
+    && potentialRows.length === dates.length && +potentialRows[0].children[1].textContent === 48.2
+    && DOC.getElementById("alloc-rp-tab-stress") === null && DOC.getElementById("alloc-rp-tab-vuln") === null;
+  DOC.getElementById("alloc-rp-scale-0.1").click();
+  r.scaleSaved = P.allocState(CMA_ALLOC).rp_scale === .1
+    && DOC.getElementById("alloc-rp-scale-0.1").getAttribute("aria-pressed") === "true";
+  DOC.getElementById("alloc-rp-scale-1").click();
   txt = boxEl().textContent;
-  r.layerToggleWorks = /잠재 위험/.test(txt)
-    && DOC.getElementById("alloc-rp-tab-vuln").getAttribute("aria-selected") === "true"
-    && DOC.getElementById("alloc-rp-tab-stress").getAttribute("aria-selected") === "false";
-  r.layerToggleSaved = P.allocState(CMA_ALLOC).rp_layer === "vuln";
   r.riskSelectionSurvivesUpdate = !boxEl().hidden && !sourceEl().hidden
     && DOC.getElementById("alloc-sim-panel").hidden
     && DOC.getElementById("alloc-workspace-risk").getAttribute("aria-pressed") === "true";
   r.mapControlRemoved = DOC.getElementById("alloc-rp-map") === null;
-  r.directLambdaVisible = /점수\s*=\s*λ|λ\s*=\s*점수/.test(boxEl().textContent);
+  r.directLambdaVisible = /점수\s*×\s*1\s*=\s*λ/.test(boxEl().textContent);
   r.lambdaKeyinUntouched = r.lambdaKeyinUntouched && +P.allocState(CMA_ALLOC).mvo_lambda === 1;
   P.DATA.risk = { layers: {} };
   shim.localStorage.removeItem("iaw-alloc");

@@ -39,30 +39,46 @@ P.DATA.risk = {asof: dates.at(-1), layers: {
 let captured = "";
 sandbox.Blob = class {constructor(parts) {this.text = parts.join("");}};
 sandbox.URL = {createObjectURL(blob) {captured = blob.text; return "blob:independent-probe";}};
-const readRows = () => {
+const readRows = (layer = "stress") => {
   captured = "";
-  const button = [...card.querySelectorAll("button")].find((n) => n.textContent === "CSV");
+  const panel = DOC.getElementById(`alloc-rp-panel-${layer}`);
+  const button = [...(panel?.querySelectorAll("button") || [])].find((n) => n.textContent === "CSV");
   if (!button) return null;
   button.click();
   const lines = captured.replace(/^\uFEFF/, "").trim().split("\n").map((line) => line.split(","));
   return {headers: lines[0], rows: lines.slice(1).map((row) => [row[0], ...row.slice(1).map(Number)])};
 };
-const run = ({saved = {}, layer = "stress", change = null, legacy = 1} = {}) => {
+const run = ({saved = {}, layer = "stress", change = null, legacy = 1,
+  scale = 1, mode = "constrained", bounds = {}} = {}) => {
   const alloc = {...CMA_ALLOC, port: JSON.parse(JSON.stringify(portfolio))};
   if (change) change(alloc);
   P.DATA.alloc = alloc;
   shim.localStorage.setItem("iaw-port", JSON.stringify(saved));
   // A stale institutional lambda and transformation preference must have no effect.
   const state = {...P.allocDefaults(CMA_ALLOC), rp_range: "all", rp_layer: layer,
-    rp_map: "log", mvo_lambda: legacy};
+    rp_map: "log", mvo_lambda: legacy, rp_scale: scale, rp_mode: mode, rp_bounds: bounds};
   const engine = makeEngine(alloc);
   render(card, engine, state, P.palette(), () => {}, []);
+  const points = [...(DOC.getElementById("alloc-rp-comparison")?.querySelectorAll("circle") || [])]
+    .map((node) => ({asset: node.getAttribute("data-asset"), layer: node.getAttribute("data-layer"),
+      mode: node.getAttribute("data-mode"), weight: +node.getAttribute("data-weight")}));
   return {engine: engine?.V || null, error: engine?.error || null,
-    csv: readRows(), charts: card.querySelectorAll("svg").length, text: card.textContent};
+    csv: readRows(layer), charts: DOC.getElementById(`alloc-rp-panel-${layer}`)?.querySelectorAll("svg").length || 0,
+    points, text: card.textContent};
 };
+const bounds = {[assets[0]]: [20, 45], [assets[1]]: [55, 80]};
 const result = {
   dates, scores, potential,
   baseline: run(), potentialPath: run({layer: "vuln"}),
+  scaled: run({scale: .1}), scaledPotential: run({scale: .1, layer: "vuln"}),
+  constrained: run({bounds}), constrainedPotential: run({bounds, layer: "vuln"}),
+  constrainedScaled: run({bounds, scale: .1}),
+  freeWithBounds: run({bounds, mode: "free"}),
+  freePotentialWithBounds: run({bounds, mode: "free", layer: "vuln"}),
+  infeasibleLower: run({bounds: {[assets[0]]: [60, 100], [assets[1]]: [60, 100]}}),
+  infeasibleUpper: run({bounds: {[assets[0]]: [0, 40], [assets[1]]: [0, 40]}}),
+  infeasibleFree: run({bounds: {[assets[0]]: [60, 100], [assets[1]]: [60, 100]}, mode: "free"}),
+  malformedBounds: run({bounds: {[assets[0]]: [null, 100]}}),
   legacyChanged: run({legacy: 777}),
   meanChanged: run({saved: {mu: {[assets[0]]: 6}}}),
   volatilityChanged: run({saved: {sig: {[assets[0]]: 8}}}),
@@ -86,5 +102,6 @@ shim.localStorage.setItem("iaw-port", "{}");
 shim.localStorage.setItem("iaw-alloc", JSON.stringify({rp_range: "all"}));
 vm.runInContext("renderLinkedAllocRisk()", sandbox);
 result.portfolioOnlyPayload = {engine: makeEngine(P.DATA.alloc).V,
-  charts: card.querySelectorAll("svg").length, csv: readRows(), text: card.textContent};
+  charts: DOC.getElementById("alloc-rp-panel-stress")?.querySelectorAll("svg").length || 0,
+  csv: readRows(), text: card.textContent};
 process.stdout.write(JSON.stringify(result));

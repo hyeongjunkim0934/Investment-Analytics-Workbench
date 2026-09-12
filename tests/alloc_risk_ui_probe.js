@@ -16,6 +16,7 @@ const load = new Function("require", "__dirname", source.slice(0, bootEnd)
 const { P, DOC, shim, sandbox, CMA_ALLOC, RISK_PORT_ALLOC, render } = load(require, __dirname);
 const byId = (id) => DOC.getElementById(id);
 const card = byId("alloc-risk-proc");
+const panel = (layer = "stress") => byId(`alloc-rp-panel-${layer}`);
 const asof = "2026-09-08";
 const second = (date) => Date.parse(date + "T00:00:00Z") / 1000;
 const week = 7 * 86400;
@@ -42,39 +43,32 @@ const reset = (data = risk, saved = {}) => {
   state = {...P.allocDefaults(CMA_ALLOC), ...saved};
   draw();
 };
-const button = (text) => [...card.querySelectorAll("button")].find((n) => n.textContent === text);
-const click = (text) => { const n = button(text); assert(n, `button ${text}`); n.click(); };
+const button = (text, root = card) => [...root.querySelectorAll("button")].find((n) => n.textContent === text);
+const click = (text, root = card) => { const n = button(text, root); assert(n, `button ${text}`); n.click(); };
 const keyboard = (node, key) => {
   assert(node, `keyboard target for ${key}`);
   node.dispatchEvent({type: "keydown", key, preventDefault() { this.defaultPrevented = true; }});
 };
-const table = () => {
-  const wrap = card.querySelector(".chart-table");
-  if (wrap.classList.contains("hidden")) click("표");
+const table = (layer = "stress") => {
+  const wrap = panel(layer).querySelector(".chart-table");
+  if (wrap.classList.contains("hidden")) click("표", panel(layer));
   return [...wrap.querySelectorAll("tbody tr")].map((n) => [...n.children].map((c) => c.textContent));
 };
 const result = {};
 reset();
-assert.equal(byId("alloc-rp-tab-stress").getAttribute("role"), "tab");
-assert.equal(byId("alloc-rp-tab-stress").getAttribute("aria-selected"), "true");
-assert.equal(byId("alloc-rp-tab-vuln").getAttribute("aria-selected"), "false");
-assert.equal(byId("alloc-rp-panel").getAttribute("role"), "tabpanel");
-assert.equal(byId("alloc-rp-tab-stress").getAttribute("aria-controls"), "alloc-rp-panel");
-assert.equal(byId("alloc-rp-panel").getAttribute("aria-labelledby"), "alloc-rp-tab-stress");
+for (const [layer, label, score] of [["stress", "현재", 67.35], ["vuln", "잠재", 62.35]]) {
+  assert(panel(layer), `${layer} panel missing`);
+  assert.equal(panel(layer).tagName, "SECTION");
+  assert.equal(panel(layer).getAttribute("aria-label"), label);
+  assert(!panel(layer).hidden, `${layer} is hidden on the combined page`);
+  assert(byId(`alloc-rp-svg-${layer}`));
+  assert.equal(+table(layer)[0][1], score);
+  assert.equal(byId(`alloc-rp-tab-${layer}`), null, "retired layer tab remains");
+}
 assert.equal(byId("alloc-rp-layer"), null, "old layer select remains");
-byId("alloc-rp-tab-vuln").click();
-assert.equal(byId("alloc-rp-tab-vuln").getAttribute("aria-selected"), "true");
-assert.equal(P.allocState(CMA_ALLOC).rp_layer, "vuln");
-assert.equal(DOC.activeElement, byId("alloc-rp-tab-vuln"), "selected tab focus was lost on redraw");
-assert.equal(+table()[0][1], 62.35);
-keyboard(byId("alloc-rp-tab-vuln"), "ArrowLeft");
-assert.equal(byId("alloc-rp-tab-stress").getAttribute("aria-selected"), "true");
-assert.equal(DOC.activeElement, byId("alloc-rp-tab-stress"));
-keyboard(byId("alloc-rp-tab-stress"), "End");
-assert.equal(byId("alloc-rp-tab-vuln").getAttribute("aria-selected"), "true");
-keyboard(byId("alloc-rp-tab-vuln"), "Home");
-assert.equal(byId("alloc-rp-tab-stress").getAttribute("aria-selected"), "true");
-result.tabsAndFocus = true;
+assert.equal(byId("alloc-rp-panel"), null);
+assert.equal(byId("alloc-rp-scale-1").getAttribute("aria-pressed"), "true");
+result.combinedLayers = true;
 
 const defaultRows = table();
 const dateWindow = (years) => {
@@ -88,6 +82,7 @@ assert(defaultRows.length > 150, "still using monthly history");
 for (const years of [1, 5, 3]) {
   click(`${years}Y`);
   assert.equal(table().length, timestamps.filter((t) => t >= dateWindow(years)).length, `${years}Y observations`);
+  assert.equal(table("vuln").length, table().length, "range control did not update both layers");
   assert.equal(String(P.allocState(CMA_ALLOC).rp_range), String(years));
   assert.equal(DOC.activeElement, button(`${years}Y`), "range selection loses focus");
 }
@@ -105,7 +100,7 @@ result.weeklyLatestAndRange = true;
 let captured = "";
 sandbox.Blob = class { constructor(parts) { this.text = parts.join(""); } };
 sandbox.URL = {createObjectURL(blob) {captured = blob.text; return "blob:probe";}};
-click("CSV");
+click("CSV", panel());
 const csv = captured.replace(/^\uFEFF/, "").split("\n").map((line) => line.split(","));
 assert.equal(csv.length, timestamps.length + 1);
 assert.equal(csv[1][0], asof);
@@ -120,7 +115,7 @@ assert.deepEqual(csv.slice(1).map((row) => row[0]), allRows.map((row) => row[0])
 result.rawExports = true;
 
 // The last period is four days; plot coordinates must follow dates, not row indexes.
-const paths = [...card.querySelectorAll("svg path")];
+const paths = [...panel().querySelectorAll("svg path")];
 const scorePath = paths.find((node) => {
   const d = node.getAttribute("d") || "";
   return (d.match(/[ML]/g) || []).length === timestamps.length && !d.endsWith("Z");
@@ -150,11 +145,11 @@ for (const node of holdingPaths) {
 result.chartGeometryAndCleanNotes = true;
 
 // Tooltip is a chart-local, initially empty readout. Keyboard/pointer paths must agree.
-const tooltip = card.querySelector(".rp-tooltip");
+const tooltip = panel().querySelector(".rp-tooltip");
 assert(tooltip, "chart tooltip missing");
-assert(card.querySelector(".chart-box").contains(tooltip));
+assert(panel().querySelector(".chart-box").contains(tooltip));
 assert(tooltip.hidden, "latest readout visible before chart interaction");
-const chartSurface = card.querySelector(".rp-chart");
+const chartSurface = panel().querySelector(".rp-chart");
 assert.equal(chartSurface.getAttribute("tabindex"), "0");
 assert.equal(chartSurface.getAttribute("role"), "group");
 keyboard(chartSurface, "End");
@@ -168,13 +163,93 @@ keyboard(chartSurface, "ArrowRight");
 assert(tooltip.textContent.includes("2020-01-10"));
 keyboard(chartSurface, "Escape");
 assert(tooltip.hidden);
-const svg = card.querySelector("svg");
+const svg = panel().querySelector("svg");
 const hit = [...svg.querySelectorAll("rect")].at(-1);
 hit.dispatchEvent({type: "pointermove", clientX: svg.clientWidth * .978});
 assert(!tooltip.hidden && tooltip.textContent.includes(asof));
 hit.dispatchEvent({type: "pointerleave"});
 assert(tooltip.hidden);
+const potentialTooltip = byId("alloc-rp-tooltip-vuln");
+keyboard(panel("vuln").querySelector(".rp-chart"), "End");
+assert(!potentialTooltip.hidden && potentialTooltip.textContent.includes("62.35"));
+assert(tooltip.hidden, "potential interaction reused the current tooltip");
+keyboard(panel("vuln").querySelector(".rp-chart"), "Escape");
 result.tooltipInteraction = true;
+
+// Scale, bounds and comparison controls are saved independently of institutional preferences.
+const rawWeights = table()[0].slice(3).map(Number);
+byId("alloc-rp-scale-0.1").click();
+assert.equal(P.allocState(CMA_ALLOC).rp_scale, .1);
+assert.equal(DOC.activeElement, byId("alloc-rp-scale-0.1"));
+for (const layer of ["stress", "vuln"]) {
+  assert.equal(+table(layer)[0][2], Math.round(risk.layers[layer].score * 10) / 100);
+  click("CSV", panel(layer));
+  const row = captured.replace(/^\uFEFF/, "").split("\n")[1].split(",");
+  assert.equal(+row[1], risk.layers[layer].score);
+  assert.equal(+row[2], risk.layers[layer].score * .1);
+}
+assert(table()[0].slice(3).some((w, i) => Math.abs(+w - rawWeights[i]) > .01));
+byId("alloc-rp-scale-1").click();
+assert.deepEqual(table()[0].slice(3).map(Number), rawWeights);
+byId("alloc-rp-lo-0").value = "10";
+byId("alloc-rp-hi-0").value = "20";
+byId("alloc-rp-hi-0").dispatchEvent({type: "input", target: byId("alloc-rp-hi-0")});
+byId("alloc-rp-scale-0.1").click();
+assert.equal(byId("alloc-rp-lo-0").value, "10", "scale redraw lost pending lower limit");
+assert.equal(byId("alloc-rp-hi-0").value, "20", "scale redraw lost pending upper limit");
+assert.equal(P.allocState(CMA_ALLOC).rp_bounds?.[engine.V.keys[0]], undefined, "pending limits were applied silently");
+assert(/미적용/.test(card.querySelector(".rp-limits").textContent));
+byId("alloc-rp-scale-1").click();
+byId("alloc-rp-bounds-apply").click();
+assert.deepEqual(Array.from(P.allocState(CMA_ALLOC).rp_bounds[engine.V.keys[0]]), [10, 20]);
+for (const layer of ["stress", "vuln"])
+  assert(table(layer).every((row) => +row[3] >= 9.999 && +row[3] <= 20.001));
+const comparison = byId("alloc-rp-comparison");
+const limitLines = [...comparison.querySelectorAll("line")].filter((n) => n.getAttribute("data-asset") != null);
+assert.equal(limitLines.length, engine.V.keys.length);
+assert.equal(+limitLines[0].getAttribute("data-lo"), 10);
+assert.equal(+limitLines[0].getAttribute("data-hi"), 20);
+const points = [...comparison.querySelectorAll("circle")];
+assert.equal(points.length, 4 * engine.V.keys.length);
+for (const layer of ["stress", "vuln"]) {
+  const latest = table(layer)[0].slice(3).map(Number);
+  for (const [i, key] of engine.V.keys.entries()) {
+    const point = points.find((n) => n.getAttribute("data-asset") === key
+      && n.getAttribute("data-layer") === layer && n.getAttribute("data-mode") === "constrained");
+    assert(Math.abs(+point.getAttribute("data-weight") - latest[i]) <= .0051);
+  }
+}
+const savedBounds = JSON.stringify(P.allocState(CMA_ALLOC).rp_bounds);
+byId("alloc-rp-mode-free").click();
+assert.equal(P.allocState(CMA_ALLOC).rp_mode, "free");
+assert.equal(DOC.activeElement, byId("alloc-rp-mode-free"));
+assert.deepEqual(table()[0].slice(3).map(Number), rawWeights, "free path still uses asset limits");
+assert.equal(JSON.stringify(P.allocState(CMA_ALLOC).rp_bounds), savedBounds);
+state = P.allocState(CMA_ALLOC); draw();
+assert.equal(byId("alloc-rp-mode-free").getAttribute("aria-pressed"), "true");
+assert.equal(byId("alloc-rp-hi-0").value, "20", "saved limits were not restored");
+byId("alloc-rp-mode-constrained").click();
+const validWeights = table()[0].slice(3);
+byId("alloc-rp-hi-0").value = "100";
+byId("alloc-rp-lo-0").value = "80";
+byId("alloc-rp-lo-1").value = "50";
+byId("alloc-rp-bounds-apply").click();
+assert.equal(JSON.stringify(P.allocState(CMA_ALLOC).rp_bounds), savedBounds, "infeasible lower sums were persisted");
+assert.deepEqual(table()[0].slice(3), validWeights, "invalid draft replaced applied allocations");
+assert.equal(byId("alloc-rp-lo-0").value, "80", "invalid input was silently clamped");
+assert(/하한/.test(card.querySelector(".rp-limits").textContent));
+draw();
+for (let i = 0; i < engine.V.keys.length; i++) {
+  byId(`alloc-rp-lo-${i}`).value = "0";
+  byId(`alloc-rp-hi-${i}`).value = "10";
+}
+byId("alloc-rp-bounds-apply").click();
+assert.equal(JSON.stringify(P.allocState(CMA_ALLOC).rp_bounds), savedBounds, "infeasible upper sums were persisted");
+assert.deepEqual(table()[0].slice(3), validWeights);
+byId("alloc-rp-bounds-reset").click();
+assert.deepEqual(Object.keys(P.allocState(CMA_ALLOC).rp_bounds), []);
+assert.deepEqual(table()[0].slice(3).map(Number), rawWeights);
+result.scaleBoundsAndFreeComparison = true;
 
 // A redraw with revised portfolio inputs must invalidate previously solved allocations.
 const beforeMu = engine.V.mu[2], beforeCap = engine.hi[2];
@@ -194,7 +269,9 @@ result.cacheRespondsToInputs = true;
 const broken = (change) => {
   const data = JSON.parse(JSON.stringify(risk)); change(data.layers.stress.hist_alloc, data); reset(data);
   assert(/보류/.test(card.textContent), "invalid history silently rendered");
-  assert.equal(card.querySelectorAll("svg").length, 0, "stale chart survives invalid history");
+  assert.equal(panel().querySelectorAll("svg").length, 0, "stale current chart survives invalid history");
+  assert(panel("vuln").querySelector("svg"), "valid potential history was hidden by current history error");
+  assert.equal(+table("vuln")[0][1], 62.35);
 };
 broken((h) => h.v.pop());
 broken((h) => {h.v[1] = null;});
@@ -205,8 +282,14 @@ broken((h) => {h.t[h.t.length - 1] = second("2026-09-09");});
 broken((h) => {h.t[1] = "invalid";});
 broken((h, data) => {delete data.layers.stress.hist_alloc;});
 assert(/주간 이력/.test(card.textContent), "missing history has no actionable reason");
+const missingPotential = JSON.parse(JSON.stringify(risk));
+delete missingPotential.layers.vuln.hist_alloc;
+reset(missingPotential);
+assert(panel().querySelector("svg"), "missing potential history suppressed valid current history");
+assert.equal(panel("vuln").querySelectorAll("svg").length, 0);
+assert.equal(+table()[0][1], 67.35);
 reset();
-assert(card.querySelector("svg"), "valid history does not recover after rejection");
+assert(panel().querySelector("svg"), "valid history does not recover after rejection");
 assert.equal(+state.mvo_lambda, 1);
 // Sparse selected ranges must retain controls so users can recover to the full history.
 const sparse = JSON.parse(JSON.stringify(risk));
@@ -215,7 +298,7 @@ sparse.layers.stress.hist_alloc.v = [20, risk.layers.stress.score];
 reset(sparse, {rp_range: "1"});
 assert(/보류/.test(card.textContent));
 click("전체");
-assert(card.querySelector("svg"), "range controls disappear when the selected interval is sparse");
+assert(panel().querySelector("svg"), "range controls disappear when the selected interval is sparse");
 assert.equal(table().length, 2);
 result.rejectsBrokenFutureAndMonthlyFallback = true;
 // Production wiring must consume the visible portfolio and ignore retired institutional preferences.
