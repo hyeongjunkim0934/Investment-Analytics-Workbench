@@ -128,7 +128,7 @@ function assertContained(c){
 }
 P.DATA.alloc=SIX_ASSET_FIXTURE;shim.localStorage.removeItem(P.PORT_LS_KEY);P.renderPortPanel(SIX_ASSET_FIXTURE);
 const initial=chart(),allRange=initial.opts.scales.x.range.slice();
-assert.equal(DOC.getElementById('port-range-sigma').value,'0.5');
+assert.equal(DOC.getElementById('port-range-sigma').value,'0.25');
 assert.equal(DOC.getElementById('port-range-sigma').getAttribute('step'),'0.25');
 assert.equal(DOC.getElementById('port-range-sigma').getAttribute('min'),'0');
 assert.equal(DOC.getElementById('port-range-sigma').getAttribute('max'),'10');
@@ -607,7 +607,7 @@ const dispersionState={...P.portDefaults(SIX_ASSET_FIXTURE.port),
   mu:{국내채권:4,국내장부:3,해외채권:4,국내주식:8,해외주식:8,대체투자:11},
   sig:{국내채권:4.41,국내장부:2,해외채권:4.41,국내주식:25,해외주식:13.75,대체투자:22.15}};
 shim.localStorage.setItem(P.PORT_LS_KEY,JSON.stringify(dispersionState));P.renderPortPanel(SIX_ASSET_FIXTURE);
-const expectedIntervals=[[4.41,1.795,6.205],[2,2,4],[4.41,1.795,6.205],[25,-4.5,20.5],[13.75,1.125,14.875],[22.15,-.075,22.075]];
+const expectedIntervals=[[4.41,2.8975,5.1025],[2,2.5,3.5],[4.41,2.8975,5.1025],[25,1.75,14.25],[13.75,4.5625,11.4375],[22.15,5.4625,16.5375]];
 const intervalStrokes=(paint)=>paint.strokes.filter(s=>s.stage==='drawClear'&&s.path.length===6
   &&s.path.every((p,i)=>p[0]===(i%2?'lineTo':'moveTo')));
 const near=(actual,expected)=>assert(Math.abs(actual-expected)<1e-9,actual+' differs from '+expected);
@@ -634,13 +634,13 @@ for(const dpr of [1,2]){
   const tip=card().querySelector('.port-portfolio-tooltip');
   for(const a of ['국내주식','해외주식','대체투자']){
     const mu=dispersionState.mu[a],sig=dispersionState.sig[a];
-    for(const ordinate of [mu,mu-.5*sig,mu+.5*sig,mu+.35*sig]){
+    for(const ordinate of [mu,mu-.25*sig,mu+.25*sig,mu+.175*sig]){
       moveCursor(chart(),paint,paint.u.valToPos(sig,'x'),paint.u.valToPos(ordinate,'y'));
-      checkAsset(tip,a,mu,sig,.5);
+      checkAsset(tip,a,mu,sig,.25);
     }
   }
 }
-assert(chart().opts.scales.y.range()[0]<-4.5&&chart().opts.scales.y.range()[1]>22.075);
+assert(chart().opts.scales.y.range()[0]<1.75&&chart().opts.scales.y.range()[1]>16.5375);
 // Sigma controls only the asset dispersion display, including 0 and fractional
 // values. The original financial state, covariance and plotted portfolios survive.
 const sigmaData=JSON.stringify(chart().data),sigmaSaved=shim.localStorage.getItem(P.PORT_LS_KEY);
@@ -669,7 +669,7 @@ for(const value of ['',-1,'Infinity',11]){
   assert.equal(shim.localStorage.getItem('iaw-port-range-sigma'),sigmaValid);
 }
 P.renderPortPanel(SIX_ASSET_FIXTURE,{preserveDraft:true});assert.equal(DOC.getElementById('port-range-sigma').value,'1');
-for(const [saved,expected] of [['1.25',1.25],['0',0],['-1',.5],['null',.5],['"2"',.5],['{broken',.5]]){
+for(const [saved,expected] of [['0.5',.5],['1.25',1.25],['0',0],['-1',.25],['null',.25],['"2"',.25],['{broken',.25]]){
   const output=require('node:child_process').execFileSync(process.execPath,[path.join(ROOT,'tests/robust_frontier_ui_probe.js'),ROOT,'--sigma-reload'],{
     encoding:'utf8',env:{...process.env,IAW_TEST_SIGMA_STATE:saved,IAW_TEST_SIGMA_EXPECTED:String(expected)},
   });assert(JSON.parse(output).reloadPass);

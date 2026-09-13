@@ -38,7 +38,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `tests/requirements.txt` | 테스트 전용 의존성(pytest). `pipeline/requirements.txt` 와 분리. **node 는 여기 없다** — `test_dashboard_ux.py` 가 쓰는 node 는 GitHub 호스팅 러너 기본 탑재분이며, 없으면 skip 이 아니라 **실패**한다(조용히 건너뛰면 막으려던 회귀가 되살아난다) |
 | `pytest.ini` | `testpaths = tests` |
 | `dashboard/index.html` `app.js` `style.css` | 정적 대시보드 (섹션 14개, **다크 기본**+라이트, 기간 필터, 마을 홈+관문. 명암과 마을 낮/밤은 **별개 축** — 아래 「어디를 고치면 무엇이 바뀌나」). **app.js 가 DOM 으로 조립하는 표에는 `<tbody>` 가 없다** — `createElement("table")` 에 `<tr>` 을 직접 붙이면 브라우저가 tbody 를 끼워 넣지 않기 때문이다. 그래서 `style.css` 에는 `thead th`/`tbody td` 와 `table > tr > th|td` **두 벌**이 있어야 한다. 한 벌만 두면 조립 표(#hedge·#alloc·#panel)의 숫자 셀이 조용히 padding 1px·왼쪽 정렬로 렌더된다 (실제로 117칸이 그 상태였다). 회귀 테스트 있음 |
-| `dashboard/port-opportunities.js` | `app.js`보다 먼저 로드하는 순수 계산 함수 `portOpportunityHints`. 일반 경계선의 실제 비중에서 자산 분포 공백과 동일 비중의 상관 완화 가정점을 최대 3개씩 선택한다. 난수 점군과 무관하며 공분산·기대수익·기존 최적화 입력을 바꾸지 않는다. `app.js`의 `portDrawHints`는 화면 겹침·4px 미만 위험 이동을 숨기고 호버와 같은 가시성을 사용한다. 탐색 설정은 `iaw-port-hints`에 별도 저장한다. |
+| `dashboard/port-opportunities.js` | `app.js`보다 먼저 로드하는 순수 계산 함수. `portOpportunityHints`는 일반 경계선의 실제 비중에서 개선여지 기준점과 동일 비중의 상관 완화 가정점을 최대 3개씩 선택한다. `portImprovementConditions`는 가상 신규 자산의 기대수익 유지·위험 감소 충분조건과 자산별 상관벡터를 계산하고 확대 공분산 PSD를 검증한다. 난수 점군과 무관하며 기존 금융 입력을 바꾸지 않는다. `portDrawHints`는 화면 겹침·4px 미만 위험 이동을 숨긴다. 탐색은 `iaw-port-hints`, 신규 자산 가정은 `iaw-port-improvement`에 별도 저장한다. |
 | `dashboard/assets/` | 마을 지도 이미지(`village-day.webp`·`village-night.webp`)를 두는 자리. 넣는 법·금지 사항은 같은 폴더 `README.md` |
 | `dashboard/vendor/uplot.min.{js,css}` | 벤더링된 유일한 프런트 의존성 (외부 네트워크 요청 없음) |
 | `.github/workflows/build-dashboard.yml` | dispatch/수동/push 트리거 → **test → build(+배포 게이트) → deploy**. build 잡은 게이트 뒤에 `Build summary` 단계로 시리즈 수·최종 관측일·JSON 수·경고를 `$GITHUB_STEP_SUMMARY` 에 표로 붙인다(`if: always()` — 게이트가 막아 실패한 실행에서도 남는다) |
@@ -469,6 +469,14 @@ JSON을 추가/삭제하면 **양쪽을 같이 고쳐야 한다.**
 - **자산배분 상위 탭은 포트폴리오·리스크연계 두 개다(2026-09-10).** 기관배분/헤지 탭과
   해당 탭으로 가던 배분 설정 버튼은 제거했다. `ALLOC_RETIRED_PANELS`는 리스크 계산의
   공통 엔진·저장 호환을 위해 DOM을 유지하지만 항상 숨긴다. 기존 상세 해시는 리스크연계로 복귀한다.
+- **포트폴리오 개선여지(2026-09-13)**: 기존 `자산 공백` 표시를 `개선여지`로 바꿨다.
+  `renderPortImprovement`는 벤치마크 비교 바로 아래에 신규 자산 조건표를 그린다.
+  기준점은 기존 일반 경계선 실제 비중이며 기대수익 하한=기준 기대수익, 기본 신규 비중10%·
+  변동성=기준의1배·기준 포트폴리오와 상관0이다. 기존 비중을 비례축소한 혼합의 위험이
+  실제 줄어드는지 확인한다. 충분조건이며 유일한 개선 조합·실재 자산 전망·최적 편입비중은 아니다.
+  자산별 상관은 기준 포트폴리오 공분산에서 유도하며 모두 같은 상관을 강제하지 않는다.
+  가정은 명시적으로 적용할 때만 별도 저장하고 CMA·경계선·리스크 한도 입력은 바꾸지 않는다.
+  `portRangeSigma`의 저장값 부재/오류 기본값은 **0.25**다. 유효한 기존 저장값과 0.25 증감 간격은 유지한다.
 - **리스크연계 = `renderAllocRiskProc`**, 별도 workspace에서 현재·잠재를 동시에 표시한다.
   `risk.json.layers.*.hist_alloc`은 전체 W-FRI 주간 점수와 실제 기준일의 최신 점수다.
   기준일 이후 금요일 라벨은 제외하며 마지막 점은 리스크 헤더의 날짜·점수와 일치한다.

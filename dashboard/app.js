@@ -6231,7 +6231,7 @@ function portRangeSigma() {
     const value = JSON.parse(localStorage.getItem(PORT_SIGMA_LS_KEY));
     if (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 10) return value;
   } catch {}
-  return 0.5;
+  return 0.25;
 }
 
 function portSigmaControl(redraw) {
@@ -6267,17 +6267,17 @@ function portHintSettings() {
 let portHintsOpen = false;
 function portHintsControl(redraw) {
   const settings = portHintSettings();
-  const panel = el("div", { id: "port-hints-panel", class: "port-hints-panel", role: "group", "aria-label": "공백·다각화 탐색" });
+  const panel = el("div", { id: "port-hints-panel", class: "port-hints-panel", role: "group", "aria-label": "개선여지·다각화 탐색" });
   panel.hidden = !portHintsOpen;
   const toggle = el("button", { id: "port-hints-toggle", type: "button", class: "btn-ghost",
-    "aria-expanded": String(portHintsOpen), "aria-controls": panel.id, title: "공백·다각화 탐색 설정",
+    "aria-expanded": String(portHintsOpen), "aria-controls": panel.id, title: "개선여지·다각화 탐색 설정",
     onclick: () => { portHintsOpen = !portHintsOpen; panel.hidden = !portHintsOpen;
       toggle.setAttribute("aria-expanded", String(portHintsOpen)); } }, "탐색");
   const save = (id) => {
     try { localStorage.setItem(PORT_HINTS_LS_KEY, JSON.stringify(settings)); } catch {}
     redraw(); document.getElementById(id)?.focus();
   };
-  [["gaps", "자산 공백"], ["diversification", "상관 완화 · 가정"]].forEach(([key, text]) => {
+  [["gaps", "개선여지"], ["diversification", "상관 완화 · 가정"]].forEach(([key, text]) => {
     const input = el("input", { type: "checkbox", id: `port-hints-${key}` });
     input.checked = settings[key];
     input.addEventListener("change", () => { settings[key] = input.checked; save(input.id); });
@@ -6303,6 +6303,99 @@ function portHintsControl(redraw) {
       panel.hidden = true; toggle.setAttribute("aria-expanded", "false"); toggle.focus(); }
   });
   return wrap;
+}
+
+const PORT_IMPROVEMENT_LS_KEY = "iaw-port-improvement";
+let portImprovementDraft = null;
+function portImprovementSettings() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(PORT_IMPROVEMENT_LS_KEY)) || {}; } catch {}
+  return {
+    weight: Number.isFinite(saved.weight) && saved.weight > 0 && saved.weight < 1 ? saved.weight : .1,
+    sigmaFactor: Number.isFinite(saved.sigmaFactor) && saved.sigmaFactor >= 0 ? saved.sigmaFactor : 1,
+    correlation: Number.isFinite(saved.correlation) && Math.abs(saved.correlation) <= 1 ? saved.correlation : 0,
+  };
+}
+
+// Sufficient hypothetical-asset conditions, using actual nominal-frontier weights.
+// Reference allocations are reduced proportionately; portfolio/CMA inputs stay intact.
+function renderPortImprovement(card, P, E, exploration, redraw) {
+  card.textContent = "";
+  const settings = portImprovementSettings(), draftKey = JSON.stringify(settings);
+  const references = exploration.gaps.length ? exploration.gaps.map((p) => ({w: p.w, mu: p.y, sig: p.x}))
+    : [...new Set([0, Math.floor((E.front.length - 1) / 2), E.front.length - 1])]
+      .map((i) => E.front[i]).filter(Boolean);
+  const refs = references.slice(0, 3).map((p, i) => ({...p, label: `개선여지 ${i + 1}`}));
+  const result = portImprovementConditions(E.risk.C, E.mu, refs, settings);
+  const heading = el("div", {class: "card-head"}, el("span", {class: "card-title"}, "개선여지"),
+    el("span", {class: "card-sub"}, "가상 신규 자산 · 기대수익 유지·위험 감소 조건"));
+  card.append(heading);
+  if (portImprovementDraft?.source !== P || portImprovementDraft.key !== draftKey)
+    portImprovementDraft = {source: P, key: draftKey, dirty: false,
+      values: {weight: String(+(settings.weight * 100).toFixed(8)), sigmaFactor: String(settings.sigmaFactor), correlation: String(settings.correlation)}};
+  const draft = portImprovementDraft, inputs = {};
+  const controls = el("div", {class: "port-improvement-controls"});
+  const status = el("span", {class: "port-improvement-status", role: "status"}, draft.dirty ? "미적용" : "");
+  const apply = () => {
+    const parsed = Object.fromEntries(Object.entries(inputs).map(([key, input]) => [key,
+      input.value.trim() && !input.validity?.badInput ? Number(input.value) : NaN]));
+    const next = {...parsed, weight: parsed.weight / 100};
+    const checked = portImprovementConditions(E.risk.C, E.mu, refs, next);
+    if (checked.error) {status.textContent = `미적용 · ${checked.error}`; return;}
+    try {localStorage.setItem(PORT_IMPROVEMENT_LS_KEY, JSON.stringify(next));}
+    catch {status.textContent = "설정을 저장하지 못했습니다."; return;}
+    portImprovementDraft = null;
+    redraw(); document.getElementById("port-improvement-apply")?.focus();
+  };
+  [["weight", "신규 비중", "%", "0.1", "99.9", "1"],
+    ["sigmaFactor", "기준 대비 변동성", "배", "0", null, "0.25"],
+    ["correlation", "기준과 상관", "", "-1", "1", "0.1"]].forEach(([key, label, unit, min, max, step]) => {
+    const id = key === "sigmaFactor" ? "port-improvement-sigma-factor" : `port-improvement-${key}`;
+    const input = el("input", {id, type: "number", min, ...(max ? {max} : {}), step,
+      value: draft.values[key], "aria-label": `${label}${unit ? ` ${unit}` : ""}`});
+    input.addEventListener("input", () => {draft.values[key] = input.value; draft.dirty = true; status.textContent = "미적용";});
+    input.addEventListener("keydown", (ev) => {if (ev.key === "Enter") {ev.preventDefault(); apply();}});
+    inputs[key] = input;
+    controls.append(el("label", {}, label, input, unit));
+  });
+  controls.append(el("button", {id: "port-improvement-apply", type: "button", class: "btn-ghost", onclick: apply}, "조건 적용"), status);
+  card.append(controls);
+  if (result.error || !result.rows.length) {
+    card.append(el("div", {class: "port-warn d-up", role: "status"}, result.error || "개선 조건을 계산할 경계점이 없습니다."));
+    return;
+  }
+  // Rounding the displayed sufficient return threshold upward avoids suggesting
+  // a return below the actual frontier reference. CSV retains the exact value.
+  const returnFloor = (mu) => fmtNum(Math.ceil(mu * 100) / 100, 2);
+  const tableWrap = el("div", {class: "table-wrap port-improvement-table port-benchmark"});
+  renderTable(tableWrap, {headers: ["기준 σ%", "기준 μ%", "신규 μ%", "신규 σ%", "기준과 상관", "편입 후 σ%", "위험 감소%p"],
+    rows: result.rows.map((row) => [fmtNum(row.baseSigma, 2), fmtNum(row.baseMu, 2), `≥ ${returnFloor(row.assetMuMin)}`,
+      fmtNum(row.assetSigma, 2), fmtNum(row.correlation, 2), fmtNum(row.mixSigma, 2),
+      `${fmtNum(row.riskReduction, 2)}${row.improves ? "" : " · 미충족"}`])});
+  [...tableWrap.querySelectorAll("tbody tr")].forEach((tr, i) => {
+    const row = result.rows[i];
+    Object.entries({"data-base-risk": row.baseSigma, "data-base-return": row.baseMu, "data-new-risk": row.assetSigma,
+      "data-new-return": row.assetMuMin, "data-correlation": row.correlation, "data-mix-risk": row.mixSigma,
+      "data-risk-reduction": row.riskReduction, "data-improves": row.improves}).forEach(([key, value]) => {
+      if (value != null) tr.setAttribute(key, String(value));
+    });
+    if (!row.improves) tr.setAttribute("title", row.reason || "현재 신규 비중·변동성·상관 가정에서는 위험이 감소하지 않습니다.");
+  });
+  card.append(tableWrap);
+  const correlations = el("details", {class: "port-improvement-correlations"}, el("summary", {}, "자산별 상관계수"));
+  const corrWrap = el("div", {class: "table-wrap port-benchmark"});
+  renderTable(corrWrap, {headers: ["기준 σ%", ...P.assets], rows: result.rows.map((row) =>
+    [fmtNum(row.baseSigma, 2), ...row.assetCorrelations.map((v) => fmtNum(v, 2))])});
+  correlations.append(corrWrap, el("div", {class: "card-sub port-improvement-note"},
+    "기준 포트폴리오와의 상관으로 구성한 가정 · 기존 자산별 상관을 모두 같게 설정한 값이 아님"));
+  const csv = el("button", {type: "button", class: "btn-ghost", onclick: () => downloadCSV("개선여지_신규자산조건.csv",
+    ["기준 변동성%", "기준 기대수익%", "신규 기대수익 하한%", "신규 변동성%", "기준과 상관", "신규 비중%", "편입 후 변동성%", "위험 감소%p", "조건 충족",
+      ...P.assets.map((asset) => `${asset} 상관`)],
+    result.rows.map((row) => [row.baseSigma, row.baseMu, row.assetMuMin, row.assetSigma, row.correlation,
+      settings.weight * 100, row.mixSigma, row.riskReduction, row.improves, ...row.assetCorrelations]))}, "CSV");
+  heading.append(el("div", {class: "card-actions"}, csv));
+  card.append(correlations, el("div", {class: "card-sub port-improvement-note"},
+    "현재 경계점 기준 · 기존 비중 비례축소 · 연 % · 실재 자산의 전망이나 유일한 개선 조합은 아님"));
 }
 
 function portDrawHints(u, hints, markers) {
@@ -7286,7 +7379,8 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   /* ③ 상관계수 → ④ 효율적 경계선·벤치마크를 한 흐름으로 표시한다. */
   const frontCard = el("div", { class: "card port-sub-card port-frontier" });
   const reviewCard = el("div", { class: "card port-sub-card" });
-  const results = el("div", { id: "port-frontier-panel", class: "port-two" }, frontCard, reviewCard);
+  const improvementCard = el("section", { id: "port-improvement-panel", class: "card port-sub-card port-improvement", "aria-label": "개선여지" });
+  const results = el("div", { id: "port-frontier-panel", class: "port-two" }, frontCard, reviewCard, improvementCard);
   const correlation = el("section", { id: "port-correlation-panel", "aria-labelledby": "port-correlation-title" },
     el("h3", { id: "port-correlation-title", class: "port-sec-title" }, "상관계수"),
     portCorrelationControl(P, W, st, recalc, portPanelDraft));
@@ -7310,7 +7404,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     portCharts.forEach(destroyChart);
     portCharts = [];
     if (!E.risk.valid) {
-      frontCard.textContent = ""; reviewCard.textContent = "";
+      frontCard.textContent = ""; reviewCard.textContent = ""; improvementCard.textContent = "";
       frontCard.append(el("div", { class: "port-warn d-up", role: "status" }, E.risk.error));
       return;
     }
@@ -7435,7 +7529,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       el("b", { style: `color:${hexA(colors.asset, 0.55)}` }, "↕"), `자산 ±${sigma}σ`));
     if (hintSettings.gaps && exploration.gaps.length) key.append(el("span", { class: "port-marker-key port-hint-key",
       title: "개별 자산 분포가 드문 구간 · 현재 입력의 기존 자산 조합으로 도달 가능 · 투자 우위를 뜻하지 않음" },
-      el("i", { class: "port-hint-symbol port-hint-gap", style: `color:${colors.nominal}`, "aria-hidden": "true" }), "자산 공백"));
+      el("i", { class: "port-hint-symbol port-hint-gap", style: `color:${colors.nominal}`, "aria-hidden": "true" }), "개선여지"));
     if (hintSettings.diversification && exploration.diversification.length) key.append(el("span", { class: "port-marker-key port-hint-key",
       title: `상관계수 크기 ${fmtNum(hintSettings.shrink * 100, 2)}% 축소 가정 · 동일 비중 · 재최적화 경계선이 아님` },
       el("i", { class: "port-hint-symbol port-hint-diversification", style: `color:${colors.asset}`, "aria-hidden": "true" }),
@@ -7477,6 +7571,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     renderTable(wrap, {
       headers: ["구분", "기대수익%", "위험%", "샤프", "초과수익%p", "TE%p", "IR"], rows });
     reviewCard.append(wrap);
+    renderPortImprovement(improvementCard, P, E, exploration, recalc);
     if (!wCur) reviewCard.append(el("div", { class: "port-warn d-up" },
       `합계 ${fmtNum(sum, 1)}% — 100% 가 아니라 현재점을 계산하지 않았습니다(몰래 정규화하지 않습니다).`));
   }

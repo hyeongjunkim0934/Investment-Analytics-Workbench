@@ -42,6 +42,9 @@ assert.equal(byId('port-hints-toggle').getAttribute('aria-expanded'),'false');
 assert(byId('port-hints-gaps').checked&&byId('port-hints-diversification').checked);
 assert.equal(byId('port-hints-shrink').value,'20');
 const base=JSON.parse(initialCalculation);
+assert(!panel.textContent.includes('자산 공백'));
+assert(card().querySelector('.port-hint-key').textContent.includes('개선여지'));
+assert(base.gaps.every(p=>p.label==='개선여지'));
 assert(base.gaps.length>0&&base.gaps.length<=3);
 assert(base.diversification.length>0&&base.diversification.length<=3);
 const E=P.portEngine(SIX_ASSET_FIXTURE.port,P.portState(SIX_ASSET_FIXTURE.port));
@@ -97,7 +100,7 @@ toggle('gaps',false);assert(!painted().some(p=>p.kind==='gap'));assertFinancial(
 toggle('diversification',false);assert(!card().querySelector('.port-hint-key'));assertFinancial();
 const beforeDisabledDraw=sandbox.hintDraws,disabledPaint=draw(chart());
 assert.equal(sandbox.hintDraws,beforeDisabledDraw);
-hover(base.gaps[0],disabledPaint);assert.notEqual(tip().querySelector('.port-tooltip-title')?.textContent,'자산 공백');
+hover(base.gaps[0],disabledPaint);assert.notEqual(tip().querySelector('.port-tooltip-title')?.textContent,'개선여지');
 P.renderPortPanel(SIX_ASSET_FIXTURE);
 assert(!byId('port-hints-gaps').checked&&!byId('port-hints-diversification').checked);
 assert(!byId('port-hints-panel').hidden);
