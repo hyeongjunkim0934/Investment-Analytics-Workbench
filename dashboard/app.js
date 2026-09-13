@@ -3474,6 +3474,10 @@ function makeRatioChart(box, opts) {
     (cfg.hooks.setCursor = cfg.hooks.setCursor || []).push(
       (u) => opts.onCursor(u.cursor ? u.cursor.idx : null));
   }
+  if (opts.hints?.length) {
+    cfg.hooks = cfg.hooks || {};
+    (cfg.hooks.draw = cfg.hooks.draw || []).push((u) => portDrawHints(u, opts.hints, opts.markers || []));
+  }
   if (opts.markers && opts.markers.length) {
     cfg.hooks = cfg.hooks || {};
     (cfg.hooks.draw = cfg.hooks.draw || []).push((u) => {
@@ -6252,6 +6256,96 @@ function portSigmaControl(redraw) {
 }
 let portRangeSigmaValue = portRangeSigma();
 
+// Exploration is a display layer. Its assumptions never enter saved CMA or MVO.
+const PORT_HINTS_LS_KEY = "iaw-port-hints";
+function portHintSettings() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(PORT_HINTS_LS_KEY)) || {}; } catch {}
+  return { gaps: saved.gaps !== false, diversification: saved.diversification !== false,
+    shrink: Number.isFinite(saved.shrink) && saved.shrink >= 0 && saved.shrink <= 1 ? saved.shrink : 0.2 };
+}
+let portHintsOpen = false;
+function portHintsControl(redraw) {
+  const settings = portHintSettings();
+  const panel = el("div", { id: "port-hints-panel", class: "port-hints-panel", role: "group", "aria-label": "공백·다각화 탐색" });
+  panel.hidden = !portHintsOpen;
+  const toggle = el("button", { id: "port-hints-toggle", type: "button", class: "btn-ghost",
+    "aria-expanded": String(portHintsOpen), "aria-controls": panel.id, title: "공백·다각화 탐색 설정",
+    onclick: () => { portHintsOpen = !portHintsOpen; panel.hidden = !portHintsOpen;
+      toggle.setAttribute("aria-expanded", String(portHintsOpen)); } }, "탐색");
+  const save = (id) => {
+    try { localStorage.setItem(PORT_HINTS_LS_KEY, JSON.stringify(settings)); } catch {}
+    redraw(); document.getElementById(id)?.focus();
+  };
+  [["gaps", "자산 공백"], ["diversification", "상관 완화 · 가정"]].forEach(([key, text]) => {
+    const input = el("input", { type: "checkbox", id: `port-hints-${key}` });
+    input.checked = settings[key];
+    input.addEventListener("change", () => { settings[key] = input.checked; save(input.id); });
+    panel.append(el("label", {}, input, text));
+  });
+  const input = el("input", { id: "port-hints-shrink", type: "number", min: "0", max: "100", step: "5",
+    value: String(+(settings.shrink * 100).toFixed(8)), "aria-label": "상관계수 크기 축소율 %", "aria-describedby": "port-hints-status" });
+  const status = el("span", { id: "port-hints-status", class: "port-range-status d-up", role: "status" });
+  const apply = () => {
+    const value = Number(input.value);
+    if (!input.value.trim() || input.validity?.badInput || !Number.isFinite(value) || value < 0 || value > 100) {
+      input.setAttribute("aria-invalid", "true"); status.textContent = "0~100 입력"; return;
+    }
+    settings.shrink = value / 100; save(input.id);
+  };
+  input.addEventListener("change", apply);
+  input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); apply(); } });
+  panel.append(el("label", { class: "port-hints-strength" }, "상관 크기 축소", input, "%"),
+    el("span", { class: "port-hints-note" }, "0 쪽으로 축소 · 비중·기대수익 유지. 위험이 줄어드는 지점만 표시."), status);
+  const wrap = el("div", { class: "port-hints-control" }, toggle, panel);
+  wrap.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && portHintsOpen) { ev.preventDefault(); portHintsOpen = false;
+      panel.hidden = true; toggle.setAttribute("aria-expanded", "false"); toggle.focus(); }
+  });
+  return wrap;
+}
+
+function portDrawHints(u, hints, markers) {
+  const { ctx, bbox } = u, dpr = devicePixelRatio || 1;
+  const position = (p) => ({ x: u.valToPos(p.x, "x", true), y: u.valToPos(p.y, "y", true) });
+  const occupied = markers.map(position), placed = [];
+  // Reserve one place for the largest scenario improvement before the coverage
+  // rings, otherwise nearby rings can suppress every diversification candidate.
+  const scenario = hints.filter((p) => p.kind === "diversification")
+    .sort((a, b) => b.riskReduction - a.riskReduction);
+  const ordered = [...scenario.slice(0, 1), ...hints.filter((p) => p.kind === "gap"), ...scenario.slice(1)];
+  ctx.save(); ctx.beginPath(); ctx.rect(bbox.left, bbox.top, bbox.width, bbox.height); ctx.clip();
+  ordered.forEach((p) => {
+    const q = position(p), gap = p.kind === "gap", radius = (gap ? 7 : 5) * dpr;
+    // Apply the same visibility decision to drawing and hover, including resize.
+    p.hiddenForPlot = ![q.x, q.y].every(Number.isFinite)
+      || q.x < bbox.left + radius || q.x > bbox.left + bbox.width - radius
+      || q.y < bbox.top + radius || q.y > bbox.top + bbox.height - radius
+      || (!gap && u.valToPos(p.baseX, "x", true) - q.x < 4 * dpr)
+      || occupied.some((m) => Math.hypot(m.x - q.x, m.y - q.y) < 17 * dpr)
+      || placed.some((m) => Math.hypot(m.x - q.x, m.y - q.y) < 23 * dpr);
+    if (p.hiddenForPlot) return;
+    placed.push(q);
+    ctx.strokeStyle = hexA(p.color, 0.42); ctx.lineWidth = 1.1 * dpr;
+    ctx.setLineDash(gap ? [3 * dpr, 3 * dpr] : []);
+    ctx.beginPath();
+    if (gap) ctx.arc(q.x, q.y, radius, 0, Math.PI * 2);
+    else {
+      ctx.moveTo(q.x, q.y - radius); ctx.lineTo(q.x + radius, q.y);
+      ctx.lineTo(q.x, q.y + radius); ctx.lineTo(q.x - radius, q.y); ctx.closePath();
+    }
+    ctx.stroke();
+    if (!gap) {
+      const baseX = u.valToPos(p.baseX, "x", true);
+      ctx.strokeStyle = hexA(p.color, 0.22); ctx.setLineDash([2 * dpr, 4 * dpr]);
+      if (baseX > q.x + radius + 3 * dpr) {
+        ctx.beginPath(); ctx.moveTo(q.x + radius + 2 * dpr, q.y); ctx.lineTo(baseX, q.y); ctx.stroke();
+      }
+    }
+  });
+  ctx.restore();
+}
+
 // Euler volatility shares use the same annual %-squared covariance as the chart.
 // Normalize returns by the input mean, never a Conservative/Optimistic ordinate.
 function portContributions(w, mu, C) {
@@ -6284,7 +6378,7 @@ function portPortfolioHover(box, assets, points, { mu = [], C = [] } = {}) {
     if (active !== p) {
       tip.textContent = "";
       tip.classList.toggle("port-asset-tooltip", !!p.asset);
-      tip.append(el("div", { class: "port-tooltip-title" }, p.asset ? p.label : `${p.label} · 배분`),
+      tip.append(el("div", { class: "port-tooltip-title" }, p.asset || p.hint ? p.label : `${p.label} · 배분`),
         el("div", { class: "port-tooltip-metrics" },
           el("span", {}, `기대수익 ${fmtNum(p.y, 2)}%`), el("span", {}, `변동성 ${fmtNum(p.x, 2)}%`)));
       if (p.asset) {
@@ -6294,7 +6388,13 @@ function portPortfolioHover(box, assets, points, { mu = [], C = [] } = {}) {
           el("div", { class: "port-tooltip-bound" }, el("span", {}, "상단"), el("b", {}, `${fmtNum(p.high, 2)}%`)),
           el("div", { class: "port-tooltip-bound" }, el("span", {}, "하단"), el("b", {}, `${fmtNum(p.low, 2)}%`)));
       } else {
-        const contribution = portContributions(p.w, mu, C);
+        const contribution = portContributions(p.w, mu, p.C || C);
+        if (p.hint) {
+          tip.append(el("div", { class: "port-tooltip-basis" }, p.note));
+          if (p.kind === "diversification") tip.append(el("div", { class: "port-tooltip-basis" },
+            `변동성 ${fmtNum(p.baseX, 2)} → ${fmtNum(p.x, 2)}% · ${fmtNum(p.riskReduction, 2)}%p 감소`),
+            el("div", { class: "port-tooltip-basis" }, "위험기여: 가정 상관 기준 · 현재 달성 가능성을 뜻하지 않음"));
+        }
         if (p.label === "Conservative" || p.label === "Optimistic")
           tip.append(el("div", { class: "port-tooltip-basis" }, `입력 기대수익 ${fmtNum(contribution.mu, 2)}% · 기여율 기준`));
         const pct = (v) => Number.isFinite(v) ? `${fmtNum(v, 2)}%` : "—";
@@ -6331,10 +6431,10 @@ function portPortfolioHover(box, assets, points, { mu = [], C = [] } = {}) {
       const top = Math.max(0, Math.min(...ends)), bottom = Math.min(height, Math.max(...ends));
       return { p, x, y, pointVisible: y >= 0 && y <= height,
         interval: ends.length && ends.every(Number.isFinite) && top <= bottom ? { top, bottom } : null };
-    }).filter((q) => [q.x, q.y].every(Number.isFinite) && q.x >= 0 && q.x <= width && (q.pointVisible || q.interval));
+    }).filter((q) => !q.p.hiddenForPlot && [q.x, q.y].every(Number.isFinite) && q.x >= 0 && q.x <= width && (q.pointVisible || q.interval));
   };
   box.setAttribute("tabindex", "0"); box.setAttribute("role", "group");
-  box.setAttribute("aria-label", "효율적 경계선. 좌우 화살표로 배분 조회. Escape로 닫기. 전체 수치는 표 버튼.");
+  box.setAttribute("aria-label", "효율적 경계선. 좌우 화살표로 배분과 탐색 지점 조회. Escape로 닫기. 경계선 수치는 표 버튼.");
   const keydown = (ev) => {
     if (ev.key === "Escape") { ev.preventDefault(); hide(); return; }
     if (!["ArrowLeft", "ArrowRight"].includes(ev.key)) return;
@@ -6355,7 +6455,7 @@ function portPortfolioHover(box, assets, points, { mu = [], C = [] } = {}) {
       projected.forEach((q) => {
         const d = (q.x - left) ** 2 + (q.y - top) ** 2;
         if (q.pointVisible && q.p.hitRadius && d <= q.p.hitRadius ** 2 && d < markerDistance) { marker = q; markerDistance = d; }
-        if (q.pointVisible && d < distance) { closest = q; distance = d; }
+        if (q.pointVisible && !q.p.hint && d < distance) { closest = q; distance = d; }
         if (q.interval) {
           const dy = Math.max(q.interval.top - top, 0, top - q.interval.bottom), rangeDistance = (q.x - left) ** 2 + dy ** 2;
           if (rangeDistance < intervalDistance) { interval = q; intervalDistance = rangeDistance; }
@@ -7216,6 +7316,12 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     }
     const pts = E.robustOk ? E.robust : E.front;
     const colors = portChartColors();
+    const hintSettings = portHintSettings();
+    const exploration = portOpportunityHints(E.front, E.risk.C, E.mu, { correlationShrink: hintSettings.shrink });
+    const hints = [
+      ...(hintSettings.gaps ? exploration.gaps.map((p) => ({ ...p, color: colors.nominal })) : []),
+      ...(hintSettings.diversification ? exploration.diversification.map((p) => ({ ...p, color: colors.asset, C: exploration.scenarioC })) : []),
+    ].map((p) => ({ ...p, hint: true, hitRadius: 9 }));
     const fbox = cardScaffold(frontCard, {
       title: "효율적 경계선",
       csvName: "효율적경계선.csv",
@@ -7241,6 +7347,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       },
     });
     frontCard.querySelector(".card-actions").prepend(portSigmaControl(recalc));
+    frontCard.querySelector(".card-actions").append(portHintsControl(recalc));
     frontCard.querySelector(".card-actions").append(portPaletteControl(recalc));
     const markers = P.assets.map((a, i) => ({ x: E.risk.sig[i], y: E.mu[i], kind: "ring", size: 5,
       label: a, symbol: "○", color: colors.asset, inlineLabel: true, asset: true,
@@ -7294,6 +7401,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const hoverPoints = [
       ...markers.filter((m) => m.asset || visibleMarkers.includes(m)).slice().reverse().map((m) => ({ ...m, hitRadius: m.size + 3,
         ...(m.asset ? { rangeSigma: sigma, low: m.y - sigma * m.x, high: m.y + sigma * m.x } : {}) })),
+      ...hints,
       ...pts.map((p) => ({ x: p.sig, y: p.mu, w: p.w, label: "경계선" })),
       ...(E.robustOk ? pts.map((p) => ({ x: p.sig, y: p.worst, w: p.w, label: "Conservative" })) : []),
       ...optimistic.map((p) => ({ x: p.sig, y: p.best, w: p.w, label: "Optimistic" })),
@@ -7312,7 +7420,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       area: E.robustOk && E.kappa > 0 ? { x: xsF, upper: ysF, lower, color: colors.robust, opacity: [0.025, 0.06, 0.12] } : null,
       reference: E.front, referenceColor: colors.nominal, cloud: E.cloud, cloudOpacity: 0.25,
       xLabel: "변동성 · 연 %", axisTitles: { y: "기대수익 · 연 %", inside: true }, unit: "%", height: 470,
-      markers: visibleMarkers, markerLegend: true, intervals,
+      markers: visibleMarkers, markerLegend: true, intervals, hints,
       xRange, yRange, hoverDecimals: 2,
       portfolioHover: { assets: P.assets, points: hoverPoints, mu: E.mu, C: E.risk.C },
     }));
@@ -7325,6 +7433,13 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       el("b", { style: `color:${m.color}` }, m.symbol), m.label)));
     key.append(el("span", { class: "port-marker-key", title: `연 기대수익률 ± ${sigma} × 연 변동성 · 평균 추정치의 신뢰구간이 아님` },
       el("b", { style: `color:${hexA(colors.asset, 0.55)}` }, "↕"), `자산 ±${sigma}σ`));
+    if (hintSettings.gaps && exploration.gaps.length) key.append(el("span", { class: "port-marker-key port-hint-key",
+      title: "개별 자산 분포가 드문 구간 · 현재 입력의 기존 자산 조합으로 도달 가능 · 투자 우위를 뜻하지 않음" },
+      el("i", { class: "port-hint-symbol port-hint-gap", style: `color:${colors.nominal}`, "aria-hidden": "true" }), "자산 공백"));
+    if (hintSettings.diversification && exploration.diversification.length) key.append(el("span", { class: "port-marker-key port-hint-key",
+      title: `상관계수 크기 ${fmtNum(hintSettings.shrink * 100, 2)}% 축소 가정 · 동일 비중 · 재최적화 경계선이 아님` },
+      el("i", { class: "port-hint-symbol port-hint-diversification", style: `color:${colors.asset}`, "aria-hidden": "true" }),
+      `상관 완화 ${fmtNum(hintSettings.shrink * 100, 0)}% · 가정`));
     frontCard.append(key);
     const assetKey = el("div", { class: "port-asset-key", "aria-label": "자산 위치 · 변동성 / 기대수익 · 연 %" });
     markers.filter((m) => m.asset).forEach((m) => assetKey.append(el("span", { class: "port-asset-position",
