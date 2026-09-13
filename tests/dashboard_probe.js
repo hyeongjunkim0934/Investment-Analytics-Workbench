@@ -182,6 +182,8 @@ Object.assign(sandbox, {
 });
 
 vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "port-opportunities.js"), "utf8"), sandbox,
+  { filename: "dashboard/port-opportunities.js" });
 /* app.js 의 top-level `const`/`function` 은 스크립트 렉시컬 스코프에 산다 —
    밖에서 잡으려면 같은 스크립트 안에서 내보내야 한다. */
 const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "sectionHasRangedChart",

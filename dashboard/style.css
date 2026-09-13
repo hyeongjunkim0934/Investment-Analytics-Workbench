@@ -1244,6 +1244,20 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-range-control { flex-wrap: wrap; }
 #alloc-port-panel .port-range-control input { width: 54px; min-height: 30px; padding: 4px 6px; font-size: 12px; }
 .port-range-status { font-size: 11px; }
+.port-hints-control { position: relative; }
+.port-hints-panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 6;
+  width: 244px; max-width: calc(100vw - 48px); box-sizing: border-box; padding: 12px;
+  display: flex; flex-direction: column; gap: 10px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.3);
+  color: var(--ink-2); font-size: 12px; }
+.port-hints-panel label { display: flex; align-items: center; gap: 7px; }
+.port-hints-panel input[type="checkbox"] { accent-color: var(--port-accent); }
+#alloc-port-panel .port-hints-strength input { width: 58px; min-height: 28px; padding: 3px 5px; font-size: 12px; }
+.port-hints-note { color: var(--ink-3); font-size: 11px; line-height: 1.5; }
+.port-hint-key { color: var(--ink-3); font-size: 11px; }
+.port-hint-symbol { display: inline-block; width: 10px; height: 10px; border: 1px solid currentColor; opacity: .55; }
+.port-hint-gap { border-radius: 50%; border-style: dashed; }
+.port-hint-diversification { width: 7px; height: 7px; transform: rotate(45deg); margin: 0 2px; }
 @media (max-width: 600px) {
   .port-frontier { padding: 12px 8px; }
 }
