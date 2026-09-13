@@ -1153,6 +1153,18 @@ a.kpi-link .kpi-label > span:first-child::after {
   background: var(--surface); color: var(--ink-1); border: 1px solid var(--border);
   border-radius: 8px; padding: 8px; }
 .port-two { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 12px; }
+.port-improvement { min-width: 0; }
+.port-improvement-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; margin: 12px 0; }
+.port-improvement-controls label { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-2); font-size: 12px; }
+.port-improvement-controls input { width: 62px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface); color: var(--ink-1); font: inherit; font-variant-numeric: tabular-nums; }
+.port-improvement-status { color: var(--ink-3); font-size: 12px; }
+.port-improvement-table { max-height: none; }
+.port-improvement-table tr[data-improves="false"] { color: var(--ink-3); }
+.port-improvement-correlations { margin-top: 12px; }
+.port-improvement-correlations summary { cursor: pointer; color: var(--ink-2); font-size: 12px; }
+.port-improvement-correlations .table-wrap { margin-top: 10px; }
+.port-improvement-note { margin-top: 10px; font-size: 11px; }
 @media (max-width: 900px) { .port-two { grid-template-columns: 1fr; } }
 .port-sub-card { padding: 12px 14px; }
 .port-benchmark th, .port-benchmark td {
