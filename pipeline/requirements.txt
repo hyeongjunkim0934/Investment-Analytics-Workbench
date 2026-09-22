@@ -4,6 +4,6 @@
 # - 파이프라인이 직접 import 하는 3개만 고정한다 (transitive 의존은 고정 대상 아님).
 # - 버전을 올릴 때는 손으로 고치지 말고 .github/dependabot.yml 이 여는 주간 PR로 올린다.
 # - 검증 환경: Python 3.12.3 (build-dashboard.yml 의 3.12 와 동일) — 실데이터 완주 확인.
-pandas==3.0.5
+pandas==3.0.6
 numpy==2.5.1
 openpyxl==3.1.5
