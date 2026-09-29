@@ -101,7 +101,7 @@ secNodes.events.append(elem("details", "events-rules"));
 /* 환헤지 뼈대 — index.html 의 #hedge 안 구조를 그대로 흉내 낸다.
    renderHedge() 가 만지는 컨테이너가 하나라도 없으면 그 자리에서 죽으므로,
    이 목록 자체가 index.html 과의 계약이다. */
-["hedge-cost-dashboard", "hedge-merit-card", "hedge-curve-card", "hedge-ts-card"]
+["hedge-cost-dashboard", "hedge-merit-card", "hedge-jgb-merit-card", "hedge-agb-merit-card", "hedge-curve-card", "hedge-ts-card"]
   .forEach((id) => secNodes.hedge.append(elem("div", id, "card")));
 
 /* ACWI 뼈대 — 시장 폭 카드 포함 */
@@ -612,7 +612,7 @@ const readHedgeDashboard = (currency = "USD") => {
     tiles: (row?.querySelectorAll(".hedge-cost-tile") || []).map((tile) => ({
       tenor: tile.getAttribute("data-tenor"), text: tile.textContent,
       value: tile.querySelector(".hedge-cost-value")?.textContent,
-      date: tile.querySelector(".hedge-cost-date")?.textContent,
+      date: tile.querySelector(".hedge-cost-date")?.textContent || null,
     })),
   };
 };
@@ -637,7 +637,7 @@ safe("hedgeScreen", () => {
   };
 });
 
-/* 게시된 비용과 일별 원자료는 다르다. 누락·서로 다른 기준일에 평균을 지어내지 않는다. */
+/* 게시된 비용 세 개만 평균한다. 날짜가 누락되거나 달라도 숫자가 모두 유효하면 평균한다. */
 safe("hedgeDashboardCases", () => {
   const r = {};
   const run = (name, change) => {
@@ -768,6 +768,51 @@ safe("hedgeMerit", () => {
   P.DATA.hedge = HEDGE_FIXTURE;
   P.DATA.panel = null;
   return r;
+});
+
+/* 일본·호주의 고유 비용/금리/스프레드를 그린다. 미국 값 복사·부호 반전을 구분한다. */
+safe("hedgeCountryMerits", () => {
+  const fixture = JSON.parse(JSON.stringify(HEDGE_FIXTURE));
+  const t = fixture.ust_merit.t;
+  fixture.jgb_merit = {
+    active: true, asof: "2029-12-22", freq: "W-FRI", t,
+    series: {cost: "JPYKRW HP 3M (연율)", foreign: "일본 국채 10년", ktb: "국고 10년"},
+    cost: [1.0, 1.1, 1.2, 1.25], foreign: [1.4, 1.5, 1.55, 1.6],
+    ktb: [3.0, 3.05, 3.0, 3.1], hedged: [2.4, 2.6, 2.75, 2.85],
+    spread: [-0.6, -0.45, -0.25, -0.25],
+    now: {cost: 1.25, foreign: 1.6, ktb: 3.1, hedged: 2.85, spread: -0.25, spread_pctile: 80},
+  };
+  fixture.agb_merit = {
+    active: true, asof: "2029-12-22", freq: "W-FRI", t,
+    series: {cost: "AUDKRW HP 3M (연율)", foreign: "호주 국채 10년", ktb: "국고 10년"},
+    cost: [-0.3, -0.4, -0.45, -0.5], foreign: [4.5, 4.6, 4.7, 4.8],
+    ktb: [3.0, 3.05, 3.0, 3.1], hedged: [4.2, 4.2, 4.25, 4.3],
+    spread: [1.2, 1.15, 1.25, 1.2],
+    now: {cost: -0.5, foreign: 4.8, ktb: 3.1, hedged: 4.3, spread: 1.2, spread_pctile: 60},
+  };
+  const ids = {ust: "hedge-merit-card", jgb: "hedge-jgb-merit-card", agb: "hedge-agb-merit-card"};
+  const read = () => Object.fromEntries(Object.entries(ids).map(([key, id]) => {
+    const card = DOC.getElementById(id);
+    const chart = shim.UPlotStub.made.findLast((u) => card.contains(u.root));
+    return [key, {text: card.textContent,
+      tileValues: card.querySelectorAll(".card").map((tile) => tile.children[1].textContent),
+      chartValues: chart?.data || null,
+      labels: chart?.opts.series.slice(1).map((series) => series.label) || []}];
+  }));
+  try {
+    P.DATA.hedge = fixture;
+    P.renderSection("hedge");
+    const r = {active: read()};
+    P.DATA.hedge = {...fixture, jgb_merit: {active: false, reason: "JPY 프로브 결측"},
+      agb_merit: {active: false, reason: "AUD 프로브 결측"}};
+    P.renderSection("hedge");
+    r.inactive = read();
+    r.errors = DOC.getElementById("hedge").querySelectorAll(".render-error").length;
+    return r;
+  } finally {
+    P.DATA.hedge = HEDGE_FIXTURE;
+    P.renderHedge();
+  }
 });
 
 /* 기간 선택은 제거됐으므로 다른 화면의 숨겨진 연수 상태가 차트·표·CSV를 자르면 안 된다. */

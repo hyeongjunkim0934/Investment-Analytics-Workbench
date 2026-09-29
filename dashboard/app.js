@@ -535,24 +535,7 @@ function observationBadge(date) {
     "data-observed": date || "" }, age.text);
 }
 
-function renderDataFreshness(today = todayKst()) {
-  const host = $("#data-freshness");
-  if (!host) return;
-  const date = DATA.meta && DATA.meta.last_observation;
-  const age = observationAge(date, today);
-  const cards = (DATA.overview && DATA.overview.cards) || [];
-  const count = cards.filter((c) => observationAge(c.date, today).check).length;
-  const check = age.check || count > 0;
-  host.hidden = underlyingSection(location.hash.replace(/^#/, "")) === "alloc";
-  host.classList.toggle("needs-check", check);
-  host.textContent = "";
-  host.append(el("b", {}, check ? "자료 확인" : "자료 시점"),
-    el("span", {}, `최신 관측 ${date || "미확인"} · ${age.text}`));
-  if (cards.length) {
-    host.append(el("span", {}, `개요 ${cards.length}개 중 확인 필요 ${count}개`));
-  }
-  host.append(el("a", { href: "#catalog" }, "출처·기간"),
-    el("span", { class: "freshness-basis" }, `${today} KST · 달력일 5일 이상 경과 시 확인`));
+function refreshObservationBadges(today = todayKst()) {
   document.querySelectorAll(".observation-age").forEach((node) => {
     const item = observationAge(node.getAttribute("data-observed"), today);
     node.textContent = item.text;
@@ -1056,7 +1039,7 @@ function renderCatalog() {
 }
 
 function renderMetaLine() {
-  renderDataFreshness();
+  refreshObservationBadges();
   const m = DATA.meta;
   if (!m) return;
   $("#meta-line").textContent =
@@ -2555,7 +2538,7 @@ function sectionHasRangedChart(sec) {
 
 /* 마을 ↔ 섹션 화면 전환. 섹션은 한 번에 하나만 보인다(스크롤 길이 문제 해결). */
 function routeView() {
-  renderDataFreshness();
+  refreshObservationBadges();
   const hash = location.hash.replace(/^#/, "");
   const sec = underlyingSection(hash);
   const showVillage = !sec;
@@ -3620,7 +3603,7 @@ function timeRangeData(data, from, to) {
 
 /* Current costs share the pipeline's currency curves with allocation/simulation.
    History supplies observation dates only; it must not replace the smoothed values.
-   A three-tenor mean requires three finite values with the same known cutoff date. */
+   The mean is the signed arithmetic mean of the three adjacent finite values. */
 function hedgeCostSnapshot(H2, currency = "USD") {
   const row = (H2?.matrix || []).find((m) => m.c === currency);
   const published = H2?.cost_dashboard?.[currency];
@@ -3649,17 +3632,18 @@ function hedgeCostSnapshot(H2, currency = "USD") {
   });
   const complete = values.every(Number.isFinite);
   const aligned = dates[0] != null && dates.every((date) => date === dates[0]);
-  const mean = complete && aligned ? values.reduce((sum, value) => sum + value, 0) / 3 : null;
-  return { values: [...values, mean], dates, meanDate: mean == null ? null : dates[0],
+  const mean = complete ? values.reduce((sum, value) => sum + value, 0) / 3 : null;
+  return { values: [...values, mean], dates, meanDate: mean != null && aligned ? dates[0] : null,
     src, label,
-    meanNote: !complete ? "3개 만기 데이터 필요" : !aligned ? "기준일 확인 필요" : "3M·6M·12M 단순평균" };
+    meanNote: !complete ? "3개 만기 데이터 필요" : "3M·6M·12M 단순평균" };
 }
 
 function renderHedge() {
   const H2 = DATA.hedge;
   if (!$("#hedge")) return;
   if (!H2) {
-    ["hedge-cost-dashboard", "hedge-merit-card", "hedge-curve-card", "hedge-ts-card"].forEach((id) => {
+    ["hedge-cost-dashboard", "hedge-merit-card", "hedge-jgb-merit-card", "hedge-agb-merit-card",
+      "hedge-curve-card", "hedge-ts-card"].forEach((id) => {
       const host = $("#" + id);
       if (host) host.textContent = "";
     });
@@ -3706,13 +3690,13 @@ function renderHedge() {
   dashboard.append(el("div", { class: "card-head" },
     el("span", { class: "card-title" }, "환헤지비용"),
     el("span", { class: "card-sub" }, `연 % · ${COST_SIGN_KEY}`)));
-  ["JPY", "AUD", "USD"].forEach((currency) => {
+  [["USD", "USDKRW"], ["AUD", "AUDKRW"], ["JPY", "JPY/KRW"]].forEach(([currency, pairLabel]) => {
     const snapshot = hedgeCostSnapshot(H2, currency);
     const source = snapshot.src?.includes("HP") && snapshot.label
       ? `HP · ${snapshot.label}` : snapshot.src || "데이터 없음";
     const row = el("div", { class: "hedge-cost-row", "data-currency": currency },
       el("div", { class: "hedge-cost-row-head" },
-        el("span", { class: "hedge-cost-currency" }, `${currency}/KRW`),
+        el("span", { class: "hedge-cost-currency" }, pairLabel),
         el("span", { class: "card-sub" }, source)));
     const tiles = el("div", { class: "hedge-cost-grid" });
     ["3M", "6M", "12M", "mean"].forEach((tenor, i) => {
@@ -3720,7 +3704,7 @@ function renderHedge() {
       tiles.append(el("div", { class: "card hedge-cost-tile", "data-currency": currency, "data-tenor": tenor },
         el("div", { class: "card-title" }, i === 3 ? "헤지비용 평균" : `환헤지비용 ${tenor}`),
         el("div", { class: "hedge-cost-value" }, fmtCost(snapshot.values[i])),
-        el("div", { class: "hedge-cost-date" }, date || "기준일 —"),
+        date ? el("div", { class: "hedge-cost-date" }, date) : null,
         i === 3 ? el("div", { class: "card-sub" }, snapshot.meanNote) : null));
     });
     row.append(tiles);
@@ -3768,13 +3752,14 @@ function renderHedge() {
     tsCardEl.append(el("p", { class: "card-sub" }, "헤지비용 커브 이력을 불러오지 못했습니다."));
   }
 
-  // Published hedged UST yield and spread; no estimation in this view.
-  const meritCard = $("#hedge-merit-card");
-  if (meritCard) {
+  // Every market uses its own published hedged yield and spread, without estimates.
+  const renderMerit = ({ id, data, title, bond, costSource }) => {
+    const meritCard = $("#" + id);
+    if (!meritCard) return;
     meritCard.textContent = "";
-    const M = H2.ust_merit;
+    const M = data;
     if (!M || !M.active) {
-      meritCard.append(el("div", { class: "card-title" }, "미국채 메리트"),
+      meritCard.append(el("div", { class: "card-title" }, title),
         el("p", { class: "card-sub" },
           (M && M.reason) || "데이터 없음"));
     } else {
@@ -3786,12 +3771,12 @@ function renderHedge() {
         el("div", { style: "color:var(--ink-3);font-size:11px" }, sub));
       const sgn2 = (x, d) => (x == null ? "—" : `${x > 0 ? "+" : ""}${fmtNum(x, d == null ? 2 : d)}%`);
       meritCard.append(el("div", { class: "card-head" },
-        el("span", { class: "card-title" }, "미국채 메리트"),
-        el("span", { class: "card-sub" }, `최근 ${M.t && M.t.length ? tsToDate(M.t[M.t.length - 1]) : "—"}`)));
+        el("span", { class: "card-title" }, title),
+        el("span", { class: "card-sub" }, `최근 ${M.asof || (M.t && M.t.length ? tsToDate(M.t[M.t.length - 1]) : "—")}`)));
       const tiles = el("div", { style: "display:flex;gap:10px;flex-wrap:wrap;margin:8px 0" });
       tiles.append(
-        tile("헤지비용 3M", sgn2(now.cost), "SMB · 연 %"),
-        tile("헤지 후 미국채 10년", fmtNum(now.hedged, 2) + "%", "헤지 후"),
+        tile("헤지비용 3M", sgn2(now.cost), `${costSource} · 연 %`),
+        tile(`헤지 후 ${bond} 10년`, fmtNum(now.hedged, 2) + "%", "헤지 후"),
         tile("국고 10년", fmtNum(now.ktb, 2) + "%", "연 %"),
         tile("스프레드", sgn2(now.spread) + "p",
           `백분위 ${fmtNum(now.spread_pctile, 0)}%`,
@@ -3802,16 +3787,21 @@ function renderHedge() {
       const chartHost = el("div", {});
       meritCard.append(chartHost);
       timeCard(chartHost, {
-        title: "미국채·국고 10년",
+        title: `${bond}·국고 10년`,
         sub: "금리 % · 스프레드 %p",
-        csvName: "미국채-메리트.csv",
-        labels: ["헤지 후 미국채 10년", "국고 10년", "스프레드"],
+        csvName: `${bond}-메리트.csv`,
+        labels: [`헤지 후 ${bond} 10년`, "국고 10년", "스프레드"],
         units: ["%", "%", "%p"],
         colors: [pal.series[0], pal.series[1], pal.series[3]],
         data: [M.t, M.hedged, M.ktb, M.spread], height: 240,
       });
     }
-  }
+  };
+  [
+    { id: "hedge-merit-card", data: H2.ust_merit, title: "미국채 메리트", bond: "미국채", costSource: "SMB" },
+    { id: "hedge-jgb-merit-card", data: H2.jgb_merit, title: "일본 국채 메리트", bond: "일본 국채", costSource: "HP 원호가" },
+    { id: "hedge-agb-merit-card", data: H2.agb_merit, title: "호주 국채 메리트", bond: "호주 국채", costSource: "HP 원호가" },
+  ].forEach(renderMerit);
 
 }
 
@@ -9073,7 +9063,7 @@ function bindTheme() {
   /* 탭이 백그라운드로 가면 영상 디코드·타이머를 멈추고, 돌아오면 다시 건다. */
   document.addEventListener("visibilitychange", () => {
     restartSceneCycle();
-    if (!document.hidden) renderDataFreshness();
+    if (!document.hidden) refreshObservationBadges();
   });
   matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", () => {
     restartSceneCycle();

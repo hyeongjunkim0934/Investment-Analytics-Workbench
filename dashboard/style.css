@@ -189,14 +189,6 @@ body {
 .range-group button.active { background: var(--accent-solid); color: #fff; }
 .filter-note { font-size: 12px; color: var(--ink-3); }
 
-.data-freshness {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px;
-  padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--border);
-  border-radius: 8px; background: var(--surface); color: var(--ink-2); font-size: 12px;
-}
-.data-freshness.needs-check { border-left: 3px solid var(--up-ink); }
-.data-freshness b { color: var(--ink-1); }
-.freshness-basis { color: var(--ink-3); }
 .kpi-source { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--ink-2); font-size: 12px; }
 .observation-age { color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .observation-age.needs-check { color: var(--up-ink); font-weight: 600; }

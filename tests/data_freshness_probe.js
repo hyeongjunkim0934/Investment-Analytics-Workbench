@@ -6,7 +6,7 @@ const source = fs.readFileSync(path.join(__dirname, "dashboard_probe.js"), "utf8
 const marker = "\nconst out = {};";
 if (!source.includes(marker)) throw new Error("dashboard_probe 부팅 경계를 찾지 못했습니다");
 const boot = source.slice(0, source.indexOf(marker)).replace("const EXPORTS = [",
-  'const EXPORTS = ["todayKst", "observationAge", "observationBadge", "renderDataFreshness", "renderOverview", "openOvDetail",');
+  'const EXPORTS = ["todayKst", "observationAge", "observationBadge", "refreshObservationBadges", "renderOverview", "openOvDetail",');
 
 new Function("require", "__dirname", "process", boot + `
 const out = {};
@@ -31,10 +31,9 @@ out.ages = {
 out.kst = ["2026-09-08T14:59:59.999Z", "2026-09-08T15:00:00.000Z",
   "2026-12-31T15:00:00.000Z"].map((x) => P.todayKst(new Date(x)));
 
-const host = elem("div", "data-freshness");
-header.append(host);
-const readHost = () => ({ text: host.textContent, check: host.classList.contains("needs-check"),
-  hidden: host.hidden, link: host.querySelector("a").getAttribute("href") });
+const readBadges = () => [...DOC.querySelectorAll(".observation-age")].map((n) => ({
+  text: n.textContent, check: n.classList.contains("needs-check"), date: n.getAttribute("data-observed")
+}));
 const card = (label, date, extra = {}) => ({ key: "info:" + label, label, source: "info",
   kind: "price", unit: "", value: 117.9, date, link: "fx", chg: {d1: 17.9},
   spark: null, ...extra });
@@ -44,53 +43,39 @@ P.DATA.overview = {cards: [
   card("누락", null), card("미래", "2026-09-10"), card("무효", "2026-02-30"),
 ]};
 P.renderOverview();
-P.renderDataFreshness(today);
-out.staleDespiteNewBuild = readHost();
-out.badges = [...DOC.querySelectorAll(".observation-age")].map((n) => ({
-  text: n.textContent, check: n.classList.contains("needs-check"), date: n.getAttribute("data-observed")
-}));
-P.renderDataFreshness("2026-09-10");
-out.nextDayBadges = [...DOC.querySelectorAll(".observation-age")].map((n) => ({
-  text: n.textContent, check: n.classList.contains("needs-check")
-}));
+P.refreshObservationBadges(today);
+out.badges = readBadges();
+P.refreshObservationBadges("2026-09-10");
+out.nextDayBadges = readBadges();
+// 메타데이터·빌드일은 개별 관측일을 바꾸지 않는다. 전역 배너 없이도 갱신한다.
 P.DATA.meta = {last_observation: today, built_at: "2026-07-01T00:00:00Z"};
-P.renderDataFreshness(today);
-out.freshMetaStaleCards = readHost();
-P.DATA.overview.cards = [card("최신", today)];
-P.renderDataFreshness(today);
-out.freshDespiteOldBuild = readHost();
-P.DATA.meta = {built_at: "2026-09-09T01:00:00Z"};
-P.renderDataFreshness(today);
-out.missingObservation = readHost();
-P.DATA.meta = {last_observation: "2026-09-10", built_at: "2026-09-09T01:00:00Z"};
-P.renderDataFreshness(today);
-out.futureObservation = readHost();
+P.refreshObservationBadges(today);
+out.oldBuildBadges = readBadges();
 delete P.DATA.meta;
-host.hidden = true;
-host.textContent = "이전 값";
 P.renderMetaLine();
-out.metaLineWithoutMeta = readHost();
+out.missingMetaBadges = readBadges();
+out.bannerAfterMeta = DOC.getElementById("data-freshness") !== null;
 
 P.DATA.meta = {last_observation: today};
 P.DATA.overview.cards = [card("경계 전", "2026-09-05")];
 P.renderOverview();
-P.renderDataFreshness(today);
-out.beforeRoute = readHost();
+P.refreshObservationBadges(today);
+out.beforeRoute = readBadges();
 nowMs = Date.parse("2026-09-09T15:00:00Z");
 sandbox.location.hash = "#overview";
 P.routeView();
-out.afterRoute = readHost();
+out.afterRoute = readBadges();
 nowMs = Date.parse("2026-09-10T15:00:00Z");
 DOC.hidden = true;
 (DOC.listeners.visibilitychange || []).forEach((fn) => fn());
-out.whileHidden = readHost();
+out.whileHidden = readBadges();
 DOC.hidden = false;
 (DOC.listeners.visibilitychange || []).forEach((fn) => fn());
-out.afterVisible = readHost();
-out.allocationRoutes = ["#alloc", "#alloc-sim", "#alloc-boot", "#overview"].map((hash) => {
+out.afterVisible = readBadges();
+out.routeBanners = ["#alloc", "#alloc-sim", "#alloc-boot", "#hedge", "#catalog", "#overview"].map((hash) => {
   sandbox.location.hash = hash;
   P.routeView();
-  return { hash, hidden: host.hidden };
+  return { hash, present: DOC.getElementById("data-freshness") !== null };
 });
 nowMs = Date.parse("2026-09-09T00:00:00Z");
 

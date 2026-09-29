@@ -44,41 +44,20 @@ def test_kst_day_rolls_at_1500_utc_including_new_year(freshness_probe):
     assert freshness_probe["kst"] == ["2026-09-08", "2026-09-09", "2027-01-01"]
 
 
-def test_freshness_uses_observation_date_not_build_date(freshness_probe):
-    stale = freshness_probe["staleDespiteNewBuild"]
-    assert stale["check"] and not stale["hidden"]
-    assert "최신 관측 2026-09-04 · 5일 경과" in stale["text"]
-    assert "6개 중 확인 필요 4개" in stale["text"]
-    assert "2026-09-09 KST" in stale["text"]
-    assert stale["link"] == "#catalog"
-    fresh = freshness_probe["freshDespiteOldBuild"]
-    assert not fresh["check"] and "오늘 관측" in fresh["text"]
-    assert "자료 시점" in fresh["text"]
-    cards_stale = freshness_probe["freshMetaStaleCards"]
-    assert cards_stale["check"] and "오늘 관측" in cards_stale["text"]
-    assert "자료 확인" in cards_stale["text"] and "확인 필요 4개" in cards_stale["text"]
+def test_individual_freshness_uses_card_date_even_without_meta_or_banner(freshness_probe):
+    assert freshness_probe["oldBuildBadges"] == freshness_probe["badges"]
+    assert freshness_probe["missingMetaBadges"] == freshness_probe["badges"]
+    assert freshness_probe["bannerAfterMeta"] is False
 
 
-@pytest.mark.parametrize("case", ["missingObservation", "futureObservation"])
-def test_missing_or_future_latest_observation_requests_check(freshness_probe, case):
-    state = freshness_probe[case]
-    assert state["check"]
-    assert "자료 확인" in state["text"] and "관측일 확인" in state["text"]
-
-
-def test_meta_line_shows_unknown_freshness_when_meta_failed_to_load(freshness_probe):
-    state = freshness_probe["metaLineWithoutMeta"]
-    assert not state["hidden"] and state["check"]
-    assert "관측일 확인" in state["text"] and "최신 관측 미확인" in state["text"]
-
-
-def test_route_and_visible_return_refresh_date_without_reloading(freshness_probe):
-    assert not freshness_probe["beforeRoute"]["check"]
+def test_route_and_visible_return_refresh_badges_without_banner(freshness_probe):
+    assert freshness_probe["beforeRoute"] == [
+        {"text": "4일 경과", "check": False, "date": "2026-09-05"}]
     after = freshness_probe["afterRoute"]
-    assert after["check"] and "2026-09-10 KST" in after["text"]
+    assert after == [{"text": "5일 경과", "check": True, "date": "2026-09-05"}]
     assert freshness_probe["whileHidden"] == after
-    visible = freshness_probe["afterVisible"]
-    assert visible["check"] and "2026-09-11 KST" in visible["text"]
+    assert freshness_probe["afterVisible"] == [
+        {"text": "6일 경과", "check": True, "date": "2026-09-05"}]
 
 
 def test_each_card_badge_updates_across_day_boundary(freshness_probe):
@@ -87,9 +66,9 @@ def test_each_card_badge_updates_across_day_boundary(freshness_probe):
     assert [x["text"] for x in badges[:3]] == ["오늘 관측", "4일 경과", "5일 경과"]
     assert badges[3]["date"] == ""
     next_day = freshness_probe["nextDayBadges"]
-    assert next_day[0] == {"text": "1일 경과", "check": False}
-    assert next_day[1] == {"text": "5일 경과", "check": True}
-    assert next_day[4] == {"text": "오늘 관측", "check": False}
+    assert next_day[0] == {"text": "1일 경과", "check": False, "date": "2026-09-09"}
+    assert next_day[1] == {"text": "5일 경과", "check": True, "date": "2026-09-05"}
+    assert next_day[4] == {"text": "오늘 관측", "check": False, "date": "2026-09-10"}
 
 
 def test_overview_and_detail_preserve_numeric_change_and_disclose_gap(freshness_probe):
@@ -106,12 +85,15 @@ def test_overview_and_detail_preserve_numeric_change_and_disclose_gap(freshness_
     assert detail["period"] == gap["period"]
 
 
-def test_freshness_banner_is_hidden_on_allocation_routes(freshness_probe):
-    assert freshness_probe["allocationRoutes"] == [
-        {"hash": "#alloc", "hidden": True},
-        {"hash": "#alloc-sim", "hidden": True},
-        {"hash": "#alloc-boot", "hidden": True},
-        {"hash": "#overview", "hidden": False},
+def test_global_freshness_banner_and_its_layout_space_are_removed(freshness_probe):
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "dashboard" / "index.html").read_text(encoding="utf-8")
+    css = (root / "dashboard" / "style.css").read_text(encoding="utf-8")
+    assert 'id="data-freshness"' not in html
+    assert ".data-freshness" not in css
+    assert freshness_probe["routeBanners"] == [
+        {"hash": route, "present": False}
+        for route in ("#alloc", "#alloc-sim", "#alloc-boot", "#hedge", "#catalog", "#overview")
     ]
 
 

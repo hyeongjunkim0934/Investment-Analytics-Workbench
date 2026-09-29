@@ -53,6 +53,42 @@ def pack(s: pd.Series, r: int = 2) -> dict:
     return common.pack_values(s, r)
 
 
+def build_bond_merit(series: dict, currency: str, label: str) -> dict:
+    """외국 10년 국채 + 같은 날 HP 3M 연율 캐리와 국고 10년을 비교한다.
+
+    만기 10년 동안 헤지비용이 고정된 실현수익률이 아닌 현재 금리·캐리 지표다.
+    원호가를 쓰므로 대시보드의 5영업일 중앙값과 구분한다. 일별 공통 관측만
+    선택하고 주별 마지막 실제 관측일을 게시한다(미도래 금요일로 날짜를 밀지 않는다).
+    """
+    keys = {"foreign": f"info:{currency}10y", "ktb": "info:한국_10y",
+            "cost": f"info:{currency}KRW_HP_3M"}
+    missing = [key for key in keys.values() if series.get(key) is None]
+    if missing:
+        return {"active": False, "reason": "원천 시리즈 없음: " + " / ".join(missing)}
+    daily = pd.concat({name: series[key] for name, key in keys.items()}, axis=1)
+    daily = daily.replace([np.inf, -np.inf], np.nan).dropna().sort_index()
+    if daily.empty:
+        return {"active": False, "reason": "국채·헤지비용 공통 관측 없음"}
+    daily["observed"] = daily.index
+    weekly = daily.resample("W-FRI").last().dropna()
+    weekly.index = pd.DatetimeIndex(weekly.pop("observed"))
+    weekly["hedged"] = weekly["foreign"] + weekly["cost"]
+    weekly["spread"] = weekly["hedged"] - weekly["ktb"]
+    fields = ("foreign", "ktb", "cost", "hedged", "spread")
+    now = {key: round(float(weekly[key].iloc[-1]), 3) for key in fields}
+    now["spread_pctile"] = round(float((weekly["spread"] <= weekly["spread"].iloc[-1]).mean() * 100), 1)
+    return {
+        "active": True, "asof": weekly.index[-1].strftime("%Y-%m-%d"),
+        "freq": "weekly", "start": weekly.index[0].strftime("%Y-%m"),
+        "n_weeks": int(len(weekly)), "t": epoch_seconds(weekly.index),
+        "series": {"foreign": f"{label} 10년", "ktb": "국고 10년",
+                   "cost": "3개월 헤지비용(HP 원호가, 연율)"},
+        "sources": keys,
+        **{key: [round(float(x), 3) for x in weekly[key]] for key in fields},
+        "now": now,
+    }
+
+
 def build(series_store: dict, warn) -> dict:
     S = {k: v["s"] for k, v in series_store.items()}
 
@@ -296,6 +332,8 @@ def build(series_store: dict, warn) -> dict:
         "cost_hist_curve": cost_hist_curve,
         "cost_hist_usd": pack(smb_m),
         "ust_merit": ust_merit,
+        "jgb_merit": build_bond_merit(S, "JPY", "일본 국채"),
+        "agb_merit": build_bond_merit(S, "AUD", "호주 국채"),
         # 계열명·표본기간·관측수를 함께 싣는다 — 화면이 「25년 평균」을 하드코딩하고
         # 있었다. 표본이 늘거나 줄어도 문장이 25년에 멈춰 있으면 거짓이 된다
         # (이 저장소는 「주식 10%는 어느 산식에서도 나오지 않는 수」로 같은 사고를

@@ -819,7 +819,7 @@ def test_hedge_dashboard_uses_published_cost_curve_and_signed_mean(probe):
     assert signed["tiles"][3]["value"] == "-0.20%"
 
 
-def test_hedge_dashboard_does_not_average_missing_values_or_mixed_dates(probe):
+def test_hedge_dashboard_average_requires_values_but_not_matching_dates(probe):
     c = probe["hedgeDashboardCases"]
     for name in ("missingValue", "nonFinite"):
         assert c[name]["snapshot"]["values"] == [-0.6, None, -0.5, None]
@@ -827,10 +827,11 @@ def test_hedge_dashboard_does_not_average_missing_values_or_mixed_dates(probe):
         assert c[name]["tiles"][3]["value"] == "—"
         assert "3개 만기 데이터 필요" in c[name]["text"]
     for name in ("missingDate", "differentDates", "proxySource"):
-        assert c[name]["snapshot"]["values"] == [-0.6, -0.55, -0.5, None]
+        assert c[name]["snapshot"]["values"] == pytest.approx([-0.6, -0.55, -0.5, -0.55])
         assert c[name]["snapshot"]["meanDate"] is None
-        assert c[name]["tiles"][3]["value"] == "—"
-        assert "기준일 확인 필요" in c[name]["text"]
+        assert c[name]["tiles"][3]["value"] == "-0.55%"
+        assert c[name]["tiles"][3]["date"] is None
+        assert not re.search(r"기준일\s*[-—]|기준일 확인 필요", c[name]["text"])
     assert c["differentDates"]["snapshot"]["dates"] == ["2029-11-30", "2029-10-31", "2029-11-30"]
     assert c["trailingNull"]["snapshot"]["dates"] == ["2029-11-30"] * 3
     assert c["trailingNull"]["snapshot"]["values"][-1] == pytest.approx(-0.55)
@@ -859,14 +860,14 @@ def test_hedge_currency_dashboard_uses_each_published_curve_date_and_source(prob
     }
     for currency, (values, displayed, date, window) in expected.items():
         row = rows[currency]
-        assert row["currencies"] == ["JPY", "AUD", "USD"]
+        assert row["currencies"] == ["USD", "AUD", "JPY"]
         assert [tile["tenor"] for tile in row["tiles"]] == ["3M", "6M", "12M", "mean"]
         assert [tile["value"] for tile in row["tiles"]] == displayed
         assert row["snapshot"]["values"] == pytest.approx(values)
         assert row["snapshot"]["dates"] == [date] * 3
         assert row["snapshot"]["meanDate"] == date
         assert [tile["date"] for tile in row["tiles"]] == [date] * 4
-        assert f"{currency}/KRW" in row["rowText"]
+        assert {"USD": "USDKRW", "AUD": "AUDKRW", "JPY": "JPY/KRW"}[currency] in row["rowText"]
         assert f"HP · {currency} 프로브 {window}관측 중앙값" in row["rowText"]
         assert "프로브전용읽기" not in row["rowText"]
         assert "3M·6M·12M 단순평균" in row["rowText"]
@@ -874,7 +875,7 @@ def test_hedge_currency_dashboard_uses_each_published_curve_date_and_source(prob
     assert probe["hedgeCurrencyDashboard"]["publishedWithoutMatrix"]["snapshot"] == rows["AUD"]["snapshot"]
 
 
-def test_hedge_currency_dashboard_withholds_mean_for_missing_or_invalid_inputs(probe):
+def test_hedge_currency_dashboard_ignores_missing_or_invalid_dates_for_mean(probe):
     cases = probe["hedgeCurrencyDashboard"]
     for name, dates in {
         "missingUsdDate": ["2029-12-05", None, "2029-12-05"],
@@ -884,10 +885,13 @@ def test_hedge_currency_dashboard_withholds_mean_for_missing_or_invalid_inputs(p
     }.items():
         row = cases[name]
         assert row["snapshot"]["dates"] == dates
-        assert row["snapshot"]["values"][-1] is None
+        expected_mean = {"missingUsdDate": -2.1, "missingJpyDates": 0.6,
+                         "mixedAudDates": -0.6, "invalidJpyDate": 0.6}[name]
+        assert row["snapshot"]["values"][-1] == pytest.approx(expected_mean)
         assert row["snapshot"]["meanDate"] is None
-        assert row["tiles"][-1]["value"] == "—"
-        assert "기준일 확인 필요" in row["rowText"]
+        assert row["tiles"][-1]["value"] == f"{expected_mean:+.2f}%"
+        assert row["tiles"][-1]["date"] is None
+        assert not re.search(r"기준일\s*[-—]|기준일 확인 필요", row["rowText"])
     missing = cases["missingAudValue"]
     assert missing["snapshot"]["values"] == [-0.9, None, -0.3, None]
     assert missing["tiles"][1]["value"] == missing["tiles"][-1]["value"] == "—"
@@ -897,10 +901,11 @@ def test_hedge_currency_dashboard_withholds_mean_for_missing_or_invalid_inputs(p
 def test_hedge_legacy_currency_values_never_borrow_usd_observation_dates(probe):
     cases = probe["hedgeCurrencyDashboard"]
     jpy = cases["legacyJpy"]
-    assert jpy["snapshot"]["values"] == [3.4, 3.3, 3.25, None]
+    assert jpy["snapshot"]["values"] == pytest.approx([3.4, 3.3, 3.25, (3.4 + 3.3 + 3.25) / 3])
     assert jpy["snapshot"]["dates"] == [None] * 3
-    assert all(tile["date"] == "기준일 —" for tile in jpy["tiles"])
-    assert "기준일 확인 필요" in jpy["rowText"]
+    assert all(tile["date"] is None for tile in jpy["tiles"])
+    assert jpy["tiles"][-1]["value"] == "+3.32%"
+    assert not re.search(r"기준일\s*[-—]|기준일 확인 필요", jpy["rowText"])
     aud = cases["legacyAud"]
     assert aud["snapshot"]["values"] == [None] * 4
     assert aud["snapshot"]["dates"] == [None] * 3
@@ -961,7 +966,8 @@ def test_hedge_main_screen_dashboard_is_followed_by_merit(probe):
                     "hedge-method", "hedge-views", "우리 포트폴리오 숫자로"):
         assert removed not in section
     order = [section.index(f'id="{name}"') for name in
-             ("hedge-cost-dashboard", "hedge-merit-card", "hedge-curve-card", "hedge-ts-card")]
+             ("hedge-cost-dashboard", "hedge-merit-card", "hedge-jgb-merit-card",
+              "hedge-agb-merit-card", "hedge-curve-card", "hedge-ts-card")]
     assert order == sorted(order)
     assert probe["hedgeScreen"]["explanationCount"] == 0
 
@@ -1970,6 +1976,33 @@ def test_hedge_ust_merit_monitor(probe):
         assert spread[i] == pytest.approx(ust + cost - ktb[i])
     assert c["hasExplanation"] is False and c["riskExplanationRemoved"] is True
     assert c["inactiveExplains"] is True
+
+
+def test_japan_and_australia_merits_use_own_published_values_and_cost_signs(probe):
+    merits = probe["hedgeCountryMerits"]
+    assert merits["errors"] == 0
+    expected = {
+        "jgb": ("일본 국채", ["+1.25%", "2.85%", "3.10%", "-0.25%p"],
+                [1.4, 1.5, 1.55, 1.6], [1.0, 1.1, 1.2, 1.25]),
+        "agb": ("호주 국채", ["-0.50%", "4.30%", "3.10%", "+1.20%p"],
+                [4.5, 4.6, 4.7, 4.8], [-0.3, -0.4, -0.45, -0.5]),
+    }
+    for key, (country, tiles, yields, costs) in expected.items():
+        card = merits["active"][key]
+        assert f"{country} 메리트" in card["text"]
+        assert "헤지비용 3M" in card["text"] and "HP" in card["text"]
+        assert "SMB" not in card["text"]
+        assert card["tileValues"] == tiles
+        assert card["labels"] == [f"헤지 후 {country} 10년", "국고 10년", "스프레드"]
+        _, hedged, ktb, spread = card["chartValues"]
+        assert ktb == [3.0, 3.05, 3.0, 3.1]
+        assert hedged == pytest.approx([y + c for y, c in zip(yields, costs)])
+        assert spread == pytest.approx([y + c - k for y, c, k in zip(yields, costs, ktb)])
+        inactive = merits["inactive"][key]
+        assert ("JPY" if key == "jgb" else "AUD") + " 프로브 결측" in inactive["text"]
+        assert inactive["tileValues"] == [] and inactive["chartValues"] is None
+    assert merits["active"]["ust"]["tileValues"] == ["-1.50%", "2.90%", "3.10%", "-0.20%p"]
+    assert merits["inactive"]["ust"] == merits["active"]["ust"], "다른 국가 결측이 미국 값을 지웠다"
 
 
 def test_overview_groups_cards_and_opens_the_detail_screens(probe):
