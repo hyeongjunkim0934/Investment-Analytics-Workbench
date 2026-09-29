@@ -2363,13 +2363,38 @@ safe("portPanel", () => {
     && /겹침 41개월 corr 0\.91/.test(cdSpan.getAttribute("title") || "");
 
   /* ⑧ 창 선택은 모형 입력 — 즉시 저장 */
+  // Distinct window moments expose stale statistics even though column titles
+  // no longer repeat the selected period (2026-09-29 user request).
+  const periodFixture = JSON.parse(JSON.stringify(ALLOC_FIXTURE));
+  const selectedWindow = periodFixture.port.windows.find((w) => w.key === "3");
+  selectedWindow.mean_pct = selectedWindow.mean_pct.map((v) => v + 1);
+  selectedWindow.vol_pct = selectedWindow.vol_pct.map((v) => v * 1.1);
+  selectedWindow.cov = selectedWindow.cov.map((row) => row.map((v) => v * 1.21));
+  selectedWindow.bench.mean_pct += 1;
+  selectedWindow.bench.vol_pct *= 1.1;
+  P.DATA.alloc = periodFixture;
+  P.renderPortPanel(periodFixture);
+  const realizedRows = () => Array.from(DOC.getElementById("alloc-port-panel")
+    .querySelectorAll(".port-table tbody tr")).map((row) => Array.from(row.querySelectorAll("td")).slice(4, 6));
+  const beforeStatistics = realizedRows().map((row) => row.map((cell) => cell.textContent));
   const period = DOC.getElementById("port-period");
   period.value = "3";
   period.dispatchEvent({ type: "change", target: period });
   const saved2 = JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY) || "{}");
   r.windowChoiceSaved = saved2.win === "3";
+  const selectedPanel = DOC.getElementById("alloc-port-panel");
+  const realizedHeaders = Array.from(selectedPanel.querySelectorAll(".port-table th")).slice(4, 6);
+  const expectedHeaders = ["실현수익 %", "실현변동성 %"];
+  const afterRows = realizedRows();
   r.periodSelectionUpdated = DOC.getElementById("port-period").value === "3"
-    && /실현수익 % \(3년\)/.test(DOC.getElementById("alloc-port-panel").textContent);
+    && selectedPanel.querySelector(".alloc-period-range").textContent.includes("36개월")
+    && realizedHeaders.length === 2
+    && realizedHeaders.every((cell, j) => cell.textContent === expectedHeaders[j])
+    && afterRows.length === periodFixture.port.assets.length
+    && afterRows.every((row, i) => row.length === 2 && row.every((cell, j) =>
+      cell.textContent === [selectedWindow.mean_pct[i], selectedWindow.vol_pct[i]][j].toFixed(2)
+      && cell.textContent !== beforeStatistics[i][j]
+      && cell.getAttribute("data-label") === expectedHeaders[j]));
 
   /* ⑨ 비활성 블록 — 조용히 사라지지 않고 사유를 적는다 */
   P.DATA.alloc = { ...ALLOC_FIXTURE, port: { active: false, reason: "probe 사유" } };
