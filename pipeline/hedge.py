@@ -97,7 +97,7 @@ def build(series_store: dict, warn) -> dict:
     # 예전에는 두 모듈이 같은 시리즈를 각자 `iloc[-1]` 로 읽었고, 우연히 같은 값이
     # 나와 문제가 안 보였다. 한쪽만 바꾸면 같은 화면의 두 숫자가 조용히 갈라진다.
     hp_label = common.hp_read_label()
-    cost_curve, cost_src = {}, {}
+    cost_curve, cost_src, cost_dashboard = {}, {}, {}
     hp_asof = None
     for c in CURRENCIES:
         hp = common.hp_curve(S, c)
@@ -112,6 +112,17 @@ def build(series_store: dict, warn) -> dict:
         else:
             cost_curve[c] = None
             cost_src[c] = "데이터 필요"
+        # 현재 커브는 시뮬레이터·자산배분과 공유한다. 통화별 기준일은 HP 원천의
+        # 마지막 유효 관측일이며 USD 일별 이력이나 전체 asof를 빌려 쓰지 않는다.
+        if c in ("JPY", "AUD", "USD"):
+            cost_dashboard[c] = {
+                "curve": cost_curve[c],
+                "dates": {m: hp["dates"][m].strftime("%Y-%m-%d") if hp else None
+                          for m in common.HP_TENORS},
+                "src": cost_src[c],
+                "label": hp_label if hp else None,
+                "window": hp["window"] if hp else None,
+            }
 
     # ----- 통화 매트릭스 -----
     def span(idx) -> dict | None:
@@ -279,6 +290,7 @@ def build(series_store: dict, warn) -> dict:
         "cost_read": {"label": hp_label, "window": common.HP_MEDIAN_N,
                       "asof": None if hp_asof is None else hp_asof.strftime("%Y-%m-%d")},
         "matrix": matrix,
+        "cost_dashboard": cost_dashboard,
         "curves": curves,
         "backtest": backtest,
         "cost_hist_curve": cost_hist_curve,

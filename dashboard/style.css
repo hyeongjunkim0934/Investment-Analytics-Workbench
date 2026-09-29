@@ -1022,6 +1022,9 @@ details.explain[open] > summary { color: var(--ink-2); }
 .alloc-period input[type="date"] { width: 144px; color-scheme: dark; }
 [data-theme="light"] .alloc-period input[type="date"] { color-scheme: light; }
 .alloc-period-status { flex-basis: 100%; }
+.hedge-cost-row + .hedge-cost-row { margin-top: 14px; }
+.hedge-cost-row-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 7px; }
+.hedge-cost-currency { color: var(--ink-1); font-size: 13px; font-weight: 700; letter-spacing: .03em; }
 .hedge-cost-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .hedge-cost-tile { min-width: 0; padding: 12px 14px; }
 .hedge-cost-tile .card-title { font-size: 12px; }

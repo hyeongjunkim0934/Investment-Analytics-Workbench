@@ -3618,16 +3618,27 @@ function timeRangeData(data, from, to) {
   return data.map((series) => indices.map((i) => series[i]));
 }
 
-/* Current costs share the pipeline's USD curve with allocation/simulation.
+/* Current costs share the pipeline's currency curves with allocation/simulation.
    History supplies observation dates only; it must not replace the smoothed values.
    A three-tenor mean requires three finite values with the same known cutoff date. */
-function hedgeCostSnapshot(H2) {
-  const usd = (H2?.matrix || []).find((m) => m.c === "USD");
+function hedgeCostSnapshot(H2, currency = "USD") {
+  const row = (H2?.matrix || []).find((m) => m.c === currency);
+  const published = H2?.cost_dashboard?.[currency];
+  const curve = published ? published.curve : row?.cost_curve;
+  const src = published ? published.src : row?.src;
+  const label = published ? published.label : H2?.cost_read?.label;
   const tenors = ["3M", "6M", "12M"];
-  const values = tenors.map((k) => Number.isFinite(usd?.cost_curve?.[k]) ? usd.cost_curve[k] : null);
+  const values = tenors.map((k) => Number.isFinite(curve?.[k]) ? curve[k] : null);
   const dates = tenors.map((k) => {
+    if (published) {
+      const date = published.dates?.[k];
+      if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+      const time = new Date(`${date}T00:00:00Z`).getTime();
+      return Number.isFinite(time) && tsToDate(time / 1000) === date ? date : null;
+    }
+    // Legacy history contains USD only; never attach its dates to another currency.
     // A rate-difference proxy has no HP observation date.
-    if (usd?.src && !usd.src.includes("HP")) return null;
+    if (currency !== "USD" || (src && !src.includes("HP"))) return null;
     const h = H2?.cost_hist_curve?.[k];
     let last = null;
     (h?.t || []).forEach((t, i) => {
@@ -3640,6 +3651,7 @@ function hedgeCostSnapshot(H2) {
   const aligned = dates[0] != null && dates.every((date) => date === dates[0]);
   const mean = complete && aligned ? values.reduce((sum, value) => sum + value, 0) / 3 : null;
   return { values: [...values, mean], dates, meanDate: mean == null ? null : dates[0],
+    src, label,
     meanNote: !complete ? "3개 만기 데이터 필요" : !aligned ? "기준일 확인 필요" : "3M·6M·12M 단순평균" };
 }
 
@@ -3691,23 +3703,29 @@ function renderHedge() {
 
   const dashboard = $("#hedge-cost-dashboard");
   dashboard.textContent = "";
-  const snapshot = hedgeCostSnapshot(H2);
-  const usd = (H2.matrix || []).find((m) => m.c === "USD");
-  const source = usd?.src?.includes("HP") && H2.cost_read?.label
-    ? `HP · ${H2.cost_read.label}` : usd?.src || "데이터 없음";
   dashboard.append(el("div", { class: "card-head" },
     el("span", { class: "card-title" }, "환헤지비용"),
-    el("span", { class: "card-sub" }, `USD/KRW · ${source} · 연 % · ${COST_SIGN_KEY}`)));
-  const tiles = el("div", { class: "hedge-cost-grid" });
-  ["3M", "6M", "12M", "mean"].forEach((tenor, i) => {
-    const date = i === 3 ? snapshot.meanDate : snapshot.dates[i];
-    tiles.append(el("div", { class: "card hedge-cost-tile", "data-tenor": tenor },
-      el("div", { class: "card-title" }, i === 3 ? "헤지비용 평균" : `환헤지비용 ${tenor}`),
-      el("div", { class: "hedge-cost-value" }, fmtCost(snapshot.values[i])),
-      el("div", { class: "hedge-cost-date" }, date || "기준일 —"),
-      i === 3 ? el("div", { class: "card-sub" }, snapshot.meanNote) : null));
+    el("span", { class: "card-sub" }, `연 % · ${COST_SIGN_KEY}`)));
+  ["JPY", "AUD", "USD"].forEach((currency) => {
+    const snapshot = hedgeCostSnapshot(H2, currency);
+    const source = snapshot.src?.includes("HP") && snapshot.label
+      ? `HP · ${snapshot.label}` : snapshot.src || "데이터 없음";
+    const row = el("div", { class: "hedge-cost-row", "data-currency": currency },
+      el("div", { class: "hedge-cost-row-head" },
+        el("span", { class: "hedge-cost-currency" }, `${currency}/KRW`),
+        el("span", { class: "card-sub" }, source)));
+    const tiles = el("div", { class: "hedge-cost-grid" });
+    ["3M", "6M", "12M", "mean"].forEach((tenor, i) => {
+      const date = i === 3 ? snapshot.meanDate : snapshot.dates[i];
+      tiles.append(el("div", { class: "card hedge-cost-tile", "data-currency": currency, "data-tenor": tenor },
+        el("div", { class: "card-title" }, i === 3 ? "헤지비용 평균" : `환헤지비용 ${tenor}`),
+        el("div", { class: "hedge-cost-value" }, fmtCost(snapshot.values[i])),
+        el("div", { class: "hedge-cost-date" }, date || "기준일 —"),
+        i === 3 ? el("div", { class: "card-sub" }, snapshot.meanNote) : null));
+    });
+    row.append(tiles);
+    dashboard.append(row);
   });
-  dashboard.append(tiles);
 
   const cc = $("#hedge-curve-card");
   cc.textContent = "";
