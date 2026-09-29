@@ -799,115 +799,111 @@ def test_dom_assembled_tables_get_the_same_formatting_as_parsed_ones():
     assert 'el("table", { class: "mini-table" }' in app
 
 
-def test_hedge_reference_numbers_all_come_from_the_payload(probe):
-    """화면의 참고치는 전부 hedge.json 에서 나온다 — 하드코딩 0.
-
-    픽스처는 실데이터와 다르다(주식 곡선 최소 15%, MVH 71~118%, 만기 6개월,
-    최악의 달 2019-03, 최저월 2021-07). 예전에 박혀 있던 "채권 88~102% · 주식
-    10~30%" · "2008년 최악의 달" · 굵은 행 "9개월" 이 살아 있으면 여기서 잡힌다.
-    특히 주식 10% 는 **어느 산식에서도 나오지 않는 수**였다.
-    """
+def test_hedge_dashboard_uses_published_cost_curve_and_signed_mean(probe):
+    """게시된 HP 중앙값 세 개의 단순평균이며, 마지막 일별 호가·SMB 평균과 다르다."""
     h = probe["hedgeScreen"]
-    assert "71~118%" in h["headline"] and "15%" in h["headline"]
-    assert "88~102" not in h["headline"] and "10~30" not in h["headline"]
-    assert h["views"] == "" and h["method"] == ""
-    assert h["explanationCount"] == 0
-    assert "채권 50% · 주식 15%" in h["curveSub"]
-    assert "전체 평균 0.10%" in h["costSub"] and "2008" not in h["costSub"]
-    assert "2019-03" in " ".join(h["mtmHeader"])
-    assert h["boldRowText"].startswith("6개월"), h["boldRowText"]
+    tiles = h["dashboard"]["tiles"]
+    assert [tile["tenor"] for tile in tiles] == ["3M", "6M", "12M", "mean"]
+    assert [tile["value"] for tile in tiles] == ["-0.60%", "-0.55%", "-0.50%", "-0.55%"]
+    assert h["snapshot"]["values"] == pytest.approx([-0.6, -0.55, -0.5, (-0.6 - 0.55 - 0.5) / 3])
+    assert h["snapshot"]["dates"] == ["2029-11-30"] * 3
+    assert h["snapshot"]["meanDate"] == "2029-11-30"
+    assert all("2029-11-30" in tile["date"] for tile in tiles)
+    assert "3M·6M·12M 단순평균" in h["dashboard"]["text"]
+    assert "HP" in h["dashboard"]["text"] and "프로브전용읽기" in h["dashboard"]["text"]
+    assert "연 %" in h["dashboard"]["text"]
+    # 0은 유효한 값이며 음수와 양수는 절대값 변환 없이 평균한다.
+    signed = probe["hedgeDashboardCases"]["signed"]
+    assert signed["snapshot"]["values"] == pytest.approx([-1.2, 0, 0.6, -0.2])
+    assert signed["tiles"][2]["value"] == "+0.60%"
+    assert signed["tiles"][3]["value"] == "-0.20%"
+
+
+def test_hedge_dashboard_does_not_average_missing_values_or_mixed_dates(probe):
+    c = probe["hedgeDashboardCases"]
+    for name in ("missingValue", "nonFinite"):
+        assert c[name]["snapshot"]["values"] == [-0.6, None, -0.5, None]
+        assert c[name]["tiles"][1]["value"] == "—"
+        assert c[name]["tiles"][3]["value"] == "—"
+        assert "3개 만기 데이터 필요" in c[name]["text"]
+    for name in ("missingDate", "differentDates", "proxySource"):
+        assert c[name]["snapshot"]["values"] == [-0.6, -0.55, -0.5, None]
+        assert c[name]["snapshot"]["meanDate"] is None
+        assert c[name]["tiles"][3]["value"] == "—"
+        assert "기준일 확인 필요" in c[name]["text"]
+    assert c["differentDates"]["snapshot"]["dates"] == ["2029-11-30", "2029-10-31", "2029-11-30"]
+    assert c["trailingNull"]["snapshot"]["dates"] == ["2029-11-30"] * 3
+    assert c["trailingNull"]["snapshot"]["values"][-1] == pytest.approx(-0.55)
+
+
+def test_hedge_dashboard_missing_usd_or_payload_is_explicit(probe):
+    c = probe["hedgeDashboardCases"]
+    assert c["noUsd"]["snapshot"]["values"] == [None] * 4
+    assert len(c["noUsd"]["tiles"]) == 4
+    assert all(tile["value"] == "—" for tile in c["noUsd"]["tiles"])
+    for name in ("noUsd", "noData"):
+        assert not re.search(r"undefined|NaN|Infinity", c[name]["text"])
+    assert not c["noData"]["tiles"]
+    assert "데이터" in c["noData"]["text"]
+    assert "미국채 메리트" not in c["noData"]["sectionText"], "데이터 부재 시 이전 값이 남았다"
+    assert "실측(HP)" in c["sourceFallback"]["text"]
+
+
+def test_hedge_retained_reference_numbers_come_from_payload(probe):
+    assert "채권 50% · 주식 15%" in probe["hedgeScreen"]["curveSub"]
     assert probe["hedgeSim"]["eqRef"] == "경제 15% (변동성 최소)"
 
 
 def test_hedge_cost_sign_direction_is_spelled_out_not_just_coloured(probe):
-    """헤지비용 부호는 **글자**로 나온다 — 방향이 뒤집히면 즉시 빨간불.
-
-    계약이 지목한 함정 자리다("MTM 손실은 스왑레이트 상승 시", 과거에 부호를 뒤집어
-    최악월을 1.8배 과소 발표한 전력). 산식이 정하는 방향은 하나다: 캐리 = A × h × cost
-    이므로 **양수 = 받음 / 음수 = 지불**.
-    """
     h = probe["hedgeScreen"]
     assert h["signKey"] == "＋받음 −지불"
-    # 픽스처: 엔 +3.25(받음) · 달러 −0.50(지불)
-    assert "+3.25%" in h["jpyCost"] and "받음" in h["jpyCost"] and "지불" not in h["jpyCost"]
-    assert "-0.50%" in h["usdCost"] and "지불" in h["usdCost"] and "받음" not in h["usdCost"]
-    assert "＋받음 −지불" in " ".join(h["matrixHeader"])
+    assert h["signKey"] in h["dashboard"]["text"]
     s = probe["hedgeSim"]
     assert "받음" in s["atDefault"]["jpyCost"] and "지불" in s["atDefault"]["usdCost"]
-    assert "받음" in s["atDefault"]["carry"]          # 캐리 합계 +43억
-    # MTM 최악의 달은 손실이므로 음수로 찍힌다
-    assert all(v.startswith("−") for v in h["mtmWorst"]), h["mtmWorst"]
+    assert "받음" in s["atDefault"]["carry"]
 
 
-def test_mtm_tau_is_half_the_tenor_everywhere(probe):
-    """τ(잔존만기) = 만기 ÷ 2. 표·캡션·시뮬레이터가 같은 정의를 쓴다."""
-    h = probe["hedgeScreen"]
-    assert h["mtmTau"] == ["0.125", "0.250", "0.375", "0.500"], h["mtmTau"]
-    assert "잔존만기 τ" in " ".join(h["mtmHeader"]) and "년" in " ".join(h["mtmHeader"])
-    assert h["method"] == ""
-    # 최악의 달 평가손도 τ 에 정비례한다: 3.3%p × τ
-    worst = [float(v.replace("−", "").replace("%", "")) for v in h["mtmWorst"]]
-    for tau, w in zip((0.125, 0.25, 0.375, 0.5), worst):
-        assert abs(w - tau * 3.3) < 0.006, (tau, w)   # toFixed(2) 반올림 폭
+def test_simulator_mtm_tau_remains_half_the_tenor(probe):
     assert "잔존만기 τ = 만기 ÷ 2" in probe["hedgeSim"]["tenorNote"]
 
 
-def test_mtm_normal_vol_is_annualized_with_sqrt12(probe):
-    """§5.3.1 공백 ④ — 「평상시 MTM 변동」 = τ × σ_Δs,3M × **√12** (연율).
-
-    √12 를 빼면 ±0.23% 가 ±0.07% 로 줄어드는데 열 제목은 「연 %」 그대로라
-    눈으로는 못 잡는다 — 픽스처 σ 로 독립 재계산해 표시값과 대조한다.
-    """
-    h = probe["hedgeScreen"]
-    sigma = h["mtmSigma"]
-    assert sigma > 0, "전제가 깨졌다 — 픽스처 σ 가 있어야 한다"
-    for m, shown in zip((3, 6, 9, 12), h["mtmVol"]):
-        expect = (m / 24) * sigma * math.sqrt(12)
-        val = float(shown.replace("±", "").replace("%", ""))
-        assert abs(val - expect) < 0.006, (   # toFixed(2) 반올림 폭
-            f"{m}개월: 화면 {shown} vs τ·σ·√12 = {expect:.4f} — 연율화가 어긋난다")
-        assert shown.startswith("±"), f"{m}개월: 변동 표기가 ± 가 아니다: {shown}"
-
-
-def test_hedge_period_inputs_filter_charts_tables_and_raw_csv(probe):
-    """선택기간의 양 끝을 포함하며 실제 차트·열린 표·원시 CSV가 일치한다."""
-    h = probe["hedgePeriod"]
+def test_hedge_charts_tables_and_raw_csv_keep_the_full_range(probe):
+    """기간 UI 삭제 후 다른 탭의 1년 필터가 이력·표·CSV를 자르지 않는다."""
+    h = probe["hedgeFullRange"]
     epoch = lambda value: datetime.fromisoformat(value).replace(tzinfo=timezone.utc).timestamp()
-    assert h["rangedCharts"] == 3
-    assert h["inputLabels"] == ["시작기간", "종료기간"]
-    assert all(count > 1 for count in h["suggestions"])
-    assert h["applied"] == {"start": "2021-06-30", "end": "2021-07-31"}
-    expected_scale = {"axis": "x", "min": epoch("2021-06-30"), "max": epoch("2021-08-01")}
-    assert h["scales"] == [expected_scale] * 3
-    assert h["rows"] == [["2021-07-31", "-5.50", "–"], ["2021-06-30", "-0.20", "–"]]
-    assert h["chartData"] == [[epoch("2021-06-30"), epoch("2021-07-31")],
-                              [-0.200123, -5.501234], [None, None]]
+    assert h["timeCharts"] == 2
+    assert h["chartData"] == [
+        [epoch("2021-05-31"), epoch("2026-06-30"), epoch("2029-11-30")],
+        [-0.600123, -0.620234, -0.631234],
+        [-0.550123, -0.570234, -0.581234],
+        [-0.500123, -0.520234, -0.531234],
+    ]
+    assert h["rows"] == [["2029-11-30", "-0.63", "-0.58", "-0.53"],
+                          ["2026-06-30", "-0.62", "-0.57", "-0.52"],
+                          ["2021-05-31", "-0.60", "-0.55", "-0.50"]]
     lines = h["csv"].lstrip("\ufeff").splitlines()
-    assert "SMB" in lines[0] and "HP" in lines[0] and "%" in lines[0]
-    assert lines[1:] == ["2021-07-31,-5.501234,", "2021-06-30,-0.200123,"]
-    assert h["statsUnchanged"] is True
-
-
-def test_hedge_period_rejects_bad_ranges_and_preserves_valid_state(probe):
-    h = probe["hedgePeriod"]
-    assert h["reverseRejected"] and h["invalidRejected"] and h["outsideRejected"]
-    assert h["singleDayRows"] == [["2021-07-31", "-5.50", "–"]]
-    assert h["singleDayScale"]["max"] - h["singleDayScale"]["min"] == 86400
-    assert h["singlePointVisible"] is True and h["missingPointHidden"] is True
-    assert h["emptyRows"] == [] and h["emptyChartPoints"] == [0, 0, 0]
-    assert len(h["emptyCsv"].splitlines()) == 1
+    assert all(token in lines[0] for token in ("3개월", "6개월", "12개월", "%"))
+    assert lines[1:] == ["2029-11-30,-0.631234,-0.581234,-0.531234",
+                         "2026-06-30,-0.620234,-0.570234,-0.520234",
+                         "2021-05-31,-0.600123,-0.550123,-0.500123"]
     assert h["afterOtherRange"] == h["scales"]
+    assert h["afterOtherData"] == h["chartData"] == h["afterRerender"]
+    assert h["afterOtherRows"] == h["rows"]
     assert h["otherRange"] == {"axis": "x", "min": 2000000000 - 31557600, "max": 2000000000}
-    assert h["afterRerender"] == ["2021-06-30", "2021-07-31", "2021-06-30~2021-07-31"]
     assert h["globalFilterHidden"] is True
+    assert len(h["meritData"][0]) == 4
 
 
-def test_hedge_main_screen_has_no_explanations_or_simulator_cta(probe):
+def test_hedge_main_screen_dashboard_is_followed_by_merit(probe):
     html = INDEX_HTML.read_text(encoding="utf-8")
     section = html.split('<section id="hedge"', 1)[1].split("</section>", 1)[0]
-    for removed in ("hedge-sim-btn", "hedge-method", "hedge-views", "우리 포트폴리오 숫자로"):
+    for removed in ("hedge-headline", "hedge-period", "hedge-lead", "hedge-matrix",
+                    "hedge-bt-card", "hedge-cost-card", "hedge-mtm-card", "hedge-sim-btn",
+                    "hedge-method", "hedge-views", "우리 포트폴리오 숫자로"):
         assert removed not in section
-    assert 'id="hedge-period"' in section
+    order = [section.index(f'id="{name}"') for name in
+             ("hedge-cost-dashboard", "hedge-merit-card", "hedge-curve-card", "hedge-ts-card")]
+    assert order == sorted(order)
     assert probe["hedgeScreen"]["explanationCount"] == 0
 
 
@@ -966,12 +962,10 @@ def test_amount_line_matches_its_own_stated_formula(probe):
 def test_every_worked_number_names_the_tenor_it_used(probe):
     """만기를 밝히지 않은 헤지비용 문장은 없다.
 
-    매트릭스는 12개월, 시뮬레이터 기본값은 실무 평균(픽스처 6개월)이라 같은 통화가
-    다른 숫자로 보인다 — 그래서 **모든** 문장이 자기 만기를 들고 있어야 한다.
+    대시보드는 3·6·12개월, 시뮬레이터는 선택한 만기를 표시한다.
     """
-    h, s = probe["hedgeScreen"], probe["hedgeSim"]
-    assert "12개월" in " ".join(h["matrixHeader"])
-    assert "12개월" in h["lead"]
+    s = probe["hedgeSim"]
+    assert [tile["tenor"] for tile in probe["hedgeScreen"]["dashboard"]["tiles"]] == ["3M", "6M", "12M", "mean"]
     assert "만기 6개월" in s["atDefault"]["costHead"]
     assert "만기 12개월" in s["at12"]["costHead"], "만기를 바꾸면 열 제목이 따라와야 한다"
     assert "만기 6개월로 양 끝을" in s["atDefault"]["span"]
@@ -1050,63 +1044,12 @@ def test_cross_screen_pointers_are_true():
     assert 'id="hedge-ts-card"' not in fx_sec
 
 
-def test_hedge_matrix_covers_all_three_tenors(probe):
-    """매트릭스가 3·6·12개월을 전부 싣는가 — FX 화면 표를 흡수한 결과.
-
-    흡수 이유: 그 표의 12M 열과 매트릭스 12M 열이 **완전히 같은 숫자**였다(실측 4/4).
-    한 화면에 나란히 놓으면 순수 잉여가 된다. 흡수하면서 이관 표에 없던
-    캐나다달러·파운드의 3·6개월이 처음으로 화면에 나온다.
-    """
-    h = probe["hedgeScreen"]
-    head = " ".join(h["matrixHeader"])
-    for tenor in ("3개월", "6개월", "12개월"):
-        assert tenor in head, f"매트릭스에 {tenor} 열이 없다: {head}"
-    # 픽스처 커브가 만기마다 다른 값이므로, 세 열이 같은 값이면 같은 열을 세 번 그린 것이다
-    assert h["jpyCost3m"] != h["jpyCost6m"] != h["jpyCost"], (
-        f"세 만기 열이 같은 값이다: {h['jpyCost3m']} / {h['jpyCost6m']} / {h['jpyCost']}"
-    )
-    assert "+3.40%" in h["jpyCost3m"] and "+3.30%" in h["jpyCost6m"]
-    # 커브가 없는 통화는 세 열 모두 대시 — undefined 가 나가면 안 된다
-    assert h["cnyCost3m"] == "—", h["cnyCost3m"]
-
-
-def test_matrix_states_its_own_sample_per_row(probe):
-    """행마다 표본 구간·월수를 적는다. 두 표본이 다르면 **둘 다** 적는다.
-
-    같은 행 안에서도 열마다 표본이 다르다 — `vol_e` 는 조인 전에, `mvh`/`corr` 은
-    채권 프록시와 조인한 뒤에 계산되므로 짧은 쪽에 맞춰 잘린다(실데이터 실측:
-    EUR·JPY 305 vs 294, AUD 267/267). 표에는 「변동성·MVH·상관 = 월간 수익률」
-    한 줄만 있어 **같은 표본으로 읽혔다.** 파이프라인만 고치고 화면을 안 고치면
-    조용히 무시되므로, 렌더된 글자를 본다.
-    """
-    h = probe["hedgeScreen"]
-    assert "표본" in " ".join(h["matrixHeader"])
-    # 두 표본이 같은 행: 한 줄로 줄어야 한다(같은 말을 두 번 적지 않는다)
-    assert h["usdSample"] == "2002-01~2029-12 (294)", h["usdSample"]
-    # 다른 행: 둘 다 적혀야 하고 월수도 각각 나와야 한다
-    assert "305" in h["jpySample"] and "294" in h["jpySample"], h["jpySample"]
-    assert "변동성" in h["jpySample"] and "MVH" in h["jpySample"], h["jpySample"]
-    # 적합 표본이 없는 행: 변동성만
-    assert h["cnySample"].startswith("변동성") and "MVH" not in h["cnySample"], h["cnySample"]
-
-
 def test_migrated_curve_card_uses_short_labels_and_units(probe):
     """만기별 비용 카드에서 제목·단위·부호는 유지하고 보간 해설은 제거한다."""
     t = probe["hedgeScreen"]["tsCardText"]
     assert "달러 만기별 비용" in t, t[:80]
     assert "연 %" in t and "＋받음 −지불" in t
     assert "보간" not in t
-
-
-def test_inactive_row_state_is_not_conveyed_by_opacity_alone(probe):
-    """비활성 통화 행: opacity .5 는 대비 3.67:1 로 AA 미달이었고 색만으로 상태를 전했다."""
-    h = probe["hedgeScreen"]
-    assert h["cnyClass"] == "row-off"
-    assert not h["cnyStyle"] or "opacity" not in h["cnyStyle"]
-    assert "데이터 없음" in h["cnyText"]
-    css = STYLE_CSS.read_text(encoding="utf-8")
-    assert re.search(r"\.mini-table tr\.row-off td\s*\{[^}]*var\(--ink-3\)", css)
-    assert not re.search(r"\.grid-inp tr\.dis\s*\{\s*opacity", css)
 
 
 def test_simulator_inputs_all_have_accessible_names(probe):
@@ -1195,60 +1138,10 @@ def test_a_failing_section_says_it_is_broken(probe):
     assert r["noticeNotDuplicated"] is True, "다시 그릴 때마다 안내가 겹쳐 쌓인다"
 
 
-def test_screen_says_how_the_cost_curve_was_read(probe):
-    """헤지비용을 **어떻게 읽었는지**를 화면이 말해야 하고, 그 문자열은 파이프라인 값이어야 한다.
-
-    최근 5영업일 중앙값은 최신 호가와 다른 숫자를 낸다(실데이터 9개월 −0.975 →
-    −0.800). 화면이 "최신 호가"라고 계속 적으면 게시값과 설명이 어긋난다.
-    화면에 문자열을 박으면 `HP_MEDIAN_N` 을 되돌려도 문장만 남으므로,
-    파이프라인의 `cost_read.label` 을 그대로 쓰는지 본다 — 픽스처는 실데이터와
-    **일부러 다른** 라벨을 태운다.
-    """
-    h = probe["hedgeScreen"]
-    assert "프로브전용읽기" in h["matrixSub"], (
-        f"매트릭스 부제가 파이프라인의 읽는 법을 쓰지 않는다: {h['matrixSub']}"
-    )
-    assert "최신 호가" not in h["matrixSub"], "읽는 법이 화면에 박혀 있다"
-
-
 def test_screen_falls_back_when_the_read_method_is_missing(probe):
     """`cost_read` 가 없는 옛 payload 로도 "undefined" 를 안 찍는다."""
     m = probe["hedgeMissingFields"]
     assert not m["hasUndefined"], m["where"]
-
-
-def test_cost_history_card_keeps_the_full_sample_mean_label(probe):
-    """차트 범위 조정과 구별되도록 평균을 전체 집계값으로 표시한다."""
-    h = probe["hedgeScreen"]
-    assert "25년" not in h["costSub"], h["costSub"]
-    assert "전체 평균 0.10%" in h["costSub"], h["costSub"]
-    assert "3개월" in h["costSub"] and "연 %" in h["costSub"]
-
-
-def test_mtm_card_states_its_own_sample(probe):
-    """MTM 통계도 자기 표본을 밝혀야 한다 — σ 와 최악월이 표본에 통째로 의존한다.
-
-    HP 로 통일했다면 이 표본이 302 → 21개월로 줄어 σ 를 54% 과소평가하고 최악월이
-    +4.92%p(2008-12) → +0.41%p(2025-12) 로 12분의 1이 됐을 것이다. 그래서 이력은
-    SMB 로 남겼고, 남긴 이상 무엇을 쓰는지 화면이 말해야 한다.
-    """
-    h = probe["hedgeScreen"]
-    assert "프로브전용MTM계열" in h["mtmSub"], h["mtmSub"]
-    assert "2027-02~2029-12" in h["mtmSub"] and "35개월" in h["mtmSub"], h["mtmSub"]
-
-
-def test_cost_history_overlays_the_hp_series(probe):
-    """간소화 후에도 SMB 월말과 HP 일별을 서로 다른 두 계열로 그린다."""
-    h = probe["hedgeScreen"]
-    # 문장이 아니라 **차트에 실제로 그려진 계열**을 센다 — "겹쳐 그렸다"고 적어 두고
-    # 안 그리는 변경은 문장 검사로는 통과한다(뮤테이션으로 실제로 확인했다).
-    cost_chart = next((c for c in h["chartSeries"]
-                       if any("SMB" in l for l in c["labels"])), None)
-    assert cost_chart, f"비용 이력 차트를 못 찾았다: {h['chartSeries']}"
-    assert len(cost_chart["labels"]) == 2, (
-        f"HP 보조선이 차트에 없다 — 그려진 계열: {cost_chart['labels']}"
-    )
-    assert any("HP" in l for l in cost_chart["labels"]), cost_chart["labels"]
 
 
 def test_migrated_curve_chart_draws_all_three_tenors(probe):
@@ -1350,23 +1243,6 @@ def test_every_row_sign_matches_the_computed_carry(probe):
             assert word in r["costShown"], (
                 f"[{tenor_key}/{rid}] 비용 {r['costShown']!r} 이 {r['expectCost']:+.2f} 와 어긋난다"
             )
-
-
-def test_receiving_currencies_list_only_contains_positive_costs(probe):
-    """「받는 통화」 목록에 든 통화는 전부 `cost_12m > 0` 이어야 한다 (E-6).
-
-    분류가 뒤집히면 "내는 통화"가 "받는 통화"로 발표된다. 픽스처는 엔만 양수다.
-    """
-    lead = probe["hedgeScreen"]["lead"]
-    pos = [m["name"] for m in probe["hedgeScreen"]["matrixCosts"] if (m["cost"] or 0) > 0]
-    neg = [m["name"] for m in probe["hedgeScreen"]["matrixCosts"] if (m["cost"] or 0) < 0]
-    assert pos and neg, "테스트 전제가 깨졌다 — 픽스처에 양수·음수가 다 있어야 한다"
-    recv = lead.split("받는 통화")[1].split("내는 통화")[0] if "받는 통화" in lead else ""
-    assert recv, f"결론 상자에 「받는 통화」가 없다: {lead[:160]}"
-    for name in pos:
-        assert name in recv, f"{name}(양수)가 받는 통화 목록에 없다: {recv}"
-    for name in neg:
-        assert name not in recv, f"{name}(음수)가 받는 통화 목록에 있다: {recv}"
 
 
 # ---- 미국 시장 폭 카드 (실행해서 확인) --------------------------------------
