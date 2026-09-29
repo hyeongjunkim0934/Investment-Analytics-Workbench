@@ -30,6 +30,21 @@ NAME = {"USD": "달러", "EUR": "유로", "JPY": "엔", "CNY": "위안",
 DEFAULT_TENOR_M = 9        # 사용자 실무 기준: 금액가중평균 9개월
 
 
+# 10년 국채와 해당 통화의 3개월 연율 스왑레이트. 금리 키는 process.CURVES와
+# 같은 info 원천이다. GER은 EUR/KRW로 헤지하며 USD 비용·금리차로 대체하지 않는다.
+# HP 현재 커브의 중앙값과 달리 이력은 관측일별 호가를 읽는다(cost_hist_curve와 동일).
+BOND_MERIT_SOURCES = {
+    "UST": {"currency": "USD", "bond": "info:UST10y", "label": "미국채 10년",
+            "cost": "info:SMB_USDKRW_3M", "cost_source": "SMB"},
+    "JPY": {"currency": "JPY", "bond": "info:JPY10y", "label": "일본 국채 10년",
+            "cost": "info:JPYKRW_HP_3M", "cost_source": "HP 원호가"},
+    "AUD": {"currency": "AUD", "bond": "info:AUD10y", "label": "호주 국채 10년",
+            "cost": "info:AUDKRW_HP_3M", "cost_source": "HP 원호가"},
+    "GER": {"currency": "EUR", "bond": "info:GER10y", "label": "독일 국채 10년",
+            "cost": "info:EURKRW_HP_3M", "cost_source": "HP 원호가"},
+}
+
+
 def despike(s: pd.Series, thr: float = 0.10) -> pd.Series:
     """하루 튀고 다음날 복귀하는 단일일 데이터 오류 제거."""
     chg = s.pct_change()
@@ -51,6 +66,72 @@ def synth_bond_tr(y_series: pd.Series, T: int = 5) -> pd.Series:
 
 def pack(s: pd.Series, r: int = 2) -> dict:
     return common.pack_values(s, r)
+
+
+def build_bond_merit(series: dict, currency: str, label: str, *,
+                     hedge_currency: str | None = None) -> dict:
+    """외국 10년 국채 + 같은 날 HP 3M 연율 캐리와 국고 10년을 비교한다.
+
+    만기 10년 동안 헤지비용이 고정된 실현수익률이 아닌 현재 금리·캐리 지표다.
+    원호가를 쓰므로 대시보드의 5영업일 중앙값과 구분한다. 일별 공통 관측만
+    선택하고 주별 마지막 실제 관측일을 게시한다(미도래 금요일로 날짜를 밀지 않는다).
+    """
+    keys = {"foreign": f"info:{currency}10y", "ktb": "info:한국_10y",
+            "cost": f"info:{hedge_currency or currency}KRW_HP_3M"}
+    missing = [key for key in keys.values() if series.get(key) is None]
+    if missing:
+        return {"active": False, "reason": "원천 시리즈 없음: " + " / ".join(missing)}
+    daily = pd.concat({name: series[key] for name, key in keys.items()}, axis=1)
+    daily = daily.replace([np.inf, -np.inf], np.nan).dropna().sort_index()
+    if daily.empty:
+        return {"active": False, "reason": "국채·헤지비용 공통 관측 없음"}
+    daily["observed"] = daily.index
+    weekly = daily.resample("W-FRI").last().dropna()
+    weekly.index = pd.DatetimeIndex(weekly.pop("observed"))
+    weekly["hedged"] = weekly["foreign"] + weekly["cost"]
+    weekly["spread"] = weekly["hedged"] - weekly["ktb"]
+    fields = ("foreign", "ktb", "cost", "hedged", "spread")
+    now = {key: round(float(weekly[key].iloc[-1]), 3) for key in fields}
+    now["spread_pctile"] = round(float((weekly["spread"] <= weekly["spread"].iloc[-1]).mean() * 100), 1)
+    return {
+        "active": True, "asof": weekly.index[-1].strftime("%Y-%m-%d"),
+        "freq": "weekly", "start": weekly.index[0].strftime("%Y-%m"),
+        "n_weeks": int(len(weekly)), "t": epoch_seconds(weekly.index),
+        "series": {"foreign": f"{label} 10년", "ktb": "국고 10년",
+                   "cost": "3개월 헤지비용(HP 원호가, 연율)"},
+        "sources": keys,
+        **{key: [round(float(x), 3) for x in weekly[key]] for key in fields},
+        "now": now,
+    }
+
+
+def build_bond_merits(series: dict, warn, ust_merit: dict) -> dict:
+    """기존 UST 이력과 통화별 국채 메리트를 같은 화면 계약으로 묶는다.
+
+    기존 UST는 W-FRI 표시·SMB 원천을 유지한다. JPY/AUD/GER은 HP 이력이
+    실제로 있는 구간만 사용하며 주별 마지막 실제 관측일을 게시한다.
+    모두 연율 금리의 캐리 비교로, 장기 실현 총수익률을 뜻하지 않는다.
+    """
+    merits = {}
+    for code, spec in BOND_MERIT_SOURCES.items():
+        original = ust_merit if code == "UST" else build_bond_merit(
+            series, code, spec["label"].removesuffix(" 10년"),
+            hedge_currency=spec["currency"])
+        base = {"currency": spec["currency"], "cost_source": spec["cost_source"],
+                "sources": {"bond": spec["bond"], "ktb": "info:한국_10y", "cost": spec["cost"]}}
+        if not original["active"]:
+            warn(f"hedge: {code} 메리트 — {original['reason']}")
+            merits[code] = {**original, **base}
+            continue
+        old_key = "ust" if code == "UST" else "foreign"
+        m = {**original, **base}
+        m["bond"] = m.pop(old_key)
+        m["series"] = {**m["series"], "bond": m["series"][old_key]}
+        m["series"].pop(old_key)
+        m["now"] = {**m["now"], "bond": m["now"][old_key]}
+        m["now"].pop(old_key)
+        merits[code] = m
+    return merits
 
 
 def build(series_store: dict, warn) -> dict:
@@ -296,6 +377,9 @@ def build(series_store: dict, warn) -> dict:
         "cost_hist_curve": cost_hist_curve,
         "cost_hist_usd": pack(smb_m),
         "ust_merit": ust_merit,
+        "bond_merits": build_bond_merits(S, warn, ust_merit),
+        "jgb_merit": build_bond_merit(S, "JPY", "일본 국채"),
+        "agb_merit": build_bond_merit(S, "AUD", "호주 국채"),
         # 계열명·표본기간·관측수를 함께 싣는다 — 화면이 「25년 평균」을 하드코딩하고
         # 있었다. 표본이 늘거나 줄어도 문장이 25년에 멈춰 있으면 거짓이 된다
         # (이 저장소는 「주식 10%는 어느 산식에서도 나오지 않는 수」로 같은 사고를
