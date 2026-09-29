@@ -617,6 +617,20 @@ def test_hp_curve_maps_currency_codes_to_series_keys():
     assert common.hp_curve(S, "USD") is None
 
 
+def test_hp_curve_preserves_each_tenors_observation_date():
+    """연장된 날짜 축·끝의 결측을 다른 만기의 기준일로 메우면 안 된다."""
+    idx = pd.bdate_range("2030-01-01", periods=6)
+    S = {f"info:AUDKRW_HP_{m}": pd.Series(v, index=idx) for m, v in {
+        "3M": [-1., -2., -3., -4., -5., float("nan")],
+        "6M": [0., 1., 2., 3., 4., 5.],
+        "12M": [1., 2., 3., 4., float("nan"), float("nan")],
+    }.items()}
+    got = common.hp_curve(S, "AUD")
+    assert got["dates"] == {"3M": idx[4], "6M": idx[5], "12M": idx[3]}
+    assert got["asof"] == idx[5]
+    assert got["curve"] == {"3M": -3., "6M": 3., "12M": 2.5}
+
+
 def test_hedge_and_alloc_read_the_same_hp_curve():
     """두 모듈이 **같은 헬퍼를 부르고 같은 값을 낸다.**
 

@@ -601,11 +601,15 @@ const HEDGE_FIXTURE = (() => {
   };
 })();
 
-const readHedgeDashboard = () => {
+const readHedgeDashboard = (currency = "USD") => {
   const dashboard = DOC.getElementById("hedge-cost-dashboard");
+  const rows = dashboard.querySelectorAll(".hedge-cost-row");
+  const row = rows.find((node) => node.getAttribute("data-currency") === currency);
   return {
     text: dashboard.textContent,
-    tiles: dashboard.querySelectorAll(".hedge-cost-tile").map((tile) => ({
+    rowText: row?.textContent || "",
+    currencies: rows.map((node) => node.getAttribute("data-currency")),
+    tiles: (row?.querySelectorAll(".hedge-cost-tile") || []).map((tile) => ({
       tenor: tile.getAttribute("data-tenor"), text: tile.textContent,
       value: tile.querySelector(".hedge-cost-value")?.textContent,
       date: tile.querySelector(".hedge-cost-date")?.textContent,
@@ -659,6 +663,52 @@ safe("hedgeDashboardCases", () => {
     P.renderHedge();
     r.noData = readHedgeDashboard();
     r.noData.sectionText = DOC.getElementById("hedge").textContent;
+    return r;
+  } finally {
+    P.DATA.hedge = HEDGE_FIXTURE;
+    P.renderHedge();
+  }
+});
+
+/* 통화별 비용·관측일은 새 게시 블록의 값을 그대로 사용한다. USD의 구 이력이나
+   다른 통화의 기준일로 공백을 채우면 합성 값이 명확하게 달라지도록 구성한다. */
+safe("hedgeCurrencyDashboard", () => {
+  const fixture = JSON.parse(JSON.stringify(HEDGE_FIXTURE));
+  const entry = (values, date, currency, window) => ({
+    curve: Object.fromEntries(["3M", "6M", "12M"].map((tenor, i) => [tenor, values[i]])),
+    dates: Object.fromEntries(["3M", "6M", "12M"].map((tenor) => [tenor, date])),
+    src: "실측(HP)", label: `${currency} 프로브 ${window}관측 중앙값`, window,
+  });
+  fixture.cost_dashboard = {
+    JPY: entry([1.2, 0.6, 0], "2029-12-03", "JPY", 3),
+    AUD: entry([-0.9, -0.6, -0.3], "2029-12-04", "AUD", 5),
+    USD: entry([-1.8, -2.1, -2.4], "2029-12-05", "USD", 9),
+  };
+  const r = {};
+  const read = (f, currency) => ({
+    snapshot: P.hedgeCostSnapshot(f, currency), ...readHedgeDashboard(currency),
+  });
+  const run = (name, currency, change) => {
+    const f = JSON.parse(JSON.stringify(fixture));
+    change(f.cost_dashboard[currency], f);
+    P.DATA.hedge = f;
+    P.renderHedge();
+    r[name] = read(f, currency);
+  };
+  try {
+    P.DATA.hedge = fixture;
+    P.renderHedge();
+    r.published = Object.fromEntries(["JPY", "AUD", "USD"].map((currency) => [currency, read(fixture, currency)]));
+    run("missingUsdDate", "USD", (entry) => { delete entry.dates["6M"]; });
+    run("missingJpyDates", "JPY", (entry) => { delete entry.dates; });
+    run("mixedAudDates", "AUD", (entry) => { entry.dates["6M"] = "2029-12-03"; });
+    run("invalidJpyDate", "JPY", (entry) => { entry.dates["6M"] = "2029-02-30"; });
+    run("missingAudValue", "AUD", (entry) => { entry.curve["6M"] = null; });
+    run("publishedWithoutMatrix", "AUD", (_, f) => { f.matrix = []; });
+    P.DATA.hedge = HEDGE_FIXTURE;
+    P.renderHedge();
+    r.legacyJpy = read(HEDGE_FIXTURE, "JPY");
+    r.legacyAud = read(HEDGE_FIXTURE, "AUD");
     return r;
   } finally {
     P.DATA.hedge = HEDGE_FIXTURE;

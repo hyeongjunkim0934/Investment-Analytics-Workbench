@@ -100,10 +100,11 @@ def hp_curve(series: dict, cur: str, n: int = HP_MEDIAN_N) -> dict | None:
     읽는 자리를 하나로 합치는 것이 중앙값 도입의 선행 조건이었다.
 
     돌려주는 것: `{"curve": {"3M":…, "6M":…, "12M":…}, "asof": Timestamp,
-    "window": n, "n_used": 실제로 쓴 관측 수}`. 세 만기 중 하나라도 없으면 None.
+    "window": n, "n_used": 실제로 쓴 관측 수, "dates": 만기별 마지막 유효 관측일}`.
+    세 만기 중 하나라도 없으면 None. `asof`는 가장 늦은 날짜이며 만기별 날짜를 대체하지 않는다.
     """
     key = "USDKRW" if cur == "USD" else f"{cur}KRW"
-    curve, last, used = {}, None, None
+    curve, dates, last, used = {}, {}, None, None
     for m in HP_TENORS:
         s = series.get(f"info:{key}_HP_{m}")
         if s is None:
@@ -113,9 +114,11 @@ def hp_curve(series: dict, cur: str, n: int = HP_MEDIAN_N) -> dict | None:
             return None
         w = s.iloc[-max(1, n):]
         curve[m] = round(float(w.median()), 2)
+        dates[m] = s.index[-1]
         last = s.index[-1] if last is None else max(last, s.index[-1])
         used = len(w) if used is None else min(used, len(w))
-    return {"curve": curve, "asof": last, "window": max(1, n), "n_used": used}
+    return {"curve": curve, "asof": last, "window": max(1, n), "n_used": used,
+            "dates": dates}
 
 
 def hp_read_label(n: int = HP_MEDIAN_N) -> str:

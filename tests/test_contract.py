@@ -282,6 +282,31 @@ def test_hedge_ust_merit_identity(built):
     assert m["now"]["spread"] == m["spread"][-1]
 
 
+def test_hedge_dashboard_publishes_currency_specific_dates(built, parsed):
+    out, _ = built
+    H = json.loads((out / "hedge.json").read_text(encoding="utf-8"))
+    _, p = parsed
+    assert set(H["cost_dashboard"]) == {"JPY", "AUD", "USD"}
+    for c, d in H["cost_dashboard"].items():
+        matrix = next(r for r in H["matrix"] if r["c"] == c)
+        assert d["curve"] == matrix["cost_curve"]
+        assert d["src"] == matrix["src"]
+        # The baseline synthetic workbook deliberately omits some currency HPs.
+        # Their existing rate-difference proxy must not acquire HP dates.
+        if not all(f"info:{c}KRW_HP_{m}" in p.SERIES for m in ("3M", "6M", "12M")):
+            assert d["window"] is None and d["label"] is None
+            assert d["dates"] == {"3M": None, "6M": None, "12M": None}
+            assert "HP" not in d["src"]
+            continue
+        assert d["window"] == 5
+        for m in ("3M", "6M", "12M"):
+            s = p.SERIES[f"info:{c}KRW_HP_{m}"]["s"].dropna()
+            assert d["dates"][m] == s.index[-1].strftime("%Y-%m-%d")
+            # Order-statistic oracle, independent of the helper's median call.
+            latest = sorted(s.iloc[-5:].tolist())
+            assert d["curve"][m] == round(latest[2], 2)
+
+
 def test_alloc_publishes_covariance_not_returns(built):
     """alloc.json 공개 범위: 원천 공분산·평균·분위수만 — 원본 수익률 시계열 금지.
 

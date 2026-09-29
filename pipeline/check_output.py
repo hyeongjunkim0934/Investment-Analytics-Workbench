@@ -53,7 +53,7 @@ META_FIELDS = ["built_at_utc", "last_observation", "series_count", "files", "war
 # 게이트의 일이 아니다 — 그건 pytest 와 프로브가 본다.
 REQUIRED_KEYS = {
     "hedge": ["asof", "default_tenor_m", "matrix", "curves", "backtest",
-              "cost_hist_curve", "cost_hist_usd", "cost_stats", "mtm", "sim",
+              "cost_hist_curve", "cost_hist_usd", "cost_dashboard", "cost_stats", "mtm", "sim",
               # ust_merit = 미국채 투자 메리트 모니터(§7.7.14). 시리즈가 없어도
               # active:false 로 항상 게시된다(bm.cma 와 같은 체인 안전장치).
               "ust_merit",
@@ -94,6 +94,7 @@ REQUIRED_NESTED_KEYS = {
     ("hedge", "mtm"): ["sigma_ds_3m", "worst_ds", "worst_date", "series",
                        "start", "end", "n_months"],
     ("hedge", "cost_read"): ["label", "window", "asof"],
+    ("hedge", "cost_dashboard"): ["JPY", "AUD", "USD"],
 }
 
 _errors: list[str] = []

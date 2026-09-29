@@ -849,6 +849,65 @@ def test_hedge_dashboard_missing_usd_or_payload_is_explicit(probe):
     assert "실측(HP)" in c["sourceFallback"]["text"]
 
 
+def test_hedge_currency_dashboard_uses_each_published_curve_date_and_source(probe):
+    """새 게시 블록을 우선하며 통화별 관측일·중앙값 라벨을 섞지 않는다."""
+    rows = probe["hedgeCurrencyDashboard"]["published"]
+    expected = {
+        "JPY": ([1.2, 0.6, 0, 0.6], ["+1.20%", "+0.60%", "0.00%", "+0.60%"], "2029-12-03", 3),
+        "AUD": ([-0.9, -0.6, -0.3, -0.6], ["-0.90%", "-0.60%", "-0.30%", "-0.60%"], "2029-12-04", 5),
+        "USD": ([-1.8, -2.1, -2.4, -2.1], ["-1.80%", "-2.10%", "-2.40%", "-2.10%"], "2029-12-05", 9),
+    }
+    for currency, (values, displayed, date, window) in expected.items():
+        row = rows[currency]
+        assert row["currencies"] == ["JPY", "AUD", "USD"]
+        assert [tile["tenor"] for tile in row["tiles"]] == ["3M", "6M", "12M", "mean"]
+        assert [tile["value"] for tile in row["tiles"]] == displayed
+        assert row["snapshot"]["values"] == pytest.approx(values)
+        assert row["snapshot"]["dates"] == [date] * 3
+        assert row["snapshot"]["meanDate"] == date
+        assert [tile["date"] for tile in row["tiles"]] == [date] * 4
+        assert f"{currency}/KRW" in row["rowText"]
+        assert f"HP · {currency} 프로브 {window}관측 중앙값" in row["rowText"]
+        assert "프로브전용읽기" not in row["rowText"]
+        assert "3M·6M·12M 단순평균" in row["rowText"]
+        assert "연 %" in row["text"] and "＋받음 −지불" in row["text"]
+    assert probe["hedgeCurrencyDashboard"]["publishedWithoutMatrix"]["snapshot"] == rows["AUD"]["snapshot"]
+
+
+def test_hedge_currency_dashboard_withholds_mean_for_missing_or_invalid_inputs(probe):
+    cases = probe["hedgeCurrencyDashboard"]
+    for name, dates in {
+        "missingUsdDate": ["2029-12-05", None, "2029-12-05"],
+        "missingJpyDates": [None] * 3,
+        "mixedAudDates": ["2029-12-04", "2029-12-03", "2029-12-04"],
+        "invalidJpyDate": ["2029-12-03", None, "2029-12-03"],
+    }.items():
+        row = cases[name]
+        assert row["snapshot"]["dates"] == dates
+        assert row["snapshot"]["values"][-1] is None
+        assert row["snapshot"]["meanDate"] is None
+        assert row["tiles"][-1]["value"] == "—"
+        assert "기준일 확인 필요" in row["rowText"]
+    missing = cases["missingAudValue"]
+    assert missing["snapshot"]["values"] == [-0.9, None, -0.3, None]
+    assert missing["tiles"][1]["value"] == missing["tiles"][-1]["value"] == "—"
+    assert "3개 만기 데이터 필요" in missing["rowText"]
+
+
+def test_hedge_legacy_currency_values_never_borrow_usd_observation_dates(probe):
+    cases = probe["hedgeCurrencyDashboard"]
+    jpy = cases["legacyJpy"]
+    assert jpy["snapshot"]["values"] == [3.4, 3.3, 3.25, None]
+    assert jpy["snapshot"]["dates"] == [None] * 3
+    assert all(tile["date"] == "기준일 —" for tile in jpy["tiles"])
+    assert "기준일 확인 필요" in jpy["rowText"]
+    aud = cases["legacyAud"]
+    assert aud["snapshot"]["values"] == [None] * 4
+    assert aud["snapshot"]["dates"] == [None] * 3
+    assert all(tile["value"] == "—" for tile in aud["tiles"])
+    assert "데이터 없음" in aud["rowText"]
+
+
 def test_hedge_retained_reference_numbers_come_from_payload(probe):
     assert "채권 50% · 주식 15%" in probe["hedgeScreen"]["curveSub"]
     assert probe["hedgeSim"]["eqRef"] == "경제 15% (변동성 최소)"
