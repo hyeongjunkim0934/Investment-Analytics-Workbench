@@ -101,9 +101,7 @@ secNodes.events.append(elem("details", "events-rules"));
 /* 환헤지 뼈대 — index.html 의 #hedge 안 구조를 그대로 흉내 낸다.
    renderHedge() 가 만지는 컨테이너가 하나라도 없으면 그 자리에서 죽으므로,
    이 목록 자체가 index.html 과의 계약이다. */
-["hedge-headline", "hedge-period", "hedge-lead", "hedge-matrix",
- "hedge-curve-card", "hedge-bt-card", "hedge-cost-card", "hedge-mtm-card",
- "hedge-ts-card", "hedge-merit-card"]
+["hedge-cost-dashboard", "hedge-merit-card", "hedge-curve-card", "hedge-ts-card"]
   .forEach((id) => secNodes.hedge.append(elem("div", id, "card")));
 
 /* ACWI 뼈대 — 시장 폭 카드 포함 */
@@ -191,7 +189,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "bandInk", "relLum", "deltaText", "factorRow", "renderEvents", "renderMetaLine",
   "cardScaffold", "el", "registry", "DATA", "BANDS", "SECTION_IDS", "palette",
   "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY",
-  "HEDGE_PERIOD", "hedgePeriodData", "applyRange", "bindRangeButtons", "state",
+  "hedgeCostSnapshot", "applyRange", "bindRangeButtons", "state",
   "SCENE_CYCLE_MS", "sceneCycleAllowed", "restartSceneCycle", "stopSceneCycle",
   "renderVillage", "allocSaveState", "villageNotesInvalidate", "allocRefModel", "VILLAGE_NOTES", "VILLAGE_ZONES", "VILLAGE_BANNER",
   "currentScene", "currentTheme", "syncThemeButton",
@@ -572,9 +570,9 @@ const HEDGE_FIXTURE = (() => {
                      v: [0.5, -0.2, -5.5, 0.1] },
     /* FX 화면에서 이관된 일별 커브 — 세 계열이 서로 다른 값이어야 흡수 검사가 의미 있다 */
     cost_hist_curve: {
-      "3M":  { t: [mk(2029, 10), mk(2029, 11)], v: [-0.61, -0.60] },
-      "6M":  { t: [mk(2029, 10), mk(2029, 11)], v: [-0.56, -0.55] },
-      "12M": { t: [mk(2029, 10), mk(2029, 11)], v: [-0.51, -0.50] },
+      "3M":  { t: [mk(2029, 10), mk(2029, 11)], v: [-0.61, -0.63] },
+      "6M":  { t: [mk(2029, 10), mk(2029, 11)], v: [-0.56, -0.58] },
+      "12M": { t: [mk(2029, 10), mk(2029, 11)], v: [-0.51, -0.53] },
     },
     /* 표본 길이·계열명도 payload 에서 온다 — 실데이터(25.2년 · 303개월)와 **일부러
        다른** 수를 태워, 화면이 「25년 평균」처럼 박아 두면 여기서 잡히게 한다. */
@@ -603,72 +601,69 @@ const HEDGE_FIXTURE = (() => {
   };
 })();
 
+const readHedgeDashboard = () => {
+  const dashboard = DOC.getElementById("hedge-cost-dashboard");
+  return {
+    text: dashboard.textContent,
+    tiles: dashboard.querySelectorAll(".hedge-cost-tile").map((tile) => ({
+      tenor: tile.getAttribute("data-tenor"), text: tile.textContent,
+      value: tile.querySelector(".hedge-cost-value")?.textContent,
+      date: tile.querySelector(".hedge-cost-date")?.textContent,
+    })),
+  };
+};
+
 safe("hedgeScreen", () => {
-  shim.UPlotStub.made.length = 0;          // 이 렌더에서 만들어진 차트만 본다
+  shim.UPlotStub.made.length = 0;
   P.DATA.hedge = HEDGE_FIXTURE;
   P.DATA.meta = { last_observation: "2030-01-31" };
   P.renderHedge();
   const txt = (id) => (DOC.getElementById(id) || { textContent: "" }).textContent;
-  const rowsOf = (id) => DOC.getElementById(id).querySelectorAll("tr");
-  const mxRows = rowsOf("hedge-matrix");
-  const cell = (row, i) => row.children[i].textContent;
-  const jpy = mxRows.find((r) => /엔 \(/.test(r.textContent));
-  const usd = mxRows.find((r) => /달러 \(/.test(r.textContent));
-  const cny = mxRows.find((r) => /위안/.test(r.textContent));
-  /* 헤더 텍스트에 이름이 들어 있는 열을 찾아 그 행의 같은 위치를 돌려준다. */
-  const heads = mxRows[0].children.map((c) => c.textContent);
-  const col = (row, name) => {
-    if (!row) return null;
-    const i = heads.findIndex((h) => h.includes(name));
-    return i < 0 ? `열없음:${name}` : row.children[i].textContent;
-  };
-  const mtmRows = rowsOf("hedge-mtm-card");
-  const boldRow = mtmRows.find((r) => /700/.test(r.getAttribute("style") || ""));
   return {
     signKey: P.COST_SIGN_KEY,
-    headline: txt("hedge-headline"),
-    views: txt("hedge-views"),
     explanationCount: DOC.getElementById("hedge").querySelectorAll(".explain").length,
-    lead: txt("hedge-lead"),
-    matrixHeader: mxRows[0].children.map((c) => c.textContent),
-    matrixSub: DOC.getElementById("hedge-matrix").querySelector(".card-sub").textContent,
-    matrixCosts: HEDGE_FIXTURE.matrix.map((m) => ({ name: m.name, cost: m.cost_12m })),
-    /* 부호 방향은 **글자**로 나와야 한다 — 색만으로는 전달되지 않고, 뒤집히면 여기서 잡힌다.
-       열은 인덱스가 아니라 **헤더 이름**으로 집는다 — 예전에는 `cell(row, 4)` 라
-       3·6개월 열을 흡수하자 조용히 다른 열을 재고 있었다. */
-    jpyCost: col(jpy, "12개월"), usdCost: col(usd, "12개월"),
-    jpyCost3m: col(jpy, "헤지비용 3개월"), jpyCost6m: col(jpy, "6개월"),
-    cnyCost3m: col(cny, "헤지비용 3개월"),
-    usdSample: col(usd, "표본"), jpySample: col(jpy, "표본"), cnySample: col(cny, "표본"),
+    dashboard: readHedgeDashboard(), snapshot: P.hedgeCostSnapshot(HEDGE_FIXTURE),
     tsCardText: txt("hedge-ts-card"),
-    tsCardSeries: DOC.getElementById("hedge-ts-card")
-      .querySelectorAll(".legend-item, .chart-legend span").map((n) => n.textContent),
-    cnyClass: cny ? cny.className : null,
-    cnyStyle: cny ? cny.getAttribute("style") : null,
-    cnyText: cny ? cny.textContent : null,
     curveSub: DOC.getElementById("hedge-curve-card").querySelector(".card-sub").textContent,
-    costSub: DOC.getElementById("hedge-cost-card").querySelector(".card-sub").textContent,
-    mtmSub: DOC.getElementById("hedge-mtm-card").querySelector(".card-sub").textContent,
-    /* 차트에 **실제로 그려진 계열**. 설명 문장만 보면 "겹쳐 그렸다"고 적어 두고
-       그리지 않는 변경이 통과한다 — uPlot 에 넘어간 series 를 직접 센다. */
     chartSeries: shim.UPlotStub.made.map((u) => ({
       title: (u.opts && u.opts.title) || "",
       labels: ((u.opts && u.opts.series) || []).slice(1).map((sr) => sr.label),
       rows: (u.data && u.data[0] && u.data[0].length) || 0,
     })),
-    costNote: txt("hedge-cost-card"),
-    mtmHeader: mtmRows[0].children.map((c) => c.textContent),
-    /* τ 열 — 만기 ÷ 2 (년). 3/6/9/12 개월 → 0.125/0.250/0.375/0.500 */
-    mtmTau: mtmRows.slice(1).map((r) => cell(r, 1)),
-    /* §5.3.1 공백 ④ — 「평상시 MTM 변동」 = τ × σ_Δs,3M × √12 (연율). √12 를 빼면
-       ±0.23% 가 ±0.07% 로 줄어드는데 열 제목은 「연 %」 그대로다 — 값으로 대조한다. */
-    mtmVol: mtmRows.slice(1).map((r) => cell(r, 2)),
-    mtmSigma: HEDGE_FIXTURE.mtm.sigma_ds_3m,
-    mtmWorst: mtmRows.slice(1).map((r) => cell(r, 3)),
-    boldRowText: boldRow ? boldRow.textContent : null,
-    method: txt("hedge-method"),
-    fxLinks: DOC.getElementById("hedge-matrix").querySelectorAll("a").map((a) => a.getAttribute("href")),
   };
+});
+
+/* 게시된 비용과 일별 원자료는 다르다. 누락·서로 다른 기준일에 평균을 지어내지 않는다. */
+safe("hedgeDashboardCases", () => {
+  const r = {};
+  const run = (name, change) => {
+    const fixture = JSON.parse(JSON.stringify(HEDGE_FIXTURE));
+    change(fixture);
+    P.DATA.hedge = fixture;
+    P.renderHedge();
+    r[name] = { snapshot: P.hedgeCostSnapshot(fixture), ...readHedgeDashboard() };
+  };
+  try {
+    run("signed", (f) => { f.matrix[0].cost_curve = { "3M": -1.2, "6M": 0, "12M": 0.6 }; });
+    run("missingValue", (f) => { f.matrix[0].cost_curve["6M"] = null; });
+    run("nonFinite", (f) => { f.matrix[0].cost_curve["6M"] = Infinity; });
+    run("missingDate", (f) => { delete f.cost_hist_curve["6M"]; });
+    run("differentDates", (f) => { f.cost_hist_curve["6M"].v[1] = null; });
+    run("trailingNull", (f) => {
+      Object.values(f.cost_hist_curve).forEach((h) => { h.t.push(h.t.at(-1) + 86400); h.v.push(null); });
+    });
+    run("noUsd", (f) => { f.matrix = f.matrix.filter((m) => m.c !== "USD"); });
+    run("sourceFallback", (f) => { delete f.cost_read; });
+    run("proxySource", (f) => { f.matrix[0].src = "금리차 프록시"; });
+    P.DATA.hedge = null;
+    P.renderHedge();
+    r.noData = readHedgeDashboard();
+    r.noData.sectionText = DOC.getElementById("hedge").textContent;
+    return r;
+  } finally {
+    P.DATA.hedge = HEDGE_FIXTURE;
+    P.renderHedge();
+  }
 });
 
 /* 필수 필드가 빠진 payload 로도 "undefined" 를 화면에 찍지 않는다 */
@@ -725,85 +720,62 @@ safe("hedgeMerit", () => {
   return r;
 });
 
-/* 날짜 입력 이벤트 → uPlot 축·열린 표·CSV를 함께 확인한다. 통계 표본은 고정이다. */
-safe("hedgePeriod", () => {
-  const previous = { ...P.HEDGE_PERIOD }, oldYears = P.state.years;
-  const oldRegistry = P.registry.slice();
+/* 기간 선택은 제거됐으므로 다른 화면의 숨겨진 연수 상태가 차트·표·CSV를 자르면 안 된다. */
+safe("hedgeFullRange", () => {
+  const oldYears = P.state.years, oldRegistry = P.registry.slice();
   const fixture = JSON.parse(JSON.stringify(HEDGE_FIXTURE));
-  fixture.cost_hist_usd.v = [0.5, -0.200123, -5.501234, 0.1];
-  P.DATA.hedge = fixture;
-  P.registry.length = 0;
-  Object.assign(P.HEDGE_PERIOD, { start: "", end: "" });
-  P.renderHedge();
-  const byId = (id) => DOC.getElementById(`hedge-period-${id}`);
-  const input = (id, value) => { byId(id).value = value; byId(id).dispatchEvent({ type: "input" }); };
-  const costCard = DOC.getElementById("hedge-cost-card");
-  const costTable = () => costCard.querySelector(".chart-table");
-  const tableRows = (card) => card.querySelector(".chart-table").querySelectorAll("tbody tr")
-    .map((row) => row.children.map((cell) => cell.textContent));
-  const beforeStats = ["hedge-matrix", "hedge-bt-card", "hedge-mtm-card"]
-    .map((id) => DOC.getElementById(id).textContent);
-  const entries = P.registry.filter((entry) => entry.range === P.HEDGE_PERIOD);
-  entries.forEach((entry) => { entry.u.setScale = (axis, value) => { entry.u.lastScale = { axis, ...value }; }; });
-  costCard.querySelectorAll(".card-actions button")[0].click();
-  const r = { defaultRange: { ...P.HEDGE_PERIOD }, rangedCharts: entries.length,
-    inputLabels: [byId("start"), byId("end")].map((n) => n.getAttribute("aria-label")),
-    suggestions: [byId("start-options"), byId("end-options")].map((n) => n.children.length) };
-  input("start", "2021-06-30"); input("end", "2021-07-31"); byId("apply").click();
-  r.applied = { ...P.HEDGE_PERIOD };
-  r.scales = entries.map((entry) => entry.u.lastScale);
-  r.chartData = entries.find((entry) => costCard.contains(entry.u.root)).u.data;
-  r.rows = tableRows(costCard);
-  costCard.querySelectorAll(".card-actions button")[1].click();
-  r.csv = CSV_DOWNLOADS.at(-1);
-  r.statsUnchanged = beforeStats.every((text, i) =>
-    text === DOC.getElementById(["hedge-matrix", "hedge-bt-card", "hedge-mtm-card"][i]).textContent);
-  // Another tab's year button must still change its own chart and leave hedge dates intact.
-  const other = { isTime: true, tmin: 0, tmax: 2000000000, u: { setScale(axis, value) { this.lastScale = { axis, ...value }; } } };
-  P.registry.push(other);
-  const yearButton = P.el("button", { "data-range": "1" }, "1년");
-  yearButton.dataset.range = "1"; // DOM shim does not reflect data-* attributes into dataset.
-  rangeGroup.append(yearButton); P.bindRangeButtons(); yearButton.click();
-  r.afterOtherRange = entries.map((entry) => entry.u.lastScale);
-  r.otherRange = other.u.lastScale;
-  const chartBeforeError = JSON.stringify(r.afterOtherRange);
-  input("start", "2021-07-31"); input("end", "2021-06-30"); byId("apply").click();
-  r.reverseRejected = !byId("status").hidden && /늦/.test(byId("status").textContent)
-    && P.HEDGE_PERIOD.start === "2021-06-30" && P.HEDGE_PERIOD.end === "2021-07-31"
-    && JSON.stringify(entries.map((entry) => entry.u.lastScale)) === chartBeforeError;
-  input("start", "2021-02-30"); input("end", "2021-07-31"); byId("apply").click();
-  r.invalidRejected = !byId("status").hidden && P.HEDGE_PERIOD.start === "2021-06-30";
-  input("start", "2020-01-01"); byId("apply").click();
-  r.outsideRejected = !byId("status").hidden && /조회 가능/.test(byId("status").textContent);
-  // A single calendar day is inclusive, with a nonzero chart width.
-  input("start", "2021-07-31"); input("end", "2021-07-31");
-  byId("end").dispatchEvent({ type: "keydown", key: "Enter", preventDefault() {} });
-  r.singleDayRows = tableRows(costCard);
-  r.singleDayScale = entries[0].u.lastScale;
-  const costPlot = entries.find((entry) => costCard.contains(entry.u.root)).u;
-  r.singlePointVisible = costPlot.opts.series[1].points.show(costPlot, 1);
-  r.missingPointHidden = !costPlot.opts.series[2].points.show(costPlot, 2);
-  input("start", "2022-01-01"); input("end", "2022-01-31"); byId("apply").click();
-  r.emptyRows = tableRows(costCard);
-  r.emptyChartPoints = entries.map((entry) => entry.u.data[0].length);
-  costCard.querySelectorAll(".card-actions button")[1].click();
-  r.emptyCsv = CSV_DOWNLOADS.at(-1);
-  input("start", "2021-06-30"); input("end", "2021-07-31"); byId("apply").click();
-  P.renderHedge();
-  r.afterRerender = [byId("start").value, byId("end").value, byId("range").textContent];
-  shim.location.hash = "#hedge"; P.routeView(); r.globalFilterHidden = filterRow.hidden;
-  yearButton.remove();
-  P.state.years = oldYears;
-  Object.assign(P.HEDGE_PERIOD, previous);
-  P.registry.length = 0; P.registry.push(...oldRegistry);
-  P.DATA.hedge = HEDGE_FIXTURE;
-  return r;
+  const ts = [Date.UTC(2021, 4, 31), Date.UTC(2026, 5, 30), Date.UTC(2029, 10, 30)].map((x) => x / 1000);
+  fixture.cost_hist_curve = {
+    "3M": { t: ts, v: [-0.600123, -0.620234, -0.631234] },
+    "6M": { t: ts, v: [-0.550123, -0.570234, -0.581234] },
+    "12M": { t: ts, v: [-0.500123, -0.520234, -0.531234] },
+  };
+  let yearButton;
+  try {
+    P.DATA.hedge = fixture;
+    P.registry.length = 0;
+    P.state.years = 1;
+    P.renderHedge();
+    const card = DOC.getElementById("hedge-ts-card");
+    const entries = P.registry.filter((entry) => DOC.getElementById("hedge").contains(entry.u.root));
+    const costEntry = entries.find((entry) => card.contains(entry.u.root));
+    const meritEntry = entries.find((entry) => DOC.getElementById("hedge-merit-card").contains(entry.u.root));
+    entries.forEach((entry) => {
+      entry.u.setScale = (axis, value) => { entry.u.lastScale = { axis, ...value }; };
+      P.applyRange(entry);
+    });
+    card.querySelectorAll(".card-actions button")[0].click();
+    const tableRows = () => card.querySelector(".chart-table").querySelectorAll("tbody tr")
+      .map((row) => row.children.map((cell) => cell.textContent));
+    const r = { timeCharts: entries.length, chartData: costEntry.u.data, rows: tableRows(),
+      scales: entries.map((entry) => entry.u.lastScale), meritData: meritEntry.u.data };
+    card.querySelectorAll(".card-actions button")[1].click();
+    r.csv = CSV_DOWNLOADS.at(-1);
+    const other = { isTime: true, tmin: 0, tmax: 2000000000,
+      u: { setScale(axis, value) { this.lastScale = { axis, ...value }; } } };
+    P.registry.push(other);
+    yearButton = P.el("button", { "data-range": "1" }, "1년");
+    yearButton.dataset.range = "1";
+    rangeGroup.append(yearButton); P.bindRangeButtons(); yearButton.click();
+    r.afterOtherRange = entries.map((entry) => entry.u.lastScale);
+    r.afterOtherData = costEntry.u.data;
+    r.afterOtherRows = tableRows();
+    r.otherRange = other.u.lastScale;
+    P.renderHedge();
+    r.afterRerender = P.registry.findLast((entry) => card.contains(entry.u.root)).u.data;
+    shim.location.hash = "#hedge"; P.routeView(); r.globalFilterHidden = filterRow.hidden;
+    return r;
+  } finally {
+    yearButton?.remove(); P.state.years = oldYears;
+    P.registry.length = 0; P.registry.push(...oldRegistry);
+    P.DATA.hedge = HEDGE_FIXTURE;
+  }
 });
 
 safe("hedgeMissingFields", () => {
   const thin = JSON.parse(JSON.stringify(HEDGE_FIXTURE));
   delete thin.default_tenor_m; delete thin.curves; delete thin.mtm;
-  delete thin.cost_hist_usd; delete thin.cost_stats; delete thin.backtest;
+  delete thin.cost_hist_usd; delete thin.cost_stats; delete thin.backtest; delete thin.cost_read;
   P.DATA.hedge = thin;
   let threw = null;
   try { P.renderHedge(); } catch (e) { threw = String(e && e.message || e); }

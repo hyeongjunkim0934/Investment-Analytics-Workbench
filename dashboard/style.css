@@ -1022,10 +1022,14 @@ details.explain[open] > summary { color: var(--ink-2); }
 .alloc-period input[type="date"] { width: 144px; color-scheme: dark; }
 [data-theme="light"] .alloc-period input[type="date"] { color-scheme: light; }
 .alloc-period-status { flex-basis: 100%; }
-#hedge-lead { display: grid; gap: 4px; margin-top: 10px; font-size: 12px; }
-#hedge-period { margin: 14px 0; }
-#hedge .chart-box { position: relative; }
-.hedge-empty { position: absolute; inset: 42% 0 auto; text-align: center; pointer-events: none; }
+.hedge-cost-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.hedge-cost-tile { min-width: 0; padding: 12px 14px; }
+.hedge-cost-tile .card-title { font-size: 12px; }
+.hedge-cost-value { margin: 5px 0 3px; font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hedge-cost-date { color: var(--ink-3); font-size: 11px; }
+.hedge-cost-tile .card-sub { display: block; margin-top: 3px; font-size: 11px; }
+@media (max-width: 760px) { .hedge-cost-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 380px) { .hedge-cost-grid { grid-template-columns: 1fr; } }
 #alloc-headline:empty { display: none; }
 .alloc-select { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; }
 .alloc-select select {
