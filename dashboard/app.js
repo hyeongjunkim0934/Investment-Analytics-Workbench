@@ -2598,6 +2598,7 @@ function routeView() {
 }
 
 function ensureVillageBack(sec) {
+  if (sec === "alloc") return; // The allocation workspace uses the top navigation.
   const node = document.getElementById(sec);
   if (!node || node.querySelector(".village-back")) return;
   const p = el("p", { class: "village-back" }, el("a", { href: "#village" }, "‹ 마을로 돌아가기"));
@@ -3492,7 +3493,11 @@ function makeRatioChart(box, opts) {
       const markerBoxes = opts.markers.map((m) => {
         const x = u.valToPos(m.x, "x", true), y = u.valToPos(m.y, "y", true), r = ((m.size || 5) + 5) * dpr;
         return { x: x - r, y: y - r, w: 2 * r, h: 2 * r };
-      });
+      }).concat((opts.hints || []).filter((p) => !p.hiddenForPlot).map((p) => {
+        const x = u.valToPos(p.x, "x", true), y = u.valToPos(p.y, "y", true);
+        const r = ((p.kind === "gap" ? PORT_GAP_STYLE.radius : 5) + 3) * dpr;
+        return { x: x - r, y: y - r, w: 2 * r, h: 2 * r };
+      }));
       const markerBackground = cssVar("--page");
       opts.markers.forEach((m) => {
         const px = u.valToPos(m.x, "x", true), py = u.valToPos(m.y, "y", true);
@@ -6398,6 +6403,8 @@ function renderPortImprovement(card, P, E, exploration, redraw) {
     "현재 경계점 기준 · 기존 비중 비례축소 · 연 % · 실재 자산의 전망이나 유일한 개선 조합은 아님"));
 }
 
+const PORT_GAP_STYLE = { radius: 14, color: "#a0a0a0" };
+
 function portDrawHints(u, hints, markers) {
   const { ctx, bbox } = u, dpr = devicePixelRatio || 1;
   const position = (p) => ({ x: u.valToPos(p.x, "x", true), y: u.valToPos(p.y, "y", true) });
@@ -6409,16 +6416,16 @@ function portDrawHints(u, hints, markers) {
   const ordered = [...scenario.slice(0, 1), ...hints.filter((p) => p.kind === "gap"), ...scenario.slice(1)];
   ctx.save(); ctx.beginPath(); ctx.rect(bbox.left, bbox.top, bbox.width, bbox.height); ctx.clip();
   ordered.forEach((p) => {
-    const q = position(p), gap = p.kind === "gap", radius = (gap ? 7 : 5) * dpr;
+    const q = position(p), gap = p.kind === "gap", radius = (gap ? PORT_GAP_STYLE.radius : 5) * dpr;
     // Apply the same visibility decision to drawing and hover, including resize.
     p.hiddenForPlot = ![q.x, q.y].every(Number.isFinite)
       || q.x < bbox.left + radius || q.x > bbox.left + bbox.width - radius
       || q.y < bbox.top + radius || q.y > bbox.top + bbox.height - radius
       || (!gap && u.valToPos(p.baseX, "x", true) - q.x < 4 * dpr)
-      || occupied.some((m) => Math.hypot(m.x - q.x, m.y - q.y) < 17 * dpr)
-      || placed.some((m) => Math.hypot(m.x - q.x, m.y - q.y) < 23 * dpr);
+      || occupied.some((m) => Math.hypot(m.x - q.x, m.y - q.y) < Math.max(17 * dpr, radius + 10 * dpr))
+      || placed.some((m) => Math.hypot(m.x - q.x, m.y - q.y) < Math.max(23 * dpr, radius + m.radius + 9 * dpr));
     if (p.hiddenForPlot) return;
-    placed.push(q);
+    placed.push({ ...q, radius });
     ctx.strokeStyle = hexA(p.color, 0.42); ctx.lineWidth = 1.1 * dpr;
     ctx.setLineDash(gap ? [3 * dpr, 3 * dpr] : []);
     ctx.beginPath();
@@ -7278,10 +7285,9 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   const mixInputs = {}, srcCells = {}, sigInputs = {};
   const riskStatus = el("div", { id: "port-risk-status", class: "port-warn d-up", role: "status" });
   const table = el("table", { class: "port-table" });
-  /* μ 출처는 열이 아니라 키인 칸 아래 주석(.port-src)이다 — 그 자리에 실현 μ(선택 창)를
-     싣는다(2026-08-23 사용자 지시. 벤치마크 60/40 수익률은 행 단위가 아니라 포트폴리오
-     하나의 수라 행에 넣지 않는다 — 아래 리뷰 카드가 정본). */
-  const assetHeaders = ["자산군", "비중 %", "기대수익 %", "변동성 %", `실현수익 % (${portWinLabel(W.key)})`,
+  // Suppress default-source notes while retaining explicit key-in/CMA indicators.
+  const sourceLabel = (source) => source === "과거 평균(참고)" || source === "실측" ? "" : source;
+  const assetHeaders = ["자산군", "현재비중", "기대수익 %", "변동성 %", `실현수익 % (${portWinLabel(W.key)})`,
     `실현변동성 % (${portWinLabel(W.key)})`, "10년 참고 μ/σ"];
   table.append(el("thead", {}, el("tr", {}, ...assetHeaders.map((h) => el("th", { scope: "col" }, h)))));
   const tbody = el("tbody");
@@ -7304,15 +7310,15 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       if (isFinite(v)) st.mu[a] = v; else delete st.mu[a];
       portSaveState(st);
       const E = portEngine(P, st);
-      srcCells[a].textContent = E.src[i];
+      srcCells[a].textContent = sourceLabel(E.src[i]);
       recalc();
     });
-    const srcNote = el("span", { class: "port-src" }, E0.src[i]);
+    const srcNote = el("span", { class: "port-src" }, sourceLabel(E0.src[i]));
     srcCells[a] = srcNote;
     const sigInp = el("input", { type: "number", min: "0", step: "any", placeholder: fmtNum(E0.risk.baseSig[i], 2),
       "aria-label": `${a} 변동성`, "aria-describedby": "port-risk-status" });
     if (st.sig[a] != null) sigInp.value = String(st.sig[a]);
-    const sigNote = el("span", { class: "port-src" }, st.sig[a] != null ? "키인" : "실측");
+    const sigNote = el("span", { class: "port-src" }, st.sig[a] != null ? "키인" : "");
     sigInputs[a] = sigInp;
     sigInp.addEventListener("input", () => {
       const blank = sigInp.value.trim() === "" && !sigInp.validity?.badInput;
@@ -7324,7 +7330,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
         riskStatus.textContent = `${candidate.error || "변동성을 숫자로 입력하십시오."} 마지막 적용값을 유지합니다.`; return;
       }
       sigInp.removeAttribute("aria-invalid"); st.sig = next;
-      sigNote.textContent = blank ? "실측" : "키인";
+      sigNote.textContent = blank ? "" : "키인";
       riskStatus.textContent = Object.values(sigInputs).some((input) => input.getAttribute("aria-invalid") === "true")
         ? "잘못된 변동성 입력이 있습니다. 마지막 적용값을 유지합니다." : "";
       portSaveState(st); recalc();
@@ -7413,9 +7419,9 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const hintSettings = portHintSettings();
     const exploration = portOpportunityHints(E.front, E.risk.C, E.mu, { correlationShrink: hintSettings.shrink });
     const hints = [
-      ...(hintSettings.gaps ? exploration.gaps.map((p) => ({ ...p, color: colors.nominal })) : []),
+      ...(hintSettings.gaps ? exploration.gaps.map((p) => ({ ...p, color: PORT_GAP_STYLE.color })) : []),
       ...(hintSettings.diversification ? exploration.diversification.map((p) => ({ ...p, color: colors.asset, C: exploration.scenarioC })) : []),
-    ].map((p) => ({ ...p, hint: true, hitRadius: 9 }));
+    ].map((p) => ({ ...p, hint: true, hitRadius: p.kind === "gap" ? PORT_GAP_STYLE.radius + 3 : 9 }));
     const fbox = cardScaffold(frontCard, {
       title: "효율적 경계선",
       csvName: "효율적경계선.csv",
@@ -7529,7 +7535,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       el("b", { style: `color:${hexA(colors.asset, 0.55)}` }, "↕"), `자산 ±${sigma}σ`));
     if (hintSettings.gaps && exploration.gaps.length) key.append(el("span", { class: "port-marker-key port-hint-key",
       title: "개별 자산 분포가 드문 구간 · 현재 입력의 기존 자산 조합으로 도달 가능 · 투자 우위를 뜻하지 않음" },
-      el("i", { class: "port-hint-symbol port-hint-gap", style: `color:${colors.nominal}`, "aria-hidden": "true" }), "개선여지"));
+      el("i", { class: "port-hint-symbol port-hint-gap", style: `color:${PORT_GAP_STYLE.color}`, "aria-hidden": "true" }), "개선여지"));
     if (hintSettings.diversification && exploration.diversification.length) key.append(el("span", { class: "port-marker-key port-hint-key",
       title: `상관계수 크기 ${fmtNum(hintSettings.shrink * 100, 2)}% 축소 가정 · 동일 비중 · 재최적화 경계선이 아님` },
       el("i", { class: "port-hint-symbol port-hint-diversification", style: `color:${colors.asset}`, "aria-hidden": "true" }),

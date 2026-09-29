@@ -159,6 +159,7 @@ body {
 /* ---------- layout ---------- */
 .page { max-width: 1280px; margin: 0 auto; padding: 18px 20px 60px; }
 .section { margin-top: 34px; scroll-margin-top: 70px; }
+#alloc { margin-top: 0; }
 .section h2 {
   font-size: 18px; margin: 0 0 14px;
   padding-left: 10px; border-left: 3px solid var(--accent);
@@ -1143,6 +1144,7 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-table input[type="number"] { width: min(86px, 100%); min-width: 0; text-align: center; }
 /* μ 출처는 열이 아니라 키인 칸 아래 주석이다 */
 .port-src { display: block; font-size: 11px; color: var(--ink-3); margin-top: 2px; }
+.port-src:empty { display: none; }
 .port-badge { font-size: 12.5px; padding: 2px 8px; border: 1px solid var(--border);
   border-radius: 8px; color: var(--ink-2); }
 .port-btns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
@@ -1268,7 +1270,7 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-hints-note { color: var(--ink-3); font-size: 11px; line-height: 1.5; }
 .port-hint-key { color: var(--ink-3); font-size: 11px; }
 .port-hint-symbol { display: inline-block; width: 10px; height: 10px; border: 1px solid currentColor; opacity: .55; }
-.port-hint-gap { border-radius: 50%; border-style: dashed; }
+.port-hint-gap { width: 16px; height: 16px; border-radius: 50%; border-style: dashed; }
 .port-hint-diversification { width: 7px; height: 7px; transform: rotate(45deg); margin: 0 2px; }
 @media (max-width: 600px) {
   .port-frontier { padding: 12px 8px; }
