@@ -543,7 +543,7 @@ function renderDataFreshness(today = todayKst()) {
   const cards = (DATA.overview && DATA.overview.cards) || [];
   const count = cards.filter((c) => observationAge(c.date, today).check).length;
   const check = age.check || count > 0;
-  host.hidden = underlyingSection(location.hash.replace(/^#/, "")) === "alloc";
+  host.hidden = ["alloc", "risk"].includes(underlyingSection(location.hash.replace(/^#/, "")));
   host.classList.toggle("needs-check", check);
   host.textContent = "";
   host.append(el("b", {}, check ? "자료 확인" : "자료 시점"),
@@ -1141,7 +1141,7 @@ function withToday(hist, asofTs, cur) {
 }
 
 /* 0~100 고정 스케일 + 등급 밴드 배경 차트 (기간 필터 미적용) */
-function makeBandChart(box, { seriesDefs, height = 300, extra = null }) {
+function makeBandChart(box, { seriesDefs, height = 300, extra = null, hoverOnly = false }) {
   /* extra: {label, color, t, v, levels} — 점수(0~100, 좌축)와 단위가 다른 대조
      계열(%, 우축)을 **같은 차트**에 겹친다(2026-08-27 사용자 지시). levels 는
      우축 기준 수평 점선 — 수치만 긋고 뜻은 적지 않는다. */
@@ -1149,6 +1149,8 @@ function makeBandChart(box, { seriesDefs, height = 300, extra = null }) {
   const dark = currentTheme() === "dark";
   const defs = extra ? [...seriesDefs, extra] : seriesDefs;
   const data = joinSeries(defs);
+  const tip = hoverOnly ? el("div", { class: "risk-chart-tooltip", role: "status" }) : null;
+  if (tip) { tip.hidden = true; box.append(tip); }
   const series = [{ label: "주", value: "{YYYY}-{MM}-{DD}" }];
   seriesDefs.forEach((sd) => series.push({
     label: sd.label, stroke: sd.color, width: 2.5, spanGaps: true,
@@ -1175,7 +1177,7 @@ function makeBandChart(box, { seriesDefs, height = 300, extra = null }) {
       : { y: { range: () => [0, 100] } },
     series,
     axes,
-    legend: { live: true },
+    legend: { show: !hoverOnly, live: true },
     hooks: {
       drawClear: [(u) => {
         const { ctx, bbox } = u;
@@ -1200,7 +1202,7 @@ function makeBandChart(box, { seriesDefs, height = 300, extra = null }) {
         }
         // 끝점 값 라벨
         let prevY = null;
-        seriesDefs.forEach((sd, i) => {
+        if (!hoverOnly) seriesDefs.forEach((sd, i) => {
           const xs = u.data[0], ys = u.data[i + 1];
           let li = ys.length - 1;
           while (li >= 0 && ys[li] == null) li--;
@@ -1220,6 +1222,28 @@ function makeBandChart(box, { seriesDefs, height = 300, extra = null }) {
       }],
     },
   };
+  if (tip) {
+    opts.hooks.setCursor = [(u) => {
+      const { idx, left, top } = u.cursor;
+      if (!Number.isInteger(idx) || idx < 0 || idx >= u.data[0].length || left < 0 || top < 0) {
+        tip.hidden = true;
+        return;
+      }
+      tip.textContent = "";
+      tip.append(el("strong", {}, tsToDate(u.data[0][idx])));
+      defs.forEach((sd, i) => {
+        const value = u.data[i + 1][idx];
+        const unit = i < seriesDefs.length ? "점" : "%";
+        tip.append(el("div", { class: "risk-tooltip-row" },
+          legendKey(sd.color, sd.label),
+          el("b", {}, value == null ? "–" : `${fmtNum(value, 2)}${unit}`)));
+      });
+      if (lv.length) tip.append(el("small", {}, `참고선 ${lv.join(" · ")}%`));
+      tip.style.left = left > u.bbox.width / devicePixelRatio / 2 ? "8px" : "auto";
+      tip.style.right = left > u.bbox.width / devicePixelRatio / 2 ? "auto" : "8px";
+      tip.hidden = false;
+    }];
+  }
   if (lv.length) {
     opts.hooks.draw.push((u) => {
       const { ctx, bbox } = u;
@@ -1289,10 +1313,10 @@ function factorRow(f, r, asofTs) {
   return row;
 }
 
-function renderFactorGroup(titleSel, rowsSel, layerKey, layer, subtitle, r, asofTs) {
+function renderFactorGroup(titleSel, rowsSel, layerKey, layer, r, asofTs) {
   const title = $(titleSel);
   title.textContent = "";
-  title.append(`${layer.name} ${Math.round(layer.score)}점 `, gradeChip(layer.grade), ` — ${subtitle}`);
+  title.append(`${layer.name} ${Math.round(layer.score)}점 `, gradeChip(layer.grade));
   const trip = deltaTriplet(layer.chg);
   if (trip) {
     const ctx = el("span", { class: "layer-ctx" }, trip);
@@ -1364,8 +1388,7 @@ function renderRisk() {
 
   const hl = $("#risk-headline");
   hl.textContent = "";
-  hl.append(el("div", { class: "q" }, "이 화면이 답하는 질문"));
-  const a = el("div", { class: "a" }, `지금 시장 위험은 어느 수준인가 — 현재 위험 ${Math.round(S.score)} `);
+  const a = el("div", { class: "a" }, `현재 위험 ${Math.round(S.score)} `);
   a.append(gradeChip(S.grade), ` · 잠재 위험 ${Math.round(V.score)} `, gradeChip(V.grade));
   hl.append(a);
 
@@ -1375,8 +1398,8 @@ function renderRisk() {
     el("span", { class: "card-title" }, "위험 수준 추이 — 최근 24개월"),
     el("span", { class: "card-sub" }, `기준일 ${r.asof} · 선이 위로 갈수록 위험 · 배경 음영 = 등급 구간`)));
   const lg = el("div", { class: "legendline" });
-  lg.append(legendKey(pal.series[0], `현재 위험 — ${S.question}`),
-            legendKey(pal.series[1], `잠재 위험 — ${V.question} (가동 ${V.active}/${V.total} 요인)`));
+  lg.append(legendKey(pal.series[0], "현재 위험"),
+            legendKey(pal.series[1], "잠재 위험"));
   cc.append(lg);
   const box = el("div", { class: "chart-box" });
   cc.append(box);
@@ -1385,12 +1408,9 @@ function renderRisk() {
      옛 페이로드(kospi10 없음)에서는 종전 2계열 차트 그대로다. */
   const k10 = r.kospi10;
   const hasK10 = !!(k10 && k10.hist && k10.hist.t && k10.hist.t.length);
-  if (hasK10) {
-    lg.append(legendKey(pal.series[2], `${k10.label} — 우축 %`),
-      el("span", { class: "card-sub" }, `참고선 ${(k10.levels || []).join(" · ")}%`));
-  }
   const sh = withToday(S.hist, asofTs, S.score), vh = withToday(V.hist, asofTs, V.score);
   makeBandChart(box, {
+    hoverOnly: true,
     seriesDefs: [
       { label: "현재 위험", color: pal.series[0], t: sh.t, v: sh.v },
       { label: "잠재 위험", color: pal.series[1], t: vh.t, v: vh.v },
@@ -1431,8 +1451,8 @@ function renderRisk() {
   if (!evs.length) em.append(el("div", { class: "chart-empty" }, "최근 이벤트 없음"));
   else evs.forEach((e) => em.append(evMini(e)));
 
-  renderFactorGroup("#risk-stress-title", "#risk-stress-rows", "stress", S, "무엇이 흔들리고 있나", r, asofTs);
-  renderFactorGroup("#risk-vuln-title", "#risk-vuln-rows", "vuln", V, "무엇이 쌓여 있나", r, asofTs);
+  renderFactorGroup("#risk-stress-title", "#risk-stress-rows", "stress", S, r, asofTs);
+  renderFactorGroup("#risk-vuln-title", "#risk-vuln-rows", "vuln", V, r, asofTs);
   renderRiskRegime(r);
   buildRiskMethod(r);
   /* 관계분석은 리스크 안의 입구가 되었다(2026-08-13 사용자 지시 — 상단 탭에서 내려옴).
@@ -2598,7 +2618,7 @@ function routeView() {
 }
 
 function ensureVillageBack(sec) {
-  if (sec === "alloc") return; // The allocation workspace uses the top navigation.
+  if (sec === "alloc" || sec === "risk") return; // These workspaces use the top navigation.
   const node = document.getElementById(sec);
   if (!node || node.querySelector(".village-back")) return;
   const p = el("p", { class: "village-back" }, el("a", { href: "#village" }, "‹ 마을로 돌아가기"));
