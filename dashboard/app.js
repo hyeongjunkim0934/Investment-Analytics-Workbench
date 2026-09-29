@@ -7287,8 +7287,8 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   const table = el("table", { class: "port-table" });
   // Suppress default-source notes while retaining explicit key-in/CMA indicators.
   const sourceLabel = (source) => source === "과거 평균(참고)" || source === "실측" ? "" : source;
-  const assetHeaders = ["자산군", "현재비중", "기대수익 %", "변동성 %", `실현수익 % (${portWinLabel(W.key)})`,
-    `실현변동성 % (${portWinLabel(W.key)})`, "10년 참고 μ/σ"];
+  const assetHeaders = ["자산군", "현재비중", "기대수익 %", "변동성 %", "실현수익 %",
+    "실현변동성 %", "10년 참고 μ/σ"];
   table.append(el("thead", {}, el("tr", {}, ...assetHeaders.map((h) => el("th", { scope: "col" }, h)))));
   const tbody = el("tbody");
   P.assets.forEach((a, i) => {
