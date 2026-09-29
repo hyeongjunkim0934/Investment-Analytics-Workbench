@@ -350,8 +350,36 @@ function makeTimeChart(box, cfg) {
     scales: cfg.bars ? { y: { range: (u, mn, mx) => [Math.min(mn, 0), Math.max(mx, 0)] } } : {},
     series,
     axes: baseAxes(pal, yFmt, yReFmt),
-    legend: { live: true },
+    legend: { live: !cfg.hoverTooltip },
   };
+
+  if (cfg.hoverTooltip) {
+    box.classList.add("time-chart-hover");
+    const tip = el("div", { class: "time-chart-tooltip", role: "status" });
+    tip.hidden = true;
+    box.append(tip);
+    const hide = () => { tip.hidden = true; };
+    opts.hooks = {
+      setCursor: [(plot) => {
+        const { idx, left, top } = plot.cursor;
+        if (idx == null || left < 0 || top < 0 || !Number.isFinite(plot.data[0]?.[idx])) {
+          hide(); return;
+        }
+        tip.textContent = "";
+        tip.append(el("strong", {}, tsToDate(plot.data[0][idx])));
+        cfg.labels.forEach((label, i) => {
+          if (plot.series[i + 1].show === false) return;
+          tip.append(el("div", {}, el("span", { style: `color:${cfg.colors[i]}` }, label),
+            el("b", {}, plot.series[i + 1].value(plot, plot.data[i + 1][idx]))));
+        });
+        tip.hidden = false;
+        tip.style.left = left > box.clientWidth / 2 ? "12px" : "auto";
+        tip.style.right = left > box.clientWidth / 2 ? "auto" : "12px";
+      }],
+      setData: [hide], setSeries: [hide],
+    };
+    box.addEventListener("mouseleave", hide);
+  }
 
   const u = new uPlot(opts, cfg.data, box);
   if (!cfg.range) stampLatest(box, cfg);
@@ -535,24 +563,7 @@ function observationBadge(date) {
     "data-observed": date || "" }, age.text);
 }
 
-function renderDataFreshness(today = todayKst()) {
-  const host = $("#data-freshness");
-  if (!host) return;
-  const date = DATA.meta && DATA.meta.last_observation;
-  const age = observationAge(date, today);
-  const cards = (DATA.overview && DATA.overview.cards) || [];
-  const count = cards.filter((c) => observationAge(c.date, today).check).length;
-  const check = age.check || count > 0;
-  host.hidden = ["alloc", "risk"].includes(underlyingSection(location.hash.replace(/^#/, "")));
-  host.classList.toggle("needs-check", check);
-  host.textContent = "";
-  host.append(el("b", {}, check ? "자료 확인" : "자료 시점"),
-    el("span", {}, `최신 관측 ${date || "미확인"} · ${age.text}`));
-  if (cards.length) {
-    host.append(el("span", {}, `개요 ${cards.length}개 중 확인 필요 ${count}개`));
-  }
-  host.append(el("a", { href: "#catalog" }, "출처·기간"),
-    el("span", { class: "freshness-basis" }, `${today} KST · 달력일 5일 이상 경과 시 확인`));
+function refreshObservationBadges(today = todayKst()) {
   document.querySelectorAll(".observation-age").forEach((node) => {
     const item = observationAge(node.getAttribute("data-observed"), today);
     node.textContent = item.text;
@@ -1056,7 +1067,7 @@ function renderCatalog() {
 }
 
 function renderMetaLine() {
-  renderDataFreshness();
+  refreshObservationBadges();
   const m = DATA.meta;
   if (!m) return;
   $("#meta-line").textContent =
@@ -2575,7 +2586,7 @@ function sectionHasRangedChart(sec) {
 
 /* 마을 ↔ 섹션 화면 전환. 섹션은 한 번에 하나만 보인다(스크롤 길이 문제 해결). */
 function routeView() {
-  renderDataFreshness();
+  refreshObservationBadges();
   const hash = location.hash.replace(/^#/, "");
   const sec = underlyingSection(hash);
   const showVillage = !sec;
@@ -3640,7 +3651,7 @@ function timeRangeData(data, from, to) {
 
 /* Current costs share the pipeline's currency curves with allocation/simulation.
    History supplies observation dates only; it must not replace the smoothed values.
-   A three-tenor mean requires three finite values with the same known cutoff date. */
+   The mean is the signed arithmetic mean of the three adjacent finite values. */
 function hedgeCostSnapshot(H2, currency = "USD") {
   const row = (H2?.matrix || []).find((m) => m.c === currency);
   const published = H2?.cost_dashboard?.[currency];
@@ -3669,17 +3680,80 @@ function hedgeCostSnapshot(H2, currency = "USD") {
   });
   const complete = values.every(Number.isFinite);
   const aligned = dates[0] != null && dates.every((date) => date === dates[0]);
-  const mean = complete && aligned ? values.reduce((sum, value) => sum + value, 0) / 3 : null;
-  return { values: [...values, mean], dates, meanDate: mean == null ? null : dates[0],
+  const mean = complete ? values.reduce((sum, value) => sum + value, 0) / 3 : null;
+  return { values: [...values, mean], dates, meanDate: mean != null && aligned ? dates[0] : null,
     src, label,
-    meanNote: !complete ? "3개 만기 데이터 필요" : !aligned ? "기준일 확인 필요" : "3M·6M·12M 단순평균" };
+    meanNote: !complete ? "3개 만기 데이터 필요" : "3M·6M·12M 단순평균" };
+}
+
+const HEDGE_MERIT_RANGES = {};
+
+function renderHedgeMeritChart(card, code, label, M, pal) {
+  const id = `hedge-merit-${code}`;
+  const data = [M.t, M.hedged, M.ktb, M.spread];
+  const full = { start: tsToDate(M.t[0]), end: tsToDate(M.t[M.t.length - 1]) };
+  const range = HEDGE_MERIT_RANGES[code] || { ...full };
+  const status = el("span", { id: `${id}-status`, class: "alloc-period-status d-up", role: "status" });
+  status.hidden = true;
+  const input = (key, title) => el("input", { type: "date", id: `${id}-${key}`,
+    value: range[key], "aria-label": `${code} ${title}`, "aria-describedby": `${id}-status` });
+  const start = input("start", "시작기간"), end = input("end", "종료기간");
+  const controls = el("div", { class: "alloc-period" },
+    el("label", { for: start.id }, "시작기간", start),
+    el("label", { for: end.id }, "종료기간", end));
+  card.append(controls);
+  const host = el("div", {});
+  card.append(host);
+  const selectedData = () => timeRangeData(data,
+    Date.parse(range.start) / 1000, Date.parse(range.end) / 1000 + 86400);
+  const labels = [`헤지 후 ${label} 10년`, "국고 10년", "스프레드"];
+  const units = ["%", "%", "%p"];
+  const tableFn = (cap, raw) => tsTableFn(labels.map((name, i) => `${name} (${units[i]})`), selectedData(), 2)(cap, raw);
+  const box = cardScaffold(host, { title: `${label}·국고 10년`, sub: "금리 % · 스프레드 %p",
+    csvName: `${code}-메리트.csv`, tableFn });
+  const empty = el("p", { class: "card-sub", role: "status" }, "해당 기간의 데이터가 없습니다.");
+  empty.hidden = true;
+  box.append(empty);
+  const chart = makeTimeChart(box, { labels, units, colors: [pal.series[0], pal.series[1], pal.series[3]],
+    data, range, emptyState: empty, height: 260, dec: 2, hoverTooltip: true });
+  const entry = registry.find((item) => item.u === chart.u);
+  const validDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v)
+    && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
+  const apply = () => {
+    if (!validDate(start.value) || !validDate(end.value)) {
+      status.textContent = "시작기간과 종료기간을 입력하십시오.";
+    } else if (start.value > end.value) {
+      status.textContent = "시작기간은 종료기간보다 늦을 수 없습니다.";
+    } else {
+      range.start = start.value; range.end = end.value;
+      HEDGE_MERIT_RANGES[code] = range;
+      status.hidden = true;
+      applyRange(entry);
+      const table = host.querySelector(".chart-table");
+      if (!table.classList.contains("hidden")) renderTable(table, tableFn());
+      return;
+    }
+    status.hidden = false;
+  };
+  [start, end].forEach((field) => {
+    field.addEventListener("input", () => { status.hidden = true; });
+    field.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); apply(); }
+    });
+  });
+  controls.append(el("button", { type: "button", id: `${id}-apply`, class: "btn-ghost", onclick: apply }, "기간 적용"),
+    el("button", { type: "button", id: `${id}-all`, class: "btn-ghost", onclick: () => {
+      start.value = full.start; end.value = full.end; apply();
+      // A full-history view should include new observations after the next data refresh.
+      delete HEDGE_MERIT_RANGES[code];
+    } }, "전체"), status);
 }
 
 function renderHedge() {
   const H2 = DATA.hedge;
   if (!$("#hedge")) return;
   if (!H2) {
-    ["hedge-cost-dashboard", "hedge-merit-card", "hedge-curve-card", "hedge-ts-card"].forEach((id) => {
+    ["hedge-cost-dashboard", "hedge-merit-card"].forEach((id) => {
       const host = $("#" + id);
       if (host) host.textContent = "";
     });
@@ -3689,50 +3763,18 @@ function renderHedge() {
   }
   const pal = palette();
 
-  // The retained volatility chart uses the published curves.
-  const argMin = (arr) => {
-    if (!Array.isArray(arr) || !arr.length) return -1;
-    let k = -1;
-    for (let i = 0; i < arr.length; i++) if (arr[i] != null && (k < 0 || arr[i] < arr[k])) k = i;
-    return k;
-  };
-  const curves = H2.curves || {};
-  const bMinI = argMin(curves.bond), eMinI = argMin(curves.equity);
-  const bMin = bMinI < 0 ? null : bMinI * 5;
-  const eMin = eMinI < 0 ? null : eMinI * 5;
-  /* 최소점이 동률일 수 있다(실데이터: 주식 곡선의 30%·35% 가 2자리 반올림 후 둘 다 13.05).
-     첫 번째만 집어 유일한 점처럼 말하지 않고, 동률이면 구간으로 적는다. */
-  const eqTieHi = eMinI < 0 ? null
-    : (() => { let k = eMinI; while (k + 1 < curves.equity.length && curves.equity[k + 1] === curves.equity[eMinI]) k++; return k * 5; })();
-  const eqTxt = eMin == null ? "—" : (eqTieHi > eMin ? `${eMin}~${eqTieHi}%` : `${eMin}%`);
-  const timeCard = (container, cfg) => {
-    const units = cfg.units || cfg.labels.map(() => "%");
-    const tableLabels = cfg.labels.map((label, i) => `${label} (${units[i]})`);
-    const tableFn = tsTableFn(tableLabels, cfg.data, 2);
-    const box = cardScaffold(container, { ...cfg, tableFn });
-    if (!cfg.data[0]?.length) {
-      box.append(el("p", { class: "card-sub", role: "status" }, "데이터 없음"));
-      return;
-    }
-    // Chart, table and CSV share the published history without period filtering.
-    // A local range prevents other screens' year buttons from clipping this view.
-    const xs = cfg.data[0];
-    const range = { start: tsToDate(xs[0]), end: tsToDate(xs[xs.length - 1]) };
-    makeTimeChart(box, { ...cfg, range, units, dec: 2, unit: "%" });
-  };
-
   const dashboard = $("#hedge-cost-dashboard");
   dashboard.textContent = "";
   dashboard.append(el("div", { class: "card-head" },
     el("span", { class: "card-title" }, "환헤지비용"),
     el("span", { class: "card-sub" }, `연 % · ${COST_SIGN_KEY}`)));
-  ["JPY", "AUD", "USD"].forEach((currency) => {
+  [["USD", "USDKRW"], ["AUD", "AUDKRW"], ["JPY", "JPY/KRW"]].forEach(([currency, pairLabel]) => {
     const snapshot = hedgeCostSnapshot(H2, currency);
     const source = snapshot.src?.includes("HP") && snapshot.label
       ? `HP · ${snapshot.label}` : snapshot.src || "데이터 없음";
     const row = el("div", { class: "hedge-cost-row", "data-currency": currency },
       el("div", { class: "hedge-cost-row-head" },
-        el("span", { class: "hedge-cost-currency" }, `${currency}/KRW`),
+        el("span", { class: "hedge-cost-currency" }, pairLabel),
         el("span", { class: "card-sub" }, source)));
     const tiles = el("div", { class: "hedge-cost-grid" });
     ["3M", "6M", "12M", "mean"].forEach((tenor, i) => {
@@ -3740,98 +3782,46 @@ function renderHedge() {
       tiles.append(el("div", { class: "card hedge-cost-tile", "data-currency": currency, "data-tenor": tenor },
         el("div", { class: "card-title" }, i === 3 ? "헤지비용 평균" : `환헤지비용 ${tenor}`),
         el("div", { class: "hedge-cost-value" }, fmtCost(snapshot.values[i])),
-        el("div", { class: "hedge-cost-date" }, date || "기준일 —"),
+        date ? el("div", { class: "hedge-cost-date" }, date) : null,
         i === 3 ? el("div", { class: "card-sub" }, snapshot.meanNote) : null));
     });
     row.append(tiles);
     dashboard.append(row);
   });
 
-  const cc = $("#hedge-curve-card");
-  cc.textContent = "";
-  /* 곡선이 없으면 카드를 통째로 건너뛴다 — 없는 배열을 훑어 "undefined" 를 그리지 않는다. */
-  if (bMin != null && eMin != null) {
-  const xs = Array.from({ length: 21 }, (_, i) => i * 5);
-  const curveBox = cardScaffold(cc, {
-    title: "헤지비율·변동성",
-    sub: `달러 · 최소점: 채권 ${bMin}% · 주식 ${eqTxt} · 연 %`,
-    csvName: "헤지비율-변동성.csv",
-    tableFn: (cap, raw) => ({
-      headers: ["헤지비율", "채권 변동성(%)", "주식 변동성(%)"],
-      rows: xs.map((h, i) => [`${h}%`, curves.bond[i], curves.equity[i]]),
-    }),
-  });
-  makeRatioChart(curveBox, { seriesDefs: [
-    { label: "미국 채권(종합)", color: pal.series[0], x: xs, v: curves.bond },
-    { label: "미국 주식(S&P500 TR)", color: pal.series[1], x: xs, v: curves.equity },
-  ] });
-  }
-
-  // Retain the raw HP history separately from the current smoothed cost tiles.
-  const tsCardEl = $("#hedge-ts-card");
-  tsCardEl.textContent = "";
-  const CH = H2.cost_hist_curve || {};
-  const curveGroups = [["3M", "3개월"], ["6M", "6개월"], ["12M", "12개월"]]
-    .filter(([k]) => CH[k] && CH[k].t && CH[k].t.length)
-    .map(([k, label]) => ({ label, t: CH[k].t, v: CH[k].v }));
-  if (curveGroups.length) {
-    const cdata = joinSeries(curveGroups);
-    timeCard(tsCardEl, {
-      title: "달러 만기별 비용",
-      sub: `HP 일별 · 연 % · ${COST_SIGN_KEY}`,
-      csvName: "달러-헤지비용-커브.csv",
-      labels: curveGroups.map((g) => g.label),
-      colors: curveGroups.map((_, i) => pal.series[i % 8]),
-      data: cdata, height: 230,
-    });
-  } else {
-    tsCardEl.append(el("p", { class: "card-sub" }, "헤지비용 커브 이력을 불러오지 못했습니다."));
-  }
-
-  // Published hedged UST yield and spread; no estimation in this view.
-  const meritCard = $("#hedge-merit-card");
-  if (meritCard) {
-    meritCard.textContent = "";
-    const M = H2.ust_merit;
-    if (!M || !M.active) {
-      meritCard.append(el("div", { class: "card-title" }, "미국채 메리트"),
-        el("p", { class: "card-sub" },
-          (M && M.reason) || "데이터 없음"));
-    } else {
-      const now = M.now || {};
-      const tile = (label, val, sub, cls) => el("div",
-        { class: "card", style: "padding:10px 14px;min-width:150px" },
-        el("div", { class: "card-title", style: "font-size:11.5px" }, label),
-        el("div", { class: cls || "", style: "font-size:18px;font-weight:700;margin:3px 0 1px" }, val),
-        el("div", { style: "color:var(--ink-3);font-size:11px" }, sub));
-      const sgn2 = (x, d) => (x == null ? "—" : `${x > 0 ? "+" : ""}${fmtNum(x, d == null ? 2 : d)}%`);
-      meritCard.append(el("div", { class: "card-head" },
-        el("span", { class: "card-title" }, "미국채 메리트"),
-        el("span", { class: "card-sub" }, `최근 ${M.t && M.t.length ? tsToDate(M.t[M.t.length - 1]) : "—"}`)));
-      const tiles = el("div", { style: "display:flex;gap:10px;flex-wrap:wrap;margin:8px 0" });
-      tiles.append(
-        tile("헤지비용 3M", sgn2(now.cost), "SMB · 연 %"),
-        tile("헤지 후 미국채 10년", fmtNum(now.hedged, 2) + "%", "헤지 후"),
-        tile("국고 10년", fmtNum(now.ktb, 2) + "%", "연 %"),
-        tile("스프레드", sgn2(now.spread) + "p",
-          `백분위 ${fmtNum(now.spread_pctile, 0)}%`,
-          now.spread > 0 ? "d-down" : "d-up"));
-      meritCard.append(tiles);
-      /* cardScaffold 는 컨테이너를 **비우고** 시작한다(container.textContent = "") —
-         카드에 직접 걸면 위의 머리글·타일이 지워진다(실측). 차트 전용 호스트를 분리. */
-      const chartHost = el("div", {});
-      meritCard.append(chartHost);
-      timeCard(chartHost, {
-        title: "미국채·국고 10년",
-        sub: "금리 % · 스프레드 %p",
-        csvName: "미국채-메리트.csv",
-        labels: ["헤지 후 미국채 10년", "국고 10년", "스프레드"],
-        units: ["%", "%", "%p"],
-        colors: [pal.series[0], pal.series[1], pal.series[3]],
-        data: [M.t, M.hedged, M.ktb, M.spread], height: 240,
-      });
+  const meritHost = $("#hedge-merit-card");
+  meritHost.textContent = "";
+  const legacyMerits = { UST: H2.ust_merit, JPY: H2.jgb_merit, AUD: H2.agb_merit };
+  [
+    ["UST", "미국채"], ["JPY", "일본 국채"], ["AUD", "호주 국채"], ["GER", "독일 국채"],
+  ].forEach(([code, label]) => {
+    const M = H2.bond_merits?.[code] ?? legacyMerits[code];
+    const card = el("div", { class: "card hedge-merit", id: `hedge-merit-${code}` });
+    meritHost.append(card);
+    card.append(el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, code),
+      M?.active && M.t?.length
+        ? el("span", { class: "card-sub" }, `최근 ${tsToDate(M.t[M.t.length - 1])}`) : null));
+    if (!M?.active || !M.t?.length) {
+      card.append(el("p", { class: "card-sub", role: "status" }, M?.reason || "데이터 없음"));
+      return;
     }
-  }
+    const now = M.now || {};
+    const value = (x, unit = "%", signed = false) => Number.isFinite(x)
+      ? `${signed && x > 0 ? "+" : ""}${fmtNum(x, 2)}${unit}` : "—";
+    const tile = (title, number, sub, cls = "") => el("div", { class: "card hedge-merit-tile" },
+      el("div", { class: "card-title" }, title),
+      el("div", { class: `hedge-merit-value ${cls}` }, number),
+      el("div", { class: "card-sub" }, sub));
+    card.append(el("div", { class: "hedge-merit-tiles" },
+      tile("헤지비용 3M", value(now.cost, "%", true), `${M.cost_source || (code === "UST" ? "SMB" : "HP")} · 연 %`),
+      tile(`헤지 후 ${label} 10년`, value(now.hedged), "헤지 후"),
+      tile("국고 10년", value(now.ktb), "연 %"),
+      tile("스프레드", value(now.spread, "%p", true),
+        Number.isFinite(now.spread_pctile) ? `백분위 ${fmtNum(now.spread_pctile, 0)}%` : "",
+        now.spread > 0 ? "d-down" : "d-up")));
+    renderHedgeMeritChart(card, code, label, M, pal);
+  });
 
 }
 
@@ -9093,7 +9083,7 @@ function bindTheme() {
   /* 탭이 백그라운드로 가면 영상 디코드·타이머를 멈추고, 돌아오면 다시 건다. */
   document.addEventListener("visibilitychange", () => {
     restartSceneCycle();
-    if (!document.hidden) renderDataFreshness();
+    if (!document.hidden) refreshObservationBadges();
   });
   matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", () => {
     restartSceneCycle();
