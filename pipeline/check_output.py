@@ -56,7 +56,7 @@ REQUIRED_KEYS = {
               "cost_hist_curve", "cost_hist_usd", "cost_dashboard", "cost_stats", "mtm", "sim",
               # ust_merit = 미국채 투자 메리트 모니터(§7.7.14). 시리즈가 없어도
               # active:false 로 항상 게시된다(bm.cma 와 같은 체인 안전장치).
-              "ust_merit", "jgb_merit", "agb_merit",
+              "ust_merit", "jgb_merit", "agb_merit", "bond_merits",
               "acct_model", "limits"],
     "alloc": ["asof", "sources", "sets", "rates", "cost_options", "anchor_ref",
               "defaults", "ccy_bench", "boot", "checks", "acct_model", "limits",

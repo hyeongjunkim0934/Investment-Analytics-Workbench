@@ -101,7 +101,7 @@ secNodes.events.append(elem("details", "events-rules"));
 /* 환헤지 뼈대 — index.html 의 #hedge 안 구조를 그대로 흉내 낸다.
    renderHedge() 가 만지는 컨테이너가 하나라도 없으면 그 자리에서 죽으므로,
    이 목록 자체가 index.html 과의 계약이다. */
-["hedge-cost-dashboard", "hedge-merit-card", "hedge-jgb-merit-card", "hedge-agb-merit-card", "hedge-curve-card", "hedge-ts-card"]
+["hedge-cost-dashboard", "hedge-merit-card"]
   .forEach((id) => secNodes.hedge.append(elem("div", id, "card")));
 
 /* ACWI 뼈대 — 시장 폭 카드 포함 */
@@ -628,7 +628,8 @@ safe("hedgeScreen", () => {
     explanationCount: DOC.getElementById("hedge").querySelectorAll(".explain").length,
     dashboard: readHedgeDashboard(), snapshot: P.hedgeCostSnapshot(HEDGE_FIXTURE),
     tsCardText: txt("hedge-ts-card"),
-    curveSub: DOC.getElementById("hedge-curve-card").querySelector(".card-sub").textContent,
+    removedChartsAbsent: !DOC.getElementById("hedge-curve-card") && !DOC.getElementById("hedge-ts-card"),
+    meritTitles: DOC.getElementById("hedge-merit-card").children.map((node) => node.querySelector(".card-title")?.textContent),
     chartSeries: shim.UPlotStub.made.map((u) => ({
       title: (u.opts && u.opts.title) || "",
       labels: ((u.opts && u.opts.series) || []).slice(1).map((sr) => sr.label),
@@ -637,7 +638,7 @@ safe("hedgeScreen", () => {
   };
 });
 
-/* 게시된 비용 세 개만 평균한다. 날짜가 누락되거나 달라도 숫자가 모두 유효하면 평균한다. */
+/* 게시된 비용과 일별 원자료는 다르다. 누락·서로 다른 기준일에 평균을 지어내지 않는다. */
 safe("hedgeDashboardCases", () => {
   const r = {};
   const run = (name, change) => {
@@ -731,10 +732,10 @@ safe("hedgeMerit", () => {
   P.DATA.hedge = HEDGE_FIXTURE;
   P.DATA.panel = null;               // 패널 없음 — 상관 문장 대신 링크 폴백이어야 한다
   P.renderSection("hedge");
-  const card = DOC.getElementById("hedge-merit-card");
+  const card = DOC.getElementById("hedge-merit-UST");
   const txt = card ? card.textContent : "";
   r.renderErrors = DOC.getElementById("hedge").querySelectorAll(".render-error").length;
-  r.cardRendered = /미국채 메리트/.test(txt);
+  r.cardRendered = card?.querySelector(".card-title")?.textContent === "UST";
   r.tilesShowSpread = /스프레드/.test(txt) && /백분위 75%/.test(txt);
   r.statesCostTenor = /헤지비용 3M/.test(txt) && /SMB/.test(txt);
   r.tileValues = card.querySelectorAll(".card").map((tile) => tile.children[1].textContent);
@@ -770,60 +771,41 @@ safe("hedgeMerit", () => {
   return r;
 });
 
-/* 일본·호주의 고유 비용/금리/스프레드를 그린다. 미국 값 복사·부호 반전을 구분한다. */
-safe("hedgeCountryMerits", () => {
-  const fixture = JSON.parse(JSON.stringify(HEDGE_FIXTURE));
-  const t = fixture.ust_merit.t;
-  fixture.jgb_merit = {
-    active: true, asof: "2029-12-22", freq: "W-FRI", t,
-    series: {cost: "JPYKRW HP 3M (연율)", foreign: "일본 국채 10년", ktb: "국고 10년"},
-    cost: [1.0, 1.1, 1.2, 1.25], foreign: [1.4, 1.5, 1.55, 1.6],
-    ktb: [3.0, 3.05, 3.0, 3.1], hedged: [2.4, 2.6, 2.75, 2.85],
-    spread: [-0.6, -0.45, -0.25, -0.25],
-    now: {cost: 1.25, foreign: 1.6, ktb: 3.1, hedged: 2.85, spread: -0.25, spread_pctile: 80},
-  };
-  fixture.agb_merit = {
-    active: true, asof: "2029-12-22", freq: "W-FRI", t,
-    series: {cost: "AUDKRW HP 3M (연율)", foreign: "호주 국채 10년", ktb: "국고 10년"},
-    cost: [-0.3, -0.4, -0.45, -0.5], foreign: [4.5, 4.6, 4.7, 4.8],
-    ktb: [3.0, 3.05, 3.0, 3.1], hedged: [4.2, 4.2, 4.25, 4.3],
-    spread: [1.2, 1.15, 1.25, 1.2],
-    now: {cost: -0.5, foreign: 4.8, ktb: 3.1, hedged: 4.3, spread: 1.2, spread_pctile: 60},
-  };
-  const ids = {ust: "hedge-merit-card", jgb: "hedge-jgb-merit-card", agb: "hedge-agb-merit-card"};
-  const read = () => Object.fromEntries(Object.entries(ids).map(([key, id]) => {
-    const card = DOC.getElementById(id);
-    const chart = shim.UPlotStub.made.findLast((u) => card.contains(u.root));
-    return [key, {text: card.textContent,
-      tileValues: card.querySelectorAll(".card").map((tile) => tile.children[1].textContent),
-      chartValues: chart?.data || null,
-      labels: chart?.opts.series.slice(1).map((series) => series.label) || []}];
-  }));
-  try {
-    P.DATA.hedge = fixture;
-    P.renderSection("hedge");
-    const r = {active: read()};
-    P.DATA.hedge = {...fixture, jgb_merit: {active: false, reason: "JPY 프로브 결측"},
-      agb_merit: {active: false, reason: "AUD 프로브 결측"}};
-    P.renderSection("hedge");
-    r.inactive = read();
-    r.errors = DOC.getElementById("hedge").querySelectorAll(".render-error").length;
-    return r;
-  } finally {
-    P.DATA.hedge = HEDGE_FIXTURE;
-    P.renderHedge();
-  }
-});
-
-/* 기간 선택은 제거됐으므로 다른 화면의 숨겨진 연수 상태가 차트·표·CSV를 자르면 안 된다. */
-safe("hedgeFullRange", () => {
+/* 국가마다 다른 합성값·시점을 써서 복사된 USD 값이나 공유 기간 상태를 검출한다.
+   실제 app.js 이벤트를 실행하고, 표·CSV·차트·호버를 같은 독립 기대값과 대조한다. */
+safe("hedgeMeritRanges", () => {
   const oldYears = P.state.years, oldRegistry = P.registry.slice();
   const fixture = JSON.parse(JSON.stringify(HEDGE_FIXTURE));
-  const ts = [Date.UTC(2021, 4, 31), Date.UTC(2026, 5, 30), Date.UTC(2029, 10, 30)].map((x) => x / 1000);
-  fixture.cost_hist_curve = {
-    "3M": { t: ts, v: [-0.600123, -0.620234, -0.631234] },
-    "6M": { t: ts, v: [-0.550123, -0.570234, -0.581234] },
-    "12M": { t: ts, v: [-0.500123, -0.520234, -0.531234] },
+  const codes = ["UST", "JPY", "AUD", "GER"];
+  const ts = ["2021-05-31", "2026-06-30", "2029-11-30"].map((x) => Date.parse(x) / 1000);
+  fixture.bond_merits = Object.fromEntries(codes.map((code, j) => {
+    const base = fixture.ust_merit;
+    const cost = [-0.600123, -0.620234, -0.631234].map((x) => x + j / 10);
+    const bond = [4.1, 4.2, 4.3].map((x) => x + j);
+    const ktb = [3.0, 3.1, 3.2];
+    const hedged = bond.map((x, i) => x + cost[i]);
+    const spread = hedged.map((x, i) => x - ktb[i]);
+    return [code, { ...base, country: code, currency: code === "UST" ? "USD" : code === "GER" ? "EUR" : code,
+      asof: "2029-11-30", series: { cost: "3개월 스왑레이트(SMB, 연율)", bond: `${code} 10년`, ktb: "국고 10년" },
+      t: ts, cost, bond, ust: bond, ktb, hedged, spread,
+      now: { cost: cost[2], bond: bond[2], ust: bond[2], ktb: ktb[2], hedged: hedged[2], spread: spread[2], spread_pctile: 75 } }];
+  }));
+  const card = (code) => DOC.getElementById(`hedge-merit-${code}`);
+  const chart = (code) => shim.UPlotStub.made.findLast((u) => card(code).contains(u.root));
+  const copy = (value) => JSON.parse(JSON.stringify(value));
+  const chartData = () => Object.fromEntries(codes.map((code) => [code, copy(chart(code).data)]));
+  const changeRange = (code, start, end) => {
+    DOC.getElementById(`hedge-merit-${code}-start`).value = start;
+    DOC.getElementById(`hedge-merit-${code}-end`).value = end;
+    DOC.getElementById(`hedge-merit-${code}-apply`).click();
+  };
+  const tableAndCsv = (code) => {
+    const c = card(code), actions = c.querySelectorAll(".card-actions button");
+    if (c.querySelector(".chart-table").classList.contains("hidden")) actions[0].click();
+    const rows = c.querySelector(".chart-table").querySelectorAll("tbody tr")
+      .map((row) => row.children.map((cell) => cell.textContent));
+    actions[1].click();
+    return { rows, csv: CSV_DOWNLOADS.at(-1) };
   };
   let yearButton;
   try {
@@ -831,39 +813,58 @@ safe("hedgeFullRange", () => {
     P.registry.length = 0;
     P.state.years = 1;
     P.renderHedge();
-    const card = DOC.getElementById("hedge-ts-card");
-    const entries = P.registry.filter((entry) => DOC.getElementById("hedge").contains(entry.u.root));
-    const costEntry = entries.find((entry) => card.contains(entry.u.root));
-    const meritEntry = entries.find((entry) => DOC.getElementById("hedge-merit-card").contains(entry.u.root));
-    entries.forEach((entry) => {
-      entry.u.setScale = (axis, value) => { entry.u.lastScale = { axis, ...value }; };
-      P.applyRange(entry);
-    });
-    card.querySelectorAll(".card-actions button")[0].click();
-    const tableRows = () => card.querySelector(".chart-table").querySelectorAll("tbody tr")
-      .map((row) => row.children.map((cell) => cell.textContent));
-    const r = { timeCharts: entries.length, chartData: costEntry.u.data, rows: tableRows(),
-      scales: entries.map((entry) => entry.u.lastScale), meritData: meritEntry.u.data };
-    card.querySelectorAll(".card-actions button")[1].click();
-    r.csv = CSV_DOWNLOADS.at(-1);
+    const r = { initial: chartData(), titles: codes.map((code) => card(code).querySelector(".card-title").textContent),
+      dates: codes.map((code) => [DOC.getElementById(`hedge-merit-${code}-start`).value,
+        DOC.getElementById(`hedge-merit-${code}-end`).value]),
+      legendsLive: codes.map((code) => chart(code).opts.legend.live),
+      labels: codes.map((code) => chart(code).opts.series.slice(1).map((series) => series.label)),
+      initialExport: tableAndCsv("UST") };
+    changeRange("JPY", "2026-06-30", "2029-11-30");
+    r.afterJpy = chartData();
+    r.selectedExport = tableAndCsv("JPY");
+    changeRange("UST", "2021-05-31", "2021-05-31");
+    r.afterUst = chartData();
+    r.singlePointVisible = chart("UST").opts.series[1].points.show(chart("UST"), 1);
+    changeRange("AUD", "2027-01-01", "2028-01-01");
+    r.empty = { data: copy(chart("AUD").data), text: card("AUD").textContent, export: tableAndCsv("AUD") };
+    changeRange("GER", "2029-11-30", "2021-05-31");
+    r.invalid = { data: copy(chart("GER").data), status: DOC.getElementById("hedge-merit-GER-status").textContent };
+    changeRange("GER", "2029-02-30", "2029-11-30");
+    r.invalidCalendar = { data: copy(chart("GER").data), status: DOC.getElementById("hedge-merit-GER-status").textContent };
+    changeRange("GER", "", "2029-11-30");
+    r.missingDate = { data: copy(chart("GER").data), status: DOC.getElementById("hedge-merit-GER-status").textContent };
+    // Hover callback: uPlot is stubbed, so cursor/series are supplied exactly as uPlot does.
+    const u = chart("JPY"), tip = card("JPY").querySelector(".time-chart-tooltip");
+    u.cursor = { idx: 0, left: 120, top: 30 };
+    u.series = u.opts.series.map((series) => ({ ...series, show: true }));
+    const hook = (name) => (u.opts.hooks?.[name] || []).forEach((fn) => fn(u));
+    hook("setCursor");
+    r.hover = { text: tip?.textContent || "", hidden: tip?.hidden };
+    u.cursor.idx = null; hook("setCursor");
+    r.hover.hiddenOnLeave = tip?.hidden;
+    const beforeOther = chartData();
     const other = { isTime: true, tmin: 0, tmax: 2000000000,
       u: { setScale(axis, value) { this.lastScale = { axis, ...value }; } } };
     P.registry.push(other);
     yearButton = P.el("button", { "data-range": "1" }, "1년");
     yearButton.dataset.range = "1";
     rangeGroup.append(yearButton); P.bindRangeButtons(); yearButton.click();
-    r.afterOtherRange = entries.map((entry) => entry.u.lastScale);
-    r.afterOtherData = costEntry.u.data;
-    r.afterOtherRows = tableRows();
+    r.globalRangeNoChange = JSON.stringify(beforeOther) === JSON.stringify(chartData());
     r.otherRange = other.u.lastScale;
     P.renderHedge();
-    r.afterRerender = P.registry.findLast((entry) => card.contains(entry.u.root)).u.data;
+    r.afterRerender = chartData();
+    r.rerenderDates = codes.map((code) => [DOC.getElementById(`hedge-merit-${code}-start`).value,
+      DOC.getElementById(`hedge-merit-${code}-end`).value]);
+    DOC.getElementById("hedge-merit-JPY-all").click();
+    r.afterJpyReset = chartData();
     shim.location.hash = "#hedge"; P.routeView(); r.globalFilterHidden = filterRow.hidden;
     return r;
   } finally {
+    codes.forEach((code) => DOC.getElementById(`hedge-merit-${code}-all`)?.click());
     yearButton?.remove(); P.state.years = oldYears;
     P.registry.length = 0; P.registry.push(...oldRegistry);
     P.DATA.hedge = HEDGE_FIXTURE;
+    P.renderHedge();
   }
 });
 
