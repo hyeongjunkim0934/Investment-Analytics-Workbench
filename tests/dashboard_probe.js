@@ -2673,12 +2673,39 @@ safe("riskContext", () => {
 
   /* 실제 상황 대조(2026-08-27) — 위험 2계열과 **같은 차트**에 우축(%)으로 겹치고,
      참고선은 pct 축 점선·수치만, 의미 문구 없음 */
-  const ccTxt = DOC.getElementById("risk-chart-card").textContent;
   const bandU = shim.UPlotStub.made.find((u) =>
     u.opts && u.opts.series && u.opts.series.some((s) => s.label === "현재 위험"));
   r.kospi10ChartMade = !!bandU && bandU.opts.series.some(
     (s) => /KOSPI 10영업일/.test(s.label || "") && s.scale === "pct");
-  r.kospi10RefLevelsListed = /참고선 -10 · -16 · -25%/.test(ccTxt);
+  r.legendIsCompact = Array.from(DOC.querySelectorAll("#risk-chart-card .legendline > span"))
+    .map((n) => n.textContent).join("|") === "현재 위험|잠재 위험";
+  r.liveLegendHidden = bandU.opts.legend.show === false;
+  const tip = DOC.querySelector("#risk-chart-card .risk-chart-tooltip");
+  r.tooltipInitiallyHidden = tip.hidden;
+  bandU.bbox = { width: 600 };
+  bandU.cursor = { idx: 1, left: 100, top: 80 };
+  const move = () => bandU.opts.hooks.setCursor.forEach((fn) => fn(bandU));
+  move();
+  r.tooltipHasDateAndValues = !tip.hidden && /2023-11-21/.test(tip.textContent)
+    && /현재 위험45\.00점/.test(tip.textContent) && /잠재 위험45\.00점/.test(tip.textContent)
+    && /KOSPI.*-12\.50%/.test(tip.textContent);
+  r.kospi10RefLevelsListed = /참고선 -10 · -16 · -25%/.test(tip.textContent);
+  r.tooltipAvoidsPointer = tip.style.right === "8px" && tip.style.left === "auto";
+  bandU.cursor = { idx: 0, left: 500, top: 80 };
+  const firstS = bandU.data[1][0], firstV = bandU.data[2][0];
+  bandU.data[1][0] = 0; bandU.data[2][0] = null;
+  move();
+  r.tooltipZeroAndMissing = /현재 위험0\.00점/.test(tip.textContent)
+    && /잠재 위험–/.test(tip.textContent);
+  r.tooltipAvoidsPointer = r.tooltipAvoidsPointer && tip.style.left === "8px" && tip.style.right === "auto";
+  bandU.data[1][0] = firstS; bandU.data[2][0] = firstV;
+  bandU.cursor.idx = bandU.data[0].length - 1;
+  move();
+  r.tooltipLatest = /2030-06-27/.test(tip.textContent) && /53\.50점/.test(tip.textContent)
+    && /60\.10점/.test(tip.textContent) && /KOSPI.*–/.test(tip.textContent);
+  bandU.cursor = { idx: null, left: -10, top: -10 };
+  move();
+  r.tooltipHidesOnExit = tip.hidden;
   r.kospi10RefLinesInOpts = !!bandU && !!bandU.opts.scales && !!bandU.opts.scales.pct
     && bandU.opts.hooks.draw.length === 2;
   r.kospi10NoMeaningWords = !/위기임박|위기단계/.test(
@@ -2688,6 +2715,9 @@ safe("riskContext", () => {
   r.titleHasTriplet = /1개월/.test(st) && /3개월/.test(st) && /1년/.test(st);
   r.titleHasRank = /최근 5년 백분위 62%/.test(st);
   const vt = DOC.getElementById("risk-vuln-title").textContent;
+  r.commentaryRemoved = !/이 화면이 답하는 질문|지금 시장 위험은 어느 수준인가/.test(
+    DOC.getElementById("risk-headline").textContent)
+    && !/무엇이 흔들리고|무엇이 쌓여/.test(st + vt);
   r.nullHorizonShowsDash = /3개월 –/.test(vt);
   const hw = DOC.getElementById("risk-howto").textContent;
   r.bandStatsLineVisible = /구간별 과거 실적/.test(hw) && /경계 41%/.test(hw);
@@ -2696,9 +2726,21 @@ safe("riskContext", () => {
     && /41\.0%/.test(mt) && /24\.7%/.test(mt) && /band-note/.test(mt);
 
   P.openDetail("f1");
+  r.detailLegendUnchanged = shim.UPlotStub.made[shim.UPlotStub.made.length - 1].opts.legend.show === true;
   const ovTxt = DOC.getElementById("detail-overlay").textContent;
   r.detailHasTriplet = /1개월/.test(ovTxt) && /3개월/.test(ovTxt) && /1년/.test(ovTxt);
   P.hideDetail();
+
+  const prevHash = shim.location.hash;
+  const back = secNodes.risk.querySelector(".village-back");
+  if (back) back.remove();
+  shim.location.hash = "#risk"; P.routeView();
+  r.riskBackRemoved = !secNodes.risk.querySelector(".village-back");
+  shim.location.hash = "#detail-f1"; P.routeView();
+  r.detailBackRemoved = !secNodes.risk.querySelector(".village-back");
+  r.bannerRemoved = !fs.readFileSync(path.join(ROOT, "dashboard", "index.html"), "utf8")
+    .includes('id="data-freshness"');
+  shim.location.hash = prevHash;
 
   /* 옛 페이로드(chg·rank5y·band_stats 없음) — 조용히 종전 표시로 남고 무너지지 않는다 */
   delete RISK.layers.stress.chg; delete RISK.layers.stress.rank5y;

@@ -159,7 +159,7 @@ body {
 /* ---------- layout ---------- */
 .page { max-width: 1280px; margin: 0 auto; padding: 18px 20px 60px; }
 .section { margin-top: 34px; scroll-margin-top: 70px; }
-#alloc { margin-top: 0; }
+#alloc, #risk { margin-top: 0; }
 .section h2 {
   font-size: 18px; margin: 0 0 14px;
   padding-left: 10px; border-left: 3px solid var(--accent);
@@ -388,6 +388,21 @@ table > tr > th.rowhead { color: var(--ink-2); white-space: normal; }
 @media (max-width: 1000px) { .risk-top { grid-template-columns: 1fr; } }
 .risk-side { display: flex; flex-direction: column; gap: 14px; }
 .risk-side .card { flex: 1; }
+#risk .qa { margin-bottom: 8px; }
+#risk > h2 { margin-bottom: 8px; }
+.risk-top > * { min-width: 0; }
+.risk-chart-tooltip { position: absolute; top: 8px; z-index: 5; pointer-events: none;
+  width: 264px; max-width: calc(100% - 16px); padding: 10px 12px; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border); color: var(--ink-2);
+  box-shadow: 0 4px 16px #0003; font-size: 12px; line-height: 1.4; }
+.risk-chart-tooltip > strong { display: block; color: var(--ink-1); margin-bottom: 6px; }
+.risk-tooltip-row { display: flex; justify-content: space-between; gap: 10px; margin-top: 4px; }
+.risk-tooltip-row > span { min-width: 0; overflow-wrap: anywhere; }
+.risk-tooltip-row i { display: inline-block; width: 12px; border-top: 2px solid;
+  vertical-align: middle; margin-right: 5px; }
+.risk-tooltip-row b { flex-shrink: 0; color: var(--ink-1); font-weight: 500;
+  font-variant-numeric: tabular-nums; }
+.risk-chart-tooltip > small { display: block; margin-top: 6px; color: var(--ink-3); }
 .howto {
   background: color-mix(in srgb, var(--accent) 6%, var(--surface));
   border: 1px solid var(--border); border-radius: 12px;
