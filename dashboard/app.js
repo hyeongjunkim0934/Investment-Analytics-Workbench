@@ -525,7 +525,7 @@ function deltaSpan(label, v, kind, big = false) {
    계약 테스트가 둘을 대조한다(어긋나면 버튼 이름과 도착 화면 제목이 달라진다). */
 const SECTION_LABELS = {
   overview: "시장 개요", risk: "리스크", alloc: "자산배분",
-  hedge: "환헤지", events: "이벤트", panel: "관계분석", rates: "금리",
+  hedge: "환헤지", pseudo: "Pseudo", events: "이벤트", panel: "관계분석", rates: "금리",
   irs: "IRS 포워드", credit: "크레딧", fx: "FX · 환율", inflation: "기대인플레이션",
   acwi: "MSCI ACWI", macro: "매크로", catalog: "시리즈 카탈로그",
 };
@@ -1999,7 +1999,7 @@ const VILLAGE_ZONES = [
   { key: "workshop", x: 10.8, y: 48.9, name: "공방", sub: "모델 랩 — 준비 중", soon: true },
 ];
 
-const SECTION_IDS = ["overview", "risk", "alloc", "hedge", "events", "panel",
+const SECTION_IDS = ["overview", "risk", "alloc", "hedge", "pseudo", "events", "panel",
                      "rates", "irs", "credit", "fx", "inflation", "acwi", "macro", "catalog"];
 
 /* 오버레이 해시는 그 아래에 어느 섹션이 깔려 있어야 하는지를 정한다 */
@@ -2687,7 +2687,7 @@ function routeView() {
 }
 
 function ensureVillageBack(sec) {
-  if (sec === "alloc" || sec === "risk") return; // These workspaces use the top navigation.
+  if (sec === "alloc" || sec === "risk" || sec === "pseudo") return; // These workspaces use the top navigation.
   const node = document.getElementById(sec);
   if (!node || node.querySelector(".village-back")) return;
   const p = el("p", { class: "village-back" }, el("a", { href: "#village" }, "‹ 마을로 돌아가기"));
@@ -9292,11 +9292,15 @@ function openAllocDetail(topic) {
 
 /* ---------------- render all / boot ---------------- */
 
+function renderPseudo() {
+  if (typeof renderPseudoDocs === "function") renderPseudoDocs();
+}
+
 /* 섹션 id → 그 섹션을 그리는 함수. SECTION_IDS 와 1:1 이며 계약 테스트가 강제한다.
    순서는 화면 순서(마을 구역 순)와 같게 둔다 — 읽는 사람이 대조하기 쉽게. */
 const RENDERERS = {
   overview: renderOverview, risk: renderRisk, events: renderEvents,
-  panel: renderPanel, hedge: renderHedge, alloc: renderAlloc,
+  panel: renderPanel, hedge: renderHedge, alloc: renderAlloc, pseudo: renderPseudo,
   rates: renderRates, irs: renderIRS, credit: renderCredit,
   fx: renderFX, inflation: renderInflation, acwi: renderACWI,
   macro: renderMacro, catalog: renderCatalog,
@@ -9466,6 +9470,9 @@ async function boot() {
   bindTheme();
   bindRangeButtons();
   bindSkipLink();
+  renderSection("pseudo"); // Static handoff notes also work without market JSON.
+  window.addEventListener("hashchange", handleHash);
+  handleHash();
   const results = await Promise.allSettled(
     FILES.map((f) => fetch(`data/${f}.json`).then((r) => {
       if (!r.ok) throw new Error(`${f}.json ${r.status}`);
@@ -9482,7 +9489,6 @@ async function boot() {
   }
   renderMetaLine();
   renderAll();          // 카탈로그도 RENDERERS 에 있으므로 따로 부르지 않는다
-  window.addEventListener("hashchange", handleHash);
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !$("#detail-overlay").hidden) {
       location.hash = location.hash === "#hedge-sim" ? "hedge"

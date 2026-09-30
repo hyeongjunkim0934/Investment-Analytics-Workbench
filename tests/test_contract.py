@@ -707,10 +707,11 @@ def _village_targets() -> set[str]:
 
 
 def test_village_zones_cover_every_section():
-    """마을에서 14개 섹션 전부에 도달할 수 있어야 한다."""
+    """시장 섹션은 마을에서, Pseudo 문서는 상단 탭에서 도달한다."""
     ids = set(re.findall(r'<section id="([a-z]+)" class="section">', _index_html()))
-    assert len(ids) == 14, f"섹션 수가 14가 아닙니다: {sorted(ids)}"
-    missing = ids - _village_targets()
+    assert len(ids) == 15, f"섹션 수가 15가 아닙니다: {sorted(ids)}"
+    assert "pseudo" in _nav_hrefs()
+    missing = ids - {"pseudo"} - _village_targets()
     assert not missing, f"마을에서 도달할 수 없는 섹션: {sorted(missing)}"
 
 
@@ -1164,7 +1165,7 @@ def _renderer_map() -> dict[str, str]:
 
 
 def test_every_section_has_a_renderer():
-    """SECTION_IDS 의 14개가 전부 RENDERERS 에 있어야 한다.
+    """SECTION_IDS 의 15개가 전부 RENDERERS 에 있어야 한다.
 
     빠뜨리면 그 섹션은 **아무 오류 없이 영영 비어 있다** — 클릭해서 들어가야만
     보이는 구조라 눈으로 알아채기까지 오래 걸린다.
@@ -1174,7 +1175,7 @@ def test_every_section_has_a_renderer():
     r = _renderer_map()
     assert set(ids) - set(r) == set(), f"렌더러가 없는 섹션: {sorted(set(ids) - set(r))}"
     assert set(r) - set(ids) == set(), f"섹션에 없는 렌더러: {sorted(set(r) - set(ids))}"
-    assert len(ids) == 14
+    assert len(ids) == 15
 
 
 def test_renderers_named_in_the_map_actually_exist():
@@ -1478,10 +1479,10 @@ def test_built_brief_covers_its_own_events(built):
 
 
 # --------------------------------------------------------------------------
-# 정보구조 (§7.9) — 상단 탭 6개, 나머지는 부모 화면 안의 입구로
+# 정보구조 (§7.9, 2026-09-30) — 상단 탭 7개, 나머지는 부모 화면 안의 입구로
 # --------------------------------------------------------------------------
 
-EXPECTED_TABS = ["village", "overview", "events", "risk", "alloc", "hedge"]
+EXPECTED_TABS = ["village", "overview", "events", "risk", "alloc", "hedge", "pseudo"]
 
 
 def _nav_hrefs() -> list[str]:
@@ -1490,13 +1491,8 @@ def _nav_hrefs() -> list[str]:
     return re.findall(r'href="#([a-z]+)"', block.group(1))
 
 
-def test_top_tabs_are_exactly_the_six_the_user_asked_for():
-    """상단 탭은 마을·개요·이벤트·리스크·자산배분·환헤지 **6개뿐**.
-
-    2026-08-13 사용자 지시("덜 중요한 애들이 메인 탭에 있어")로 7개가 됐고,
-    2026-09-07 지시로 「수익률 추정」이 제거되어 6개다(§7.17 — 탭에서 내린 것이
-    아니라 화면 자체를 지웠다). 탭을 다시 늘리려면 사용자와 합의해야 한다.
-    """
+def test_top_tabs_include_pseudo_after_hedge():
+    """2026-09-30 사용자 지시: 환헤지 옆에 Pseudo 탭 추가."""
     assert _nav_hrefs() == EXPECTED_TABS, f"상단 탭이 바뀌었습니다: {_nav_hrefs()}"
 
 
