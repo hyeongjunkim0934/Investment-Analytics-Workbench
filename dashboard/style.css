@@ -1192,7 +1192,7 @@ a.kpi-link .kpi-label > span:first-child::after {
   border-radius: 8px; padding: 8px; }
 .port-two { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 12px; }
 /* Keep the selected result above the editable rows, below the responsive site header. */
-.port-results-dock { position: sticky; top: var(--port-results-top, 64px); z-index: 12;
+.port-results-dock { --port-results-top: 64px; position: sticky; top: var(--port-results-top); z-index: 12;
   min-width: 0; margin: -2px 0 16px; background: var(--surface);
   border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 8px 16px rgba(0,0,0,.16); }
 .port-result-tabs { display: flex; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
