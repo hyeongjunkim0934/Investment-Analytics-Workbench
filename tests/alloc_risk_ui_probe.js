@@ -176,7 +176,7 @@ assert(tooltip.hidden, "potential interaction reused the current tooltip");
 keyboard(panel("vuln").querySelector(".rp-chart"), "Escape");
 result.tooltipInteraction = true;
 
-// Scale, bounds and comparison controls are saved independently of institutional preferences.
+// Chart scale remains independent of institutional preferences; retired limits and modes never affect paths.
 const rawWeights = table()[0].slice(3).map(Number);
 byId("alloc-rp-scale-0.1").click();
 assert.equal(P.allocState(CMA_ALLOC).rp_scale, .1);
@@ -191,65 +191,27 @@ for (const layer of ["stress", "vuln"]) {
 assert(table()[0].slice(3).some((w, i) => Math.abs(+w - rawWeights[i]) > .01));
 byId("alloc-rp-scale-1").click();
 assert.deepEqual(table()[0].slice(3).map(Number), rawWeights);
-byId("alloc-rp-lo-0").value = "10";
-byId("alloc-rp-hi-0").value = "20";
-byId("alloc-rp-hi-0").dispatchEvent({type: "input", target: byId("alloc-rp-hi-0")});
-byId("alloc-rp-scale-0.1").click();
-assert.equal(byId("alloc-rp-lo-0").value, "10", "scale redraw lost pending lower limit");
-assert.equal(byId("alloc-rp-hi-0").value, "20", "scale redraw lost pending upper limit");
-assert.equal(P.allocState(CMA_ALLOC).rp_bounds?.[engine.V.keys[0]], undefined, "pending limits were applied silently");
-assert(/미적용/.test(card.querySelector(".rp-limits").textContent));
-byId("alloc-rp-scale-1").click();
-byId("alloc-rp-bounds-apply").click();
-assert.deepEqual(Array.from(P.allocState(CMA_ALLOC).rp_bounds[engine.V.keys[0]]), [10, 20]);
-for (const layer of ["stress", "vuln"])
-  assert(table(layer).every((row) => +row[3] >= 9.999 && +row[3] <= 20.001));
-const comparison = byId("alloc-rp-comparison");
-const limitLines = [...comparison.querySelectorAll("line")].filter((n) => n.getAttribute("data-asset") != null);
-assert.equal(limitLines.length, engine.V.keys.length);
-assert.equal(+limitLines[0].getAttribute("data-lo"), 10);
-assert.equal(+limitLines[0].getAttribute("data-hi"), 20);
-const points = [...comparison.querySelectorAll("circle")];
-assert.equal(points.length, 4 * engine.V.keys.length);
-for (const layer of ["stress", "vuln"]) {
-  const latest = table(layer)[0].slice(3).map(Number);
-  for (const [i, key] of engine.V.keys.entries()) {
-    const point = points.find((n) => n.getAttribute("data-asset") === key
-      && n.getAttribute("data-layer") === layer && n.getAttribute("data-mode") === "constrained");
-    assert(Math.abs(+point.getAttribute("data-weight") - latest[i]) <= .0051);
-  }
+assert.equal(byId("alloc-risk-source"), null, "retired source score card remains");
+assert.equal(byId("alloc-rp-comparison"), null, "retired optimum comparison remains");
+assert.equal(card.querySelector(".rp-limits"), null, "retired limits inputs remain");
+assert.equal(card.querySelector(".rp-scope"), null, "retired unconstrained note remains");
+for (const id of ["alloc-rp-mode-free", "alloc-rp-mode-constrained", "alloc-rp-bounds-apply", "alloc-rp-bounds-reset"])
+  assert.equal(byId(id), null, `retired control ${id} remains`);
+assert(!/리스크 결과|투자한도|최적비중/.test(card.textContent));
+const baselineRows = {stress: table().map((row) => [...row]), vuln: table("vuln").map((row) => [...row])};
+for (const [mode, bounds] of [
+  ["constrained", {[engine.V.keys[0]]: [10, 20]}],
+  ["free", {[engine.V.keys[0]]: [10, 20]}],
+  ["constrained", Object.fromEntries(engine.V.keys.map((key) => [key, [80, 100]]))],
+  ["constrained", {[engine.V.keys[0]]: [null, 100]}],
+]) {
+  state.rp_mode = mode;
+  state.rp_bounds = bounds;
+  draw();
+  for (const layer of ["stress", "vuln"])
+    assert.deepEqual(table(layer), baselineRows[layer], "retired limits or modes changed the chart path");
 }
-const savedBounds = JSON.stringify(P.allocState(CMA_ALLOC).rp_bounds);
-byId("alloc-rp-mode-free").click();
-assert.equal(P.allocState(CMA_ALLOC).rp_mode, "free");
-assert.equal(DOC.activeElement, byId("alloc-rp-mode-free"));
-assert.deepEqual(table()[0].slice(3).map(Number), rawWeights, "free path still uses asset limits");
-assert.equal(JSON.stringify(P.allocState(CMA_ALLOC).rp_bounds), savedBounds);
-state = P.allocState(CMA_ALLOC); draw();
-assert.equal(byId("alloc-rp-mode-free").getAttribute("aria-pressed"), "true");
-assert.equal(byId("alloc-rp-hi-0").value, "20", "saved limits were not restored");
-byId("alloc-rp-mode-constrained").click();
-const validWeights = table()[0].slice(3);
-byId("alloc-rp-hi-0").value = "100";
-byId("alloc-rp-lo-0").value = "80";
-byId("alloc-rp-lo-1").value = "50";
-byId("alloc-rp-bounds-apply").click();
-assert.equal(JSON.stringify(P.allocState(CMA_ALLOC).rp_bounds), savedBounds, "infeasible lower sums were persisted");
-assert.deepEqual(table()[0].slice(3), validWeights, "invalid draft replaced applied allocations");
-assert.equal(byId("alloc-rp-lo-0").value, "80", "invalid input was silently clamped");
-assert(/하한/.test(card.querySelector(".rp-limits").textContent));
-draw();
-for (let i = 0; i < engine.V.keys.length; i++) {
-  byId(`alloc-rp-lo-${i}`).value = "0";
-  byId(`alloc-rp-hi-${i}`).value = "10";
-}
-byId("alloc-rp-bounds-apply").click();
-assert.equal(JSON.stringify(P.allocState(CMA_ALLOC).rp_bounds), savedBounds, "infeasible upper sums were persisted");
-assert.deepEqual(table()[0].slice(3), validWeights);
-byId("alloc-rp-bounds-reset").click();
-assert.deepEqual(Object.keys(P.allocState(CMA_ALLOC).rp_bounds), []);
-assert.deepEqual(table()[0].slice(3).map(Number), rawWeights);
-result.scaleBoundsAndFreeComparison = true;
+result.chartScaleAndRetiredState = true;
 
 // A redraw with revised portfolio inputs must invalidate previously solved allocations.
 const beforeMu = engine.V.mu[2], beforeCap = engine.hi[2];
@@ -312,7 +274,8 @@ click("전체");
 const original = table().map((row) => row.slice(3));
 const legacy = { ...P.allocDefaults(CMA_ALLOC), mvo_lambda: 29.7, rp_map: "lin", rp_range: "all",
   source: "proxy", h_bond: 0, h_eq: 0, h_alt: 0,
-  bands: Object.fromEntries(Object.keys(P.allocDefaults(CMA_ALLOC).bands).map((key) => [key, [0, 0]])) };
+  bands: Object.fromEntries(Object.keys(P.allocDefaults(CMA_ALLOC).bands).map((key) => [key, [0, 0]])),
+  rp_mode: "constrained", rp_bounds: Object.fromEntries(engine.V.keys.map((key) => [key, [80, 100]])) };
 shim.localStorage.setItem("iaw-alloc", JSON.stringify(legacy));
 P.renderSection("alloc");
 assert.deepEqual(table().map((row) => row.slice(3)), original, "retired institutional state changed risk weights");

@@ -68,7 +68,7 @@ secNodes.alloc.append(elem("div", "alloc-workspace"));
 ["alloc-port-panel",
  "alloc-sim-panel",
  "alloc-headline", "alloc-summary", "alloc-controls", "alloc-cards", "alloc-levers",
- "alloc-risk-source", "alloc-risk-proc",
+ "alloc-risk-proc",
  ]
   .forEach((id) => secNodes.alloc.append(elem("div", id)));
 
@@ -1912,15 +1912,13 @@ safe("allocRiskProc", () => {
   const boxEl = () => DOC.getElementById("alloc-risk-proc");
   const riskPanel = (layer = "stress") => DOC.getElementById(`alloc-rp-panel-${layer}`);
   DOC.getElementById("alloc-workspace-risk").click();
-  const sourceEl = () => DOC.getElementById("alloc-risk-source");
-  r.latestSourceMatchesRisk = /기준일 2020-09-08/.test(sourceEl().textContent)
-    && DOC.getElementById("alloc-risk-score-stress").textContent === "67"
-    && DOC.getElementById("alloc-risk-score-vuln").textContent === "48"
-    && [...sourceEl().querySelectorAll(".chip")].map((n) => n.textContent).join(",") === "주의,보통"
-    && sourceEl().querySelector("a").getAttribute("href") === "#risk";
+  r.removedSummaryAndLimits = DOC.getElementById("alloc-risk-source") === null
+    && DOC.getElementById("alloc-rp-comparison") === null
+    && boxEl().querySelector(".rp-limits") === null
+    && !/리스크 결과|투자한도|최적비중/.test(boxEl().textContent);
   let txt = boxEl().textContent;
   r.renderErrors = DOC.getElementById("alloc").querySelectorAll(".render-error").length;
-  r.cardRendered = /투자한도 · 최적비중/.test(txt)
+  r.cardRendered = boxEl().querySelectorAll(".rp-layer").length === 2
     && !!riskPanel() && !!riskPanel("vuln") && !riskPanel().hidden && !riskPanel("vuln").hidden;
   r.pathCount = riskPanel().querySelectorAll("svg path").length;
   const tbtn = [...riskPanel().querySelectorAll("button")].find((b) => b.textContent === "표");
@@ -1956,7 +1954,7 @@ safe("allocRiskProc", () => {
     && DOC.getElementById("alloc-rp-scale-0.1").getAttribute("aria-pressed") === "true";
   DOC.getElementById("alloc-rp-scale-1").click();
   txt = boxEl().textContent;
-  r.riskSelectionSurvivesUpdate = !boxEl().hidden && !sourceEl().hidden
+  r.riskSelectionSurvivesUpdate = !boxEl().hidden && DOC.getElementById("alloc-risk-source") === null
     && DOC.getElementById("alloc-sim-panel").hidden
     && DOC.getElementById("alloc-workspace-risk").getAttribute("aria-pressed") === "true";
   r.mapControlRemoved = DOC.getElementById("alloc-rp-map") === null;
@@ -1966,9 +1964,8 @@ safe("allocRiskProc", () => {
   shim.localStorage.removeItem("iaw-alloc");
   P.renderSection("alloc");
   r.missingWeeklyHistoryExplains = /주간 이력/.test(boxEl().textContent) && /보류/.test(boxEl().textContent);
-  r.missingLatestClearsOldScores = DOC.getElementById("alloc-risk-score-stress").textContent === "—"
-    && DOC.getElementById("alloc-risk-score-vuln").textContent === "—"
-    && !/2020-09-08/.test(sourceEl().textContent);
+  r.missingLatestClearsOldGraphs = boxEl().querySelectorAll("svg").length === 0
+    && !/2020-09-08/.test(boxEl().textContent);
   P.DATA.risk = RISK_WEEKLY;
   P.DATA.alloc = ALLOC_FIXTURE;
   P.renderSection("alloc");
