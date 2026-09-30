@@ -1580,6 +1580,10 @@ def test_gate_asks_on_every_visit(probe):
     assert g["shownEvenWithLegacyKey"] is True, "예전 버전이 남긴 기억 키가 있으면 관문을 건너뛴다"
     assert g["legacyKeyCleared"] is True, "옛 키를 지우지 않으면 예전 방문자는 계속 통과된다"
     assert g["nothingRemembered"] is True, "통과 후 무언가를 저장한다 — 다음 접속에 안 묻게 된다"
+    assert g["startsCollapsed"] is True, "처음에는 엽서만 보여야 한다"
+    assert g["revealsPassword"] is True, "엽서를 누르면 비밀번호 입력창이 열려야 한다"
+    assert g["focusesPassword"] is True
+    assert g["escapeCollapses"] is True
 
 
 def test_gate_rejects_a_wrong_passphrase(probe):
