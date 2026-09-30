@@ -6,6 +6,7 @@ of the production covariance aggregation. No private source values are required.
 
 import copy
 import json
+import statistics
 import numpy as np
 import pandas as pd
 import pytest
@@ -49,6 +50,51 @@ def test_full_daily_distribution_is_not_cut_to_common_bond_history_or_trimmed():
     json.dumps(out, allow_nan=False)
 
 
+def test_distribution_display_crop_uses_full_sample_sigma_without_renormalizing():
+    values = np.r_[np.linspace(-2, 2, 1000), -45., 51.]
+    raw = pd.Series(values, index=pd.bdate_range("2000-01-03", periods=len(values)))
+    source_before = raw.copy()
+    row = hedge.build_cost_distribution({"info:SMB_USDKRW_3M": raw}, "UST")
+    # Independent scalar sample statistics include the same tails being hidden.
+    mean, sigma = statistics.mean(values), statistics.stdev(values)
+    low, high = mean - 5 * sigma, mean + 5 * sigma
+    assert row["mean_pct"] == pytest.approx(mean)
+    assert row["std_pct"] == pytest.approx(sigma)
+    assert row["display_low_pct"] == pytest.approx(low)
+    assert row["display_high_pct"] == pytest.approx(high)
+    assert row["display_n"] == 1000
+    assert row["display_tail_policy"] == "omit_abs_z_gte"
+    assert row["display_ddof"] == 1 and row["display_sigma_limit"] == 5
+    assert row["display_bins"][0]["low"] == row["display_low_pct"]
+    assert row["display_bins"][-1]["high"] == row["display_high_pct"]
+    assert sum(b["count"] for b in row["display_bins"]) == 1000
+    assert sum(b["frequency_pct"] for b in row["display_bins"]) == pytest.approx(1000 / 1002 * 100)
+    for i, b in enumerate(row["display_bins"]):
+        last = i == len(row["display_bins"]) - 1
+        expected = sum(abs(v - mean) < 5 * sigma and b["low"] <= v and
+                       (v <= b["high"] if last else v < b["high"]) for v in values)
+        assert b["count"] == expected
+        assert b["frequency_pct"] == pytest.approx(expected / len(values) * 100)
+        assert low <= b["low"] < b["high"] <= high
+    assert row["n"] == 1002 and sum(b["count"] for b in row["bins"]) == 1002
+    assert row["min_pct"] == -45 and row["max_pct"] == 51
+    pd.testing.assert_series_equal(raw, source_before)
+    json.dumps(row, allow_nan=False)
+
+
+def test_distribution_exact_five_sigma_observations_are_hidden_only_from_display():
+    # n=51, mean=0, sample variance=(25+25)/(51-1)=1 exactly.
+    # The FD IQR is zero: one original bin contains both tails and the center.
+    values = [-5.] + [0.] * 49 + [5.]
+    row = hedge.build_cost_distribution({"info:SMB_USDKRW_3M": pd.Series(
+        values, index=pd.bdate_range("2025-01-01", periods=len(values)))}, "UST")
+    assert row["mean_pct"] == 0 and row["std_pct"] == 1
+    assert row["n"] == 51 and row["bins"][0]["count"] == 51
+    assert row["display_n"] == row["display_bins"][0]["count"] == 49
+    assert row["display_low_pct"] == -5 and row["display_high_pct"] == 5
+    assert row["display_bins"][0]["frequency_pct"] == pytest.approx(49 / 51 * 100)
+
+
 def test_distribution_source_mapping_signed_constant_and_invalid_observations():
     dates = pd.bdate_range("2025-01-01", periods=8)
     src = {spec["cost"]: pd.Series(float(i), index=dates)
@@ -61,7 +107,25 @@ def test_distribution_source_mapping_signed_constant_and_invalid_observations():
         assert len(row["bins"]) == 1
         assert row["sign"] == "positive_received"
         assert row["n"] == (7 if code == "GER" else 8)
-    assert not hedge.build_cost_distribution({}, "UST")["active"]
+        assert row["std_pct"] == 0 and row["display_n"] == row["n"]
+        assert row["display_bins"] == row["bins"]
+        assert row["display_low_pct"] < i < row["display_high_pct"]
+        json.dumps(row, allow_nan=False)
+
+
+@pytest.mark.parametrize("values", [[], [np.nan, np.inf, -np.inf], [2.]])
+def test_distribution_empty_nonfinite_and_singleton_display(values):
+    row = hedge.build_cost_distribution({"info:SMB_USDKRW_3M": pd.Series(
+        values, index=pd.bdate_range("2025-01-01", periods=len(values)), dtype=float)}, "UST")
+    if values == [2.]:
+        assert row["active"] and row["std_pct"] == 0
+        assert row["display_n"] == 1 and row["display_bins"] == row["bins"]
+        assert row["display_bins"][0]["frequency_pct"] == 100
+    else:
+        assert not row["active"] and row["n"] == row["display_n"] == 0
+        assert row["bins"] == row["display_bins"] == []
+        assert row["std_pct"] is row["display_low_pct"] is row["display_high_pct"] is None
+    json.dumps(row, allow_nan=False)
 
 
 @pytest.mark.parametrize("y", [-0.01, 0., 0.035])
