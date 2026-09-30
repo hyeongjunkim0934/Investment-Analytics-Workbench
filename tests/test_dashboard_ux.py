@@ -2574,21 +2574,23 @@ def test_explain_fold_behaviour_and_warning_visibility(probe):
 
 
 # ---- 포트폴리오 구성 (신규 7자산군 · §7.14) — 실행으로 확인 ----------------------
-def test_port_panel_defaults_and_two_track_saving(probe):
-    """대분류 초기 세팅(50/30/20/10)·적용 규칙·2트랙 저장 계약."""
+def test_port_panel_defaults_and_two_portfolio_saving(probe):
+    """최소/최대 제약 적용·비중 독립 저장 계약."""
     c = probe["portPanel"]
     assert "ERROR" not in c, c.get("ERROR")
     assert c["panelRendered"] is True
     assert c["panelAboveSim"] is True, "대분류 초기 세팅은 제일 상단이다(사용자 지시)"
-    assert c["groupDefaults"] == [50, 30, 20, 10]
+    assert c["groupDefaults"] == {
+        f"{group} {bound}제약 %": value
+        for group in ("주식", "채권", "대체")
+        for bound, value in (("최대", 100), ("최소", 0))
+    }
     assert abs(c["applySum"] - 100) < 1e-9, "적용 후 합계가 정확히 100.0 이 아니다"
-    assert c["applyMix"] == [13.5, 13.5, 22.5, 22.5, 18.0, 5.0, 5.0], (
-        "비례 축소·그룹 내 균등 분할 결과가 어긋난다"
-    )
-    assert c["liqEqualSplit"] is True, "달러/원화 유동성 동일 비중(사용자 지정)이 깨졌다"
-    assert c["applyDoesNotSave"] is True and c["mixInputDoesNotSave"] is True, (
-        "비중은 시뮬레이션 트랙 — 입력 이벤트에서 저장하면 안 된다"
-    )
+    assert c["applyPreservesMix"] is True, "제약 적용이 비교 비중을 임의로 재분배했다"
+    assert c["liquidityConstraintRemoved"] is True
+    assert c["applySavesConstraints"] is True
+    assert c["mixInputDoesNotSave"] is True, "비중 편집의 기존 초안 저장 계약을 유지한다"
+    assert c["mixInputSavesIndependently"] is True, "비중1 편집은 비중2와 독립적으로 저장돼야 한다"
     assert c["muInputSavesImmediately"] is True, "μ 키인은 모형 입력 — 즉시 저장"
     assert c["windowChoiceSaved"] is True
 

@@ -3,14 +3,37 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const assert = require("node:assert/strict");
+const vm = require("node:vm");
 const { spawnSync } = require("node:child_process");
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(__dirname, "dashboard_probe.js"), "utf8");
 const boundary = source.indexOf("const EXPORTS = [");
 assert(boundary > 0, "shared DOM bootstrap boundary");
 const fixture = source.slice(source.indexOf("const ALLOC_FIXTURE = (() => {"), source.indexOf('\nsafe("hedgeXe"'));
-const robust = fs.readFileSync(path.join(__dirname, "robust_frontier_ui_probe.js"), "utf8");
-const sixFixture = robust.slice(robust.indexOf("const SIX_ASSET_FIXTURE = (() => {"), robust.indexOf("\n`;\nconst reloadCode"));
+const sevenFixture = `
+const SEVEN_ASSET_FIXTURE = (() => {
+  const old = ALLOC_FIXTURE.port, indexes = [0, 6, 1, null, 2, 3, 4];
+  const assets = ["국내시가", "국내장부", "해외시가", "해외장부", "국내주식", "해외주식", "대체투자"];
+  const rename = a => ({국내채권:"국내시가", 해외채권:"해외시가", 원화유동성:"국내장부"}[a] || a);
+  const remap = value => Object.fromEntries(Object.entries(value || {}).filter(([a]) => a !== "달러유동성")
+    .map(([a,v]) => [rename(a),v]));
+  return {...ALLOC_FIXTURE, port:{...old, assets, proxies:{...remap(old.proxies), 해외장부:"bm:synthetic-book"},
+    asset_notes:{해외장부:"원화 장부가 BM · 원천 환노출·헤지 상태 미확인 — 추가 환헤지 미적용"},
+    usd_assets:old.usd_assets.map(rename), bench_w:remap(old.bench_w),
+    defaults:{...old.defaults, liq_default:0,
+      groups:{주식:["국내주식","해외주식"],채권:assets.slice(0,4),대체:["대체투자"]}},
+    coverage:indexes.map((i,j) => i === null ? {asset:assets[j],key:"bm:synthetic-book",currency:"KRW",n_months:42}
+      : {...old.coverage[i],asset:assets[j]}),
+    ref10y:{...old.ref10y,per_asset:{...remap(old.ref10y.per_asset),해외장부:null}},
+    cma_input:{...old.cma_input,mu_pct:{...remap(old.cma_input.mu_pct),해외장부:3.2}},
+    windows:old.windows.map(w => ({...w,
+      mean_pct:indexes.map(i => i === null ? 3.2 : w.mean_pct[i]),
+      vol_pct:indexes.map(i => i === null ? 2 : w.vol_pct[i]),
+      mdd_pct:indexes.map(i => i === null ? 3 : w.mdd_pct[i]),
+      cov:indexes.map(i => indexes.map(j => i === null || j === null ? (i === j ? .0004 : 0) : w.cov[i][j])),
+      corr:indexes.map(i => indexes.map(j => i === null || j === null ? +(i === j) : w.corr[i][j])),
+    }))}};
+})();`;
 const load = new Function("require", "__dirname", source.slice(0, boundary) + `
 const saved = new Map(JSON.parse(process.env.IAW_TEST_CMA_STORAGE || "[]"));
 const writes = [];
@@ -27,8 +50,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard/cma.js"), "utf8"), sa
 const noBoot = APP.replace(/\\nboot\\(\\);\\s*$/, "\\n");
 if (noBoot === APP) throw new Error("app boot boundary");
 vm.runInContext(noBoot + "\\n;globalThis.__cmaProbe = {DATA, SECTION_IDS, SECTION_LABELS, RENDERERS, routeView, renderSection, renderPortPanel, portState, portDefaults, portSaveState, portModelInputs, portRiskInputs, portHedgeInputs, portRiskAllocationEngine, portCorrKey, PORT_LS_KEY};", sandbox);
-` + fixture + "\n" + sixFixture + `
-return {P:sandbox.__cmaProbe, DOC, shim, sandbox, saved, writes, FETCH_CALLS, main, nav, elem, fixture:SIX_ASSET_FIXTURE,
+` + fixture + "\n" + sevenFixture + `
+return {P:sandbox.__cmaProbe, DOC, shim, sandbox, saved, writes, FETCH_CALLS, main, nav, elem, fixture:SEVEN_ASSET_FIXTURE,
   inspect: expression => vm.runInContext(expression, sandbox)};
 `);
 const {P, DOC, sandbox, saved, writes, FETCH_CALLS, main, nav, elem, fixture: allocation, inspect} = load(require, __dirname);
@@ -52,7 +75,7 @@ for (const match of navHTML[1].matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([^<]+)<\/
 }
 const portfolio = allocation.port;
 P.DATA.alloc = allocation;
-const asset = "해외채권", assetIndex = portfolio.assets.indexOf(asset);
+const asset = "해외시가", assetIndex = portfolio.assets.indexOf(asset);
 assert(assetIndex >= 0);
 const cmaBox = () => DOC.getElementById("cma-content");
 const portBox = () => DOC.getElementById("alloc-port-panel");
@@ -67,7 +90,8 @@ if (process.argv.includes("--reload")) {
   console.log(JSON.stringify({mu: model.baseMu[assetIndex], sig: model.risk.sig[assetIndex],
     source: model.src[assetIndex], active: !!C.cmaAssetAssumption(asset),
     noRenderError: !DOC.getElementById("cma").querySelector(".render-error"),
-    warning: cmaBox().textContent.includes("저장된 CMA를 읽지 못했습니다"), writes: writes.length}));
+    warning: cmaBox().textContent.includes("저장된 CMA를 읽지 못했습니다"), writes: writes.length,
+    cmaAssets: C.cmaStore().assets}));
   process.exit(0);
 }
 const reload = (state = [...saved]) => {
@@ -108,12 +132,59 @@ result.boundaries = {
 };
 assert(Object.values(result.boundaries).every(Boolean), JSON.stringify(result.boundaries));
 
+// Upgrade old saved names only when the loaded portfolio uses their replacements.
+// Loading before market data, or retaining an old payload, must not hide its CMA.
+const legacyEntry = {enabled:true,applied:copy(rows),draft:copy(changed(0,{p:""})),
+  baseline:{mu:4.5,sig:9,source:"자산배분 키인",window:"all"}};
+const currentEntry = {enabled:false,applied:copy(changed(0,{mu:12})),draft:copy(changed(0,{mu:14})),
+  baseline:{mu:5.5,sig:10,source:"CMA 파일",window:"all"}};
+const legacyAssets = {국내채권:copy(legacyEntry),해외채권:copy(legacyEntry),해외시가:copy(currentEntry),
+  원화유동성:{...copy(legacyEntry),enabled:false}};
+const migrationData = {alloc:null}, migrationWrites = [];
+const migrationStorage = new Map([[C.CMA_LS_KEY,JSON.stringify({version:1,assets:legacyAssets})]]);
+const migrationContext = vm.createContext({DATA:migrationData,document:{getElementById:()=>null},localStorage:{
+  getItem:key=>migrationStorage.get(key)??null,
+  setItem:(key,value)=>{migrationWrites.push([key,value]);migrationStorage.set(key,value);},
+}});
+vm.runInContext(fs.readFileSync(path.join(root,"dashboard/cma.js"),"utf8"),migrationContext);
+const migrationApi = vm.runInContext("({cmaStore,cmaSave,cmaAssetAssumption})",migrationContext);
+same(migrationApi.cmaStore().assets,legacyAssets);
+migrationData.alloc = {port:{assets:["국내채권","해외채권","원화유동성"]}};
+assert.equal(migrationApi.cmaAssetAssumption("해외채권").mu,4);
+same(migrationApi.cmaStore().assets,legacyAssets);
+const oldPayloadKeptOldNames = Object.hasOwn(migrationApi.cmaStore().assets,"해외채권")
+  && migrationApi.cmaAssetAssumption("해외채권").mu === 4;
+migrationData.alloc.port.assets = portfolio.assets;
+const migratedAssets = migrationApi.cmaStore().assets;
+same(migratedAssets.국내시가,legacyEntry);
+same(migratedAssets.해외시가,currentEntry);
+same(migratedAssets.국내장부,legacyAssets.원화유동성);
+const noWritesDuringMigration = migrationWrites.length === 0;
+migrationApi.cmaSave();
+const persistedMigration = JSON.parse(migrationStorage.get(C.CMA_LS_KEY));
+const migratedReload = reload([[C.CMA_LS_KEY,JSON.stringify({version:1,assets:{해외채권:legacyEntry}})]]);
+result.assetMigration = {
+  delayedDataMigratesCachedState: !!migratedAssets.국내시가 && !migratedAssets.국내채권,
+  oldPayloadKeepsOldNames: oldPayloadKeptOldNames,
+  newNameWins: JSON.stringify(migratedAssets.해외시가) === JSON.stringify(currentEntry),
+  appliedAndUnfinishedDraftPreserved: JSON.stringify(migratedAssets.국내시가) === JSON.stringify(legacyEntry),
+  disabledStatePreserved: migratedAssets.국내장부.enabled === false,
+  newBookNeverInheritsLegacy: !Object.hasOwn(migratedAssets,"해외장부"),
+  oldKeysRemoved: !["국내채권","해외채권","원화유동성"].some(a=>Object.hasOwn(migratedAssets,a)),
+  readDoesNotWrite: noWritesDuringMigration,
+  explicitSavePersists: JSON.stringify(persistedMigration.assets) === JSON.stringify(migratedAssets),
+  reloadUsesMigratedApplied: migratedReload.active && migratedReload.mu === 4 && migratedReload.noRenderError,
+  reloadPreservesUnfinishedDraft: migratedReload.cmaAssets.해외시가.draft[0].p === "",
+};
+assert(Object.values(result.assetMigration).every(Boolean),JSON.stringify(result.assetMigration));
+
 // Existing manual inputs remain recoverable when the independent CMA layer is disabled.
 const state = P.portDefaults(portfolio);
 state.mu[asset] = -1.2; state.sig[asset] = 6.5;
 P.portSaveState(state); const storedPortfolio = saved.get(P.PORT_LS_KEY);
 P.renderPortPanel(allocation);
-portInput("국내채권 비중").value = "42"; fire(portInput("국내채권 비중"), "input");
+portInput("국내시가 비중1").value = "42"; fire(portInput("국내시가 비중1"), "input");
+portInput("해외장부 비중2").value = "7"; fire(portInput("해외장부 비중2"), "input");
 P.renderSection("cma");
 assert(!DOC.getElementById("cma").querySelector(".render-error"));
 const card = () => [...cmaBox().querySelectorAll("article")].find(node => node.getAttribute("aria-label") === `${asset} CMA`);
@@ -138,7 +209,10 @@ result.application = {
   sigmaFieldReflectsModel: Math.abs(Number(portInput(`${asset} 변동성`).value) - Math.sqrt(82.5)) < 0.0051,
   readOnlyDerivedInputs: portInput(`${asset} 기대수익`).hasAttribute("readonly") && portInput(`${asset} 변동성`).hasAttribute("readonly"),
   underlyingManualInputsPreserved: saved.get(P.PORT_LS_KEY) === storedPortfolio && liveState().mu[asset] === -1.2 && liveState().sig[asset] === 6.5,
-  unsavedWeightPreserved: Number(portInput("국내채권 비중").value) === 42,
+  unsavedWeightPreserved: Number(portInput("국내시가 비중1").value) === 42,
+  secondWeightPreserved: Number(portInput("해외장부 비중2").value) === 7,
+  sevenCmaCards: cmaBox().querySelectorAll("article").length === 7,
+  newBookAssetEditable: !!input(cmaBox(), "해외장부 낙관 기대수익 %"),
   marketPayloadUnchanged: JSON.stringify(P.DATA.alloc) === dataBefore,
 };
 assert(Object.values(result.application).every(Boolean), JSON.stringify(result.application));
@@ -194,13 +268,13 @@ DOC.querySelector(".cma-popup-close").click();
 const closeButtonStaysClosed=!DOC.querySelector(".cma-popup") && DOC.activeElement===trigger;
 fire(trigger,"mouseenter");
 result.hover = {hoverOpened, allThreeExact: values.length === 3,
-  unhedgedBasis: popup.textContent.includes("환헤지 전"), escapeClosed, focusedOpen,
+  unhedgedBasis: popup.textContent.includes("추가 환헤지 전"), escapeClosed, focusedOpen,
   keyboardEditLink: down.defaultPrevented && editLinkFocused && link.getAttribute("href") === "#cma",
   keyboardEscapeStaysClosed,closeButtonStaysClosed};
 
 // Published correlation and its manually edited alternative survive CMA sigma scaling.
 const noHedge = P.portModelInputs(portfolio,liveState());
-const correlationKey = P.portCorrKey("국내채권",asset);
+const correlationKey = P.portCorrKey("국내시가",asset);
 const custom = {...liveState(),corr:{[correlationKey]:0.2}};
 const customModel = P.portModelInputs(portfolio,custom);
 const window = portfolio.windows.find(w=>w.key===liveState().win) || portfolio.windows.at(-1);
@@ -219,6 +293,26 @@ result.model={validHedge:hedged.risk.valid,
   linkedMeanSame:JSON.stringify(linked.V.mu)===JSON.stringify(hedged.mu),
   linkedCovarianceSame:JSON.stringify(linked.V.C)===JSON.stringify(hedged.C)};
 assert(Object.values(result.model).every(Boolean),JSON.stringify(result.model));
+
+// The seventh asset has its own editable assumptions and no assumed extra FX hedge.
+const bookEntry = C.cmaEnsureAsset("해외장부",{mu:3.2,sig:2});
+bookEntry.draft = rows.map(row=>({...row,mu:3.7,sig:2.8}));
+assert(C.cmaApplyAsset("해외장부").valid);
+const bookModel = P.portModelInputs(portfolio,liveState());
+const bookTrigger = [...portBox().querySelectorAll("button")]
+  .find(node=>node.getAttribute("aria-label") === "해외장부 시나리오 보기");
+fire(bookTrigger,"mouseenter");
+result.sevenAssetIntegration = {
+  sevenAssets: portfolio.assets.length === 7 && bookModel.mu.length === 7 && bookModel.C.length === 7,
+  bookAssumptionApplied: bookModel.mu[3] === 3.7 && bookModel.risk.sig[3] === 2.8,
+  bookVariance: Math.abs(bookModel.C[3][3]-2.8**2)<1e-9,
+  bookHover: DOC.querySelector(".cma-popup").textContent.includes("해외장부"),
+  bookSourceBasis: cmaBox().querySelector(".cma-source-note").textContent === portfolio.asset_notes.해외장부,
+  noUnknownBookHedge: !portInput("해외장부 환헤지"),
+  bothDraftWeightsRetained: Number(portInput("국내시가 비중1").value) === 42
+    && Number(portInput("해외장부 비중2").value) === 7,
+};
+assert(Object.values(result.sevenAssetIntegration).every(Boolean),JSON.stringify(result.sevenAssetIntegration));
 
 const links=[...nav.querySelectorAll("a")],hashes=links.map(node=>node.getAttribute("href"));
 sandbox.location.hash="#cma";P.routeView();

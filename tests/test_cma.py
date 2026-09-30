@@ -57,3 +57,8 @@ def test_asset_hover_keyboard_and_cma_route(cma):
 
 def test_bad_saved_content_and_missing_market_data_are_safe(cma):
     assert all(cma["storageSafety"].values()), cma["storageSafety"]
+
+
+def test_renamed_assets_preserve_saved_scenarios_and_new_book_integrates(cma):
+    assert all(cma["assetMigration"].values()), cma["assetMigration"]
+    assert all(cma["sevenAssetIntegration"].values()), cma["sevenAssetIntegration"]

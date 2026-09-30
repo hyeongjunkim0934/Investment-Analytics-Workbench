@@ -105,7 +105,7 @@ const expectedTe=Math.sqrt(cov(activeReturns,activeReturns))*100;
 const expectedMu=current.reduce((sum,v,i)=>sum+v*(means[i]-uiH[i]*2.4),0);
 const expectedAct=expectedMu-wb.reduce((sum,v,i)=>sum+v*means[i],0);
 const benchmarkRows=Array.from(panel.querySelectorAll('.port-benchmark tbody tr'));
-const hedgeRow=benchmarkRows.find(row=>row.querySelector('td').textContent==='현재 배분 · 환헤지');assert(hedgeRow);
+const hedgeRow=benchmarkRows.find(row=>row.querySelector('td').textContent==='비중1 · 환헤지');assert(hedgeRow);
 const cells=Array.from(hedgeRow.querySelectorAll('td')).map(cell=>cell.textContent);
 near(Number(cells[1]),expectedMu,.0051);near(Number(cells[4]),expectedAct,.0051);
 near(Number(cells[5]),expectedTe,.0051);near(Number(cells[6]),expectedAct/expectedTe,.0051);
@@ -116,7 +116,8 @@ const hoverPlot={bbox:{left:0,top:0,width:100000,height:100000},valToPos:value=>
   cursor:{left:pointSigma*1000,top:pointMu*1000}};
 compared.opts.hooks.draw.at(-1)(hoverPlot);compared.opts.hooks.setCursor.at(-1)(hoverPlot);
 const tip=panel.querySelector('.port-portfolio-tooltip');assert(!tip.hidden);
-assert(tip.querySelector('.port-tooltip-title').textContent.includes('현재 · 환헤지'));
+same(saved.mix,saved.mix2); // Initial portfolios coincide, so their hit regions coincide as well.
+assert(/비중[12] · 환헤지/.test(tip.querySelector('.port-tooltip-title').textContent));
 const riskTerms=current.map((v,i)=>v*uiModel.risk.C[i].reduce((sum,c,j)=>sum+c*current[j],0));
 const portfolioVariance=riskTerms.reduce((sum,v)=>sum+v,0);
 Array.from(tip.querySelectorAll('.port-tooltip-return')).forEach((cell,i)=>
@@ -146,8 +147,8 @@ const failedReview=panel.querySelector('.port-benchmark').parentElement;assert(f
 assert(!chart().opts.series.some(series=>series.label==='환헤지 경계선'));
 p.hedge_cost=oldCost;P.renderPortPanel(fixture);
 // Theme rerender preserves the current weight draft and matching risk-layer model.
-input('국내채권 비중').value='42';fire(input('국내채권 비중'),'input');
-P.renderPortPanel(fixture,{preserveDraft:true});assert.equal(input('국내채권 비중').value,'42');
+input('국내채권 비중1').value='42';fire(input('국내채권 비중1'),'input');
+P.renderPortPanel(fixture,{preserveDraft:true});assert.equal(input('국내채권 비중1').value,'42');
 const linked=P.portRiskAllocationEngine(fixture);assert(!linked.error);
 same(linked.V.mu,portModelInputs(p,P.portState(p)).mu);
 same(linked.V.C,portModelInputs(p,P.portState(p)).C);

@@ -279,7 +279,10 @@ for(const dpr of [1,2]){
   assert(paint.some(cmd=>cmd[0]==='arc'&&Math.abs(cmd[1]-x)<1e-8&&Math.abs(cmd[2]-y)<1e-8&&cmd[3]===4.5*dpr),
     'current portfolio ring radius must be 4.5 CSS pixels');
   moveCursor(chart(),paint,paint.u.valToPos(currentPoint.sig,'x'),paint.u.valToPos(currentPoint.mu,'y'));
-  checkPortfolio(hover,currentPoint);assert(hover.querySelector('.port-tooltip-title').textContent.startsWith('현재'));
+  checkPortfolio(hover,currentPoint);
+  // Both initial comparison portfolios coincide; either marker has the same weights.
+  assert.deepEqual(JSON.parse(JSON.stringify(P.portState(SIX_ASSET_FIXTURE.port).mix)),JSON.parse(JSON.stringify(P.portState(SIX_ASSET_FIXTURE.port).mix2)));
+  assert(/^비중[12]/.test(hover.querySelector('.port-tooltip-title').textContent));
 }
 // Restore the DPR 1 projection before querying the point cloud below.
 draw(chart());
@@ -298,7 +301,7 @@ moveCursor(chart(),cloudPaint,...screen(cloudPoint));checkPortfolio(hover,cloudP
 moveCursor(chart(),cloudPaint,0,0);assert(hover.hidden);
 const bench=panel.querySelector('.port-benchmark');
 assert.equal(bench.querySelectorAll('th').length,7);
-assert.equal(bench.querySelectorAll('tbody tr').length,4);
+assert.equal(bench.querySelectorAll('tbody tr').length,5);
 assert(!/실현 성과\(/.test(panel.textContent));
 
 // View bounds affect only the drawing, including zero/negative bounds and cropped markers.
@@ -579,15 +582,15 @@ assert.equal(migrated.mu.국내장부,2.25);assert.equal(migrated.sig.국내장�
 assert.equal(migrated.corr[R.portCorrKey('국내장부','국내채권')],.11);
 assert.equal(migrated.corr[R.portCorrKey('국내채권','해외채권')],.3);
 for(const key of ['mix','mu','sig','corr']) assert(!/달러유동성|원화유동성/.test(JSON.stringify(migrated[key])));
-assert.equal(field('국내장부 비중').value,'5');assert.equal(field('국내장부 기대수익').value,'2.25');
+assert.equal(field('국내장부 비중1').value,'5');assert.equal(field('국내장부 기대수익').value,'2.25');
 assert.equal(field('국내장부 변동성').value,'0.6');
-assert(!Array.from(card().querySelectorAll('.port-marker-key')).some(n=>n.textContent.endsWith('현재')));
-assert(!panel.querySelector('.port-benchmark').textContent.includes('현재 배분'));
-click('CSV');assert(!sandbox.robustCSV[2].some(row=>row[0]==='현재'));
+assert(!Array.from(card().querySelectorAll('.port-marker-key')).some(n=>n.textContent.endsWith('비중1')));
+assert(!panel.querySelector('.port-benchmark').textContent.includes('비중1'));
+click('CSV');assert(!sandbox.robustCSV[2].some(row=>row[0]==='비중1'));
 assert(sandbox.robustCSV[2].some(row=>row[0]==='국내장부'&&row[2]===.6&&row[3]===2.25));
-edit('국내장부 비중',10);
-assert(Array.from(card().querySelectorAll('.port-marker-key')).some(n=>n.textContent.endsWith('현재')));
-assert(panel.querySelector('.port-benchmark').textContent.includes('현재 배분'));
+edit('국내장부 비중1',10);
+assert(Array.from(card().querySelectorAll('.port-marker-key')).some(n=>n.textContent.endsWith('비중1')));
+assert(panel.querySelector('.port-benchmark').textContent.includes('비중1'));
 edit('국내장부 기대수익',2.3);
 const savedMigration=JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY));
 for(const key of ['mix','mu','sig','corr']) assert(!/달러유동성|원화유동성/.test(JSON.stringify(savedMigration[key])));

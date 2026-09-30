@@ -56,8 +56,25 @@ function cmaCopyScenarios(rows) {
     p: rows[i].p, mu: rows[i].mu, sig: rows[i].sig }));
 }
 
+function cmaMigrateAssetNames(store) {
+  const assets = typeof DATA === "undefined" ? [] : DATA.alloc?.port?.assets || [];
+  // Asset labels are storage identities. Preserve the applied values, unfinished
+  // drafts and enabled flag as one record; an existing current-name entry wins.
+  // Recheck cached state after data loads or the portfolio universe changes.
+  for (const [oldName, name] of Object.entries({
+    원화유동성: "국내장부", 국내채권: "국내시가", 해외채권: "해외시가",
+  })) {
+    if (!assets.includes(name) || assets.includes(oldName)
+        || !Object.prototype.hasOwnProperty.call(store.assets, oldName)) continue;
+    if (!Object.prototype.hasOwnProperty.call(store.assets, name))
+      store.assets[name] = store.assets[oldName];
+    delete store.assets[oldName];
+  }
+  return store;
+}
+
 function cmaStore() {
-  if (cmaStateCache) return cmaStateCache;
+  if (cmaStateCache) return cmaMigrateAssetNames(cmaStateCache);
   cmaStateCache = { version: 1, assets: {} };
   try {
     const text = localStorage.getItem(CMA_LS_KEY);
@@ -69,7 +86,7 @@ function cmaStore() {
   } catch {
     cmaStorageError = "저장된 CMA를 읽지 못했습니다. 이번 화면의 입력은 새 초안입니다.";
   }
-  return cmaStateCache;
+  return cmaMigrateAssetNames(cmaStateCache);
 }
 
 function cmaSave() {
@@ -185,6 +202,7 @@ function renderCma() {
     const stateLabel = el("span", { class: "cma-state" });
     card.append(el("div", { class: "cma-card-head" }, el("h3", {}, asset),
       el("label", { class: "cma-enable" }, toggle, stateLabel)));
+    if (P.asset_notes?.[asset]) card.append(el("p", { class: "cma-unit cma-source-note" }, P.asset_notes[asset]));
     const table = el("table", { class: "cma-table" });
     table.append(el("thead", {}, el("tr", {},
       ...["시나리오", "확률 %", "기대수익 %", "변동성 %"].map((s) => el("th", { scope: "col" }, s)))));
@@ -242,7 +260,7 @@ function renderCma() {
   });
   host.append(grid);
   const details = [
-    el("p", {}, "입력·산출: 사용자 가정, 1년 수익률 기준(연 %) · 환헤지 전. 자산별 적용을 누르면 기대수익과 변동성이 자산배분에 함께 반영됩니다."),
+    el("p", {}, "입력·산출: 사용자 가정, 1년 수익률 기준(연 %) · 추가 환헤지 전. 자산별 적용을 누르면 기대수익과 변동성이 자산배분에 함께 반영됩니다."),
     el("p", {}, "초기 확률 25/50/25%는 편집용 가정이며 세 시나리오의 μ·σ는 모두 현재 자산배분 기준값으로 시작합니다. 전망 차이는 직접 입력하십시오."),
     el("p", {}, "기대수익은 확률가중 평균입니다. 변동성은 시나리오 내부 분산과 시나리오 평균 차이의 분산을 합산합니다."),
     el("p", {}, "기존 자산 간 상관계수를 유지합니다. 자산별 시나리오는 공동 시나리오를 정의하지 않으므로 시나리오별 포트폴리오 손익·공분산을 직접 추정한 결과가 아닙니다."),
@@ -282,7 +300,7 @@ function cmaAssetLabel(asset) {
     node.append(heading);
     const entry = cmaStore().assets[asset], result = cmaMoments(entry?.applied);
     if (result.valid) {
-      node.append(el("p", { class: "cma-popup-state" }, entry.enabled ? "적용 중 · 1년 가정 · 연 % · 환헤지 전" : "CMA 해제 · 마지막 적용 시나리오 · 1년 가정 · 연 %"));
+      node.append(el("p", { class: "cma-popup-state" }, entry.enabled ? "적용 중 · 1년 가정 · 연 % · 추가 환헤지 전" : "CMA 해제 · 마지막 적용 시나리오 · 1년 가정 · 연 %"));
       const table = el("table", { class: "cma-popup-table" });
       table.append(el("thead", {}, el("tr", {}, ...["시나리오", "확률 %", "기대수익 %", "변동성 %"].map((s) => el("th", {}, s)))));
       const tbody = el("tbody");

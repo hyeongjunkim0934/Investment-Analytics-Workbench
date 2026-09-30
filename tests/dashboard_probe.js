@@ -182,6 +182,8 @@ Object.assign(sandbox, {
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "port-opportunities.js"), "utf8"), sandbox,
   { filename: "dashboard/port-opportunities.js" });
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "port-constraints.js"), "utf8"), sandbox,
+  { filename: "dashboard/port-constraints.js" });
 /* app.js 의 top-level `const`/`function` 은 스크립트 렉시컬 스코프에 산다 —
    밖에서 잡으려면 같은 스크립트 안에서 내보내야 한다. */
 const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "sectionHasRangedChart",
@@ -2316,9 +2318,9 @@ safe("simPanel", () => {
   return r;
 });
 
-/* ====== P-port. 포트폴리오 구성(신규 7자산군 · §7.14) — 실행으로 잰다 ==========
-   ① 대분류 디폴트(50/30/20/10)와 적용 규칙(비례 축소·그룹 내 균등·합계 100.0)
-   ② 2트랙 저장(비중 = 저장 안 함 / μ 키인 = 즉시 저장) ③ CMA 파일 디폴트 표시
+/* ====== P-port. 포트폴리오 구성 — 실제 DOM으로 계산·저장·표시를 잰다 ==========
+   ① 최소/최대 제약 적용은 비교 비중을 재분배하지 않는다.
+   ② 두 비교 비중과 μ 입력의 저장 계약 ③ CMA 파일 디폴트 표시
    ④ 효율적 경계선 hover 상세 ⑤ 벤치마크 리뷰 표 ⑥ 창 미충족 경고의 가시성. */
 safe("portPanel", () => {
   const r = {};
@@ -2334,34 +2336,39 @@ safe("portPanel", () => {
   r.panelAboveSim = kids.indexOf(panel) >= 0 &&
     kids.indexOf(panel) < kids.indexOf(DOC.getElementById("alloc-sim-panel"));
 
-  /* ① 대분류 디폴트 + 적용 */
+  /* ① 제약 디폴트 + 적용. 적용은 비교 비중을 재분배하지 않는다. */
   const gIn = Array.from(panel.querySelectorAll("input"))
-    .filter((n) => (n.getAttribute("aria-label") || "").startsWith("제약조건"));
-  r.groupDefaults = gIn.map((n) => +n.value);          // [50, 30, 20, 10]
+    .filter((n) => /^(주식|채권|대체) (최대|최소)제약 %$/.test(n.getAttribute("aria-label") || ""));
+  r.groupDefaults = Object.fromEntries(gIn.map((n) => [n.getAttribute("aria-label"), +n.value]));
+  const beforeMix = JSON.stringify(P.portState(ALLOC_FIXTURE.port).mix);
   const applyBtn = Array.from(panel.querySelectorAll("button"))
     .find((b) => b.textContent === "제약 적용");
   applyBtn.dispatchEvent({ type: "click", target: applyBtn });
   const mixIn = Array.from(panel.querySelectorAll("input"))
-    .filter((n) => /비중$/.test(n.getAttribute("aria-label") || ""));
+    .filter((n) => /비중1$/.test(n.getAttribute("aria-label") || ""));
   const mixVals = mixIn.map((n) => +n.value);
   r.applySum = mixVals.reduce((a, b) => a + b, 0);     // 100 정확
-  r.applyMix = mixVals;                                // [13.5,13.5,22.5,22.5,18,5,5]
-  const la = mixIn.map((n) => n.getAttribute("aria-label"));
-  const vOf = (name) => mixVals[la.indexOf(`${name} 비중`)];
-  r.liqEqualSplit = vOf("달러유동성") === vOf("원화유동성");
-  r.applyDoesNotSave = shim.localStorage.getItem(P.PORT_LS_KEY) == null;
+  r.applyPreservesMix = JSON.stringify(P.portState(ALLOC_FIXTURE.port).mix) === beforeMix;
+  r.liquidityConstraintRemoved = !Array.from(panel.querySelectorAll("input"))
+    .some((n) => /유동성.*제약|제약.*유동성/.test(n.getAttribute("aria-label") || ""));
+  r.applySavesConstraints = !!JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY) || "{}").constraints;
 
-  /* ② 비중 입력도 저장하지 않는다 / μ 키인은 즉시 저장한다 */
+  /* ② 비중은 저장 전 초안을 유지하고 μ 키인은 두 비교안과 함께 저장한다. */
+  const mix2Before = JSON.stringify(P.portState(ALLOC_FIXTURE.port).mix2);
+  const savedBeforeWeight = shim.localStorage.getItem(P.PORT_LS_KEY);
   const wIn = mixIn[0];
   wIn.value = "20";
   wIn.dispatchEvent({ type: "input", target: wIn });
-  r.mixInputDoesNotSave = shim.localStorage.getItem(P.PORT_LS_KEY) == null;
+  r.mixInputDoesNotSave = shim.localStorage.getItem(P.PORT_LS_KEY) === savedBeforeWeight;
   const muIn = Array.from(panel.querySelectorAll("input"))
     .find((n) => (n.getAttribute("aria-label") || "") === "국내채권 기대수익");
   muIn.value = "4.2";
   muIn.dispatchEvent({ type: "input", target: muIn });
   const savedRaw = shim.localStorage.getItem(P.PORT_LS_KEY);
   r.muInputSavesImmediately = savedRaw != null && JSON.parse(savedRaw).mu["국내채권"] === 4.2;
+  const mixAfter = JSON.parse(savedRaw || "{}");
+  r.mixInputSavesIndependently = mixAfter.mix?.국내채권 === 20
+    && JSON.stringify(mixAfter.mix2) === mix2Before;
 
   /* ③ μ 출처 — 키인 > CMA 파일 > 과거 평균. 열이 아니라 키인 칸 아래 주석(.port-src)이고
      (2026-08-23 사용자 지시), 그 자리는 실현 μ(선택 창) 열이 받았다 */
@@ -2422,7 +2429,9 @@ safe("portPanel", () => {
   r.periodNotesRemoved = !/창 미충족|산출 기준|7자산군|원화 미헤지|① 제약조건|② 자산군/.test(panel.textContent);
 
   /* ⑦ 합계 ≠ 100 이면 현재점을 몰래 정규화하지 않고 사유를 적는다 */
-  r.sumWarnAfterDrift = /100% 가 아니라 현재점을 계산하지 않았습니다/.test(panel.textContent);
+  r.sumWarnAfterDrift = /비중1/.test(panel.textContent) && /100%/.test(panel.textContent)
+    && !Array.from(panel.querySelectorAll(".port-benchmark tbody tr"))
+      .some((row) => row.querySelector("td").textContent === "비중1");
 
   /* ⑦b 기본 창 = 최장 공통 표본(all) — 저장이 없을 때 가장 긴 창이 기본이고
      화면이 그 사실을 적는다 (2026-08-22 사용자 지시 "가능한 긴 표본") */
@@ -2449,7 +2458,7 @@ safe("portPanel", () => {
   P.DATA.alloc = periodFixture;
   P.renderPortPanel(periodFixture);
   const realizedRows = () => Array.from(DOC.getElementById("alloc-port-panel")
-    .querySelectorAll(".port-table tbody tr")).map((row) => Array.from(row.querySelectorAll("td")).slice(4, 6));
+    .querySelectorAll(".port-table tbody tr")).map((row) => Array.from(row.querySelectorAll("td")).slice(5, 7));
   const beforeStatistics = realizedRows().map((row) => row.map((cell) => cell.textContent));
   const period = DOC.getElementById("port-period");
   period.value = "3";
@@ -2457,7 +2466,7 @@ safe("portPanel", () => {
   const saved2 = JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY) || "{}");
   r.windowChoiceSaved = saved2.win === "3";
   const selectedPanel = DOC.getElementById("alloc-port-panel");
-  const realizedHeaders = Array.from(selectedPanel.querySelectorAll(".port-table th")).slice(4, 6);
+  const realizedHeaders = Array.from(selectedPanel.querySelectorAll(".port-table th")).slice(5, 7);
   const expectedHeaders = ["실현수익 %", "실현변동성 %"];
   const afterRows = realizedRows();
   r.periodSelectionUpdated = DOC.getElementById("port-period").value === "3"
