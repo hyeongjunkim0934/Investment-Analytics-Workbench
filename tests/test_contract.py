@@ -708,7 +708,7 @@ def _village_targets() -> set[str]:
 
 def test_village_zones_cover_every_section():
     """시장 섹션은 마을에서, Pseudo 문서는 상단 탭에서 도달한다."""
-    ids = set(re.findall(r'<section id="([a-z]+)" class="section">', _index_html()))
+    ids = set(re.findall(r'<section id="([a-z]+)" class="section"[^>]*>', _index_html()))
     assert len(ids) == 15, f"섹션 수가 15가 아닙니다: {sorted(ids)}"
     assert "pseudo" in _nav_hrefs()
     missing = ids - {"pseudo"} - _village_targets()
@@ -717,7 +717,7 @@ def test_village_zones_cover_every_section():
 
 def test_village_zone_targets_all_exist():
     """반대 방향 — 존재하지 않는 섹션을 가리키는 구역이 없어야 한다."""
-    ids = set(re.findall(r'<section id="([a-z]+)" class="section">', _index_html()))
+    ids = set(re.findall(r'<section id="([a-z]+)" class="section"[^>]*>', _index_html()))
     dangling = _village_targets() - ids
     assert not dangling, f"실재하지 않는 섹션을 가리키는 구역: {sorted(dangling)}"
 
@@ -747,7 +747,7 @@ def test_section_ids_constant_matches_html():
     block = re.search(r"const SECTION_IDS = \[(.*?)\];", _app_js(), re.S)
     assert block, "SECTION_IDS 를 찾지 못했습니다"
     js_ids = set(re.findall(r'"([a-z]+)"', block.group(1)))
-    html_ids = set(re.findall(r'<section id="([a-z]+)" class="section">', _index_html()))
+    html_ids = set(re.findall(r'<section id="([a-z]+)" class="section"[^>]*>', _index_html()))
     assert js_ids == html_ids, f"SECTION_IDS ≠ HTML 섹션: {js_ids ^ html_ids}"
 
 
@@ -1501,7 +1501,7 @@ def test_sections_dropped_from_tabs_are_still_reachable():
 
     딥링크(#rates 등)와 마을 접근이 살아 있지 않으면 "정리"가 아니라 기능 삭제다.
     """
-    ids = set(re.findall(r'<section id="([a-z]+)" class="section">', _index_html()))
+    ids = set(re.findall(r'<section id="([a-z]+)" class="section"[^>]*>', _index_html()))
     demoted = ids - set(EXPECTED_TABS)
     assert demoted, "탭에서 내려온 섹션이 하나도 없습니다 — 검사가 아무것도 안 하고 있습니다"
     r = _renderer_map()
@@ -1512,7 +1512,7 @@ def test_sections_dropped_from_tabs_are_still_reachable():
 
 
 def test_section_labels_match_the_section_headings():
-    """`SECTION_LABELS` 는 각 섹션의 <h2> 와 같은 문자열이어야 한다.
+    """`SECTION_LABELS` 는 각 섹션의 제목 또는 접근성 이름과 같아야 한다.
 
     이 이름은 개요 구역 버튼·리스크의 관계분석 입구·카탈로그 버튼에 그대로 찍힌다 —
     어긋나면 버튼 이름과 도착 화면 제목이 달라 "다른 데 왔다"고 읽힌다.
@@ -1522,7 +1522,9 @@ def test_section_labels_match_the_section_headings():
     assert block, "app.js 에서 SECTION_LABELS 를 찾지 못했습니다"
     labels = dict(re.findall(r'(\w+):\s*"([^"]+)"', block.group(1)))
     heads = dict(re.findall(
-        r'<section id="([a-z]+)" class="section">\s*<h2>([^<]+)</h2>', _index_html()))
+        r'<section id="([a-z]+)" class="section"[^>]*>\s*<h2>([^<]+)</h2>', _index_html()))
+    heads.update(re.findall(
+        r'<section id="([a-z]+)" class="section"[^>]*aria-label="([^"]+)"', _index_html()))
     assert heads, "index.html 에서 섹션 제목을 읽지 못했습니다"
     ids = set(re.findall(r'"([a-z]+)"', re.search(
         r"const SECTION_IDS = \[(.*?)\];", js, re.S).group(1)))

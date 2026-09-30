@@ -124,7 +124,7 @@ Array.from(tip.querySelectorAll('.port-tooltip-return')).forEach((cell,i)=>
 Array.from(tip.querySelectorAll('.port-tooltip-risk')).forEach((cell,i)=>
  near(parseFloat(cell.textContent),riskTerms[i]/portfolioVariance*100,.0051));
 // CSV retains both scenarios and exact frontier values.
-Array.from(panel.querySelector('.port-frontier').querySelectorAll('button')).find(button=>button.textContent==='CSV').click();
+Array.from(panel.querySelector('.port-result-tools').querySelectorAll('button')).find(button=>button.textContent==='CSV').click();
 assert(CSV_DOWNLOADS.at(-1).includes('환헤지 경계선'));
 const hedgeCsv=CSV_DOWNLOADS.at(-1).split('\n').map(line=>line.split(',')).find(row=>row[0]==='환헤지 경계선');
 near(Number(hedgeCsv[2]),uiModel.front[0].sig);near(Number(hedgeCsv[3]),uiModel.front[0].mu);
