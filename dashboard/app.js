@@ -3433,6 +3433,7 @@ function makeRatioChart(box, opts) {
           xRange = [0, 100], yRange = null, band = null, zeroLine = false,
           xSuffix = xLabel === "헤지비율" ? "%" : "", hoverDecimals = null } = opts;
   const pal = palette();
+  const chartHeight = () => typeof height === "function" ? height() : height;
   const xs = seriesDefs[0].x;
   const series = [{ label: xLabel, value: (u, v) => v == null ? "–"
     : (hoverDecimals == null ? v : fmtNum(v, hoverDecimals)) + xSuffix }];
@@ -3442,7 +3443,7 @@ function makeRatioChart(box, opts) {
     value: (u, v) => v == null ? "–" : fmtNum(v, hoverDecimals ?? (unit === "" ? 2 : 1)) + unit,
   }));
   const cfg = {
-    width: Math.max(280, box.clientWidth), height,
+    width: Math.max(280, box.clientWidth), height: chartHeight(),
     cursor: { points: { size: 8 }, y: false },
     scales: { x: { time: false, range: xRange } },
     series,
@@ -3684,7 +3685,7 @@ function makeRatioChart(box, opts) {
     Object.entries(hooks).forEach(([name, hook]) => (cfg.hooks[name] = cfg.hooks[name] || []).push(hook));
   }
   const u = new uPlot(cfg, [xs, ...seriesDefs.map((sd) => sd.v)], box);
-  const ro = new ResizeObserver(() => u.setSize({ width: Math.max(280, box.clientWidth), height }));
+  const ro = new ResizeObserver(() => u.setSize({ width: Math.max(280, box.clientWidth), height: chartHeight() }));
   ro.observe(box);
   return trackChart(u, ro);
 }
@@ -6135,6 +6136,12 @@ function allocSrcTag(key) {
 const PORT_LS_KEY = "iaw-port";
 let portCharts = [];
 let portPanelDraft = null;      // 같은 데이터의 재렌더·기관 입력 변경에서 초안을 보존
+let portResultTab = "frontier";
+let portDockObserver = null;
+function portResultChartHeight() {
+  const viewport = typeof window !== "undefined" && window.innerHeight || 900;
+  return Math.max(180, Math.min(300, Math.round(viewport * 0.31)));
+}
 const PORT_AXIS_LS_KEY = "iaw-port-axis";
 function portLoadAxisLimits() {
   try {
@@ -6409,7 +6416,7 @@ function portPortfolioHover(box, assets, points, { mu = [], C = [] } = {}) {
           el("div", { class: "port-tooltip-bound" }, el("span", {}, "상단"), el("b", {}, `${fmtNum(p.high, 2)}%`)),
           el("div", { class: "port-tooltip-bound" }, el("span", {}, "하단"), el("b", {}, `${fmtNum(p.low, 2)}%`)));
       } else {
-        const contribution = portContributions(p.w, mu, p.C || C);
+        const contribution = portContributions(p.w, p.muInputs || mu, p.C || C);
         if (p.hint) {
           tip.append(el("div", { class: "port-tooltip-basis" }, p.note));
           if (p.kind === "diversification") tip.append(el("div", { class: "port-tooltip-basis" },
@@ -7198,6 +7205,8 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   if (!box) return;
   portCharts.forEach(destroyChart);
   portCharts = [];
+  portDockObserver?.disconnect();
+  portDockObserver = null;
   box.textContent = "";
   const P = A && A.port;
   const head = el("div", { class: "card-head" });
@@ -7386,19 +7395,60 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   expWrap.hidden = true;
   box.append(expWrap);
 
-  /* ③ 상관계수 → ④ 효율적 경계선·벤치마크를 한 흐름으로 표시한다. */
-  const frontCard = el("div", { class: "card port-sub-card port-frontier" });
-  const reviewCard = el("div", { class: "card port-sub-card" });
-  const improvementCard = el("section", { id: "port-improvement-panel", class: "card port-sub-card port-improvement", "aria-label": "개선여지" });
-  const results = el("div", { id: "port-frontier-panel", class: "port-two" }, frontCard, reviewCard, improvementCard);
+  /* 결과를 먼저 고정하고 입력은 아래에 둔다. 탭 전환은 입력/금융 상태를 바꾸지 않는다. */
+  const frontCard = el("div", { id: "port-result-frontier", class: "card port-sub-card port-frontier",
+    role: "tabpanel", "aria-labelledby": "port-result-tab-frontier" });
+  const reviewCard = el("div", { id: "port-result-benchmark", class: "card port-sub-card",
+    role: "tabpanel", "aria-labelledby": "port-result-tab-benchmark" });
+  const resultTabs = el("div", { class: "port-result-tabs", role: "tablist", "aria-label": "포트폴리오 결과" });
+  const resultBody = el("div", { class: "port-results-body" }, frontCard, reviewCard);
+  const results = el("section", { id: "port-frontier-panel", class: "port-results-dock", "aria-label": "포트폴리오 결과" }, resultTabs, resultBody);
+  const tabs = {};
+  const selectResult = (key, focus = false) => {
+    portResultTab = key;
+    Object.entries(tabs).forEach(([name, button]) => {
+      button.setAttribute("aria-selected", String(name === key));
+      button.setAttribute("tabindex", name === key ? "0" : "-1");
+    });
+    frontCard.hidden = key !== "frontier";
+    reviewCard.hidden = key !== "benchmark";
+    resultBody.scrollTop = 0;
+    if (focus) tabs[key].focus();
+  };
+  [["frontier", "효율적 경계선"], ["benchmark", "벤치마크 비교"]].forEach(([key, label]) => {
+    const button = el("button", { id: `port-result-tab-${key}`, type: "button", role: "tab",
+      "aria-controls": `port-result-${key}`, onclick: () => selectResult(key) }, label);
+    button.addEventListener("keydown", (ev) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(ev.key)) return;
+      ev.preventDefault();
+      selectResult(ev.key === "Home" ? "frontier" : ev.key === "End" ? "benchmark"
+        : key === "frontier" ? "benchmark" : "frontier", true);
+    });
+    tabs[key] = button; resultTabs.append(button);
+  });
+  selectResult(portResultTab);
   const correlation = el("section", { id: "port-correlation-panel", "aria-labelledby": "port-correlation-title" },
     el("h3", { id: "port-correlation-title", class: "port-sec-title" }, "상관계수"),
     portCorrelationControl(P, W, st, recalc, portPanelDraft));
-  box.append(correlation, results);
+  box.prepend(results);
+  box.append(correlation);
+  const topbar = $(".topbar");
+  if (topbar) {
+    const syncDock = () => results.style.setProperty("--port-results-top", `${Math.ceil(topbar.getBoundingClientRect().height) + 6}px`);
+    syncDock();
+    portDockObserver = new ResizeObserver(syncDock);
+    portDockObserver.observe(topbar);
+  }
 
   function recalc() {
     refreshAllocWorkspaceInfo();
-    const E = portEngine(P, st);
+    // Keep the original opportunity set visible; selected hedges are an overlay.
+    const selected = portEngine(P, st);
+    const hedgeActive = selected.risk.hedge?.active;
+    const E = hedgeActive ? portEngine(P, { ...st, hedge: {} }) : selected;
+    const H = hedgeActive && selected.risk.valid && selected.front.length ? selected : null;
+    const hedgeError = !hedgeActive ? "" : !selected.risk.valid ? selected.risk.error
+      : !selected.front.length ? "환헤지 경계선 계산 불가 — 공분산 또는 최적화 수렴을 확인하십시오." : "";
     renderLinkedAllocRisk();
     const sum = P.assets.reduce((s, a) => s + (+st.mix[a] || 0), 0);
     const sumOk = Math.abs(sum - 100) <= 0.05;
@@ -7412,15 +7462,15 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
 
     Object.entries(hedgeCells).forEach(([a, { applied, i }]) => {
       const enabled = st.hedge[a]?.enabled;
-      applied.textContent = !enabled ? "" : E.risk.valid
-        ? `μ ${fmtNum(E.mu[i], 2)} · σ ${fmtNum(E.risk.sig[i], 2)}` : "계산 불가";
-      applied.title = E.risk.manual ? "헤지 후 연 % · 입력 변동성에 과거 자산·환율 상관을 유지한 가정" : "헤지 후 연 %";
+      applied.textContent = !enabled ? "" : selected.risk.valid
+        ? `μ ${fmtNum(selected.mu[i], 2)} · σ ${fmtNum(selected.risk.sig[i], 2)}` : "계산 불가";
+      applied.title = selected.risk.manual ? "헤지 후 연 % · 입력 변동성에 과거 자산·환율 상관을 유지한 가정" : "헤지 후 연 %";
     });
     const wCur = sumOk ? P.assets.map((a) => (+st.mix[a] || 0) / 100) : null;
     portCharts.forEach(destroyChart);
     portCharts = [];
     if (!E.risk.valid) {
-      frontCard.textContent = ""; reviewCard.textContent = ""; improvementCard.textContent = "";
+      frontCard.textContent = ""; reviewCard.textContent = "";
       frontCard.append(el("div", { class: "port-warn d-up", role: "status" }, E.risk.error));
       return;
     }
@@ -7447,7 +7497,11 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
               worst: E.robustOk ? p.mu - E.kappa * E.meanScale * p.sig : null,
               best: E.robustOk ? p.mu + E.kappa * E.meanScale * p.sig : null })),
           ...P.assets.map((a, i) => ({ type: a, k: null, sig: E.risk.sig[i], mu: E.mu[i], worst: null, best: null,
-            w: P.assets.map((_, j) => +(i === j)) }))];
+            w: P.assets.map((_, j) => +(i === j)) })),
+          ...(H ? [...H.front.map((p) => ({ ...p, type: "환헤지 경계선", k: 0, worst: null, best: null })),
+            ...[["현재 · 환헤지", wCur && { w: wCur, mu: H.muOf(wCur), sig: H.sig(wCur) }],
+              ["샤프 최대 · 환헤지", H.maxSharpe], ["최소위험 · 환헤지", H.minVar]]
+              .filter(([, p]) => p).map(([type, p]) => ({ ...p, type, k: 0, worst: null, best: null }))] : [])];
         const num = (v) => raw ? v : fmtNum(v, 2);
         return {
           headers: ["구분", "κ", "위험%", "기준 기대수익%", "Conservative 기대수익%", "Optimistic 기대수익%", ...P.assets.map((a) => `${a}%`)],
@@ -7472,6 +7526,8 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
                    label: "BM 60/40", symbol: "◆", color: colors.bm, w: E.bench.w });
     if (wCur) markers.push({ x: E.sig(wCur), y: E.muOf(wCur), kind: "ring", size: 4.5,
       label: "현재", symbol: "○", color: colors.current, w: wCur });
+    if (H && wCur) markers.push({ x: H.sig(wCur), y: H.muOf(wCur), kind: "ring", size: 4.5,
+      label: "현재 · 환헤지", symbol: "○", color: colors.asset, w: wCur, C: H.risk.C, muInputs: H.mu });
     const xsF = pts.map((p) => p.sig), ysF = pts.map((p) => p.mu);
     const lower = pts.map((p) => E.robustOk ? p.worst : p.mu);
     const optimistic = E.robustOk ? E.optimistic : [];
@@ -7479,6 +7535,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     // extrapolation, and leave real gaps in the optimistic Pareto set unconnected.
     const plotPoints = [...pts.map((p) => ({ ...p, scenario: E.robustOk ? "Conservative" : "경계선" })),
       ...optimistic.map((p) => ({ ...p, scenario: "Optimistic" })),
+      ...(H ? H.front.map((p) => ({ ...p, scenario: "환헤지 경계선" })) : []),
       ...optimistic.flatMap((p, i) => p.breakBefore && i
         ? [{ sig: (optimistic[i - 1].sig + p.sig) / 2, plotGap: true }] : [])]
       .sort((a, b) => a.sig - b.sig).filter((p, i, all) => !i || p.sig - all[i - 1].sig > 1e-7);
@@ -7492,9 +7549,10 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     };
     const plotX = plotPoints.map((p) => p.sig);
     const cloudPoints = E.cloud?.points || [];
-    const allX = [...E.front.map((p) => p.sig), ...xsF, ...markers.map((m) => m.x), ...cloudPoints.map((p) => p.sig)];
+    const allX = [...E.front.map((p) => p.sig), ...xsF, ...markers.map((m) => m.x), ...cloudPoints.map((p) => p.sig),
+      ...(H ? H.front.map((p) => p.sig) : [])];
     const allY = [...E.front.map((p) => p.mu), ...ysF, ...lower, ...optimistic.map((p) => p.best),
-      ...markers.map((m) => m.y), ...cloudPoints.map((p) => p.mu)];
+      ...markers.map((m) => m.y), ...cloudPoints.map((p) => p.mu), ...(H ? H.front.map((p) => p.mu) : [])];
     const minX = allX.length ? Math.min(...allX) : 0, maxX = allX.length ? Math.max(...allX) : 1;
     const minY = allY.length ? Math.min(...allY) : 0, maxY = allY.length ? Math.max(...allY) : 1;
     const spanX = Math.max(0.005, maxX - minX), spanY = Math.max(0.2, maxY - minY);
@@ -7516,6 +7574,8 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       ...(E.robustOk ? pts.map((p) => ({ x: p.sig, y: p.worst, w: p.w, label: "Conservative" })) : []),
       ...optimistic.map((p) => ({ x: p.sig, y: p.best, w: p.w, label: "Optimistic" })),
       ...E.front.map((p) => ({ x: p.sig, y: p.mu, w: p.w, label: "경계선" })),
+      ...(H ? H.front.map((p) => ({ x: p.sig, y: p.mu, w: p.w, label: "환헤지 경계선",
+        C: H.risk.C, muInputs: H.mu })) : []),
       ...cloudPoints.filter((p) => Number.isFinite(p.sharpe))
         .map((p) => ({ x: p.sig, y: p.mu, w: p.w, label: "포트폴리오", cloud: true })),
     ];
@@ -7526,16 +7586,19 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
           { label: "Conservative", color: colors.robust, x: plotX, v: plotX.map((x) => at(pts, "worst", x)) },
           { label: "Optimistic", color: colors.optimistic, x: plotX, v: plotX.map((x) => at(optimistic, "best", x)), spanGaps: false },
         ] : []),
+        ...(H ? [{ label: "환헤지 경계선", color: colors.asset, x: plotX,
+          v: plotX.map((x) => at(H.front, "mu", x)), spanGaps: false }] : []),
       ],
       area: E.robustOk && E.kappa > 0 ? { x: xsF, upper: ysF, lower, color: colors.robust, opacity: [0.025, 0.06, 0.12] } : null,
       reference: E.front, referenceColor: colors.nominal, cloud: E.cloud, cloudOpacity: 0.25,
-      xLabel: "변동성 · 연 %", axisTitles: { y: "기대수익 · 연 %", inside: true }, unit: "%", height: 470,
+      xLabel: "변동성 · 연 %", axisTitles: { y: "기대수익 · 연 %", inside: true }, unit: "%", height: portResultChartHeight,
       markers: visibleMarkers, markerLegend: true, intervals, hints,
       xRange, yRange, hoverDecimals: 2,
       portfolioHover: { assets: P.assets, points: hoverPoints, mu: E.mu, C: E.risk.C },
     }));
     const key = el("div", { class: "port-frontier-key" });
-    [["경계선", colors.nominal], ...(E.robustOk ? [["Conservative", colors.robust], ["Optimistic", colors.optimistic]] : [])]
+    [["경계선", colors.nominal], ...(E.robustOk ? [["Conservative", colors.robust], ["Optimistic", colors.optimistic]] : []),
+      ...(H ? [["환헤지 경계선", colors.asset]] : [])]
       .forEach(([label, color]) => key.append(el("span", { class: "port-marker-key" },
         el("i", { class: "port-curve-key", style: `background:${color}`, "aria-hidden": "true" }), label)));
     markers.filter((m) => !m.asset).forEach((m) => key.append(el("span", { class: "port-marker-key",
@@ -7566,6 +7629,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
         el("div", { class: "port-sharpe-ramp", style: `background:linear-gradient(90deg,${stops.join(",")})` }),
         el("span", {}, fmtNum(E.cloud.max, 2)), el("span", {}, `${cloudPoints.length.toLocaleString()} 배분`)));
     }
+    if (hedgeError) frontCard.append(el("div", { class: "port-warn d-up", role: "status" }, hedgeError));
     if (!E.robustOk) frontCard.append(el("div", { class: "port-warn d-up", role: "status" },
       "강건 영역 계산 불가 — 표본·공분산 또는 최적화 수렴을 확인하십시오."));
 
@@ -7577,9 +7641,27 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const rows = [];
     const fmtRow = (name, m) => [name, fmtNum(m.mu, 2), fmtNum(m.sig, 2), fmtNum(m.sharpe, 2),
                                  fmtNum(m.act, 2), fmtNum(m.te, 2), fmtNum(m.ir, 2)];
+    // All rows use the same unhedged 60/40 benchmark. Its FX exposure is not
+    // silently changed by the portfolio hedge controls, including tracking error.
+    const hedgedMetrics = (w) => {
+      const m = H.muOf(w), sig = H.sig(w), act = m - E.bench.mu;
+      const dw = w.map((v, i) => v - E.wb[i]);
+      const fx = H.risk.hedge;
+      const h = w.reduce((total, v, i) => total + v * fx.h[i], 0);
+      const variance = dw.reduce((total, v, i) => total
+        + v * E.risk.C[i].reduce((sum, c, j) => sum + c * dw[j], 0), 0)
+        - 2 * h * dw.reduce((sum, v, i) => sum + v * fx.cross[i], 0)
+        + h * h * fx.variance;
+      const te = Math.sqrt(Math.max(0, variance));
+      return { mu: m, sig, act, te, sharpe: sig > 1e-9 ? (m - E.rf) / sig : null,
+        ir: te > 1e-9 ? act / te : null };
+    };
     if (wCur) rows.push(fmtRow("현재 배분", E.metrics(wCur)));
+    if (H && wCur) rows.push(fmtRow("현재 배분 · 환헤지", hedgedMetrics(wCur)));
     if (E.maxSharpe) rows.push(fmtRow("최적(최대 샤프)", E.metrics(E.maxSharpe.w)));
+    if (H?.maxSharpe) rows.push(fmtRow("최적(최대 샤프) · 환헤지", hedgedMetrics(H.maxSharpe.w)));
     if (E.minVar) rows.push(fmtRow("최소위험", E.metrics(E.minVar.w)));
+    if (H?.minVar) rows.push(fmtRow("최소위험 · 환헤지", hedgedMetrics(H.minVar.w)));
     rows.push(["벤치마크 60/40", fmtNum(E.bench.mu, 2), fmtNum(E.bench.sig, 2),
                fmtNum(E.bench.sig > 1e-9 ? (E.bench.mu - E.rf) / E.bench.sig : null, 2),
                "0.00", "0.00", "–"]);
@@ -7587,7 +7669,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     renderTable(wrap, {
       headers: ["구분", "기대수익%", "위험%", "샤프", "초과수익%p", "TE%p", "IR"], rows });
     reviewCard.append(wrap);
-    renderPortImprovement(improvementCard, P, E, exploration, recalc);
+    if (hedgeError) reviewCard.append(el("div", { class: "port-warn d-up", role: "status" }, hedgeError));
     if (!wCur) reviewCard.append(el("div", { class: "port-warn d-up" },
       `합계 ${fmtNum(sum, 1)}% — 100% 가 아니라 현재점을 계산하지 않았습니다(몰래 정규화하지 않습니다).`));
   }

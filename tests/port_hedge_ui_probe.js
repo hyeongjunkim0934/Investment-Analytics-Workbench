@@ -66,6 +66,19 @@ P.renderPortPanel(fixture);
 const panel=DOC.getElementById('alloc-port-panel');
 const input=(label)=>Array.from(panel.querySelectorAll('input')).find(n=>n.getAttribute('aria-label')===label);
 const fire=(node,type)=>node.dispatchEvent({type});
+const chart=()=>shim.UPlotStub.made.filter(c=>c.opts.series.some(series=>series.label==='경계선')).at(-1);
+const baseChart=chart(),baseData=JSON.parse(JSON.stringify(baseChart.data));
+const baseSeries=baseChart.opts.series.map(series=>series.label);
+const verifyBaseline=(actual)=>{
+  baseSeries.slice(1).forEach((label,k)=>{
+    const series=actual.opts.series.findIndex(item=>item.label===label);assert(series>0);
+    baseData[0].forEach((x,i)=>{
+      const at=actual.data[0].findIndex(v=>Math.abs(v-x)<1e-7);assert(at>=0,'baseline x preserved');
+      if(baseData[k+1][i]===null)assert.equal(actual.data[series][at],null);
+      else near(actual.data[series][at],baseData[k+1][i],1e-6);
+    });
+  });
+};
 let check=input('해외채권 환헤지'),ratio=input('해외채권 헤지비중 %');
 assert(check&&!check.checked&&ratio.disabled);
 assert(!input('국내채권 환헤지'));
@@ -76,19 +89,69 @@ let saved=P.portState(p),once=portModelInputs(p,saved);near(once.mu[2],4.8);
 assert.equal(saved.hedge.해외채권.ratio,50);
 near(JSON.parse(panel.querySelector('.port-export').value).mu_pct.해외채권,6);
 assert(panel.querySelectorAll('.port-hedge-applied')[0].textContent.includes('μ 4.80'));
+const compared=chart(),uiModel=P.portEngine(p,saved),baseModel=P.portEngine(p,{...saved,hedge:{}});
+verifyBaseline(compared);
+const hedgedSeries=compared.opts.series.findIndex(series=>series.label==='환헤지 경계선');assert(hedgedSeries>0);
+uiModel.front.forEach(point=>{
+  const at=compared.data[0].findIndex(x=>Math.abs(x-point.sig)<1e-7);assert(at>=0);
+  near(compared.data[hedgedSeries][at],point.mu,1e-6);
+});
+// Tracking error is measured against one fixed UNHEDGED benchmark, using raw returns.
+const current=assets.map(a=>saved.mix[a]/100),wb=baseModel.wb,uiH=uiModel.risk.hedge.h;
+const actualReturns=observations.map((row,t)=>row.reduce((sum,v,i)=>sum+current[i]*(v-uiH[i]*fx[t]),0));
+const benchReturns=observations.map(row=>row.reduce((sum,v,i)=>sum+wb[i]*v,0));
+const activeReturns=actualReturns.map((value,i)=>value-benchReturns[i]);
+const expectedTe=Math.sqrt(cov(activeReturns,activeReturns))*100;
+const expectedMu=current.reduce((sum,v,i)=>sum+v*(means[i]-uiH[i]*2.4),0);
+const expectedAct=expectedMu-wb.reduce((sum,v,i)=>sum+v*means[i],0);
+const benchmarkRows=Array.from(panel.querySelectorAll('.port-benchmark tbody tr'));
+const hedgeRow=benchmarkRows.find(row=>row.querySelector('td').textContent==='현재 배분 · 환헤지');assert(hedgeRow);
+const cells=Array.from(hedgeRow.querySelectorAll('td')).map(cell=>cell.textContent);
+near(Number(cells[1]),expectedMu,.0051);near(Number(cells[4]),expectedAct,.0051);
+near(Number(cells[5]),expectedTe,.0051);near(Number(cells[6]),expectedAct/expectedTe,.0051);
+assert(!benchmarkRows.some(row=>row.textContent.includes('벤치마크 60/40 · 환헤지')));
+// Exercise the real added current-hedge point's hover, including its own mean vector.
+const pointSigma=uiModel.sig(current),pointMu=uiModel.muOf(current);
+const hoverPlot={bbox:{left:0,top:0,width:100000,height:100000},valToPos:value=>value*1000,
+  cursor:{left:pointSigma*1000,top:pointMu*1000}};
+compared.opts.hooks.draw.at(-1)(hoverPlot);compared.opts.hooks.setCursor.at(-1)(hoverPlot);
+const tip=panel.querySelector('.port-portfolio-tooltip');assert(!tip.hidden);
+assert(tip.querySelector('.port-tooltip-title').textContent.includes('현재 · 환헤지'));
+const riskTerms=current.map((v,i)=>v*uiModel.risk.C[i].reduce((sum,c,j)=>sum+c*current[j],0));
+const portfolioVariance=riskTerms.reduce((sum,v)=>sum+v,0);
+Array.from(tip.querySelectorAll('.port-tooltip-return')).forEach((cell,i)=>
+ near(parseFloat(cell.textContent),current[i]*(means[i]-uiH[i]*2.4)/expectedMu*100,.0051));
+Array.from(tip.querySelectorAll('.port-tooltip-risk')).forEach((cell,i)=>
+ near(parseFloat(cell.textContent),riskTerms[i]/portfolioVariance*100,.0051));
+// CSV retains both scenarios and exact frontier values.
+Array.from(panel.querySelector('.port-frontier').querySelectorAll('button')).find(button=>button.textContent==='CSV').click();
+assert(CSV_DOWNLOADS.at(-1).includes('환헤지 경계선'));
+const hedgeCsv=CSV_DOWNLOADS.at(-1).split('\n').map(line=>line.split(',')).find(row=>row[0]==='환헤지 경계선');
+near(Number(hedgeCsv[2]),uiModel.front[0].sig);near(Number(hedgeCsv[3]),uiModel.front[0].mu);
+// Checking a zero hedge preserves exactly one unchanged frontier scenario.
+ratio.value='0';fire(ratio,'input');same(chart().data,baseData);
+assert(!chart().opts.series.some(series=>series.label==='환헤지 경계선'));
+ratio.value='50';fire(ratio,'input');
+
 P.renderPortPanel(fixture);same(portModelInputs(p,P.portState(p)).mu,once.mu);
 ratio=input('해외채권 헤지비중 %');ratio.value='101';fire(ratio,'input');
 assert.equal(ratio.getAttribute('aria-invalid'),'true');assert.equal(P.portState(p).hedge.해외채권.ratio,50);
 check=input('해외채권 환헤지');check.checked=false;fire(check,'change');
 near(portModelInputs(p,P.portState(p)).mu[2],6);same(portModelInputs(p,P.portState(p)).C,C.map(r=>r.map(v=>v*1e4)));
 check.checked=true;fire(check,'change');near(portModelInputs(p,P.portState(p)).mu[2],4.8);
+// Unavailable hedge inputs leave the baseline plot intact with an explicit error.
+const oldCost=p.hedge_cost;p.hedge_cost={};P.renderPortPanel(fixture);
+same(chart().data,baseData);assert(panel.querySelector('.port-frontier').textContent.includes('환헤지 계산 불가'));
+const failedReview=panel.querySelector('.port-benchmark').parentElement;assert(failedReview.textContent.includes('환헤지 계산 불가'));
+assert(!chart().opts.series.some(series=>series.label==='환헤지 경계선'));
+p.hedge_cost=oldCost;P.renderPortPanel(fixture);
 // Theme rerender preserves the current weight draft and matching risk-layer model.
 input('국내채권 비중').value='42';fire(input('국내채권 비중'),'input');
 P.renderPortPanel(fixture,{preserveDraft:true});assert.equal(input('국내채권 비중').value,'42');
 const linked=P.portRiskAllocationEngine(fixture);assert(!linked.error);
 same(linked.V.mu,portModelInputs(p,P.portState(p)).mu);
 same(linked.V.C,portModelInputs(p,P.portState(p)).C);
-console.log(JSON.stringify({pass:true,independentReturnMoments:true,manualJointPsdGuard:true,zeroAndFullHedge:true,persistence:true,noDoubleCarry:true,exportUnhedged:true,linkedModel:true}));
+console.log(JSON.stringify({pass:true,independentReturnMoments:true,manualJointPsdGuard:true,zeroAndFullHedge:true,persistence:true,noDoubleCarry:true,exportUnhedged:true,linkedModel:true,baselinePreserved:true,hedgeOverlay:true,hedgeHoverContributions:true,fixedBenchmarkTrackingError:true,missingHedgeKeepsBaseline:true,zeroHedgeNoDuplicate:true}));
 `;
 const filename=path.join(repo,'tests/port_hedge_ui_regression.js');
 const m=new Module(filename,module);m.filename=filename;m.paths=Module._nodeModulePaths(path.dirname(filename));
