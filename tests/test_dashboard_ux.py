@@ -314,7 +314,7 @@ def test_brief_container_exists_in_markup():
 def test_metadata_updates_without_footer_nodes(probe):
     w = probe["metaWithoutFooter"]
     assert w["noFooterNodes"] is True
-    assert w["headerText"] == "기준일 2026-07-27 · 빌드 K · 444개 시리즈"
+    assert w["headerText"] == ""
     assert w["warnings"] == [["pipeline warnings:", ["w1", "w2", "w3"]]]
 
 
@@ -2595,7 +2595,9 @@ def test_port_panel_defaults_and_two_portfolio_saving(probe):
     assert c["applySavesConstraints"] is True
     assert c["mixInputDoesNotSave"] is True, "비중 편집의 기존 초안 저장 계약을 유지한다"
     assert c["mixInputSavesIndependently"] is True, "비중1 편집은 비중2와 독립적으로 저장돼야 한다"
-    assert c["muInputSavesImmediately"] is True, "μ 키인은 모형 입력 — 즉시 저장"
+    assert c["constraintApplyStagesOnly"] is True, "제약 적용은 업데이트 전 저장하지 않는다"
+    assert c["muInputDoesNotSave"] is True, "μ 편집은 업데이트 전 초안이다"
+    assert c["muInputSavesOnUpdate"] is True, "업데이트 시 μ와 비중을 함께 저장한다"
     assert c["windowChoiceSaved"] is True
 
 

@@ -288,6 +288,7 @@ const editVisible = (label, value) => {
   input.value = String(value);
   input.dispatchEvent({ type: "input", target: input });
   if (label.endsWith("상관계수")) byId("port-corr-apply").click();
+  byId("port-update-btn").click();
   byId("alloc-workspace-risk").click();
 };
 const latestWeights = () => table()[0].slice(3).map(Number);

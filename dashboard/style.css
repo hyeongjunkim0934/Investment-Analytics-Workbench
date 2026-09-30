@@ -1023,9 +1023,13 @@ details.explain[open] > summary { color: var(--ink-2); }
 }
 .sec-toc:empty { display: none; }
 
-/* 자산배분: 포트폴리오 / 리스크연계 / 기관배분·헤지. */
+/* Keep workspace navigation and portfolio results in separate sticky rows. */
+#alloc { --alloc-top: 64px; --alloc-tabs-height: 40px; }
 .alloc-workspace {
-  margin: 8px 0 10px;
+  position: sticky; top: var(--alloc-top); z-index: 20;
+  margin: 8px 0 10px; background: var(--page);
+  border-bottom: 1px solid var(--ink-3);
+  box-shadow: 0 6px 0 var(--page);
 }
 .alloc-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); }
 .alloc-tabs button {
@@ -1180,6 +1184,9 @@ a.kpi-link .kpi-label > span:first-child::after {
 
 /* ── 포트폴리오 구성 (신규 7자산군 · §7.14 인프라) ─────────────────────────── */
 .port-sec-title { margin: 16px 0 8px; font-size: 14px; font-weight: 700; color: var(--ink-1); }
+.port-constraint-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin: 16px 0 8px; }
+.port-constraint-heading .port-sec-title { margin: 0; }
 .port-groups { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
 .port-constraints { display: grid; gap: 10px; }
 .port-constraints > .btn-ghost { justify-self: start; }
@@ -1214,8 +1221,9 @@ a.kpi-link .kpi-label > span:first-child::after {
   background: var(--surface); color: var(--ink-1); border: 1px solid var(--border);
   border-radius: 8px; padding: 8px; }
 .port-two { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 12px; }
-/* Keep the selected result above the editable rows, below the responsive site header. */
-.port-results-dock { --port-results-top: 64px; position: sticky; top: var(--port-results-top); z-index: 12;
+/* Reserve the actual responsive workspace row before pinning portfolio results. */
+.port-results-dock { --port-results-top: calc(var(--alloc-top) + var(--alloc-tabs-height) + 6px);
+  position: sticky; top: var(--port-results-top); z-index: 12;
   min-width: 0; margin: -2px 0 16px; background: var(--surface);
   border: 1px solid var(--ink-3); border-bottom: 2px solid var(--port-accent); border-radius: 4px;
   box-shadow: 0 10px 20px rgba(0,0,0,.32); }
@@ -1364,6 +1372,12 @@ a.kpi-link .kpi-label > span:first-child::after {
 #alloc-port-panel .btn-ghost, #alloc-port-panel .card-actions button {
   min-height: 32px; padding: 5px 11px; border: 1px solid var(--border); border-radius: 4px;
   background: var(--surface); color: var(--ink-2); font: inherit; font-size: 13px;
+}
+#alloc-port-panel .port-constraint-apply { min-height: 26px; padding: 2px 9px; font-size: 12px; }
+#alloc-port-panel .card-actions .port-update-btn { white-space: nowrap; font-size: 12px; }
+#alloc-port-panel .port-update-btn[data-pending="true"] {
+  color: var(--port-accent); border-color: var(--port-accent);
+  background: color-mix(in srgb, var(--port-accent) 8%, var(--surface));
 }
 #alloc-port-panel input[type="number"] {
   min-height: 32px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 4px;

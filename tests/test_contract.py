@@ -977,6 +977,10 @@ def test_hidden_attribute_is_not_defeated_by_display_rules():
 #: app.js 가 **자기가 만들어 붙이는** id — index.html 에 없는 것이 정상이다.
 #: 여기에 이름을 더할 때는 아래 테스트가 "실제로 만드는지"까지 확인한다.
 DYNAMIC_IDS = {
+    "port-update-btn": 'id: "port-update-btn"',  # renderPortPanel() 결과 도구의 명시 업데이트
+    "port-corr-status": 'id: "port-corr-status"',  # portCorrelationControl() 검증 상태
+    "port-period-start": 'id: `${id}-${key}`',  # allocPeriodControl("port-period")의 dateInput("start")
+    "port-period-end": 'id: `${id}-${key}`',  # allocPeriodControl("port-period")의 dateInput("end")
     "alloc-workspace-info": 'id: "alloc-workspace-info"',  # renderAllocWorkspace()의 비활성·폴백 사유
     "port-axis-apply": 'id: "port-axis-apply"',  # portAxisControls() 재렌더 후 포커스 복원
     "port-axis-auto": 'id: "port-axis-auto"',

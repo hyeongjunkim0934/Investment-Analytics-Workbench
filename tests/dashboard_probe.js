@@ -2342,9 +2342,11 @@ safe("portPanel", () => {
     .filter((n) => /^(주식|채권|대체) (최대|최소)제약 %$/.test(n.getAttribute("aria-label") || ""));
   r.groupDefaults = Object.fromEntries(gIn.map((n) => [n.getAttribute("aria-label"), +n.value]));
   const beforeMix = JSON.stringify(P.portState(ALLOC_FIXTURE.port).mix);
-  const applyBtn = Array.from(panel.querySelectorAll("button"))
-    .find((b) => b.textContent === "제약 적용");
+  const update = () => DOC.getElementById("port-update-btn").click();
+  const applyBtn = DOC.getElementById("port-constraint-apply");
   applyBtn.dispatchEvent({ type: "click", target: applyBtn });
+  r.constraintApplyStagesOnly = shim.localStorage.getItem(P.PORT_LS_KEY) === null;
+  update();
   const mixIn = Array.from(panel.querySelectorAll("input"))
     .filter((n) => /비중1$/.test(n.getAttribute("aria-label") || ""));
   const mixVals = mixIn.map((n) => +n.value);
@@ -2354,19 +2356,24 @@ safe("portPanel", () => {
     .some((n) => /유동성.*제약|제약.*유동성/.test(n.getAttribute("aria-label") || ""));
   r.applySavesConstraints = !!JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY) || "{}").constraints;
 
-  /* ② 비중은 저장 전 초안을 유지하고 μ 키인은 두 비교안과 함께 저장한다. */
+  /* ② 비중과 μ는 초안을 유지하고 업데이트 시 함께 저장한다. */
   const mix2Before = JSON.stringify(P.portState(ALLOC_FIXTURE.port).mix2);
   const savedBeforeWeight = shim.localStorage.getItem(P.PORT_LS_KEY);
   const wIn = mixIn[0];
   wIn.value = "20";
   wIn.dispatchEvent({ type: "input", target: wIn });
+  const balanceWeight = mixIn.slice(1).sort((a, b) => Number(b.value) - Number(a.value))[0];
+  balanceWeight.value = String(Number(balanceWeight.value) + 100 - mixIn.reduce((sum, input) => sum + Number(input.value), 0));
+  balanceWeight.dispatchEvent({ type: "input", target: balanceWeight });
   r.mixInputDoesNotSave = shim.localStorage.getItem(P.PORT_LS_KEY) === savedBeforeWeight;
   const muIn = Array.from(panel.querySelectorAll("input"))
     .find((n) => (n.getAttribute("aria-label") || "") === "국내채권 기대수익");
   muIn.value = "4.2";
   muIn.dispatchEvent({ type: "input", target: muIn });
+  r.muInputDoesNotSave = shim.localStorage.getItem(P.PORT_LS_KEY) === savedBeforeWeight;
+  update();
   const savedRaw = shim.localStorage.getItem(P.PORT_LS_KEY);
-  r.muInputSavesImmediately = savedRaw != null && JSON.parse(savedRaw).mu["국내채권"] === 4.2;
+  r.muInputSavesOnUpdate = savedRaw != null && JSON.parse(savedRaw).mu["국내채권"] === 4.2;
   const mixAfter = JSON.parse(savedRaw || "{}");
   r.mixInputSavesIndependently = mixAfter.mix?.국내채권 === 20
     && JSON.stringify(mixAfter.mix2) === mix2Before;
@@ -2429,10 +2436,12 @@ safe("portPanel", () => {
   /* 2026-09-09 사용자 지시: 표본 부족 안내·산출 기준·번호 제거. */
   r.periodNotesRemoved = !/창 미충족|산출 기준|7자산군|원화 미헤지|① 제약조건|② 자산군/.test(panel.textContent);
 
-  /* ⑦ 합계 ≠ 100 이면 현재점을 몰래 정규화하지 않고 사유를 적는다 */
-  r.sumWarnAfterDrift = /비중1/.test(panel.textContent) && /100%/.test(panel.textContent)
-    && !Array.from(panel.querySelectorAll(".port-benchmark tbody tr"))
-      .some((row) => row.querySelector("td").textContent === "비중1");
+  /* ⑦ 합계 오류는 업데이트 전체를 보류하며 마지막 결과를 유지한다. */
+  const beforeInvalidWeight = panel.querySelector(".port-benchmark").textContent;
+  wIn.value = "19"; wIn.dispatchEvent({ type: "input", target: wIn }); update();
+  r.sumWarnAfterDrift = /100%/.test(DOC.getElementById("port-risk-status").textContent)
+    && panel.querySelector(".port-benchmark").textContent === beforeInvalidWeight;
+  wIn.value = "20"; wIn.dispatchEvent({ type: "input", target: wIn });
 
   /* ⑦b 기본 창 = 최장 공통 표본(all) — 저장이 없을 때 가장 긴 창이 기본이고
      화면이 그 사실을 적는다 (2026-08-22 사용자 지시 "가능한 긴 표본") */
@@ -2446,7 +2455,7 @@ safe("portPanel", () => {
     && /참고 전용/.test(cdSpan.getAttribute("title") || "")
     && /겹침 41개월 corr 0\.91/.test(cdSpan.getAttribute("title") || "");
 
-  /* ⑧ 창 선택은 모형 입력 — 즉시 저장 */
+  /* ⑧ 창 선택도 업데이트 시 금융 결과·저장에 반영한다. */
   // Distinct window moments expose stale statistics even though column titles
   // no longer repeat the selected period (2026-09-29 user request).
   const periodFixture = JSON.parse(JSON.stringify(ALLOC_FIXTURE));
@@ -2464,6 +2473,7 @@ safe("portPanel", () => {
   const period = DOC.getElementById("port-period");
   period.value = "3";
   period.dispatchEvent({ type: "change", target: period });
+  update();
   const saved2 = JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY) || "{}");
   r.windowChoiceSaved = saved2.win === "3";
   const selectedPanel = DOC.getElementById("alloc-port-panel");

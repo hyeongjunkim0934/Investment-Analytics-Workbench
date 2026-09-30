@@ -66,6 +66,7 @@ P.renderPortPanel(fixture);
 const panel=DOC.getElementById('alloc-port-panel');
 const input=(label)=>Array.from(panel.querySelectorAll('input')).find(n=>n.getAttribute('aria-label')===label);
 const fire=(node,type)=>node.dispatchEvent({type});
+const update=()=>DOC.getElementById('port-update-btn').click();
 const chart=()=>shim.UPlotStub.made.filter(c=>c.opts.series.some(series=>series.label==='경계선')).at(-1);
 const baseChart=chart(),baseData=JSON.parse(JSON.stringify(baseChart.data));
 const baseSeries=baseChart.opts.series.map(series=>series.label);
@@ -84,7 +85,7 @@ assert(check&&!check.checked&&ratio.disabled);
 assert(!input('국내채권 환헤지'));
 assert.equal(panel.querySelectorAll('.port-table th').at(-1).textContent,'환헤지 / 비중 %');
 check.checked=true;fire(check,'change');assert(!ratio.disabled);
-ratio.value='50';fire(ratio,'input');
+ratio.value='50';fire(ratio,'input');update();
 let saved=P.portState(p),once=portModelInputs(p,saved);near(once.mu[2],4.8);
 assert.equal(saved.hedge.해외채권.ratio,50);
 near(JSON.parse(panel.querySelector('.port-export').value).mu_pct.해외채권,6);
@@ -130,16 +131,16 @@ assert(CSV_DOWNLOADS.at(-1).includes('환헤지 경계선'));
 const hedgeCsv=CSV_DOWNLOADS.at(-1).split('\n').map(line=>line.split(',')).find(row=>row[0]==='환헤지 경계선');
 near(Number(hedgeCsv[2]),uiModel.front[0].sig);near(Number(hedgeCsv[3]),uiModel.front[0].mu);
 // Checking a zero hedge preserves exactly one unchanged frontier scenario.
-ratio.value='0';fire(ratio,'input');same(chart().data,baseData);
+ratio.value='0';fire(ratio,'input');update();same(chart().data,baseData);
 assert(!chart().opts.series.some(series=>series.label==='환헤지 경계선'));
-ratio.value='50';fire(ratio,'input');
+ratio.value='50';fire(ratio,'input');update();
 
 P.renderPortPanel(fixture);same(portModelInputs(p,P.portState(p)).mu,once.mu);
 ratio=input('해외채권 헤지비중 %');ratio.value='101';fire(ratio,'input');
 assert.equal(ratio.getAttribute('aria-invalid'),'true');assert.equal(P.portState(p).hedge.해외채권.ratio,50);
-check=input('해외채권 환헤지');check.checked=false;fire(check,'change');
+check=input('해외채권 환헤지');check.checked=false;fire(check,'change');update();
 near(portModelInputs(p,P.portState(p)).mu[2],6);same(portModelInputs(p,P.portState(p)).C,C.map(r=>r.map(v=>v*1e4)));
-check.checked=true;fire(check,'change');near(portModelInputs(p,P.portState(p)).mu[2],4.8);
+ratio.value='50';fire(ratio,'input');check.checked=true;fire(check,'change');update();near(portModelInputs(p,P.portState(p)).mu[2],4.8);
 // Unavailable hedge inputs leave the baseline plot intact with an explicit error.
 const oldCost=p.hedge_cost;p.hedge_cost={};P.renderPortPanel(fixture);
 same(chart().data,baseData);assert(panel.querySelector('.port-frontier').textContent.includes('환헤지 계산 불가'));
