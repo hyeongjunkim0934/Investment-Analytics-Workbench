@@ -7,7 +7,7 @@
 <meta name="description" content="금리·크레딧·FX·인플레이션·지수 데이터를 자동 갱신하는 투자 분석 대시보드">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%F0%9F%93%88%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="vendor/uplot.min.css">
-<link rel="stylesheet" href="style.css?v=20260930-allocation-constraints-1">
+<link rel="stylesheet" href="style.css?v=20260930-risk-cleanup-1">
 <link rel="stylesheet" href="cma.css?v=20260930-cma-cards-1">
 </head>
 <body>
@@ -100,28 +100,15 @@
     <p id="ov-catalog" style="margin-top:18px"></p>
   </section>
 
-  <section id="risk" class="section">
-    <h2>리스크</h2>
+  <section id="risk" class="section" aria-label="리스크">
     <div class="qa" id="risk-headline"></div>
-    <div class="risk-top">
-      <div class="card" id="risk-chart-card"></div>
-      <div class="risk-side">
-        <div class="card" id="risk-events-mini"></div>
-      </div>
-    </div>
-    <!-- 안내가 표 두 개(요인 11행) 아래에 있어서 정작 필요한 시점에는 읽히지 않았다.
-         첫 표 바로 위로 올린다. -->
-    <details class="explain" style="margin:22px 0 -4px"><summary>설명</summary><div class="explain-body">아래 표에서 <b>요인 이름을 누르면</b> 그 요인의 구성 지표·계산 과정·이력 상세로 들어갑니다 (키보드는 Tab 으로 이동 후 Enter).</div></details>
+    <div class="card" id="risk-chart-card"></div>
     <h3 class="rows-title" id="risk-stress-title"></h3>
     <div class="frows" id="risk-stress-rows"></div>
     <h3 class="rows-title" id="risk-vuln-title"></h3>
     <div class="frows" id="risk-vuln-rows"></div>
     <!-- 시장 국면 참고 카드(§5.1 ⓐ) — renderRiskRegime 이 채운다. 등급·경보 미반영. -->
     <div class="card" id="risk-regime-card" style="margin-top:22px" hidden></div>
-    <!-- 관계분석은 상단 탭에서 내려와 리스크 안의 입구가 되었다(2026-08-13 사용자 지시).
-         화면 자체는 그대로이고 #panel 딥링크도 산다. -->
-    <p id="risk-panel-link" style="margin-top:20px"></p>
-    <details class="method" id="risk-method"></details>
   </section>
 
   <section id="events" class="section">
@@ -284,6 +271,6 @@
 <script src="pseudo/alloc.js?v=20260930-cma-cards-1"></script>
 <script src="pseudo/hedge.js?v=20260930-hedge-anchor-1"></script>
 <script src="pseudo.js?v=20260930-pseudo-1"></script>
-<script src="app.js?v=20260930-allocation-cma-2"></script>
+<script src="app.js?v=20260930-risk-cleanup-1"></script>
 </body>
 </html>
