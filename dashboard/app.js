@@ -525,7 +525,7 @@ function deltaSpan(label, v, kind, big = false) {
    계약 테스트가 둘을 대조한다(어긋나면 버튼 이름과 도착 화면 제목이 달라진다). */
 const SECTION_LABELS = {
   overview: "시장 개요", risk: "리스크", alloc: "자산배분",
-  hedge: "환헤지", pseudo: "Pseudo", events: "이벤트", panel: "관계분석", rates: "금리",
+  hedge: "환헤지", cma: "CMA", pseudo: "Pseudo", events: "이벤트", panel: "관계분석", rates: "금리",
   irs: "IRS 포워드", credit: "크레딧", fx: "FX · 환율", inflation: "기대인플레이션",
   acwi: "MSCI ACWI", macro: "매크로", catalog: "시리즈 카탈로그",
 };
@@ -1999,7 +1999,7 @@ const VILLAGE_ZONES = [
   { key: "workshop", x: 10.8, y: 48.9, name: "공방", sub: "모델 랩 — 준비 중", soon: true },
 ];
 
-const SECTION_IDS = ["overview", "risk", "alloc", "hedge", "pseudo", "events", "panel",
+const SECTION_IDS = ["overview", "risk", "alloc", "hedge", "cma", "pseudo", "events", "panel",
                      "rates", "irs", "credit", "fx", "inflation", "acwi", "macro", "catalog"];
 
 /* 오버레이 해시는 그 아래에 어느 섹션이 깔려 있어야 하는지를 정한다 */
@@ -2644,10 +2644,12 @@ function sectionHasRangedChart(sec) {
 
 /* 마을 ↔ 섹션 화면 전환. 섹션은 한 번에 하나만 보인다(스크롤 길이 문제 해결). */
 function routeView() {
+  if (typeof cmaCloseTooltip === "function") cmaCloseTooltip();
   refreshObservationBadges();
   const hash = location.hash.replace(/^#/, "");
   const sec = underlyingSection(hash);
   const showVillage = !sec;
+  if (sec === "cma") renderSection("cma");
   /* 브리핑 음성은 화면 전환과 함께 끝낸다 — 이벤트 화면을 떠났는데 목소리만 남아
      따라오는 상태를 만들지 않는다(멱등이라 어느 전환에서 불려도 무해). */
   stopBrief();
@@ -2687,7 +2689,7 @@ function routeView() {
 }
 
 function ensureVillageBack(sec) {
-  if (sec === "alloc" || sec === "risk" || sec === "pseudo") return; // These workspaces use the top navigation.
+  if (sec === "alloc" || sec === "risk" || sec === "cma" || sec === "pseudo") return; // These workspaces use the top navigation.
   const node = document.getElementById(sec);
   if (!node || node.querySelector(".village-back")) return;
   const p = el("p", { class: "village-back" }, el("a", { href: "#village" }, "‹ 마을로 돌아가기"));
@@ -7136,6 +7138,11 @@ function portCorrKey(a, b) { return JSON.stringify([a, b].sort()); }
 
 // Annual percentage inputs produce percentage-squared covariance, with no rescaling.
 // Validate R itself even when a zero-volatility asset would mask an invalid row in C.
+// Enabled CMA assumptions override manual inputs without mutating their saved values.
+function portCmaAssumption(asset) {
+  return typeof cmaAssetAssumption === "function" ? cmaAssetAssumption(asset) : null;
+}
+
 function portRiskInputs(P, W, st) {
   const n = P.assets.length;
   const baseC = W.cov.map((row) => row.map((v) => v * 1e4));
@@ -7146,7 +7153,7 @@ function portRiskInputs(P, W, st) {
     return den > 0 ? Math.max(-1, Math.min(1, v / den))
       : Number.isFinite(W.corr?.[i]?.[j]) ? W.corr[i][j] : 0;
   }));
-  const sig = P.assets.map((a, i) => st.sig?.[a] ?? baseSig[i]);
+  const sig = P.assets.map((a, i) => portCmaAssumption(a)?.sig ?? st.sig?.[a] ?? baseSig[i]);
   const corr = baseCorr.map((row, i) => row.map((v, j) => i === j ? 1
     : st.corr?.[portCorrKey(P.assets[i], P.assets[j])] ?? v));
   let error = "";
@@ -7164,7 +7171,7 @@ function portRiskInputs(P, W, st) {
       L[i][j] = i === j ? Math.sqrt(v) : v / L[j][j];
     }
   }
-  const manual = P.assets.some((a) => st.sig?.[a] != null)
+  const manual = P.assets.some((a) => portCmaAssumption(a) != null || st.sig?.[a] != null)
     || P.assets.some((a, i) => P.assets.slice(i + 1).some((b) => st.corr?.[portCorrKey(a, b)] != null));
   // Preserve the published covariance exactly when no assumptions were overridden.
   const C = manual ? corr.map((row, i) => row.map((v, j) => sig[i] * v * sig[j])) : baseC;
@@ -7228,8 +7235,9 @@ function portModelInputs(P, st) {
   const fileMu = (P.cma_input && P.cma_input.mu_pct) || {};
   const mu = [], src = [];
   P.assets.forEach((a, i) => {
-    const k = st.mu[a];
-    if (k != null && isFinite(+k)) { mu.push(+k); src.push("키인"); }
+    const k = st.mu[a], cma = portCmaAssumption(a);
+    if (cma) { mu.push(cma.mu); src.push("CMA 시나리오"); }
+    else if (k != null && isFinite(+k)) { mu.push(+k); src.push("키인"); }
     else if (fileMu[a] != null && isFinite(+fileMu[a])) { mu.push(+fileMu[a]); src.push("CMA 파일"); }
     else { mu.push(W.mean_pct[i]); src.push("과거 평균(참고)"); }
   });
@@ -7450,10 +7458,17 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     mixInputs[a] = wInp;
     const dflt = (P.cma_input && P.cma_input.mu_pct && P.cma_input.mu_pct[a] != null)
       ? P.cma_input.mu_pct[a] : E0.W.mean_pct[i];
+    const cma = portCmaAssumption(a);
     const muInp = el("input", { type: "number", step: "0.01",
                                 placeholder: fmtNum(dflt, 2), "aria-label": `${a} 기대수익` });
     if (st.mu[a] != null && isFinite(+st.mu[a])) muInp.value = String(st.mu[a]);
+    if (cma) {
+      muInp.value = fmtNum(cma.mu, 2).replace(/,/g, "");
+      muInp.setAttribute("readonly", "");
+      muInp.title = "CMA 탭에서 시나리오를 수정하거나 적용을 해제하십시오.";
+    }
     muInp.addEventListener("input", () => {
+      if (portCmaAssumption(a)) return;
       const v = parseFloat(muInp.value);
       if (isFinite(v)) st.mu[a] = v; else delete st.mu[a];
       portSaveState(st);
@@ -7466,9 +7481,15 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const sigInp = el("input", { type: "number", min: "0", step: "any", placeholder: fmtNum(E0.risk.baseSig[i], 2),
       "aria-label": `${a} 변동성`, "aria-describedby": "port-risk-status" });
     if (st.sig[a] != null) sigInp.value = String(st.sig[a]);
-    const sigNote = el("span", { class: "port-src" }, st.sig[a] != null ? "키인" : "");
+    if (cma) {
+      sigInp.value = fmtNum(cma.sig, 2).replace(/,/g, "");
+      sigInp.setAttribute("readonly", "");
+      sigInp.title = "CMA 탭에서 시나리오를 수정하거나 적용을 해제하십시오.";
+    }
+    const sigNote = el("span", { class: "port-src" }, cma ? "CMA 시나리오" : st.sig[a] != null ? "키인" : "");
     sigInputs[a] = sigInp;
     sigInp.addEventListener("input", () => {
+      if (portCmaAssumption(a)) return;
       const blank = sigInp.value.trim() === "" && !sigInp.validity?.badInput;
       const v = Number(sigInp.value), next = { ...st.sig };
       if (blank) delete next[a]; else next[a] = v;
@@ -7518,7 +7539,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
         title: "USD 노출 · 월별 환율 공분산 반영 · 기대 환율변화 0 · 입력 μ/σ·상관은 미헤지 기준" }, check, ratio), applied);
     } else hedgeCell.textContent = "–";
     tbody.append(el("tr", {},
-      el("td", {}, a),
+      el("td", {}, typeof cmaAssetLabel === "function" ? cmaAssetLabel(a) : a),
       el("td", { class: "num", "data-label": assetHeaders[1] }, wInp),
       el("td", { class: "num", "data-label": assetHeaders[2] }, muInp, srcNote),
       el("td", { class: "num", "data-label": assetHeaders[3] }, sigInp, sigNote),
@@ -9338,6 +9359,14 @@ function openAllocDetail(topic) {
 
 /* ---------------- render all / boot ---------------- */
 
+function renderCmaSection() {
+  if (typeof renderCma === "function") renderCma();
+  else {
+    const box = $("#cma-content");
+    if (box) box.textContent = "CMA 모듈을 불러오지 못했습니다. 화면을 새로고침하십시오.";
+  }
+}
+
 function renderPseudo() {
   if (typeof renderPseudoDocs === "function") renderPseudoDocs();
 }
@@ -9346,7 +9375,7 @@ function renderPseudo() {
    순서는 화면 순서(마을 구역 순)와 같게 둔다 — 읽는 사람이 대조하기 쉽게. */
 const RENDERERS = {
   overview: renderOverview, risk: renderRisk, events: renderEvents,
-  panel: renderPanel, hedge: renderHedge, alloc: renderAlloc, pseudo: renderPseudo,
+  panel: renderPanel, hedge: renderHedge, alloc: renderAlloc, cma: renderCmaSection, pseudo: renderPseudo,
   rates: renderRates, irs: renderIRS, credit: renderCredit,
   fx: renderFX, inflation: renderInflation, acwi: renderACWI,
   macro: renderMacro, catalog: renderCatalog,

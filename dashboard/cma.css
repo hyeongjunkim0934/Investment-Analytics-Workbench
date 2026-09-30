@@ -1,0 +1,68 @@
+/* CMA inherits the dashboard's dark/light palette and numeric typography. */
+.cma-heading, .cma-card-head, .cma-card-actions, .cma-popup-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.cma-heading { margin-bottom: 12px; }
+.cma-subtitle, .cma-unit, .cma-applied, .cma-status, .cma-popup-state { color: var(--ink-2); font-size: 12px; }
+.cma-unit { margin: 0 0 14px; }
+.cma-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.cma-card { min-width: 0; padding: 16px; }
+.cma-card-head { margin-bottom: 12px; }
+.cma-card-head h3 { margin: 0; font-size: 15px; }
+.cma-enable { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 12px; white-space: nowrap; }
+.cma-enable input { margin: 0; width: 15px; height: 15px; accent-color: var(--accent-solid); }
+.cma-table { width: 100%; table-layout: fixed; font-size: 12px; }
+.cma-table th, .cma-table td, .cma-table tbody td.num { padding: 7px 5px; text-align: center; }
+.cma-table thead th { position: static; white-space: normal; font-size: 11px; }
+.cma-table th:first-child { width: 58px; text-align: left; }
+.cma-table tbody th { font-weight: 500; }
+.cma-table input {
+  box-sizing: border-box; width: 100%; min-width: 0; padding: 7px 3px; text-align: center;
+  border: 1px solid var(--baseline); border-radius: 4px; background: var(--page); color: var(--ink-1);
+  font: inherit; font-variant-numeric: tabular-nums; appearance: textfield; -moz-appearance: textfield;
+}
+.cma-table input::-webkit-inner-spin-button, .cma-table input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.cma-table input[aria-invalid="true"] { border-color: var(--up-ink); }
+.cma-table input:focus-visible, .cma-asset-label:focus-visible, .cma-popup-close:focus-visible {
+  outline: 2px solid var(--accent-ink); outline-offset: 2px;
+}
+.cma-table .cma-optimistic { color: var(--ink-1); }
+.cma-table .cma-neutral { color: var(--ink-2); }
+.cma-table .cma-pessimistic { color: var(--ink-2); }
+.cma-totals { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 12px 0 10px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--ink-2); }
+.cma-totals strong { margin-left: 3px; color: var(--ink-1); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cma-card-actions { margin-top: 10px; }
+.cma-applied { margin: 0; font-variant-numeric: tabular-nums; }
+.cma-apply { flex: none; min-height: 32px; }
+.cma-apply:disabled { opacity: .55; cursor: default; }
+.cma-status { margin: 8px 0 0; min-height: 18px; }
+.cma-warning { color: var(--up-ink); font-size: 12px; line-height: 1.5; }
+.cma-asset-label {
+  display: inline; padding: 2px 0; border: 0; border-bottom: 1px dotted var(--ink-3); border-radius: 0;
+  background: transparent; color: inherit; font: inherit; text-align: inherit; cursor: pointer;
+}
+.cma-asset-label:hover { color: var(--accent-ink); }
+.cma-popup {
+  position: fixed; z-index: 4000; box-sizing: border-box; width: 390px; max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px); overflow: auto; padding: 12px 14px;
+  border: 1px solid var(--baseline); border-radius: 7px; background: var(--surface); color: var(--ink-1);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .4); font-size: 12px;
+}
+.cma-popup-head strong { font-size: 13px; }
+.cma-popup-close { border: 0; background: transparent; color: var(--ink-2); font-size: 21px; line-height: 1; cursor: pointer; padding: 1px 4px; }
+.cma-popup-state { margin: 7px 0; line-height: 1.5; }
+.cma-popup-table { width: 100%; font-size: 11px; }
+.cma-popup-table th, .cma-popup-table td { padding: 5px 3px; text-align: right; font-variant-numeric: tabular-nums; }
+.cma-popup-table th:first-child { text-align: left; }
+.cma-popup-table thead th { position: static; font-size: 10px; font-weight: 500; }
+.cma-popup-table tbody th { font-weight: 500; }
+.cma-popup-total { margin: 9px 0; font-variant-numeric: tabular-nums; }
+.cma-popup-link { color: var(--accent-ink); font-size: 12px; }
+@media (max-width: 860px) { .cma-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 420px) {
+  .cma-card { padding: 12px 9px; }
+  .cma-table th, .cma-table td { padding: 6px 3px; }
+  .cma-table th:first-child { width: 44px; }
+  .cma-totals { gap: 7px 11px; font-size: 11px; }
+  .cma-card-actions { align-items: flex-start; }
+}
