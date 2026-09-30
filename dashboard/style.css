@@ -391,6 +391,9 @@ table > tr > th.rowhead { color: var(--ink-2); white-space: normal; }
 #risk .qa { margin-bottom: 8px; }
 #risk > h2 { margin-bottom: 8px; }
 .risk-top > * { min-width: 0; }
+.risk-chart-head { align-items: center; gap: 8px 16px; }
+#risk-chart-card .risk-period { gap: 6px 10px; }
+#risk-chart-card .risk-period input[type="date"] { width: 132px; }
 .risk-chart-tooltip { position: absolute; top: 8px; z-index: 5; pointer-events: none;
   width: 264px; max-width: calc(100% - 16px); padding: 10px 12px; border-radius: 8px;
   background: var(--surface); border: 1px solid var(--border); color: var(--ink-2);
