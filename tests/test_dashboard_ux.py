@@ -2642,7 +2642,7 @@ def test_rates_tenor_selector(probe):
 
 # ---- 리스크 층 맥락 + 밴드 실증 (2026-08-24 사용자 지시 — 개선 6·3번) ------------
 def test_risk_context_and_band_stats(probe):
-    """층 맥락·방법론을 보존하고 안내 삭제·구간 라벨·기간 선택·호버·폴백을 검증한다."""
+    """층 맥락을 보존하고 보조 패널 삭제·구간 라벨·기간 선택·호버·폴백을 검증한다."""
     c = probe["riskContext"]
     assert "ERROR" not in c, c.get("ERROR")
     assert c["titleHasTriplet"] is True, "층 제목에 1·3·12개월 변화가 없다"
@@ -2651,7 +2651,7 @@ def test_risk_context_and_band_stats(probe):
         "이력이 짧아 없는 구간(null)은 – 로 보여야 한다 — 0 으로 지어내면 안 된다"
     )
     assert c["howtoRemoved"] is True, "점수 읽는 법 카드가 DOM 또는 화면에 남았다"
-    assert c["methodHasBandTable"] is True, "방법론에 밴드 실증 표(주수·위기율·변동성)가 없다"
+    assert c["supplementaryPanelsRemoved"] is True, "삭제한 리스크 보조 패널이 남거나 렌더 오류가 발생했다"
     assert c["detailHasTriplet"] is True, "요인 상세 오버레이에 3구간 변화가 없다"
     assert c["legacyNoTriplet"] is True and c["legacyDetailFallsBack"] is True, (
         "chg 없는 옛 페이로드에서 무너지거나 새 표기를 지어냈다"

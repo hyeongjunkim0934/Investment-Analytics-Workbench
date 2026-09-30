@@ -1351,48 +1351,6 @@ function renderFactorGroup(titleSel, rowsSel, layerKey, layer, r, asofTs) {
   r.factors.filter((f) => f.layer === layerKey).forEach((f) => wrap.append(factorRow(f, r, asofTs)));
 }
 
-function buildRiskMethod(r) {
-  const box = $("#risk-method");
-  box.textContent = "";
-  box.append(el("summary", {}, "산식 · 가중치 · 검증 (방법론)"));
-  const w = r.weights;
-  box.append(el("p", {}, el("b", {}, "점수"), ` — ${r.howto}`));
-  box.append(el("p", {}, el("b", {}, "현재 위험 가중치"),
-    ` — ${w.desc} (학습 타깃: ${w.target} · 최근 재학습 ${w.refit})`));
-  const wt = el("table", {},
-    el("tr", {}, ...w.items.map((x) => el("th", {}, x.name))),
-    el("tr", {}, ...w.items.map((x) => el("td", { class: "num" }, (x.w * 100).toFixed(1) + "%"))));
-  box.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, wt));
-  const v = r.validation;
-  if (v && v.metrics) {
-    box.append(el("p", {}, el("b", {}, "표본 외 검증"),
-      ` — ${v.window} (${v.n_weeks}주 · 위기주 ${v.crisis_weeks}주)`));
-    const vt = el("table", {},
-      el("tr", {}, el("th", {}, "합성 방식"), el("th", { class: "num" }, "위험 추적력(IC)"),
-        el("th", { class: "num" }, "위기 판별(AUC)")),
-      ...v.metrics.map((m) => el("tr", {}, el("td", {}, m.name),
-        el("td", { class: "num" }, String(m.ic)), el("td", { class: "num" }, String(m.auc5)))));
-    box.append(vt, el("p", { style: "font-size:11.5px;color:var(--ink-3)" }, v.note));
-  }
-  const gbs = r.grade_band_stats;
-  if (gbs && gbs.rows) {
-    box.append(el("p", {}, el("b", {}, "등급 구간의 과거 실적"), ` — ${gbs.window}`));
-    const bt = el("table", {},
-      el("tr", {}, ...["구간", "주수", "위기주 빈도", "평균 실현변동성"]
-        .map((h, i) => el("th", { class: i ? "num" : "" }, h))),
-      ...gbs.rows.map((b) => el("tr", {},
-        el("td", {}, `${b.grade} (${b.lo}–${b.hi})`),
-        el("td", { class: "num" }, String(b.n_weeks)),
-        el("td", { class: "num" },
-          b.crisis_rate_pct == null ? "–" : `${fmtNum(b.crisis_rate_pct, 1)}%`),
-        el("td", { class: "num" },
-          b.avg_fwd_vol_pct == null ? "–" : `${fmtNum(b.avg_fwd_vol_pct, 1)}%`))));
-    box.append(el("div", { class: "table-wrap", style: "max-height:none;border:0" }, bt),
-      el("p", { style: "font-size:11.5px;color:var(--ink-3)" }, gbs.note));
-  }
-  box.append(el("p", {}, el("b", {}, "한계"), ` — ${r.limits}`));
-}
-
 // undefined = initial published window; null = full history; object = chosen dates.
 let riskChartRange;
 
@@ -1507,31 +1465,9 @@ function renderRisk() {
 
   renderRiskTrend($("#risk-chart-card"), r, asofTs, pal);
 
-  const em = $("#risk-events-mini");
-  em.textContent = "";
-  const emHead = el("div", { class: "card-head" }, el("span", { class: "card-title" }, "최근 이벤트"));
-  emHead.append(el("a", { href: "#events",
-    /* display/padding 은 24×24 최소 조작부(WCAG 2.5.8)를 맞추기 위한 것 — 카드 머리글의
-       유일한 링크라 문장 속 인라인 링크 예외에 해당하지 않는다. */
-    style: "margin-left:auto;font-size:12px;color:var(--accent-ink);text-decoration:none;"
-         + "display:inline-block;padding:5px 4px" }, "전체 보기 →"));
-  em.append(emHead);
-  const evs = ((DATA.events && DATA.events.events) || []).slice(0, 5);
-  if (!evs.length) em.append(el("div", { class: "chart-empty" }, "최근 이벤트 없음"));
-  else evs.forEach((e) => em.append(evMini(e)));
-
   renderFactorGroup("#risk-stress-title", "#risk-stress-rows", "stress", S, r, asofTs);
   renderFactorGroup("#risk-vuln-title", "#risk-vuln-rows", "vuln", V, r, asofTs);
   renderRiskRegime(r);
-  buildRiskMethod(r);
-  /* 관계분석은 리스크 안의 입구가 되었다(2026-08-13 사용자 지시 — 상단 탭에서 내려옴).
-     화면 자체는 그대로이므로 여기서는 들어가는 자리만 만든다. */
-  const pl = $("#risk-panel-link");
-  if (pl) {
-    pl.textContent = "";
-    pl.append(sectionLink("panel",
-      "— 위험 지표와 시장 변수의 상관·교차상관·회귀"));
-  }
 }
 
 /* ── 시장 국면 참고 카드 (§5.1 2026-08-31 실험 채택분 ⓐ — regime.py 가 정본).
