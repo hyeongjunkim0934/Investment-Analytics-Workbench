@@ -70,6 +70,31 @@
 }
 
 * { box-sizing: border-box; }
+
+/* Pseudo handoff: content follows each module; no market-data dependency. */
+.pseudo-tabs { margin: 0 0 16px; }
+.pseudo-overview { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.pseudo-summary { margin: 0; color: var(--ink-2); }
+.pseudo-actions { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--ink-3); }
+.pseudo-copy { padding: 4px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--ink-1); cursor: pointer; }
+.pseudo-status { color: var(--ink-2); }
+.pseudo-io { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 5px 12px; margin: 16px 0 20px; font-size: 12px; }
+.pseudo-io dt { color: var(--ink-3); }
+.pseudo-io dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+.pseudo-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.pseudo-card { min-width: 0; padding: 18px; }
+.pseudo-card h3 { display: flex; gap: 10px; align-items: baseline; margin: 0 0 14px; font-size: 14px; font-weight: 600; }
+.pseudo-number { color: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.pseudo-formula { color: var(--ink-1); font-size: 15px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pseudo-legend { color: var(--ink-2); font-size: 11.5px; margin: 3px 0 12px; overflow-wrap: anywhere; }
+.pseudo-code { background: var(--page); border: 1px solid var(--border); border-radius: 5px; padding: 12px; margin: 14px 0 10px; font: 12px/1.8 ui-monospace, Consolas, "Malgun Gothic", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pseudo-code code { font: inherit; color: var(--ink-2); }
+.pseudo-note { margin: 0; font-size: 11.5px; color: var(--ink-2); overflow-wrap: anywhere; }
+.pseudo-sources { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+.pseudo-sources summary { cursor: pointer; color: var(--ink-3); }
+.pseudo-sources a { color: var(--accent-ink); }
+.pseudo-copy-fallback { width: 100%; margin-top: 12px; background: var(--page); color: var(--ink-1); border: 1px solid var(--border); }
+@media (max-width: 900px) { .pseudo-grid { grid-template-columns: minmax(0, 1fr); } }
 /* hidden 속성은 UA 스타일(display:none)이라 클래스의 display 선언에 진다.
    .gate·.filter-row 처럼 display:flex 를 가진 요소가 hidden 인데도 화면을 덮는 사고를
    막는다 — 이 프로젝트에서 hidden 은 언제나 "숨긴다"는 뜻이다. */
@@ -159,7 +184,7 @@ body {
 /* ---------- layout ---------- */
 .page { max-width: 1280px; margin: 0 auto; padding: 18px 20px 60px; }
 .section { margin-top: 34px; scroll-margin-top: 70px; }
-#alloc, #risk { margin-top: 0; }
+#alloc, #risk, #pseudo { margin-top: 0; }
 .section h2 {
   font-size: 18px; margin: 0 0 14px;
   padding-left: 10px; border-left: 3px solid var(--accent);
