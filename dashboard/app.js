@@ -182,7 +182,7 @@ function downloadCSV(filename, headers, rows) {
 function cardScaffold(container, { title, sub, tableFn, csvName, controls }) {
   container.textContent = "";
   const head = el("div", { class: "card-head" },
-    el("span", { class: "card-title" }, title),
+    title ? el("span", { class: "card-title" }, title) : null,
     sub ? el("span", { class: "card-sub" }, sub) : null);
   if (controls) head.append(controls);
 
@@ -3686,8 +3686,14 @@ function makeRatioChart(box, opts) {
     Object.entries(hooks).forEach(([name, hook]) => (cfg.hooks[name] = cfg.hooks[name] || []).push(hook));
   }
   const u = new uPlot(cfg, [xs, ...seriesDefs.map((sd) => sd.v)], box);
-  const ro = new ResizeObserver(() => u.setSize({ width: Math.max(280, box.clientWidth), height: chartHeight() }));
+  const resize = () => u.setSize({ width: Math.max(280, box.clientWidth), height: chartHeight() });
+  const ro = new ResizeObserver(resize);
   ro.observe(box);
+  if (typeof height === "function") {
+    // A height-only viewport resize does not necessarily resize the chart's box.
+    window.addEventListener("resize", resize);
+    return trackChart(u, { disconnect() { ro.disconnect(); window.removeEventListener("resize", resize); } });
+  }
   return trackChart(u, ro);
 }
 
@@ -6260,7 +6266,7 @@ let portResultTab = "frontier";
 let portDockObserver = null;
 function portResultChartHeight() {
   const viewport = typeof window !== "undefined" && window.innerHeight || 900;
-  return Math.max(180, Math.min(300, Math.round(viewport * 0.31)));
+  return Math.max(220, Math.min(420, Math.round(viewport * 0.44)));
 }
 const PORT_AXIS_LS_KEY = "iaw-port-axis";
 function portLoadAxisLimits() {
@@ -7521,8 +7527,10 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   const reviewCard = el("div", { id: "port-result-benchmark", class: "card port-sub-card",
     role: "tabpanel", "aria-labelledby": "port-result-tab-benchmark" });
   const resultTabs = el("div", { class: "port-result-tabs", role: "tablist", "aria-label": "포트폴리오 결과" });
+  const resultTools = el("div", { class: "port-result-tools" });
+  const resultHeader = el("div", { class: "port-results-header" }, resultTabs, resultTools);
   const resultBody = el("div", { class: "port-results-body" }, frontCard, reviewCard);
-  const results = el("section", { id: "port-frontier-panel", class: "port-results-dock", "aria-label": "포트폴리오 결과" }, resultTabs, resultBody);
+  const results = el("section", { id: "port-frontier-panel", class: "port-results-dock", "aria-label": "포트폴리오 결과" }, resultHeader, resultBody);
   const tabs = {};
   const selectResult = (key, focus = false) => {
     portResultTab = key;
@@ -7531,6 +7539,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       button.setAttribute("tabindex", name === key ? "0" : "-1");
     });
     frontCard.hidden = key !== "frontier";
+    resultTools.hidden = key !== "frontier";
     reviewCard.hidden = key !== "benchmark";
     resultBody.scrollTop = 0;
     if (focus) tabs[key].focus();
@@ -7589,6 +7598,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const wCur = sumOk ? P.assets.map((a) => (+st.mix[a] || 0) / 100) : null;
     portCharts.forEach(destroyChart);
     portCharts = [];
+    resultTools.textContent = "";
     if (!E.risk.valid) {
       frontCard.textContent = ""; reviewCard.textContent = "";
       frontCard.append(el("div", { class: "port-warn d-up", role: "status" }, E.risk.error));
@@ -7603,7 +7613,6 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       ...(hintSettings.diversification ? exploration.diversification.map((p) => ({ ...p, color: colors.asset, C: exploration.scenarioC })) : []),
     ].map((p) => ({ ...p, hint: true, hitRadius: p.kind === "gap" ? PORT_GAP_STYLE.radius + 3 : 9 }));
     const fbox = cardScaffold(frontCard, {
-      title: "효율적 경계선",
       csvName: "효율적경계선.csv",
       tableFn: (cap = 400, raw = false) => {
         const scenario = (p, type) => ({ ...p, type, k: E.kappa,
@@ -7683,6 +7692,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       Math.max(maxY + spanY * 0.28, intervalHigh + intervalPad)];
     const actions = frontCard.querySelector(".card-actions");
     actions.insertBefore(portAxisControls(xRange, yRange, recalc), actions.querySelector(".port-palette"));
+    resultTools.append(frontCard.querySelector(".card-head"));
     const visibleMarkers = markers.filter((m) => m.x >= xRange[0] && m.x <= xRange[1]
       && m.y >= yRange[0] && m.y <= yRange[1]);
     // Keep each scenario's exact solution and plotted ordinate, even at shared x.
