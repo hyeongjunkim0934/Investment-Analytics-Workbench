@@ -36,6 +36,8 @@ P.DATA.alloc=alloc;P.renderPortPanel(alloc);
 const panel=DOC.getElementById('alloc-port-panel'),byId=id=>DOC.getElementById(id);
 const input=label=>Array.from(panel.querySelectorAll('input')).find(n=>n.getAttribute('aria-label')===label);
 const edit=(label,value)=>{const n=input(label);assert(n,label+' missing');n.value=String(value);n.dispatchEvent({type:'input'});};
+const update=()=>byId('port-update-btn').click();
+const applyConstraints=()=>byId('port-constraint-apply').click();
 const button=text=>Array.from(panel.querySelectorAll('button')).find(n=>n.textContent===text);
 const chart=()=>shim.UPlotStub.made.filter(n=>!n.dead&&n.opts.series.some(s=>s.label==='경계선')).at(-1);
 const state=()=>P.portState(p);
@@ -65,7 +67,7 @@ const moments=mix=>{
 const oneBefore=cells('비중1'),mix2={국내시가:15,국내장부:15,해외시가:25,해외장부:10,국내주식:10,해외주식:15,대체투자:10};
 assets.forEach(a=>edit(a+' 비중2',mix2[a]));
 // Weight edits remain a draft until the existing explicit save action is used.
-same(state().mix2,migrated.mix2);button('기본값으로 저장').click();
+same(state().mix2,migrated.mix2);update();
 same(state().mix,migrated.mix);same(state().mix2,mix2);same(cells('비중1'),oneBefore);
 const expected1=moments(migrated.mix),expected2=moments(mix2);
 near(Number(cells('비중1')[1]),expected1.mu,.0051);near(Number(cells('비중1')[2]),expected1.sig,.0051);
@@ -87,20 +89,23 @@ for(const [name,m] of [['비중1',expected1],['비중2',expected2]]){
 }
 const saved=JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY));same(saved.mix,migrated.mix);same(saved.mix2,mix2);
 P.renderPortPanel(alloc);assets.forEach(a=>{assert.equal(input(a+' 비중1').value,String(migrated.mix[a]));assert.equal(input(a+' 비중2').value,String(mix2[a]));});
-// Invalid totals suppress only that portfolio and never normalize its user's values.
-edit('국내시가 비중2',14);assert(row('비중1')&&!row('비중2'));assert.equal(input('국내시가 비중2').value,'14');
-edit('국내시가 비중2',15);assert(row('비중2'));
+// Invalid totals reject the full update and never normalize the user's draft.
+const validRows=panel.querySelector('.port-benchmark').textContent,validStore=shim.localStorage.getItem(P.PORT_LS_KEY);
+edit('국내시가 비중2',14);update();assert(row('비중1')&&row('비중2'));assert.equal(input('국내시가 비중2').value,'14');
+assert.equal(panel.querySelector('.port-benchmark').textContent,validRows);assert.equal(shim.localStorage.getItem(P.PORT_LS_KEY),validStore);
+edit('국내시가 비중2',15);update();assert(row('비중2'));
 
 // Contradictory draft bounds must not mutate the saved feasible model or plot.
 const prior=JSON.stringify(state().constraints),priorData=JSON.stringify(chart().data);
-edit('주식 최대제약 %',20);edit('주식 최소제약 %',50);button('제약 적용').click();
+edit('주식 최대제약 %',20);edit('주식 최소제약 %',50);applyConstraints();
 assert.equal(JSON.stringify(state().constraints),prior);assert.equal(JSON.stringify(chart().data),priorData);
 assert(byId('port-constraint-status').textContent.length>0);
 edit('주식 최대제약 %',40);edit('주식 최소제약 %',20);
 edit('채권 최대제약 %',70);edit('채권 최소제약 %',30);edit('대체 최대제약 %',30);edit('대체 최소제약 %',5);
 const select=Array.from(panel.querySelectorAll('select')).find(n=>n.getAttribute('aria-label')==='최소제약 자산 선택');assert(select);
 select.value='해외장부';select.dispatchEvent({type:'change'});edit('개별자산 최소제약 %',15);button('개별자산 추가').click();
-assert(input('해외장부 최소제약 %'));button('제약 적용').click();
+assert(input('해외장부 최소제약 %'));applyConstraints();
+assert.equal(JSON.stringify(chart().data),priorData);update();
 const constrained=state();assert.equal(constrained.constraints.assetMin.해외장부,15);
 assert.equal(constrained.constraints.groupMin.주식,20);assert.equal(constrained.constraints.groupMax.주식,40);
 same(constrained.mix,migrated.mix);same(constrained.mix2,mix2);
@@ -112,7 +117,7 @@ for(const point of [...E.front,...E.robust,...E.optimistic]){
  }
 }
 P.renderPortPanel(alloc);assert.equal(input('해외장부 최소제약 %').value,'15');assert.equal(input('주식 최대제약 %').value,'40');
-const removal=Array.from(panel.querySelectorAll('button')).find(n=>n.getAttribute('aria-label')==='해외장부 최소제약 삭제');assert(removal);removal.click();button('제약 적용').click();
+const removal=Array.from(panel.querySelectorAll('button')).find(n=>n.getAttribute('aria-label')==='해외장부 최소제약 삭제');assert(removal);removal.click();applyConstraints();update();
 assert(!Object.prototype.hasOwnProperty.call(state().constraints.assetMin,'해외장부'));
 console.log(JSON.stringify({pass:true,legacyIdentityMigration:true,separateWeightPersistence:true,independentDisplayedMoments:true,
  comparisonMarkersAndCsv:true,invalidTotalIsolation:true,liquidityConstraintRemoved:true,infeasibleDraftBlocked:true,

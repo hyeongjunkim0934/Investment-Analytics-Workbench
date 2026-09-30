@@ -283,6 +283,7 @@ portfolio.hedge_cost={USD:{active:true,mean_pct:-2.4}};
 liveState().hedge[asset]={enabled:true,ratio:50};
 const hedged=P.portModelInputs(portfolio,liveState());
 const linked=P.portRiskAllocationEngine(allocation);
+const appliedModel=P.portModelInputs(portfolio,inspect("portPanelDraft.applied"));
 result.modelValues={covariance:noHedge.C[0][assetIndex],hedgedMean:hedged.mu[assetIndex],
   hedgedVariance:hedged.C[assetIndex][assetIndex],hedgedCovariance:hedged.C[0][assetIndex]};
 result.model={validHedge:hedged.risk.valid,
@@ -290,8 +291,8 @@ result.model={validHedge:hedged.risk.valid,
   editedCorrelationPreserved:Math.abs(customModel.C[0][assetIndex]-.2*3.5*Math.sqrt(82.5))<1e-9,
   untouchedVariance:Math.abs(noHedge.C[0][0]-12.25)<1e-9,
   hedgeAppliedExactlyOnce:hedged.baseMu[assetIndex]===4 && Math.abs(hedged.mu[assetIndex]-2.8)<1e-9,
-  linkedMeanSame:JSON.stringify(linked.V.mu)===JSON.stringify(hedged.mu),
-  linkedCovarianceSame:JSON.stringify(linked.V.C)===JSON.stringify(hedged.C)};
+  linkedMeanSame:JSON.stringify(linked.V.mu)===JSON.stringify(appliedModel.mu),
+  linkedCovarianceSame:JSON.stringify(linked.V.C)===JSON.stringify(appliedModel.C)};
 assert(Object.values(result.model).every(Boolean),JSON.stringify(result.model));
 
 // The seventh asset has its own editable assumptions and no assumed extra FX hedge.

@@ -1071,8 +1071,8 @@ function renderMetaLine() {
   refreshObservationBadges();
   const m = DATA.meta;
   if (!m) return;
-  $("#meta-line").textContent =
-    `기준일 ${m.last_observation} · 빌드 ${m.built_at_kst} · ${m.series_count}개 시리즈`;
+  const line = $("#meta-line");
+  if (line) { line.textContent = ""; line.hidden = true; }
   if (m.warnings && m.warnings.length) console.warn("pipeline warnings:", m.warnings);
 }
 
@@ -3630,7 +3630,7 @@ function makeRatioChart(box, opts) {
       pendingLabels.forEach(({ m, px, py, r }) => {
           let lx = px + r + 4 * dpr, ly = py + 4 * dpr;
           if (m.inlineLabel && bbox) {
-            const fontSize = m.asset ? 10 : 12;
+            const fontSize = m.labelSize || (m.asset ? 10 : 12);
             ctx.font = `${fontSize * dpr}px system-ui, sans-serif`;
             const width = ctx.measureText(m.label)?.width || m.label.length * fontSize * dpr;
             const h = (fontSize + 4) * dpr, gap = 9 * dpr, inset = 4 * dpr;
@@ -7253,7 +7253,7 @@ function portRiskAllocationEngine(A) {
   const P = A?.port;
   if (!P?.active || !P.assets?.length || !P.windows?.length)
     return { error: "포트폴리오 데이터가 없습니다 — 데이터 갱신 후 복구됩니다." };
-  const st = portPanelDraft?.source === P ? portPanelDraft.st : portState(P);
+  const st = portPanelDraft?.source === P ? portPanelDraft.applied : portState(P);
   const { W, risk, C, mu } = portModelInputs(P, st);
   if (!risk.valid || mu.some((v) => !Number.isFinite(v)))
     return { error: risk.error || "포트폴리오 기대수익 입력을 확인하십시오." };
@@ -7335,6 +7335,7 @@ function portCorrelationControl(P, W, st, onApply, draft) {
           input.removeAttribute("aria-invalid"); status.textContent = "미적용"; status.className = "port-note";
           draft.corrDraft = Object.fromEntries(Object.entries(inputs).map(([k, item]) => [k, item.input.value]));
           draft.corrBad = Object.fromEntries(Object.entries(inputs).map(([k, item]) => [k, !!badNumber(item.input)]));
+          onApply();
         });
         cell.append(input);
       }
@@ -7352,13 +7353,15 @@ function portCorrelationControl(P, W, st, onApply, draft) {
       if (!blank) corr[key] = v;
     });
     const candidateState = { ...st, corr };
-    const candidate = portHedgeInputs(P, W, candidateState, portRiskInputs(P, W, candidateState));
+    const window = P.windows.find((w) => w.key === st.win) || W;
+    const candidate = portHedgeInputs(P, window, candidateState, portRiskInputs(P, window, candidateState));
     if (bad || !candidate.valid) {
       status.textContent = `${bad ? "상관계수는 −1부터 1 사이로 입력하십시오." : candidate.error} 마지막 적용값을 유지합니다.`;
-      status.className = "port-note d-up"; return;
+      status.className = "port-note d-up"; return false;
     }
-    st.corr = corr; draft.corrDraft = null; draft.corrBad = null; portSaveState(st); onApply();
-    status.textContent = "적용됨"; status.className = "port-note";
+    st.corr = corr; draft.corrDraft = null; draft.corrBad = null; onApply();
+    status.textContent = "업데이트 대기"; status.className = "port-note";
+    return true;
   };
   Object.values(inputs).forEach(({ input }) => input.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") { ev.preventDefault(); apply(); }
@@ -7372,7 +7375,9 @@ function portCorrelationControl(P, W, st, onApply, draft) {
       });
       apply();
     } }, "상관 기본값"), el("span", { class: "port-note" }, "빈칸 = 실측 · 대각 1.00"), status);
-  return el("div", { class: "port-correlation" }, el("div", { class: "table-wrap" }, table), controls);
+  const control = el("div", { class: "port-correlation" }, el("div", { class: "table-wrap" }, table), controls);
+  control.applyDraft = apply;
+  return control;
 }
 
 function renderPortPanel(A, { preserveDraft = false } = {}) {
@@ -7396,29 +7401,59 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   }
   const pal = palette();
   /* 기관 쪽 λ·모형 설정과 테마 변경도 renderAlloc을 부른다. 같은 데이터의 port
-     초안을 저장값으로 덮지 않는다. 명시 저장/되돌리기는 기존 직접 호출로 초기화하고,
+     초안을 저장값으로 덮지 않는다. 저장값 복원만 직접 호출로 초기화하고,
      새 데이터 객체는 새 자산 분류·표본에 맞춰 저장값/기본값에서 다시 시작한다. */
   const previousDraft = preserveDraft && portPanelDraft && portPanelDraft.source === P ? portPanelDraft : null;
   const st = previousDraft ? previousDraft.st : portState(P);
-  portPanelDraft = { source: P, st, corrDraft: previousDraft?.corrDraft || null, corrBad: previousDraft?.corrBad || null };
+  // Draft inputs never flow into a result, export or linked-risk calculation until Update.
+  portPanelDraft = { source: P, st,
+    applied: previousDraft?.applied || JSON.parse(JSON.stringify(st)),
+    pending: previousDraft?.pending || false, inputDraft: previousDraft?.inputDraft || {},
+    corrDraft: previousDraft?.corrDraft || null, corrBad: previousDraft?.corrBad || null };
+  const markPending = () => {
+    portPanelDraft.pending = true;
+    const button = $("#port-update-btn");
+    if (button) { button.setAttribute("data-pending", "true"); button.textContent = "업데이트";
+      button.removeAttribute("aria-label"); button.title = "입력한 조건을 결과에 반영"; }
+  };
+  const rememberInput = (input) => {
+    if (input.hasAttribute("readonly")) return;
+    const key = input.getAttribute("aria-label"), raw = portPanelDraft.inputDraft[key];
+    if (raw) {
+      input.value = raw.value;
+      input.setAttribute("aria-invalid", String(raw.invalid));
+    }
+    input.addEventListener("input", () => {
+      portPanelDraft.inputDraft[key] = { value: input.value,
+        invalid: !!input.validity?.badInput || input.getAttribute("aria-invalid") === "true" };
+      markPending();
+    });
+  };
   const wins = P.windows;
   const W = wins.find((w) => w.key === st.win) || wins[wins.length - 1];
   allocWorkspaceContext.port = {};
   refreshAllocWorkspaceInfo();
 
   head.append(allocPeriodControl("port-period", wins, W, (w) => {
-    st.win = w.key; portSaveState(st); renderPortPanel(A);
+    st.win = w.key;
+    delete portPanelDraft.inputDraft["시작기간"]; delete portPanelDraft.inputDraft["종료기간"];
+    markPending(); renderPortPanel(A, { preserveDraft: true });
   }));
+  ["start", "end"].forEach((key) => {
+    const input = head.querySelector("#port-period-" + key);
+    if (input) rememberInput(input);
+  });
   box.append(head);
 
   /* Limits are optimizer bounds; entered comparison weights are never redistributed. */
   const constraintDraft = previousDraft?.constraintDraft || JSON.parse(JSON.stringify(st.constraints));
   portPanelDraft.constraintDraft = constraintDraft;
   const constraintStatus = el("div", { id: "port-constraint-status", class: "port-warn d-up", role: "status" });
-  const changed = () => { constraintStatus.textContent = "제약조건 미적용"; };
+  const changed = () => { constraintStatus.textContent = "제약조건 미적용"; markPending(); };
   const limitInput = (label, get, set) => {
     const input = el("input", { type: "number", min: "0", max: "100", step: "0.1",
-      value: String(get()), "aria-label": label });
+      value: String(get()), "aria-label": label,
+      "aria-invalid": String(!Number.isFinite(get()) || get() < 0 || get() > 100) });
     input.addEventListener("input", () => {
       const value = input.value.trim() === "" || input.validity?.badInput ? NaN : Number(input.value);
       set(value); input.setAttribute("aria-invalid", String(!Number.isFinite(value) || value < 0 || value > 100)); changed();
@@ -7456,17 +7491,19 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       }
       constraintDraft.assetMin[assetSelect.value] = value; drawAssetLimits(); changed();
     } }, "개별자산 추가"));
-  const applyBtn = el("button", { type: "button", class: "btn-ghost", onclick: () => {
+  const stageConstraints = () => {
     const spec = portConstraintSpec(P, constraintDraft);
-    if (!spec.ok) { constraintStatus.textContent = `${spec.error} 마지막 적용값을 유지합니다.`; return; }
+    if (!spec.ok) { constraintStatus.textContent = `${spec.error} 마지막 적용값을 유지합니다.`; return false; }
     st.constraints = JSON.parse(JSON.stringify(constraintDraft));
-    constraintStatus.textContent = ""; portSaveState(st); recalc();
-  } }, "제약 적용");
-  gWrap.append(assetControls, assetList, applyBtn, constraintStatus);
-  box.append(el("div", { class: "port-sec-title" }, "제약조건"), gWrap);
+    constraintStatus.textContent = "업데이트 대기"; markPending(); return true;
+  };
+  const applyBtn = el("button", { type: "button", id: "port-constraint-apply",
+    class: "btn-ghost port-constraint-apply", onclick: stageConstraints }, "적용");
+  gWrap.append(assetControls, assetList, constraintStatus);
+  box.append(el("div", { class: "port-sec-title port-constraint-heading" }, "제약조건", applyBtn), gWrap);
 
   /* ② 자산군 입력 — 표 안에 별도 스크롤을 만들지 않고 전체 행을 펼친다. */
-  const E0 = portEngine(P, st);
+  const E0 = portModelInputs(P, st);
   const mixInputs = {}, mix2Inputs = {}, srcCells = {}, sigInputs = {}, hedgeCells = {};
   const riskStatus = el("div", { id: "port-risk-status", class: "port-warn d-up", role: "status" });
   const table = el("table", { class: "port-table" });
@@ -7483,7 +7520,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       input.addEventListener("input", () => {
         st[field][a] = input.value.trim() === "" || input.validity?.badInput ? NaN : Number(input.value);
         input.setAttribute("aria-invalid", String(!Number.isFinite(st[field][a]) || st[field][a] < 0 || st[field][a] > 100));
-        recalc();
+        markPending();
       });
       inputs[a] = input; return input;
     };
@@ -7501,12 +7538,12 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     }
     muInp.addEventListener("input", () => {
       if (portCmaAssumption(a)) return;
-      const v = parseFloat(muInp.value);
-      if (isFinite(v)) st.mu[a] = v; else delete st.mu[a];
-      portSaveState(st);
-      const E = portEngine(P, st);
-      srcCells[a].textContent = sourceLabel(E.src[i]);
-      recalc();
+      const blank = muInp.value.trim() === "" && !muInp.validity?.badInput;
+      const v = Number(muInp.value);
+      if (blank) delete st.mu[a]; else st.mu[a] = muInp.validity?.badInput ? NaN : v;
+      muInp.setAttribute("aria-invalid", String(!blank && (!Number.isFinite(v) || !!muInp.validity?.badInput)));
+      srcCells[a].textContent = blank ? "" : "키인";
+      markPending();
     });
     const srcNote = el("span", { class: "port-src" }, sourceLabel(E0.src[i]));
     srcCells[a] = srcNote;
@@ -7527,6 +7564,8 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       if (blank) delete next[a]; else next[a] = v;
       const candidateState = { ...st, sig: next };
       const candidate = portHedgeInputs(P, W, candidateState, portRiskInputs(P, W, candidateState));
+      st.sig = next; markPending();
+      if (sigInp.validity?.badInput) st.sig[a] = NaN;
       if (sigInp.validity?.badInput || !candidate.valid) {
         sigInp.setAttribute("aria-invalid", "true");
         riskStatus.textContent = `${candidate.error || "변동성을 숫자로 입력하십시오."} 마지막 적용값을 유지합니다.`; return;
@@ -7535,7 +7574,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       sigNote.textContent = blank ? "" : "키인";
       riskStatus.textContent = Object.values(sigInputs).some((input) => input.getAttribute("aria-invalid") === "true")
         ? "잘못된 변동성 입력이 있습니다. 마지막 적용값을 유지합니다." : "";
-      portSaveState(st); recalc();
+      markPending();
     });
     const r10 = (P.ref10y && P.ref10y.per_asset && P.ref10y.per_asset[a]) || null;
     const cdRef = (a === "국내장부" || a === "원화유동성") && !r10 && P.krw_liq_ref ? P.krw_liq_ref : null;
@@ -7557,15 +7596,17 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       hedgeCells[a] = { applied, i };
       check.addEventListener("change", () => {
         setting.enabled = check.checked; ratio.disabled = !setting.enabled;
-        ratio.value = String(setting.ratio); ratio.removeAttribute("aria-invalid");
-        riskStatus.textContent = ""; portSaveState(st); recalc();
+        ratio.value = String(setting.ratio); ratio.setAttribute("aria-invalid",
+          String(setting.enabled && !Number.isFinite(setting.ratio)));
+        riskStatus.textContent = ""; markPending();
       });
       ratio.addEventListener("input", () => {
         const value = Number(ratio.value), valid = ratio.value.trim() !== "" && !ratio.validity?.badInput
           && Number.isFinite(value) && value >= 0 && value <= 100;
         ratio.setAttribute("aria-invalid", String(!valid));
+        setting.ratio = valid ? value : NaN; markPending();
         if (!valid) { riskStatus.textContent = "헤지비중은 0부터 100% 사이로 입력하십시오. 마지막 적용값을 유지합니다."; return; }
-        setting.ratio = value; riskStatus.textContent = ""; portSaveState(st); recalc();
+        setting.ratio = value; riskStatus.textContent = ""; markPending();
       });
       hedgeCell.append(el("label", { class: "port-hedge-control",
         title: "USD 노출 · 월별 환율 공분산 반영 · 기대 환율변화 0 · 입력 μ/σ·상관은 미헤지 기준" }, check, ratio), applied);
@@ -7581,20 +7622,21 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       el("td", { class: "num", "data-label": assetHeaders[7] }, refCell), hedgeCell));
   });
   table.append(tbody);
+  table.querySelectorAll("input").forEach(rememberInput);
   const sumBadge = el("span", { class: "port-badge" }), sum2Badge = el("span", { class: "port-badge" });
   const saveNote = el("span", { class: "port-note" },
-    "비중 미저장 · 입력·표본 적용 시 함께 저장");
+    "입력 후 업데이트");
   const btnRow = el("div", { class: "port-btns" },
     sumBadge, sum2Badge,
-    el("button", { class: "btn-ghost", onclick: () => { portSaveState(st); renderPortPanel(A); } },
+    el("button", { class: "btn-ghost", onclick: () => { portSaveState(portPanelDraft.applied); saveNote.textContent = "업데이트한 결과 저장됨"; } },
       "기본값으로 저장"),
     el("button", { class: "btn-ghost", onclick: () => { renderPortPanel(A); } },
       "저장값 복원"),
     el("button", { class: "btn-ghost", onclick: () => {
-      st.mu = {}; portSaveState(st); renderPortPanel(A);
+      st.mu = {}; P.assets.forEach((a) => delete portPanelDraft.inputDraft[`${a} 기대수익`]); markPending(); renderPortPanel(A, { preserveDraft: true });
     } }, "μ 기본값"),
     el("button", { class: "btn-ghost", onclick: () => {
-      st.sig = {}; portSaveState(st); renderPortPanel(A);
+      st.sig = {}; P.assets.forEach((a) => delete portPanelDraft.inputDraft[`${a} 변동성`]); markPending(); renderPortPanel(A, { preserveDraft: true });
     } }, "σ 기본값"),
     el("button", { class: "btn-ghost", onclick: () => { expWrap.hidden = !expWrap.hidden; } },
       "CMA JSON 내보내기"),
@@ -7646,30 +7688,92 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     tabs[key] = button; resultTabs.append(button);
   });
   selectResult(portResultTab);
+  const correlationControl = portCorrelationControl(P, W, st, markPending, portPanelDraft);
   const correlation = el("section", { id: "port-correlation-panel", "aria-labelledby": "port-correlation-title" },
     el("h3", { id: "port-correlation-title", class: "port-sec-title" }, "상관계수"),
-    portCorrelationControl(P, W, st, recalc, portPanelDraft));
+    correlationControl);
   box.prepend(results);
   box.append(correlation);
   const topbar = $(".topbar");
   if (topbar) {
-    const syncDock = () => results.style.setProperty("--port-results-top", `${Math.ceil(topbar.getBoundingClientRect().height) + 6}px`);
+    const workspace = $("#alloc-workspace"), alloc = $("#alloc");
+    const syncDock = () => {
+      const top = Math.ceil(topbar.getBoundingClientRect().height);
+      const tabsHeight = Math.ceil(workspace?.getBoundingClientRect().height || 40);
+      alloc?.style.setProperty("--alloc-top", `${top}px`);
+      alloc?.style.setProperty("--alloc-tabs-height", `${tabsHeight}px`);
+    };
     syncDock();
     portDockObserver = new ResizeObserver(syncDock);
     portDockObserver.observe(topbar);
+    if (workspace) portDockObserver.observe(workspace);
+  }
+
+  function updateResults() {
+    const updateButton = $("#port-update-btn");
+    const fail = (message) => {
+      updateButton.textContent = "입력 확인";
+      updateButton.title = message;
+      updateButton.setAttribute("aria-label", `업데이트: ${message}`);
+    };
+    const from = $("#port-period-start"), to = $("#port-period-end");
+    if (from && to) {
+      const matches = (w) => w.start === from.value && w.end === to.value;
+      const chosen = matches(W) ? W : wins.find(matches);
+      if (!chosen) {
+        const message = "해당 기간의 집계 데이터가 없습니다. 제공 기간을 선택하십시오.";
+        riskStatus.textContent = message; fail(message); return;
+      }
+      st.win = chosen.key;
+    }
+    // Validate the complete draft before replacing the single applied snapshot.
+    if (!stageConstraints()) { fail(constraintStatus.textContent); return; }
+    if (!correlationControl.applyDraft()) { fail($("#port-corr-status").textContent); return; }
+    const model = portModelInputs(P, st);
+    const badWeights = ["mix", "mix2"].some((field) => {
+      const weights = P.assets.map((a) => st[field][a]);
+      return weights.some((v) => !Number.isFinite(v) || v < 0 || v > 100)
+        || Math.abs(weights.reduce((sum, v) => sum + v, 0) - 100) > 1e-6;
+    });
+    const badMu = P.assets.some((a) => !portCmaAssumption(a) && a in st.mu && !Number.isFinite(st.mu[a]));
+    const badHedge = Object.values(st.hedge).some((v) => v.enabled
+      && (!Number.isFinite(v.ratio) || v.ratio < 0 || v.ratio > 100));
+    if (badWeights || badMu || badHedge || !model.risk.valid) {
+      riskStatus.textContent = (badWeights ? "비중1·비중2는 각각 0~100%, 합계 100%로 입력하십시오."
+        : badMu ? "기대수익을 숫자로 입력하십시오." : badHedge ? "헤지비중은 0부터 100% 사이로 입력하십시오."
+        : model.risk.error) + " 마지막 업데이트 결과를 유지합니다.";
+      fail(riskStatus.textContent); return;
+    }
+    // Active CMA replaces these readonly inputs; discard only invalid, unused drafts.
+    P.assets.filter((a) => portCmaAssumption(a)).forEach((a) => {
+      if (a in st.mu && !Number.isFinite(st.mu[a])) delete st.mu[a];
+      if (a in st.sig && (!Number.isFinite(st.sig[a]) || st.sig[a] < 0)) delete st.sig[a];
+    });
+    portPanelDraft.applied = JSON.parse(JSON.stringify(st));
+    portPanelDraft.pending = false;
+    portPanelDraft.inputDraft = {};
+    portSaveState(portPanelDraft.applied);
+    constraintStatus.textContent = "";
+    const corrStatus = $("#port-corr-status");
+    if (corrStatus) corrStatus.textContent = "";
+    riskStatus.textContent = ""; saveNote.textContent = "업데이트됨";
+    if (st.win !== W.key) renderPortPanel(A, { preserveDraft: true });
+    else recalc();
+    $("#port-update-btn")?.focus();
   }
 
   function recalc() {
+    const applied = portPanelDraft.applied;
     refreshAllocWorkspaceInfo();
     // Keep the original opportunity set visible; selected hedges are an overlay.
-    const selected = portEngine(P, st);
+    const selected = portEngine(P, applied);
     const hedgeActive = selected.risk.hedge?.active;
-    const E = hedgeActive ? portEngine(P, { ...st, hedge: {} }) : selected;
+    const E = hedgeActive ? portEngine(P, { ...applied, hedge: {} }) : selected;
     const H = hedgeActive && selected.risk.valid && selected.front.length ? selected : null;
     const hedgeError = !hedgeActive ? "" : !selected.risk.valid ? selected.risk.error
       : !selected.front.length ? "환헤지 경계선 계산 불가 — 공분산 또는 최적화 수렴을 확인하십시오." : "";
     renderLinkedAllocRisk();
-    const comparisons = [["비중1", st.mix, sumBadge], ["비중2", st.mix2, sum2Badge]].map(([label, mix, badge]) => {
+    const comparisons = [["비중1", applied.mix, sumBadge], ["비중2", applied.mix2, sum2Badge]].map(([label, mix, badge]) => {
       const values = P.assets.map((a) => mix[a]);
       const valid = values.every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100);
       const sum = values.reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0);
@@ -7686,11 +7790,11 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       note: "워크벤치 화면에서 내보낸 미헤지 CMA 기대수익 (연 %)",
     }, null, 2);
 
-    Object.entries(hedgeCells).forEach(([a, { applied, i }]) => {
-      const enabled = st.hedge[a]?.enabled;
-      applied.textContent = !enabled ? "" : selected.risk.valid
+    Object.entries(hedgeCells).forEach(([a, { applied: label, i }]) => {
+      const enabled = applied.hedge[a]?.enabled;
+      label.textContent = !enabled ? "" : selected.risk.valid
         ? `μ ${fmtNum(selected.mu[i], 2)} · σ ${fmtNum(selected.risk.sig[i], 2)}` : "계산 불가";
-      applied.title = selected.risk.manual ? "헤지 후 연 % · 입력 변동성에 과거 자산·환율 상관을 유지한 가정" : "헤지 후 연 %";
+      label.title = selected.risk.manual ? "헤지 후 연 % · 입력 변동성에 과거 자산·환율 상관을 유지한 가정" : "헤지 후 연 %";
     });
     const validComparisons = comparisons.filter((p) => p.w);
     portCharts.forEach(destroyChart);
@@ -7699,6 +7803,8 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     if (!E.risk.valid || !E.constraints.ok) {
       frontCard.textContent = ""; reviewCard.textContent = "";
       frontCard.append(el("div", { class: "port-warn d-up", role: "status" }, E.risk.error || E.constraints.error));
+      resultTools.append(el("button", { type: "button", id: "port-update-btn", class: "btn-ghost port-update-btn",
+        "data-pending": String(portPanelDraft.pending), onclick: updateResults }, "업데이트"));
       return;
     }
     const pts = E.robustOk ? E.robust : E.front;
@@ -7717,7 +7823,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
         const rows = [...E.front.map((p) => ({ ...p, type: "일반", k: 0, worst: p.mu, best: p.mu })),
           ...(E.robustOk ? [...E.robust.map((p) => scenario(p, "Conservative")),
             ...E.optimistic.map((p) => scenario(p, "Optimistic"))] : []),
-          ...[["샤프 최대", E.maxSharpe], ["최소위험", E.minVar], ["BM 60/40", E.bench],
+          ...[["Max.Sharpe", E.maxSharpe], ["Min vol.", E.minVar], ["BM60/40", E.bench],
             ...validComparisons.map(({ label, w }) => [label, { w, mu: E.muOf(w), sig: E.sig(w) }])]
             .filter(([, p]) => p).map(([type, p]) => ({ ...p, type, k: E.kappa,
               worst: E.robustOk ? p.mu - E.kappa * E.meanScale * p.sig : null,
@@ -7726,7 +7832,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
             w: P.assets.map((_, j) => +(i === j)) })),
           ...(H ? [...H.front.map((p) => ({ ...p, type: "환헤지 경계선", k: 0, worst: null, best: null })),
             ...[...validComparisons.map(({ label, w }) => [`${label} · 환헤지`, { w, mu: H.muOf(w), sig: H.sig(w) }]),
-              ["샤프 최대 · 환헤지", H.maxSharpe], ["최소위험 · 환헤지", H.minVar]]
+              ["Max.Sharpe · 환헤지", H.maxSharpe], ["Min vol. · 환헤지", H.minVar]]
               .filter(([, p]) => p).map(([type, p]) => ({ ...p, type, k: 0, worst: null, best: null }))] : [])];
         const num = (v) => raw ? v : fmtNum(v, 2);
         return {
@@ -7745,11 +7851,11 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const sigma = portRangeSigmaValue;
     const intervals = markers.map((m) => ({ ...m, low: m.y - sigma * m.x, high: m.y + sigma * m.x }));
     if (E.minVar) markers.push({ x: E.minVar.sig, y: E.minVar.mu, kind: "diamond", size: 7,
-                                 label: "최소위험", symbol: "◆", color: colors.min, w: E.minVar.w });
+                                 label: "Min vol.", inlineLabel: true, labelSize: 10, symbol: "◆", color: colors.min, w: E.minVar.w });
     if (E.maxSharpe) markers.push({ x: E.maxSharpe.sig, y: E.maxSharpe.mu, kind: "diamond", size: 7,
-                                    label: "샤프 최대", symbol: "◆", color: colors.max, w: E.maxSharpe.w });
+                                    label: "Max.Sharpe", inlineLabel: true, labelSize: 10, symbol: "◆", color: colors.max, w: E.maxSharpe.w });
     markers.push({ x: E.bench.sig, y: E.bench.mu, kind: "diamond", size: 6,
-                   label: "BM 60/40", symbol: "◆", color: colors.bm, w: E.bench.w });
+                   label: "BM60/40", inlineLabel: true, labelSize: 10, symbol: "◆", color: colors.bm, w: E.bench.w });
     validComparisons.forEach(({ label, w }) => {
       const second = label === "비중2";
       markers.push({ x: E.sig(w), y: E.muOf(w), kind: second ? "diamond" : "ring", size: 4.5,
@@ -7792,6 +7898,8 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       Math.max(maxY + spanY * 0.28, intervalHigh + intervalPad)];
     const actions = frontCard.querySelector(".card-actions");
     actions.insertBefore(portAxisControls(xRange, yRange, recalc), actions.querySelector(".port-palette"));
+    actions.append(el("button", { type: "button", id: "port-update-btn", class: "btn-ghost port-update-btn",
+      "data-pending": String(portPanelDraft.pending), title: "입력한 조건을 결과에 반영", onclick: updateResults }, "업데이트"));
     resultTools.append(frontCard.querySelector(".card-head"));
     const visibleMarkers = markers.filter((m) => m.x >= xRange[0] && m.x <= xRange[1]
       && m.y >= yRange[0] && m.y <= yRange[1]);
@@ -7892,8 +8000,8 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     });
     if (E.maxSharpe) rows.push(fmtRow("최적(최대 샤프)", E.metrics(E.maxSharpe.w)));
     if (H?.maxSharpe) rows.push(fmtRow("최적(최대 샤프) · 환헤지", hedgedMetrics(H.maxSharpe.w)));
-    if (E.minVar) rows.push(fmtRow("최소위험", E.metrics(E.minVar.w)));
-    if (H?.minVar) rows.push(fmtRow("최소위험 · 환헤지", hedgedMetrics(H.minVar.w)));
+    if (E.minVar) rows.push(fmtRow("Min vol.", E.metrics(E.minVar.w)));
+    if (H?.minVar) rows.push(fmtRow("Min vol. · 환헤지", hedgedMetrics(H.minVar.w)));
     rows.push(["벤치마크 60/40", fmtNum(E.bench.mu, 2), fmtNum(E.bench.sig, 2),
                fmtNum(E.bench.sig > 1e-9 ? (E.bench.mu - E.rf) / E.bench.sig : null, 2),
                "0.00", "0.00", "–"]);

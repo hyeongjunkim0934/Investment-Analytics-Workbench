@@ -59,7 +59,7 @@ def test_model_selects_preserve_engine_and_saved_state(workspace):
         assert workspace[key], key
 def test_period_selection_updates_statistics_charts_and_separate_storage(workspace):
     for key in ("availablePeriodsOnly", "periodUpdatesStatistics", "periodUpdatesChart",
-                "periodSavesDraft", "periodRetainsFocus", "unavailablePeriodIgnored",
+                "periodSavesDraft", "periodDraftDoesNotUpdateChart", "periodRetainsFocus", "unavailablePeriodIgnored",
                 "institutionPeriodSelected", "periodsStaySeparate",
                 "unavailableSavedPeriodFallsBack", "proxyPeriodSelected"):
         assert workspace[key], key
@@ -67,5 +67,5 @@ def test_period_selection_updates_statistics_charts_and_separate_storage(workspa
 
 def test_period_dates_apply_only_matching_published_statistics(workspace):
     for key in ("periodDatesInitialized", "periodDatesApply", "invalidPeriodDatesBlocked",
-                "periodDatesFollowPreset", "institutionPeriodDatesApply"):
+                "periodDatesFollowPreset", "institutionPeriodDatesApply", "directDatesWaitForUpdate", "directDateUpdate"):
         assert workspace[key], key

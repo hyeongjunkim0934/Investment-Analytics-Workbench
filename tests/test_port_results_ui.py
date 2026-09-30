@@ -5,7 +5,7 @@ import shutil
 import subprocess
 
 
-def test_portfolio_results_tabs_and_live_inputs():
+def test_portfolio_results_tabs_and_manual_inputs():
     root = Path(__file__).resolve().parents[1]
     node = shutil.which("node")
     assert node, "Node.js is required to exercise the dashboard UI"

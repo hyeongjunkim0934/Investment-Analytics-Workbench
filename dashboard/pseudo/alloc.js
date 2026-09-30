@@ -74,7 +74,8 @@ globalThis.PSEUDO_DOCS.alloc = {
         { expression: "수익기여ᵢ = 100 × wᵢμᵢ / m(w);  위험기여ᵢ = 100 × wᵢ(Cw)ᵢ / (wᵀCw)", legend: "호버 기여도(%). 분모가 0에 가까우면 표시 보류; 음의 기여도도 가능." }
       ],
       code: [
-        "model ← validated_mu_and_covariance()",
+        "on_update: validate_all_draft_inputs_and_commit_applied_snapshot()",
+        "model ← validated_mu_and_covariance(applied_snapshot)",
         "bounds ← validate_group_min_max_and_asset_floors()",
         "enumerate_affine_faces_of_feasible_portfolios(model, bounds)",
         "for theta in frontier_grid_plus_minimum_variance:",
@@ -84,7 +85,7 @@ globalThis.PSEUDO_DOCS.alloc = {
         "frontier ← remove_dominated_points(candidates)",
         "compare_weight1_weight2_and_60_40_benchmark(frontier)"
       ].join("\n"),
-      note: "제약 적용은 일반·Conservative·Optimistic·환헤지 경계선과 리스크 연계에 같은 한도를 적용. 비중1/비중2는 각각 합계 100%를 검사하고 제약 밖도 비교용으로 표시. 불가능한 제약은 적용하지 않음.",
+      note: "하단 입력은 업데이트 시 검증·저장하고 경계선·비교·리스크 연계에 함께 반영. 제약조건 적용은 검증 후 업데이트 대기. 축·팔레트는 마지막 업데이트 결과를 다시 표시. 비중1/비중2는 각각 합계 100%를 검사하고 제약 밖도 비교용으로 표시. 비중합 오류·불가능한 제약·유효하지 않은 입력이면 마지막 업데이트 결과 유지.",
       sources: [
         { path: "dashboard/app.js", symbols: ["portRobustModel", "portFrontiers", "portContributions", "portEngine"] }
       ]

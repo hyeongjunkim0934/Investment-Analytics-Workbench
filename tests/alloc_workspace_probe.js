@@ -21,6 +21,13 @@ const byId = (id) => DOC.getElementById(id);
 const info = () => byId("alloc-workspace-info").textContent;
 const periodText = (root) => byId(root).querySelector(".alloc-period-range").textContent;
 const choose = (key) => byId(`alloc-workspace-${key}`).click();
+const update = () => byId("port-update-btn").click();
+const balanceMix = () => {
+  const weights = [...byId("alloc-port-panel").querySelectorAll("input")]
+    .filter(n => /비중1$/.test(n.getAttribute("aria-label") || ""));
+  const n = weights.slice(1).sort((a, b) => Number(b.value) - Number(a.value))[0];
+  change(n, Number(n.value) + 100 - weights.reduce((sum, input) => sum + Number(input.value), 0));
+};
 const input = (root, label) => [...byId(root).querySelectorAll("input")]
   .find((n) => n.getAttribute("aria-label") === label);
 const change = (n, value, event = "input") => {
@@ -114,6 +121,7 @@ change(institutionalDraftInput, 47.2);
 choose("port");
 change(input("alloc-port-panel", "국내채권 비중1"), 29.1);
 change(input("alloc-port-panel", "국내채권 기대수익"), 4.1);
+balanceMix();update();
 const portSaved = JSON.parse(shim.localStorage.getItem("iaw-port"));
 r.portSaveSemantics = portSaved.mix.국내채권 === 29.1 && portSaved.mu.국내채권 === 4.1
   && byId("alloc-workspace-info").hidden;
@@ -182,17 +190,19 @@ r.availablePeriodsOnly = JSON.stringify(options("port-period")) === JSON.stringi
 const chartData = () => JSON.stringify(shim.UPlotStub.made.filter((u) =>
   u.opts.series.some((s) => s.label === "경계선")).at(-1).data);
 const beforePeriodChart = chartData();
-change(input("alloc-port-panel", "국내채권 비중1"), 30.4);
+change(input("alloc-port-panel", "국내채권 비중1"), 30.4);balanceMix();
 change(byId("port-period"), "3", "change");
 const firstRow = byId("alloc-port-panel").querySelector(".port-table tbody tr");
 const cells = [...firstRow.querySelectorAll("td")];
 r.periodUpdatesStatistics = +cells[5].textContent === three.mean_pct[0]
   && Math.abs(+cells[6].textContent - three.vol_pct[0]) < 1e-9
   && /2027-07-31~2030-06-30 · 36개월/.test(periodText("alloc-port-panel"));
+r.periodDraftDoesNotUpdateChart = chartData() === beforePeriodChart;
+r.periodRetainsFocus = DOC.activeElement === byId("port-period");
+update();
 r.periodUpdatesChart = chartData() !== beforePeriodChart;
 r.periodSavesDraft = JSON.parse(shim.localStorage.getItem("iaw-port")).mix.국내채권 === 30.4
   && JSON.parse(shim.localStorage.getItem("iaw-port")).win === "3";
-r.periodRetainsFocus = DOC.activeElement === byId("port-period");
 const savedPortPeriod = shim.localStorage.getItem("iaw-port");
 change(byId("port-period"), "10", "change");
 r.unavailablePeriodIgnored = byId("port-period").value === "3"
@@ -219,9 +229,11 @@ r.periodDatesInitialized = byId("port-period-start").value === three.start
   && byId("port-period-end").value === three.end;
 const beforeDates = chartData(), instBeforeDates = shim.localStorage.getItem("iaw-alloc");
 inputDates("port-period", allWindow.start, allWindow.end);
+const dateFocusRetained = DOC.activeElement === byId("port-period-apply");
+update();
 r.periodDatesApply = byId("port-period").value === "all" && chartData() !== beforeDates
   && P.portEngine(sampled.port, P.portState(sampled.port)).W.key === "all"
-  && DOC.activeElement === byId("port-period-apply")
+  && dateFocusRetained
   && JSON.parse(shim.localStorage.getItem("iaw-port")).mix.국내채권 === 30.4
   && shim.localStorage.getItem("iaw-alloc") === instBeforeDates;
 const afterDates = chartData(), savedDates = shim.localStorage.getItem("iaw-port");
@@ -240,6 +252,14 @@ const anotherInstWindow = sampled.cma.windows.find((w) => w.key !== instWindow.k
 inputDates("institution-period", anotherInstWindow.start, anotherInstWindow.end);
 r.institutionPeriodDatesApply = P.allocEngine(sampled, P.allocState(sampled)).cmaW.key === anotherInstWindow.key
   && byId("institution-period").value === anotherInstWindow.key && byId("port-period").value === "3";
+update();
+const rawDateBefore = chartData();
+change(byId("port-period-start"), allWindow.start);
+change(byId("port-period-end"), allWindow.end);
+r.directDatesWaitForUpdate = chartData() === rawDateBefore;
+update();
+r.directDateUpdate = P.portState(sampled.port).win === "all"
+  && byId("port-period").value === "all" && chartData() !== rawDateBefore;
 shim.localStorage.setItem("iaw-port", JSON.stringify({win: "10"}));
 P.renderPortPanel(sampled);
 r.unavailableSavedPeriodFallsBack = byId("port-period").value === "all";
