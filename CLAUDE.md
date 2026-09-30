@@ -69,7 +69,7 @@ Conservative/Optimistic 평균 불확실성 경계선과 별개이며 공통 거
 ## 포트폴리오 입력 적용 (2026-09-30)
 
 `renderPortPanel`의 `portPanelDraft.st`는 편집 초안, `applied`는 마지막 업데이트 결과다.
-기간·비중1/2·μ/σ·상관·헤지·제약은 `#port-update-btn`에서 전체 검증 후 함께 저장한다.
+기간·현재 비중·목표수익률·μ/σ·상관·헤지·제약은 `#port-update-btn`에서 전체 검증 후 함께 저장한다.
 `portRiskAllocationEngine`, 경계선, 비교표, CSV/내보내기는 `applied`를 읽는다.
 제약조건 옆 `적용`과 상관 적용은 초안을 검증하며 결과 반영은 업데이트에서 수행한다.
 μ/σ 기본값과 기간 선택도 초안 변경이다. 표시 설정(축·팔레트·σ 범위·탐색)은 즉시
@@ -78,6 +78,16 @@ Conservative/Optimistic 평균 불확실성 경계선과 별개이며 공통 거
 비중합·범위·상관 PSD·헤지·제약 오류는 전체 업데이트를 거부하고 기존 결과를 유지한다.
 `#alloc-workspace`와 `.port-results-dock`은 사이트 헤더와 workspace 실측 높이에 맞춰
 함께 고정한다. `ResizeObserver`가 CSS `--alloc-top`, `--alloc-tabs-height`를 갱신한다.
+
+## 자산군 네 비중 (2026-09-30)
+
+자산군은 `현재`(직접 입력), `Max Sharpe`, `Target Return`, `Min. Vol`(읽기 전용) 순서다.
+`mix`는 현재 비중, `mix2`는 기존 저장값 보관용이며 계산/검증에 사용하지 않는다.
+`target_return`은 연 % 목표 하한, null은 선택한 헤지 모형에서 현재 비중의 기대수익률이다.
+`portTargetReturn`은 최소분산점 또는 `portTargetReturnFromFaces`의 수익률 단면 해를 반환한다.
+목표 초과 불가능/계산 실패는 Target Return만 결측으로 표시한다. 비수치 입력은 업데이트를 거부한다.
+최적비중은 선택된 헤지 모형의 결과로 표시하며 미헤지/환헤지 차트·CSV·비교 행에 같은 비중을 쓴다.
+최적비중 소수점 2자리 표시는 계산 비중을 바꾸지 않는다. 관련 Pseudo를 함께 갱신한다.
 
 ## 자주 쓰는 명령 (아래 여섯은 모두 실제 실행으로 확인함)
 

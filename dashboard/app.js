@@ -6777,7 +6777,7 @@ function portDefaults(P) {
   const grp = { ...(d.group_default || { 주식: 50, 채권: 30, 대체: 20 }) };
   const mix = portMixFromGroups(P, grp, d.liq_default != null ? +d.liq_default : 0);
   return { mix, mix2: { ...mix }, constraints: { groupMin: {}, groupMax: {}, assetMin: {} },
-    mu: {}, sig: {}, corr: {}, hedge: {}, win: null, robust_k: 1 };
+    mu: {}, sig: {}, corr: {}, hedge: {}, target_return: null, win: null, robust_k: 1 };
 }
 
 function portState(P) {
@@ -6787,7 +6787,7 @@ function portState(P) {
   if (!object(saved)) saved = {};
   const aliases = { 원화유동성: "국내장부", 국내채권: "국내시가", 해외채권: "해외시가" };
   const rename = (a) => P.assets.includes(aliases[a]) ? aliases[a] : a;
-  // Key migration preserves both scenarios and all user assumptions. New assets get zero weight.
+  // Preserve legacy mix2 in storage only; optimizer weights are always derived from applied inputs.
   const migrate = (old) => {
     if (!object(old)) return {};
     const next = {};
@@ -6829,7 +6829,7 @@ function portSaveState(st) {
   try {
     localStorage.setItem(PORT_LS_KEY, JSON.stringify({
       mix: st.mix, mix2: st.mix2, constraints: st.constraints, mu: st.mu, sig: st.sig,
-      corr: st.corr, hedge: st.hedge, win: st.win, saved: true }));
+      corr: st.corr, hedge: st.hedge, target_return: st.target_return, win: st.win, saved: true }));
   } catch {}
   refreshAllocWorkspaceInfo();
 }
@@ -6974,7 +6974,8 @@ function portRobustModel(C, mu, months) {
     }
     return best;
   };
-  return { solve, atRisk, meanScale: Math.sqrt(12 / months) };
+  return { solve, atRisk, atReturn: (target) => portTargetReturnFromFaces(C, mu, faces, target),
+    meanScale: Math.sqrt(12 / months) };
 }
 
 // Nominal Sharpe tangency: mu(w)-rf = lambda * variance(w).
@@ -7097,7 +7098,7 @@ function portFrontiers(P, W, C, mu, kappa, rf = 0, constraints = null) {
         .map((p) => ({ ...p, best: p.mu + a * p.sig })), "best", true);
     }
   }
-  const value = { front, robust: conservative, optimistic, vertices: model?.vertices,
+  const value = { model, front, robust: conservative, optimistic, vertices: model?.vertices,
     robustOk: !!model && robust.every(Boolean), meanScale: model?.meanScale || null,
     maxSharpe: portMaxSharpe(model, C, mu, rf) };
   PORT_FRONT_CACHE.set(P, { key, value });
@@ -7251,7 +7252,7 @@ function portEngine(P, st) {
   const kappa = portRobustK(st.robust_k);
   const rf = mu[P.assets.indexOf(P.assets.includes("국내장부") ? "국내장부" : "원화유동성")] ?? 0;
   const constraints = portConstraintSpec(P, st.constraints);
-  const { front, robust, optimistic, robustOk, meanScale, maxSharpe, vertices } = risk.valid && constraints.ok
+  const { model, front, robust, optimistic, robustOk, meanScale, maxSharpe, vertices } = risk.valid && constraints.ok
     ? portFrontiers(P, W, C, mu, kappa, rf, constraints)
     : { front: [], robust: [], optimistic: [], robustOk: false, meanScale: null, maxSharpe: null };
   const wb = P.assets.map((a) => (P.bench_w && P.bench_w[a]) || 0);
@@ -7263,7 +7264,12 @@ function portEngine(P, st) {
     return { mu: m, sig: s, sharpe: s > 1e-9 ? (m - rf) / s : null,
              act: m - bench.mu, te, ir: te > 1e-9 ? (m - bench.mu) / te : null };
   };
-  return { W, mu, baseMu, src, rf, risk, constraints, front, robust, optimistic, robustOk, kappa, meanScale, minVar: front[0] || null,
+  const current = P.assets.map((a) => st.mix?.[a]);
+  const currentValid = current.every((v) => Number.isFinite(v) && v >= 0 && v <= 100)
+    && Math.abs(current.reduce((sum, v) => sum + v, 0) - 100) <= 1e-6;
+  const target = st.target_return == null ? (currentValid ? muOf(current.map((v) => v / 100)) : NaN) : st.target_return;
+  const targetReturn = portTargetReturn(model, target);
+  return { W, mu, baseMu, src, rf, risk, constraints, front, robust, optimistic, robustOk, kappa, meanScale, targetReturn, minVar: front[0] || null,
            maxSharpe, cloud: robustOk ? portPortfolioCloud(P, C, mu, rf, constraints, vertices) : null,
            bench, wb, sig, muOf, metrics };
 }
@@ -7471,12 +7477,12 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
 
   /* ② 자산군 입력 — 표 안에 별도 스크롤을 만들지 않고 전체 행을 펼친다. */
   const E0 = portModelInputs(P, st);
-  const mixInputs = {}, mix2Inputs = {}, srcCells = {}, sigInputs = {}, hedgeCells = {};
+  const mixInputs = {}, optimizedCells = {}, srcCells = {}, sigInputs = {}, hedgeCells = {};
   const riskStatus = el("div", { id: "port-risk-status", class: "port-warn d-up", role: "status" });
   const table = el("table", { class: "port-table" });
   // Suppress default-source notes while retaining explicit key-in/CMA indicators.
   const sourceLabel = (source) => source === "과거 평균(참고)" || source === "실측" ? "" : source;
-  const assetHeaders = ["자산군", "비중1", "비중2", "기대수익 %", "변동성 %", "실현수익 %",
+  const assetHeaders = ["자산군", "현재", "Max Sharpe", "Target Return", "Min. Vol", "기대수익 %", "변동성 %", "실현수익 %",
     "실현변동성 %", "10년 참고 μ/σ", "환헤지 / 비중 %"];
   table.append(el("thead", {}, el("tr", {}, ...assetHeaders.map((h) => el("th", { scope: "col" }, h)))));
   const tbody = el("tbody");
@@ -7491,7 +7497,9 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       });
       inputs[a] = input; return input;
     };
-    const wInp = weightInput("mix", "비중1", mixInputs), w2Inp = weightInput("mix2", "비중2", mix2Inputs);
+    const wInp = weightInput("mix", "현재", mixInputs);
+    optimizedCells[a] = ["Max Sharpe", "Target Return", "Min. Vol"].map((label) =>
+      el("span", { class: "port-opt-weight", "aria-label": `${a} ${label}`, "data-portfolio": label }, "–"));
     const dflt = (P.cma_input && P.cma_input.mu_pct && P.cma_input.mu_pct[a] != null)
       ? P.cma_input.mu_pct[a] : E0.W.mean_pct[i];
     const cma = portCmaAssumption(a);
@@ -7550,7 +7558,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
           + (cdRef.overlap ? ` · 실ETF 겹침 ${cdRef.overlap.n_months}개월 corr ${fmtNum(cdRef.overlap.corr, 2)}` : "") },
           `${fmtNum(cdRef.mean_pct, 1)} / ${fmtNum(cdRef.vol_pct, 1)}`)
       : "–";
-    const hedgeCell = el("td", { class: "num", "data-label": assetHeaders[8] });
+    const hedgeCell = el("td", { class: "num", "data-label": assetHeaders[10] });
     if ((P.usd_assets || []).includes(a)) {
       const setting = st.hedge[a] || { enabled: false, ratio: 100 };
       st.hedge[a] = setting;
@@ -7581,20 +7589,31 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     tbody.append(el("tr", {},
       el("td", P.asset_notes?.[a] ? { title: P.asset_notes[a] } : {}, typeof cmaAssetLabel === "function" ? cmaAssetLabel(a) : a),
       el("td", { class: "num", "data-label": assetHeaders[1] }, wInp),
-      el("td", { class: "num", "data-label": assetHeaders[2] }, w2Inp),
-      el("td", { class: "num", "data-label": assetHeaders[3] }, muInp, srcNote),
-      el("td", { class: "num", "data-label": assetHeaders[4] }, sigInp, sigNote),
-      el("td", { class: "num", "data-label": assetHeaders[5] }, fmtNum(W.mean_pct[i], 2)),
-      el("td", { class: "num", "data-label": assetHeaders[6] }, fmtNum(W.vol_pct[i], 2)),
-      el("td", { class: "num", "data-label": assetHeaders[7] }, refCell), hedgeCell));
+      ...optimizedCells[a].map((cell, j) => el("td", { class: "num", "data-label": assetHeaders[j + 2] }, cell)),
+      el("td", { class: "num", "data-label": assetHeaders[5] }, muInp, srcNote),
+      el("td", { class: "num", "data-label": assetHeaders[6] }, sigInp, sigNote),
+      el("td", { class: "num", "data-label": assetHeaders[7] }, fmtNum(W.mean_pct[i], 2)),
+      el("td", { class: "num", "data-label": assetHeaders[8] }, fmtNum(W.vol_pct[i], 2)),
+      el("td", { class: "num", "data-label": assetHeaders[9] }, refCell), hedgeCell));
   });
   table.append(tbody);
   table.querySelectorAll("input").forEach(rememberInput);
-  const sumBadge = el("span", { class: "port-badge" }), sum2Badge = el("span", { class: "port-badge" });
+  const sumBadge = el("span", { class: "port-badge" });
+  const targetInput = el("input", { type: "number", step: "0.01", value: st.target_return == null ? "" : String(st.target_return),
+    placeholder: "현재 수익률", "aria-label": "목표수익률 %", title: "목표수익률 이상에서 최소위험 · 빈칸은 현재 포트폴리오 기대수익률" });
+  targetInput.addEventListener("input", () => {
+    st.target_return = targetInput.value.trim() === "" && !targetInput.validity?.badInput ? null
+      : targetInput.validity?.badInput ? NaN : Number(targetInput.value);
+    targetInput.setAttribute("aria-invalid", String(st.target_return != null && !Number.isFinite(st.target_return)));
+    markPending();
+  });
+  rememberInput(targetInput);
+  const targetStatus = el("span", { class: "port-target-status port-note", role: "status" });
+  const objectiveBasis = el("span", { class: "port-objective-basis port-note" });
   const saveNote = el("span", { class: "port-note" },
     "입력 후 업데이트");
   const btnRow = el("div", { class: "port-btns" },
-    sumBadge, sum2Badge,
+    sumBadge,
     el("button", { class: "btn-ghost", onclick: () => { portSaveState(portPanelDraft.applied); saveNote.textContent = "업데이트한 결과 저장됨"; } },
       "기본값으로 저장"),
     el("button", { class: "btn-ghost", onclick: () => { renderPortPanel(A); } },
@@ -7608,8 +7627,9 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     el("button", { class: "btn-ghost", onclick: () => { expWrap.hidden = !expWrap.hidden; } },
       "CMA JSON 내보내기"),
     saveNote);
-  box.append(el("div", { class: "port-sec-title" }, "자산군"),
-    el("div", { class: "table-wrap port-input-table-wrap" }, table), btnRow, riskStatus);
+  box.append(el("div", { class: "port-sec-title port-asset-heading" }, "자산군",
+      el("label", { class: "port-target-control" }, "Target Return %", targetInput), objectiveBasis),
+    el("div", { class: "table-wrap port-input-table-wrap" }, table), targetStatus, btnRow, riskStatus);
 
   const expTa = el("textarea", { class: "port-export", readonly: "", rows: "11",
                                  "aria-label": "CMA JSON" });
@@ -7697,7 +7717,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     if (!stageConstraints()) { fail(constraintStatus.textContent); return; }
     if (!correlationControl.applyDraft()) { fail($("#port-corr-status").textContent); return; }
     const model = portModelInputs(P, st);
-    const badWeights = ["mix", "mix2"].some((field) => {
+    const badWeights = ["mix"].some((field) => {
       const weights = P.assets.map((a) => st[field][a]);
       return weights.some((v) => !Number.isFinite(v) || v < 0 || v > 100)
         || Math.abs(weights.reduce((sum, v) => sum + v, 0) - 100) > 1e-6;
@@ -7705,8 +7725,10 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const badMu = P.assets.some((a) => !portCmaAssumption(a) && a in st.mu && !Number.isFinite(st.mu[a]));
     const badHedge = Object.values(st.hedge).some((v) => v.enabled
       && (!Number.isFinite(v.ratio) || v.ratio < 0 || v.ratio > 100));
-    if (badWeights || badMu || badHedge || !model.risk.valid) {
-      riskStatus.textContent = (badWeights ? "비중1·비중2는 각각 0~100%, 합계 100%로 입력하십시오."
+    const badTarget = st.target_return != null && !Number.isFinite(st.target_return);
+    if (badWeights || badMu || badHedge || badTarget || !model.risk.valid) {
+      riskStatus.textContent = (badWeights ? "현재 비중은 0~100%, 합계 100%로 입력하십시오."
+        : badTarget ? "목표수익률을 숫자로 입력하십시오."
         : badMu ? "기대수익을 숫자로 입력하십시오." : badHedge ? "헤지비중은 0부터 100% 사이로 입력하십시오."
         : model.risk.error) + " 마지막 업데이트 결과를 유지합니다.";
       fail(riskStatus.textContent); return;
@@ -7735,12 +7757,12 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     // Keep the original opportunity set visible; selected hedges are an overlay.
     const selected = portEngine(P, applied);
     const hedgeActive = selected.risk.hedge?.active;
-    const E = hedgeActive ? portEngine(P, { ...applied, hedge: {} }) : selected;
+    const E = hedgeActive ? portEngine(P, { ...applied, hedge: {}, target_return: selected.targetReturn.target }) : selected;
     const H = hedgeActive && selected.risk.valid && selected.front.length ? selected : null;
     const hedgeError = !hedgeActive ? "" : !selected.risk.valid ? selected.risk.error
       : !selected.front.length ? "환헤지 경계선 계산 불가 — 공분산 또는 최적화 수렴을 확인하십시오." : "";
     renderLinkedAllocRisk();
-    const comparisons = [["비중1", applied.mix, sumBadge], ["비중2", applied.mix2, sum2Badge]].map(([label, mix, badge]) => {
+    const comparisons = [["현재", applied.mix, sumBadge]].map(([label, mix, badge]) => {
       const values = P.assets.map((a) => mix[a]);
       const valid = values.every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100);
       const sum = values.reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0);
@@ -7751,6 +7773,17 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       badge.className = "port-badge" + (!sumOk || !inside ? " d-up" : "");
       return { label, w, sum, valid, inside };
     });
+    // Optimizer columns use the selected hedge assumptions and the same applied snapshot as the chart.
+    const objectivePoints = [selected.maxSharpe, selected.targetReturn.point, selected.minVar];
+    P.assets.forEach((a, i) => optimizedCells[a].forEach((cell, j) => {
+      const point = objectivePoints[j];
+      cell.textContent = point ? fmtNum(point.w[i] * 100, 2) : "–";
+    }));
+    objectiveBasis.textContent = hedgeActive ? "최적비중 · 환헤지 반영" : "최적비중 · 미헤지";
+    targetStatus.textContent = selected.targetReturn.error || (Number.isFinite(selected.targetReturn.target)
+      ? `Target Return ≥ ${fmtNum(selected.targetReturn.target, 2)}%` : "");
+    targetStatus.className = "port-target-status port-note" + (selected.targetReturn.error ? " d-up" : "");
+    targetInput.placeholder = Number.isFinite(selected.targetReturn.target) ? fmtNum(selected.targetReturn.target, 2) : "현재 수익률";
     expTa.value = JSON.stringify({
       asof: new Date().toISOString().slice(0, 10),
       mu_pct: Object.fromEntries(P.assets.map((a, i) => [a, +E.baseMu[i].toFixed(4)])),
@@ -7790,7 +7823,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
         const rows = [...E.front.map((p) => ({ ...p, type: "일반", k: 0, worst: p.mu, best: p.mu })),
           ...(E.robustOk ? [...E.robust.map((p) => scenario(p, "Conservative")),
             ...E.optimistic.map((p) => scenario(p, "Optimistic"))] : []),
-          ...[["Max.Sharpe", E.maxSharpe], ["Min vol.", E.minVar], ["BM60/40", E.bench],
+          ...[["Max Sharpe", E.maxSharpe], ["Target Return", E.targetReturn.point], ["Min. Vol", E.minVar], ["BM60/40", E.bench],
             ...validComparisons.map(({ label, w }) => [label, { w, mu: E.muOf(w), sig: E.sig(w) }])]
             .filter(([, p]) => p).map(([type, p]) => ({ ...p, type, k: E.kappa,
               worst: E.robustOk ? p.mu - E.kappa * E.meanScale * p.sig : null,
@@ -7799,7 +7832,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
             w: P.assets.map((_, j) => +(i === j)) })),
           ...(H ? [...H.front.map((p) => ({ ...p, type: "환헤지 경계선", k: 0, worst: null, best: null })),
             ...[...validComparisons.map(({ label, w }) => [`${label} · 환헤지`, { w, mu: H.muOf(w), sig: H.sig(w) }]),
-              ["Max.Sharpe · 환헤지", H.maxSharpe], ["Min vol. · 환헤지", H.minVar]]
+              ["Max Sharpe · 환헤지", H.maxSharpe], ["Target Return · 환헤지", H.targetReturn.point], ["Min. Vol · 환헤지", H.minVar]]
               .filter(([, p]) => p).map(([type, p]) => ({ ...p, type, k: 0, worst: null, best: null }))] : [])];
         const num = (v) => raw ? v : fmtNum(v, 2);
         return {
@@ -7818,17 +7851,26 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     const sigma = portRangeSigmaValue;
     const intervals = markers.map((m) => ({ ...m, low: m.y - sigma * m.x, high: m.y + sigma * m.x }));
     if (E.minVar) markers.push({ x: E.minVar.sig, y: E.minVar.mu, kind: "diamond", size: 7,
-                                 label: "Min vol.", inlineLabel: true, labelSize: 10, symbol: "◆", color: colors.min, w: E.minVar.w });
+                                 label: "Min. Vol", inlineLabel: true, labelSize: 10, symbol: "◆", color: colors.min, w: E.minVar.w });
     if (E.maxSharpe) markers.push({ x: E.maxSharpe.sig, y: E.maxSharpe.mu, kind: "diamond", size: 7,
-                                    label: "Max.Sharpe", inlineLabel: true, labelSize: 10, symbol: "◆", color: colors.max, w: E.maxSharpe.w });
+                                    label: "Max Sharpe", inlineLabel: true, labelSize: 10, symbol: "◆", color: colors.max, w: E.maxSharpe.w });
     markers.push({ x: E.bench.sig, y: E.bench.mu, kind: "diamond", size: 6,
                    label: "BM60/40", inlineLabel: true, labelSize: 10, symbol: "◆", color: colors.bm, w: E.bench.w });
     validComparisons.forEach(({ label, w }) => {
-      const second = label === "비중2";
-      markers.push({ x: E.sig(w), y: E.muOf(w), kind: second ? "diamond" : "ring", size: 4.5,
-        label, symbol: second ? "◇" : "○", color: second ? colors.optimistic : colors.current, w });
-      if (H) markers.push({ x: H.sig(w), y: H.muOf(w), kind: second ? "diamond" : "ring", size: 4.5,
-        label: `${label} · 환헤지`, symbol: second ? "◇" : "○", color: colors.asset, w, C: H.risk.C, muInputs: H.mu });
+      markers.push({ x: E.sig(w), y: E.muOf(w), kind: "ring", size: 4.5,
+        label, symbol: "○", color: colors.current, w });
+      if (H) markers.push({ x: H.sig(w), y: H.muOf(w), kind: "ring", size: 4.5,
+        label: `${label} · 환헤지`, symbol: "○", color: colors.asset, w, C: H.risk.C, muInputs: H.mu });
+    });
+    if (E.targetReturn.point) {
+      const p = E.targetReturn.point;
+      markers.push({ x: p.sig, y: p.mu, kind: "diamond", size: 5, label: "Target Return",
+        symbol: "◇", color: colors.optimistic, w: p.w });
+    }
+    if (H) [["Max Sharpe", H.maxSharpe, colors.max], ["Target Return", H.targetReturn.point, colors.optimistic],
+      ["Min. Vol", H.minVar, colors.min]].forEach(([label, p, color]) => {
+      if (p) markers.push({ x: p.sig, y: p.mu, kind: "diamond", size: 5, label: `${label} · 환헤지`,
+        symbol: "◇", color, w: p.w, C: H.risk.C, muInputs: H.mu });
     });
     const xsF = pts.map((p) => p.sig), ysF = pts.map((p) => p.mu);
     const lower = pts.map((p) => E.robustOk ? p.worst : p.mu);
@@ -7965,10 +8007,10 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       rows.push(fmtRow(label, E.metrics(w)));
       if (H) rows.push(fmtRow(`${label} · 환헤지`, hedgedMetrics(w)));
     });
-    if (E.maxSharpe) rows.push(fmtRow("최적(최대 샤프)", E.metrics(E.maxSharpe.w)));
-    if (H?.maxSharpe) rows.push(fmtRow("최적(최대 샤프) · 환헤지", hedgedMetrics(H.maxSharpe.w)));
-    if (E.minVar) rows.push(fmtRow("Min vol.", E.metrics(E.minVar.w)));
-    if (H?.minVar) rows.push(fmtRow("Min vol. · 환헤지", hedgedMetrics(H.minVar.w)));
+    [["Max Sharpe", E.maxSharpe], ["Target Return", E.targetReturn.point], ["Min. Vol", E.minVar]]
+      .forEach(([label, p]) => { if (p) rows.push(fmtRow(label, E.metrics(p.w))); });
+    if (H) [["Max Sharpe", H.maxSharpe], ["Target Return", H.targetReturn.point], ["Min. Vol", H.minVar]]
+      .forEach(([label, p]) => { if (p) rows.push(fmtRow(`${label} · 환헤지`, hedgedMetrics(p.w))); });
     rows.push(["벤치마크 60/40", fmtNum(E.bench.mu, 2), fmtNum(E.bench.sig, 2),
                fmtNum(E.bench.sig > 1e-9 ? (E.bench.mu - E.rf) / E.bench.sig : null, 2),
                "0.00", "0.00", "–"]);

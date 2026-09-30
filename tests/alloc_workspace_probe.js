@@ -24,7 +24,7 @@ const choose = (key) => byId(`alloc-workspace-${key}`).click();
 const update = () => byId("port-update-btn").click();
 const balanceMix = () => {
   const weights = [...byId("alloc-port-panel").querySelectorAll("input")]
-    .filter(n => /비중1$/.test(n.getAttribute("aria-label") || ""));
+    .filter(n => /현재$/.test(n.getAttribute("aria-label") || ""));
   const n = weights.slice(1).sort((a, b) => Number(b.value) - Number(a.value))[0];
   change(n, Number(n.value) + 100 - weights.reduce((sum, input) => sum + Number(input.value), 0));
 };
@@ -91,7 +91,7 @@ r.hashUntouched = shim.location.hash === "#alloc";
 
 /* 기관 패널은 숨겨진 DOM에서 기존 저장/엔진 호환만 검사한다.
    사용자 전환은 포트폴리오/리스크연계 두 탭으로만 수행한다. */
-const portWeight = input("alloc-port-panel", "국내채권 비중1");
+const portWeight = input("alloc-port-panel", "국내채권 현재");
 change(portWeight, 31.2);
 r.portDirty = +portWeight.value === 31.2 && shim.localStorage.getItem("iaw-port") === null;
 choose("risk");
@@ -100,26 +100,26 @@ const instOriginal = +instWeight.value;
 change(instWeight, instOriginal + 1);
 r.institutionDirty = +instWeight.value === instOriginal + 1 && shim.localStorage.getItem("iaw-alloc") === null;
 choose("port");
-r.portDraftPreserved = input("alloc-port-panel", "국내채권 비중1") === portWeight && +portWeight.value === 31.2;
+r.portDraftPreserved = input("alloc-port-panel", "국내채권 현재") === portWeight && +portWeight.value === 31.2;
 choose("port");
 choose("risk");
 r.institutionDraftPreserved = byId("sim-mix-국내채권") === instWeight && +instWeight.value === instOriginal + 1;
 P.renderSection("alloc");
 r.selectionSurvivesRerender = byId("alloc-port-panel").hidden && byId("alloc-sim-panel").hidden
   && byId("alloc-workspace-risk").getAttribute("aria-pressed") === "true";
-r.portDraftSurvivesRerender = +input("alloc-port-panel", "국내채권 비중1").value === 31.2;
+r.portDraftSurvivesRerender = +input("alloc-port-panel", "국내채권 현재").value === 31.2;
 
 /* 기존 저장 규약 그대로: λ·μ 변경이 현재 입력을 함께 저장한다. */
 change(byId("alloc-lambda"), 2.3, "change");
 r.institutionSaved = JSON.parse(shim.localStorage.getItem("iaw-alloc")).mvo_lambda === 2.3
   && byId("alloc-workspace-info").hidden;
-r.portDraftSurvivesInstitutionSave = +input("alloc-port-panel", "국내채권 비중1").value === 31.2
+r.portDraftSurvivesInstitutionSave = +input("alloc-port-panel", "국내채권 현재").value === 31.2
   && shim.localStorage.getItem("iaw-port") === null;
 const savedInstitution = shim.localStorage.getItem("iaw-alloc");
 const institutionalDraftInput = byId("sim-mix-국내채권");
 change(institutionalDraftInput, 47.2);
 choose("port");
-change(input("alloc-port-panel", "국내채권 비중1"), 29.1);
+change(input("alloc-port-panel", "국내채권 현재"), 29.1);
 change(input("alloc-port-panel", "국내채권 기대수익"), 4.1);
 balanceMix();update();
 const portSaved = JSON.parse(shim.localStorage.getItem("iaw-port"));
@@ -128,18 +128,18 @@ r.portSaveSemantics = portSaved.mix.국내채권 === 29.1 && portSaved.mu.국내
 r.separateStorage = shim.localStorage.getItem("iaw-alloc") === savedInstitution;
 r.institutionDraftSurvivesPortSave = byId("sim-mix-국내채권") === institutionalDraftInput
   && +institutionalDraftInput.value === 47.2;
-change(input("alloc-port-panel", "국내채권 비중1"), 27.9);
+change(input("alloc-port-panel", "국내채권 현재"), 27.9);
 DOC.documentElement.setAttribute("data-theme", "light");
 P.renderAll();
-r.portDraftSurvivesThemeRerender = +input("alloc-port-panel", "국내채권 비중1").value === 27.9;
+r.portDraftSurvivesThemeRerender = +input("alloc-port-panel", "국내채권 현재").value === 27.9;
 const revert = [...byId("alloc-port-panel").querySelectorAll("button")]
   .find((b) => b.textContent === "저장값 복원");
 revert.click();
-r.portExplicitRevertWorks = +input("alloc-port-panel", "국내채권 비중1").value === 29.1;
-change(input("alloc-port-panel", "국내채권 비중1"), 26.8);
+r.portExplicitRevertWorks = +input("alloc-port-panel", "국내채권 현재").value === 29.1;
+change(input("alloc-port-panel", "국내채권 현재"), 26.8);
 P.DATA.alloc = { ...CMA_ALLOC, port: JSON.parse(JSON.stringify(CMA_ALLOC.port)) };
 P.renderSection("alloc");
-r.newDatasetStartsFromSaved = +input("alloc-port-panel", "국내채권 비중1").value === 29.1;
+r.newDatasetStartsFromSaved = +input("alloc-port-panel", "국내채권 현재").value === 29.1;
 
 /* 비활성/대체 이유를 상단에서도 보이며, 한 체계의 누락이 다른 체계를 막지 않는다. */
 P.DATA.alloc = ALLOC_FIXTURE;
@@ -153,7 +153,7 @@ r.riskWorksWithoutInstitution = byId("alloc-workspace-info").hidden
   && !!byId("alloc-risk-proc").querySelector("svg");
 choose("port");
 r.portWorksWithoutInstitution = !byId("alloc-port-panel").hidden
-  && !!input("alloc-port-panel", "국내채권 비중1") && /42개월/.test(periodText("alloc-port-panel"));
+  && !!input("alloc-port-panel", "국내채권 현재") && /42개월/.test(periodText("alloc-port-panel"));
 P.DATA.alloc = { ...CMA_ALLOC, port: { active: false, reason: "합성 데이터 없음" } };
 P.renderSection("alloc");
 r.portMissingShown = /합성 데이터 없음/.test(info());
@@ -190,12 +190,15 @@ r.availablePeriodsOnly = JSON.stringify(options("port-period")) === JSON.stringi
 const chartData = () => JSON.stringify(shim.UPlotStub.made.filter((u) =>
   u.opts.series.some((s) => s.label === "경계선")).at(-1).data);
 const beforePeriodChart = chartData();
-change(input("alloc-port-panel", "국내채권 비중1"), 30.4);balanceMix();
+change(input("alloc-port-panel", "국내채권 현재"), 30.4);balanceMix();
 change(byId("port-period"), "3", "change");
 const firstRow = byId("alloc-port-panel").querySelector(".port-table tbody tr");
 const cells = [...firstRow.querySelectorAll("td")];
-r.periodUpdatesStatistics = +cells[5].textContent === three.mean_pct[0]
-  && Math.abs(+cells[6].textContent - three.vol_pct[0]) < 1e-9
+const assetHeaders = [...byId("alloc-port-panel").querySelectorAll(".port-table th")].map(n => n.textContent);
+const realizedMeanCell = cells[assetHeaders.indexOf("실현수익 %")];
+const realizedVolCell = cells[assetHeaders.indexOf("실현변동성 %")];
+r.periodUpdatesStatistics = +realizedMeanCell.textContent === three.mean_pct[0]
+  && Math.abs(+realizedVolCell.textContent - three.vol_pct[0]) < 1e-9
   && /2027-07-31~2030-06-30 · 36개월/.test(periodText("alloc-port-panel"));
 r.periodDraftDoesNotUpdateChart = chartData() === beforePeriodChart;
 r.periodRetainsFocus = DOC.activeElement === byId("port-period");

@@ -215,5 +215,65 @@ function portConstrainedModel(C, mu, months, spec) {
     }
     return best;
   };
-  return { solve, atRisk, meanScale, vertices };
+  return { solve, atRisk, meanScale, vertices,
+    atReturn: (target) => portTargetReturnFromFaces(C, mu, faces, target, spec.contains) };
+}
+
+/* Minimum variance subject to a return floor. Every affine face supplies its
+   GMV and its covariance-adjusted mean direction; intersect that direction
+   with the target-return plane, then compare all feasible faces. This also
+   handles tied maximum-return assets without choosing an arbitrary vertex. */
+function portTargetReturnFromFaces(C, mu, faces, target, contains = null) {
+  if (!Number.isFinite(target)) return null;
+  const n = mu.length, dot = (a, b) => a.reduce((sum, v, i) => sum + v * b[i], 0);
+  const shiftedMu = mu.map((v) => v - mu[0]);
+  const tolerance = 1e-8 * Math.max(1, Math.abs(target), ...mu.map(Math.abs));
+  const valid = contains || ((w) => w.length === n && w.every((v) => Number.isFinite(v) && v >= -1e-9)
+    && Math.abs(w.reduce((sum, v) => sum + v, 0) - 1) <= 1e-8);
+  let best = null;
+  const add = (w) => {
+    if (!valid(w)) return;
+    const mean = dot(mu, w);
+    if (!Number.isFinite(mean) || mean < target - tolerance) return;
+    const variance = dot(w, C.map((row) => dot(row, w)));
+    if (!Number.isFinite(variance) || variance < -1e-8) return;
+    if (!best || variance < best.variance) best = { w, mu: mean, sig: Math.sqrt(Math.max(0, variance)), variance };
+  };
+  for (const f of faces) {
+    const w0 = Array(n).fill(0), d = Array(n).fill(0);
+    if (f.ids) f.ids.forEach((id, i) => { w0[id] = f.w0[i]; d[id] = (f.riskD || f.d)[i]; });
+    else { f.w0.forEach((v, i) => { w0[i] = v; d[i] = f.d[i]; }); }
+    const mean = dot(mu, w0);
+    if (mean >= target - tolerance) add(w0);
+    const slope = dot(shiftedMu, d);
+    if (Number.isFinite(slope) && Math.abs(slope) > 1e-24) {
+      const t = (target - mean) / slope;
+      add(w0.map((v, i) => v + t * d[i]));
+    }
+  }
+  if (!best) return null;
+  return { w: best.w, mu: best.mu, sig: best.sig };
+}
+
+const PORT_TARGET_RETURN_CACHE = new WeakMap();
+function portTargetReturn(model, target) {
+  const fail = (error) => ({ point: null, target, error });
+  if (!Number.isFinite(target)) return fail("Target Return을 숫자로 입력하십시오.");
+  if (!model?.solve || !model.atReturn) return fail("Target Return 계산 불가 — 공분산 또는 제약조건을 확인하십시오.");
+  const cached = PORT_TARGET_RETURN_CACHE.get(model);
+  if (cached && cached.target === target) return cached;
+  const minimum = model.solve(Infinity, 0), maximum = model.solve(0, 0);
+  let result;
+  if (!minimum || !maximum) result = fail("Target Return 계산 불가 — 최적화 수렴을 확인하십시오.");
+  else {
+    const tolerance = 1e-8 * Math.max(1, Math.abs(target), Math.abs(maximum.mu));
+    if (target > maximum.mu + tolerance)
+      result = fail(`목표수익률이 제약조건 내 최대 기대수익률 ${maximum.mu.toFixed(2)}%를 초과합니다.`);
+    else {
+      const point = target <= minimum.mu ? minimum : model.atReturn(Math.min(target, maximum.mu));
+      result = point ? { point, target, error: "" } : fail("Target Return 계산 불가 — 목표수익률 또는 제약조건을 확인하십시오.");
+    }
+  }
+  PORT_TARGET_RETURN_CACHE.set(model, result);
+  return result;
 }

@@ -148,7 +148,7 @@ assert(panel.querySelector('.port-axis-controls').hidden);
 assert(!/오차 강도|합계 100%|공매도 금지|Robust 기준|경계선에 마우스|점선 ·/.test(card().textContent));
 assert(draw(initial).filter(x=>x[0]==='arc').length>5000);
 assert(card().querySelector('.port-sharpe-scale').textContent.includes('6,006'));
-assert(card().querySelector('.port-frontier-key').textContent.includes('Max.Sharpe'));
+assert(card().querySelector('.port-frontier-key').textContent.includes('Max Sharpe'));
 assert(draw(initial).filter(x=>x[0]==='arc').every(x=>x.slice(1).every(Number.isFinite)));
 click('표');
 assert(card().querySelector('.chart-table').textContent.includes('Conservative 기대수익%'));
@@ -258,7 +258,7 @@ card().querySelector('.chart-box').dispatchEvent({type:'mouseleave'});assert(hov
 // an interior point away from symbols/curves; recompute moments independently.
 const cloudPaint=draw(chart()),screen=(p,y=p.mu)=>[cloudPaint.u.valToPos(p.sig,'x'),cloudPaint.u.valToPos(y,'y')];
 const currentW=SIX_ASSET_FIXTURE.port.assets.map(a=>(P.portState(SIX_ASSET_FIXTURE.port).mix[a]||0)/100);
-const symbols=[E0.minVar,E0.maxSharpe,E0.bench,{w:currentW,mu:E0.muOf(currentW),sig:E0.sig(currentW)},
+const symbols=[E0.minVar,E0.maxSharpe,E0.targetReturn.point,E0.bench,{w:currentW,mu:E0.muOf(currentW),sig:E0.sig(currentW)},
   ...E0.mu.map((mu,i)=>({mu,sig:E0.risk.sig[i]}))].filter(Boolean);
 for(const [label,curve,field] of [['Conservative',E0.robust,'worst'],['Optimistic',E0.optimistic,'best']]){
   // This fixture's Conservative branch occupies under 2 screen pixels on its
@@ -280,9 +280,7 @@ for(const dpr of [1,2]){
     'current portfolio ring radius must be 4.5 CSS pixels');
   moveCursor(chart(),paint,paint.u.valToPos(currentPoint.sig,'x'),paint.u.valToPos(currentPoint.mu,'y'));
   checkPortfolio(hover,currentPoint);
-  // Both initial comparison portfolios coincide; either marker has the same weights.
-  assert.deepEqual(JSON.parse(JSON.stringify(P.portState(SIX_ASSET_FIXTURE.port).mix)),JSON.parse(JSON.stringify(P.portState(SIX_ASSET_FIXTURE.port).mix2)));
-  assert(/^비중[12]/.test(hover.querySelector('.port-tooltip-title').textContent));
+  assert.equal(hover.querySelector('.port-tooltip-title').textContent,'현재 · 배분');
 }
 // Restore the DPR 1 projection before querying the point cloud below.
 draw(chart());
@@ -583,15 +581,15 @@ assert.equal(migrated.mu.국내장부,2.25);assert.equal(migrated.sig.국내장�
 assert.equal(migrated.corr[R.portCorrKey('국내장부','국내채권')],.11);
 assert.equal(migrated.corr[R.portCorrKey('국내채권','해외채권')],.3);
 for(const key of ['mix','mu','sig','corr']) assert(!/달러유동성|원화유동성/.test(JSON.stringify(migrated[key])));
-assert.equal(field('국내장부 비중1').value,'5');assert.equal(field('국내장부 기대수익').value,'2.25');
+assert.equal(field('국내장부 현재').value,'5');assert.equal(field('국내장부 기대수익').value,'2.25');
 assert.equal(field('국내장부 변동성').value,'0.6');
-assert(!Array.from(card().querySelectorAll('.port-marker-key')).some(n=>n.textContent.endsWith('비중1')));
-assert(!panel.querySelector('.port-benchmark').textContent.includes('비중1'));
-click('CSV');assert(!sandbox.robustCSV[2].some(row=>row[0]==='비중1'));
+assert(!Array.from(card().querySelectorAll('.port-marker-key')).some(n=>n.textContent.endsWith('현재')));
+assert(!panel.querySelector('.port-benchmark').textContent.includes('현재'));
+click('CSV');assert(!sandbox.robustCSV[2].some(row=>row[0]==='현재'));
 assert(sandbox.robustCSV[2].some(row=>row[0]==='국내장부'&&row[2]===.6&&row[3]===2.25));
-edit('국내장부 비중1',10);edit('국내장부 비중2',10);update();
-assert(Array.from(card().querySelectorAll('.port-marker-key')).some(n=>n.textContent.endsWith('비중1')));
-assert(panel.querySelector('.port-benchmark').textContent.includes('비중1'));
+edit('국내장부 현재',10);update();
+assert(Array.from(card().querySelectorAll('.port-marker-key')).some(n=>n.textContent.endsWith('현재')));
+assert(panel.querySelector('.port-benchmark').textContent.includes('현재'));
 edit('국내장부 기대수익',2.3);update();
 const savedMigration=JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY));
 for(const key of ['mix','mu','sig','corr']) assert(!/달러유동성|원화유동성/.test(JSON.stringify(savedMigration[key])));

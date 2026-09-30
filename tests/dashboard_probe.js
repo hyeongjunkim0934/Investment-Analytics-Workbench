@@ -2321,7 +2321,7 @@ safe("simPanel", () => {
 
 /* ====== P-port. 포트폴리오 구성 — 실제 DOM으로 계산·저장·표시를 잰다 ==========
    ① 최소/최대 제약 적용은 비교 비중을 재분배하지 않는다.
-   ② 두 비교 비중과 μ 입력의 저장 계약 ③ CMA 파일 디폴트 표시
+   ② 현재 비중과 μ 입력의 저장 계약 ③ CMA 파일 디폴트 표시
    ④ 효율적 경계선 hover 상세 ⑤ 벤치마크 리뷰 표 ⑥ 창 미충족 경고의 가시성. */
 safe("portPanel", () => {
   const r = {};
@@ -2348,7 +2348,7 @@ safe("portPanel", () => {
   r.constraintApplyStagesOnly = shim.localStorage.getItem(P.PORT_LS_KEY) === null;
   update();
   const mixIn = Array.from(panel.querySelectorAll("input"))
-    .filter((n) => /비중1$/.test(n.getAttribute("aria-label") || ""));
+    .filter((n) => /현재$/.test(n.getAttribute("aria-label") || ""));
   const mixVals = mixIn.map((n) => +n.value);
   r.applySum = mixVals.reduce((a, b) => a + b, 0);     // 100 정확
   r.applyPreservesMix = JSON.stringify(P.portState(ALLOC_FIXTURE.port).mix) === beforeMix;
@@ -2375,7 +2375,7 @@ safe("portPanel", () => {
   const savedRaw = shim.localStorage.getItem(P.PORT_LS_KEY);
   r.muInputSavesOnUpdate = savedRaw != null && JSON.parse(savedRaw).mu["국내채권"] === 4.2;
   const mixAfter = JSON.parse(savedRaw || "{}");
-  r.mixInputSavesIndependently = mixAfter.mix?.국내채권 === 20
+  r.currentMixSavesWithoutChangingLegacy = mixAfter.mix?.국내채권 === 20
     && JSON.stringify(mixAfter.mix2) === mix2Before;
 
   /* ③ μ 출처 — 키인 > CMA 파일 > 과거 평균. 열이 아니라 키인 칸 아래 주석(.port-src)이고
@@ -2430,7 +2430,7 @@ safe("portPanel", () => {
 
   /* ⑤ 벤치마크 리뷰 표만 표시하고 하단 참고 줄은 제외한다. */
   const rvTxt = panel.textContent;
-  r.reviewHasRows = /최적\(최대 샤프\)/.test(rvTxt) && /벤치마크 60\/40/.test(rvTxt);
+  r.reviewHasRows = /Max Sharpe/.test(rvTxt) && /벤치마크 60\/40/.test(rvTxt);
   r.reviewNotesRemoved = !/실현 성과\(창|실현 성과\(10년 참고/.test(rvTxt);
 
   /* 2026-09-09 사용자 지시: 표본 부족 안내·산출 기준·번호 제거. */
@@ -2467,8 +2467,10 @@ safe("portPanel", () => {
   selectedWindow.bench.vol_pct *= 1.1;
   P.DATA.alloc = periodFixture;
   P.renderPortPanel(periodFixture);
+  const expectedHeaders = ["실현수익 %", "실현변동성 %"];
   const realizedRows = () => Array.from(DOC.getElementById("alloc-port-panel")
-    .querySelectorAll(".port-table tbody tr")).map((row) => Array.from(row.querySelectorAll("td")).slice(5, 7));
+    .querySelectorAll(".port-table tbody tr")).map((row) => expectedHeaders.map((header) =>
+      Array.from(row.querySelectorAll("td")).find((cell) => cell.getAttribute("data-label") === header)));
   const beforeStatistics = realizedRows().map((row) => row.map((cell) => cell.textContent));
   const period = DOC.getElementById("port-period");
   period.value = "3";
@@ -2477,8 +2479,8 @@ safe("portPanel", () => {
   const saved2 = JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY) || "{}");
   r.windowChoiceSaved = saved2.win === "3";
   const selectedPanel = DOC.getElementById("alloc-port-panel");
-  const realizedHeaders = Array.from(selectedPanel.querySelectorAll(".port-table th")).slice(5, 7);
-  const expectedHeaders = ["실현수익 %", "실현변동성 %"];
+  const realizedHeaders = Array.from(selectedPanel.querySelectorAll(".port-table th"))
+    .filter((cell) => expectedHeaders.includes(cell.textContent));
   const afterRows = realizedRows();
   r.periodSelectionUpdated = DOC.getElementById("port-period").value === "3"
     && selectedPanel.querySelector(".alloc-period-range").textContent.includes("36개월")

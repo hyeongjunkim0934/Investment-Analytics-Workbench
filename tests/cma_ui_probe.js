@@ -222,8 +222,8 @@ const state = P.portDefaults(portfolio);
 state.mu[asset] = -1.2; state.sig[asset] = 6.5;
 P.portSaveState(state); const storedPortfolio = saved.get(P.PORT_LS_KEY);
 P.renderPortPanel(allocation);
-portInput("국내시가 비중1").value = "42"; fire(portInput("국내시가 비중1"), "input");
-portInput("해외장부 비중2").value = "7"; fire(portInput("해외장부 비중2"), "input");
+portInput("국내시가 현재").value = "42"; fire(portInput("국내시가 현재"), "input");
+portInput("해외장부 현재").value = "7"; fire(portInput("해외장부 현재"), "input");
 P.renderSection("cma");
 assert(!DOC.getElementById("cma").querySelector(".render-error"));
 const card = () => [...cmaBox().querySelectorAll("article")].find(node => node.getAttribute("aria-label") === `${asset} CMA`);
@@ -283,8 +283,8 @@ result.application = {
   sigmaFieldReflectsModel: Math.abs(Number(portInput(`${asset} 변동성`).value) - Math.sqrt(82.5)) < 0.0051,
   readOnlyDerivedInputs: portInput(`${asset} 기대수익`).hasAttribute("readonly") && portInput(`${asset} 변동성`).hasAttribute("readonly"),
   underlyingManualInputsPreserved: saved.get(P.PORT_LS_KEY) === storedPortfolio && liveState().mu[asset] === -1.2 && liveState().sig[asset] === 6.5,
-  unsavedWeightPreserved: Number(portInput("국내시가 비중1").value) === 42,
-  secondWeightPreserved: Number(portInput("해외장부 비중2").value) === 7,
+  unsavedWeightPreserved: Number(portInput("국내시가 현재").value) === 42,
+  secondAssetCurrentWeightPreserved: Number(portInput("해외장부 현재").value) === 7,
   sevenCmaCards: cmaBox().querySelectorAll("article").length === 7,
   newBookAssetEditable: !!input(cmaBox(), "해외장부 낙관 기대수익 %"),
   marketPayloadUnchanged: JSON.stringify(P.DATA.alloc) === dataBefore,
@@ -403,8 +403,8 @@ result.sevenAssetIntegration = {
   bookHover: DOC.querySelector(".cma-popup").textContent.includes("해외장부"),
   bookSourceBasis: cmaBox().querySelector(".cma-source-note").textContent === portfolio.asset_notes.해외장부,
   noUnknownBookHedge: !portInput("해외장부 환헤지"),
-  bothDraftWeightsRetained: Number(portInput("국내시가 비중1").value) === 42
-    && Number(portInput("해외장부 비중2").value) === 7,
+  currentAssetDraftsRetained: Number(portInput("국내시가 현재").value) === 42
+    && Number(portInput("해외장부 현재").value) === 7,
 };
 assert(Object.values(result.sevenAssetIntegration).every(Boolean),JSON.stringify(result.sevenAssetIntegration));
 

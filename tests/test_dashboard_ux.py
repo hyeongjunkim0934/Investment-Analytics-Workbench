@@ -2578,8 +2578,8 @@ def test_explain_fold_behaviour_and_warning_visibility(probe):
 
 
 # ---- 포트폴리오 구성 (신규 7자산군 · §7.14) — 실행으로 확인 ----------------------
-def test_port_panel_defaults_and_two_portfolio_saving(probe):
-    """최소/최대 제약 적용·비중 독립 저장 계약."""
+def test_port_panel_defaults_and_current_portfolio_saving(probe):
+    """최소/최대 제약 적용·현재 비중 저장 및 레거시 보존 계약."""
     c = probe["portPanel"]
     assert "ERROR" not in c, c.get("ERROR")
     assert c["panelRendered"] is True
@@ -2594,7 +2594,7 @@ def test_port_panel_defaults_and_two_portfolio_saving(probe):
     assert c["liquidityConstraintRemoved"] is True
     assert c["applySavesConstraints"] is True
     assert c["mixInputDoesNotSave"] is True, "비중 편집의 기존 초안 저장 계약을 유지한다"
-    assert c["mixInputSavesIndependently"] is True, "비중1 편집은 비중2와 독립적으로 저장돼야 한다"
+    assert c["currentMixSavesWithoutChangingLegacy"] is True, "현재 비중 저장이 보관된 레거시 비중을 변경하면 안 된다"
     assert c["constraintApplyStagesOnly"] is True, "제약 적용은 업데이트 전 저장하지 않는다"
     assert c["muInputDoesNotSave"] is True, "μ 편집은 업데이트 전 초안이다"
     assert c["muInputSavesOnUpdate"] is True, "업데이트 시 μ와 비중을 함께 저장한다"
