@@ -441,6 +441,7 @@ function makeOrdinalChart(box, cfg) {
 /* ---------------- range scoping ---------------- */
 
 function applyRange(entry) {
+  if (entry.applyRange) { entry.applyRange(); return; }
   if (!entry.isTime) return;
   const { u, tmin, tmax } = entry;
   // A section-owned interval is independent of the market-wide year buttons.
@@ -3745,11 +3746,210 @@ function hedgeCostSnapshot(H2, currency = "USD") {
 
 const HEDGE_MERIT_RANGES = {};
 
-function renderHedgeMeritChart(card, code, label, M, pal) {
+/* Historical yields remain on the left. Future paths are cumulative KRW holding
+   returns on a separate right scale; FX return dispersion is never a yield band. */
+function hedgeMeritData(M, outlook, range, showOutlook = true) {
+  const lo = Date.parse(range.start) / 1000, hi = Date.parse(range.end) / 1000 + 86400;
+  const history = timeRangeData([M.t, M.hedged, M.ktb, M.spread], lo, hi);
+  const visible = !!(showOutlook && outlook?.active && history[0].length
+    && hi > M.t[M.t.length - 1]);
+  if (!outlook?.active) return { data: history, visible: false };
+  const rows = new Map(history[0].map((t, i) => [t, [history[1][i], history[2][i], history[3][i], ...Array(6).fill(null)]]));
+  if (visible) outlook.t.forEach((t, i) => {
+    const row = rows.get(t) || Array(9).fill(null);
+    [outlook.hedged.center, outlook.hedged.lower, outlook.hedged.upper,
+      outlook.unhedged.center, outlook.unhedged.lower, outlook.unhedged.upper]
+      .forEach((values, j) => { row[j + 3] = values[i]; });
+    rows.set(t, row);
+  });
+  const times = [...rows.keys()].sort((a, b) => a - b);
+  return { data: [times, ...Array.from({ length: 9 }, (_, j) => times.map((t) => rows.get(t)[j]))], visible };
+}
+
+function hedgeChartLegend(box, entries, onToggle) {
+  const legend = el("div", { class: "hedge-chart-legend" });
+  entries.forEach(([label, color, band], i) => {
+    const item = el(onToggle ? "button" : "span", onToggle ? { type: "button", "aria-pressed": "true" } : {},
+      el("i", { style: `--legend-color:${color}`, class: band ? "is-band" : "" }), label);
+    if (onToggle) item.addEventListener("click", () => {
+      const show = item.getAttribute("aria-pressed") !== "true";
+      item.setAttribute("aria-pressed", String(show)); onToggle(i, show);
+    });
+    legend.append(item);
+  });
+  box.append(legend);
+  return legend;
+}
+
+function makeHedgeOutlookChart(box, M, O, range, selection, empty, labels, pal) {
+  box.classList.add("time-chart-hover", "hedge-outlook-chart");
+  const colors = [pal.series[0], pal.series[1], pal.series[3], "#4fc3ad", "#b29cfa"];
+  hedgeChartLegend(box, labels.slice(0, 3).map((name, i) => [name, colors[i]])
+    .concat([["100% 헤지 ±1σ · 우축", colors[3], true], ["미헤지 ±1σ · 우축", colors[4], true]]),
+    (i, show) => {
+      const group = i < 3 ? [i + 1] : i === 3 ? [4, 5, 6] : [7, 8, 9];
+      group.forEach((index) => u.setSeries(index, { show })); hide();
+    });
+  const plotHost = el("div", { class: "hedge-plot-host" });
+  box.append(plotHost);
+  const tip = el("div", { class: "time-chart-tooltip", role: "status" });
+  tip.hidden = true; box.append(tip);
+  const hide = () => { tip.hidden = true; };
+  box.addEventListener("mouseleave", hide);
+  const fmt = (u, v) => v == null ? "–" : `${fmtNum(v, 2)}%`;
+  const series = [{ label: "일자" }, ...labels.map((label, i) => ({
+    label, scale: i < 3 ? "y" : "return", stroke: i < 3 ? colors[i] : i < 6 ? colors[3] : colors[4],
+    width: i < 3 ? 1.7 : [3, 6].includes(i) ? 1.2 : 0,
+    dash: [3, 6].includes(i) ? [4, 4] : [], spanGaps: false,
+    points: { show: (u, si) => u.data[si].filter(Number.isFinite).length === 1 }, value: fmt,
+  }))];
+  const axes = baseAxes(pal, (v) => fmtNum(v, 2));
+  axes[1].label = "금리 % / 스프레드 %p"; axes[1].labelSize = 18;
+  axes.push({ ...baseAxes(pal, (v) => fmtNum(v, 2))[1], scale: "return", side: 1,
+    grid: { show: false }, label: "누적 원화수익률 %", labelSize: 18 });
+  const returnLimit = Math.max(1, ...[O.hedged, O.unhedged].flatMap((row) => [...row.lower, ...row.upper]).map(Math.abs)) * 1.12;
+  let current = selection();
+  const cfg = {
+    width: Math.max(280, box.clientWidth), height: 310,
+    tzDate: (ts) => uPlot.tzDate(new Date(ts * 1000), "Etc/UTC"),
+    series, axes, legend: { show: false, live: false },
+    scales: { return: { range: () => [-returnLimit, returnLimit] } },
+    bands: [{ series: [9, 8], fill: hexA(colors[4], 0.13) }, { series: [6, 5], fill: hexA(colors[3], 0.20) }],
+    cursor: { y: false, points: { size: 5 }, drag: { setScale: false } },
+    hooks: {
+      drawClear: [(u) => {
+        if (!current.visible) return;
+        const { ctx, bbox } = u, dpr = devicePixelRatio || 1;
+        const x = u.valToPos(O.t[0], "x", true);
+        ctx.save(); ctx.beginPath(); ctx.rect(bbox.left, bbox.top, bbox.width, bbox.height); ctx.clip();
+        ctx.fillStyle = hexA(pal.ink3, 0.045); ctx.fillRect(x, bbox.top, bbox.left + bbox.width - x, bbox.height);
+        ctx.strokeStyle = pal.ink3; ctx.lineWidth = dpr; ctx.setLineDash([3 * dpr, 4 * dpr]);
+        ctx.beginPath(); ctx.moveTo(x, bbox.top); ctx.lineTo(x, bbox.top + bbox.height); ctx.stroke();
+        const zero = u.valToPos(0, "return", true);
+        ctx.beginPath(); ctx.moveTo(x, zero); ctx.lineTo(bbox.left + bbox.width, zero); ctx.stroke();
+        ctx.restore();
+      }],
+      setCursor: [(u) => {
+        const { idx, left, top } = u.cursor;
+        if (idx == null || left < 0 || top < 0 || !Number.isFinite(u.data[0]?.[idx])) { hide(); return; }
+        tip.textContent = ""; tip.append(el("strong", {}, tsToDate(u.data[0][idx])));
+        const line = (label, text, color) => tip.append(el("div", {},
+          el("span", { style: `color:${color}` }, label), el("b", {}, text)));
+        labels.slice(0, 3).forEach((label, i) => {
+          if (u.series[i + 1].show !== false && Number.isFinite(u.data[i + 1][idx])) line(label,
+            `${fmtNum(u.data[i + 1][idx], 2)}${i === 2 ? "%p" : "%"}`, colors[i]);
+        });
+        [[4, "100% 헤지", colors[3]], [7, "미헤지", colors[4]]].forEach(([j, label, color]) => {
+          if (u.series[j].show === false || !Number.isFinite(u.data[j][idx])) return;
+          line(`${label} 누적수익률`, `${fmtNum(u.data[j][idx], 2)}%`, color);
+          line("±1σ 범위", `${fmtNum(u.data[j + 1][idx], 2)} ~ ${fmtNum(u.data[j + 2][idx], 2)}%`, color);
+        });
+        tip.hidden = false;
+        tip.style.left = left > box.clientWidth / 2 ? "12px" : "auto";
+        tip.style.right = left > box.clientWidth / 2 ? "auto" : "12px";
+      }], setData: [hide],
+    },
+  };
+  const u = new uPlot(cfg, current.data, plotHost);
+  const update = () => {
+    current = selection(); u.setData(current.data, false);
+    empty.hidden = current.data.slice(1).some((ys) => ys.some(Number.isFinite));
+    u.setScale("x", { min: Date.parse(range.start) / 1000,
+      max: current.visible ? Math.max(O.t.at(-1), Date.parse(range.end) / 1000) : Date.parse(range.end) / 1000 + 86400 });
+    // uPlot setData(false) preserves stale y limits; explicitly recompute when the window changes.
+    const values = current.data.slice(1, 4).flat().filter(Number.isFinite);
+    if (values.length) {
+      const low = Math.min(...values), high = Math.max(...values), pad = Math.max(.1, (high - low) * .08);
+      u.setScale("y", { min: low - pad, max: high + pad });
+    }
+  };
+  registry.push({ u, isTime: true, applyRange: update }); update();
+  const ro = new ResizeObserver(() => u.setSize({ width: Math.max(280, box.clientWidth), height: 310 }));
+  ro.observe(box); return trackChart(u, ro);
+}
+
+function renderHedgeDistribution(card, code, D, snapshot, pal) {
+  const host = el("div", { class: "hedge-distribution", "data-market": code }); card.append(host);
+  if (!D?.active || !D.bins?.length) {
+    host.append(el("div", { class: "card-head" }, el("span", { class: "card-title" }, "과거 헤지비용 분포")),
+      el("p", { class: "card-sub" }, D?.reason || "분포 데이터가 없습니다."));
+    return;
+  }
+  const mean = snapshot.values[3], colors = [pal.series[0], "#4fc3ad"];
+  const tableFn = (cap = Infinity, raw = false) => ({
+    headers: ["헤지비용 하단 (연 %)", "헤지비용 상단 (연 %)", "관측 수", "빈도 (%)"],
+    rows: D.bins.slice(0, cap).map((b) => [b.low, b.high, b.count, b.frequency_pct]
+      .map((v, i) => raw || i === 2 ? v : fmtNum(v, 2))),
+  });
+  const box = cardScaffold(host, { title: "과거 헤지비용 분포",
+    sub: `${D.cost_source} 3M · ${D.start} ~ ${D.end} · ${D.n.toLocaleString()}일`,
+    tableFn, csvName: `${code}-헤지비용-분포.csv` });
+  hedgeChartLegend(box, [["전체 이력 · 일별 빈도", colors[0]],
+    ...(Number.isFinite(mean) ? [["최근 3M·6M·12M 평균", colors[1]]] : [])]);
+  box.append(el("div", { class: "hedge-distribution-summary" },
+    `최저 ${fmtNum(D.min_pct, 2)}% · 최고 ${fmtNum(D.max_pct, 2)}% · ${COST_SIGN_KEY}`));
+  const plotHost = el("div", { class: "hedge-plot-host" }); box.append(plotHost);
+  const tip = el("div", { class: "time-chart-tooltip", role: "status" }); tip.hidden = true; box.append(tip);
+  box.addEventListener("mouseleave", () => { tip.hidden = true; });
+  const bins = D.bins, xs = bins.map((b) => (b.low + b.high) / 2);
+  let xmin = Math.min(bins[0].low, Number.isFinite(mean) ? mean : Infinity);
+  let xmax = Math.max(bins.at(-1).high, Number.isFinite(mean) ? mean : -Infinity);
+  const pad = Math.max(.01, (xmax - xmin) * .04); xmin -= pad; xmax += pad;
+  const cfg = { width: Math.max(280, box.clientWidth), height: 190,
+    scales: { x: { time: false, range: () => [xmin, xmax] }, y: { range: (u, lo, hi) => [0, Math.max(1, hi * 1.12)] } },
+    axes: [{ ...baseAxes(pal, (v) => fmtNum(v, 2))[1], side: 2, scale: "x", label: "헤지비용 (연 %)", labelSize: 18 },
+      { ...baseAxes(pal, (v) => `${fmtNum(v, 0)}%`)[1], label: "빈도", labelSize: 18 }],
+    series: [{ label: "헤지비용" }, { label: "빈도", paths: uPlot.paths.bars({ size: [.9, 40] }),
+      fill: hexA(colors[0], .5), stroke: colors[0], width: 0, points: { show: false } }],
+    legend: { show: false, live: false }, cursor: { y: false, points: { show: false }, drag: { setScale: false } },
+    hooks: {
+      draw: [(u) => {
+        if (!Number.isFinite(mean)) return;
+        const { ctx, bbox } = u, x = u.valToPos(mean, "x", true), dpr = devicePixelRatio || 1;
+        ctx.save(); ctx.strokeStyle = colors[1]; ctx.lineWidth = 1.5 * dpr; ctx.setLineDash([4 * dpr, 3 * dpr]);
+        ctx.beginPath(); ctx.moveTo(x, bbox.top); ctx.lineTo(x, bbox.top + bbox.height); ctx.stroke(); ctx.restore();
+      }],
+      setCursor: [(u) => {
+        const { idx, left, top } = u.cursor, b = bins[idx];
+        if (idx == null || left < 0 || top < 0 || !b) { tip.hidden = true; return; }
+        tip.textContent = "";
+        tip.append(el("strong", {}, `${fmtNum(b.low, 2)} ~ ${fmtNum(b.high, 2)}%`),
+          el("div", {}, `${b.count.toLocaleString()}일 · ${fmtNum(b.frequency_pct, 2)}%`));
+        if (Number.isFinite(mean)) tip.append(el("div", {}, `최근 평균 ${fmtNum(mean, 2)}%`));
+        tip.hidden = false; tip.style.left = left > box.clientWidth / 2 ? "12px" : "auto";
+        tip.style.right = left > box.clientWidth / 2 ? "auto" : "12px";
+      }],
+    },
+  };
+  const u = new uPlot(cfg, [xs, bins.map((b) => b.frequency_pct)], plotHost);
+  const ro = new ResizeObserver(() => u.setSize({ width: Math.max(280, box.clientWidth), height: 190 }));
+  ro.observe(box); trackChart(u, ro);
+}
+
+function hedgeOutlookValid(O) {
+  if (!O?.active || !Array.isArray(O.t) || O.t.length !== 13
+      || !O.t.every((t, i) => Number.isFinite(t) && (i === 0 || t > O.t[i - 1]))
+      || !Number.isFinite(O.cost?.mean_pct) || !Number.isFinite(O.risk?.reduction_pp)
+      || !Number.isFinite(O.duration_years) || !Number.isFinite(O.sample?.n_months)) return false;
+  return [O.hedged, O.unhedged].every((row) => Number.isFinite(row?.vol_pct) && row.vol_pct >= 0
+    && ["center", "lower", "upper"].every((key) => Array.isArray(row[key])
+      && row[key].length === O.t.length && row[key].every(Number.isFinite))
+    && row.center.every((v, i) => row.lower[i] <= v && v <= row.upper[i]));
+}
+
+function renderHedgeMeritChart(card, code, label, M, pal, analytics) {
+  const supplied = analytics?.outlook;
+  const O = !supplied?.active || hedgeOutlookValid(supplied) ? supplied
+    : { active: false, reason: "예상 범위 데이터가 불완전합니다." };
+  let showOutlook = true;
   const id = `hedge-merit-${code}`;
   const data = [M.t, M.hedged, M.ktb, M.spread];
   const full = { start: tsToDate(M.t[0]), end: tsToDate(M.t[M.t.length - 1]) };
-  const range = HEDGE_MERIT_RANGES[code] || { ...full };
+  const recent = new Date(`${full.end}T00:00:00Z`); recent.setUTCFullYear(recent.getUTCFullYear() - 3);
+  const recentStart = recent.toISOString().slice(0, 10);
+  const saved = HEDGE_MERIT_RANGES[code];
+  const range = saved?.full ? { ...full, full: true } : saved
+    || { start: O?.active && recentStart > full.start ? recentStart : full.start, end: full.end };
   const status = el("span", { id: `${id}-status`, class: "alloc-period-status d-up", role: "status" });
   status.hidden = true;
   const input = (key, title) => el("input", { type: "date", id: `${id}-${key}`,
@@ -3765,15 +3965,47 @@ function renderHedgeMeritChart(card, code, label, M, pal) {
     Date.parse(range.start) / 1000, Date.parse(range.end) / 1000 + 86400);
   const labels = [`헤지 후 ${label} 10년`, "국고 10년", "스프레드"];
   const units = ["%", "%", "%p"];
-  const tableFn = (cap, raw) => tsTableFn(labels.map((name, i) => `${name} (${units[i]})`), selectedData(), 2)(cap, raw);
+  const extendedLabels = labels.concat(["100% 헤지 누적수익률", "100% 헤지 하단 1σ", "100% 헤지 상단 1σ",
+    "미헤지 누적수익률", "미헤지 하단 1σ", "미헤지 상단 1σ"]);
+  const selection = () => hedgeMeritData(M, O, range, showOutlook);
+  const tableFn = (cap, raw) => tsTableFn((O?.active ? extendedLabels : labels)
+    .map((name, i) => `${name} (${units[i] || "%"})`), O?.active ? selection().data : selectedData(), 2)(cap, raw);
   const box = cardScaffold(host, { title: `${label}·국고 10년`, sub: "금리 % · 스프레드 %p",
     csvName: `${code}-메리트.csv`, tableFn });
   const empty = el("p", { class: "card-sub", role: "status" }, "해당 기간의 데이터가 없습니다.");
   empty.hidden = true;
   box.append(empty);
-  const chart = makeTimeChart(box, { labels, units, colors: [pal.series[0], pal.series[1], pal.series[3]],
-    data, range, emptyState: empty, height: 260, dec: 2, hoverTooltip: true });
+  const chart = O?.active
+    ? makeHedgeOutlookChart(box, M, O, range, selection, empty, extendedLabels, pal)
+    : makeTimeChart(box, { labels, units, colors: [pal.series[0], pal.series[1], pal.series[3]],
+      data, range, emptyState: empty, height: 260, dec: 2, hoverTooltip: true });
+  if (O?.active) {
+    const change = O.risk.reduction_pp;
+    card.append(el("div", { class: "hedge-outlook-summary" },
+      el("span", {}, `연 σ  미헤지 ${fmtNum(O.unhedged.vol_pct, 2)}% → 헤지 ${fmtNum(O.hedged.vol_pct, 2)}%`),
+      el("b", {}, `${change >= 0 ? "감소" : "증가"} ${fmtNum(Math.abs(change), 2)}%p`),
+      el("span", {}, `적용 헤지비용 ${fmtNum(O.cost.mean_pct, 2)}%`)));
+    card.append(el("details", { class: "hedge-outlook-method" }, el("summary", {}, "1년 범위 · 조건부 ±1σ"),
+      el("p", {}, `기준 ${O.asof}. 우축은 0%에서 시작하는 누적 원화 보유수익률입니다. ` +
+        `현재 금리·평균 헤지비용 유지, 환율 추세 0, 100% 원금 헤지를 가정합니다. ` +
+        `금리·환율 공통 월간 표본 ${O.sample.start} ~ ${O.sample.end} (${O.sample.n_months}개), ` +
+        `10년 국채 수정듀레이션 ${fmtNum(O.duration_years, 2)}년의 가격변화 근사입니다. ` +
+        `확률 보장 구간이 아니며 볼록성·롤오버·거래비용·스왑 MTM은 제외합니다. ` +
+        `상단의 장기 일간 환 σ와 표본·산식이 다릅니다.`)));
+  } else if (O) {
+    card.append(el("p", { class: "card-sub", role: "status" }, `1년 범위: ${O.reason || "표본 부족"}`));
+  }
   const entry = registry.find((item) => item.u === chart.u);
+  if (O?.active) {
+    const checkbox = el("input", { type: "checkbox", "aria-label": `${code} 1년 예상 범위` });
+    checkbox.checked = true;
+    checkbox.addEventListener("change", () => {
+      showOutlook = checkbox.checked; applyRange(entry);
+      const table = host.querySelector(".chart-table");
+      if (!table.classList.contains("hidden")) renderTable(table, tableFn());
+    });
+    controls.append(el("label", { class: "hedge-outlook-toggle" }, checkbox, "1년 범위"));
+  }
   const validDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v)
     && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
   const apply = () => {
@@ -3782,7 +4014,7 @@ function renderHedgeMeritChart(card, code, label, M, pal) {
     } else if (start.value > end.value) {
       status.textContent = "시작기간은 종료기간보다 늦을 수 없습니다.";
     } else {
-      range.start = start.value; range.end = end.value;
+      range.start = start.value; range.end = end.value; range.full = false;
       HEDGE_MERIT_RANGES[code] = range;
       status.hidden = true;
       applyRange(entry);
@@ -3798,11 +4030,17 @@ function renderHedgeMeritChart(card, code, label, M, pal) {
       if (ev.key === "Enter") { ev.preventDefault(); apply(); }
     });
   });
+  if (O?.active) controls.append(el("button", { type: "button", class: "btn-ghost", onclick: () => {
+    const recent = new Date(`${full.end}T00:00:00Z`); recent.setUTCFullYear(recent.getUTCFullYear() - 3);
+    start.value = recent.toISOString().slice(0, 10) > full.start ? recent.toISOString().slice(0, 10) : full.start;
+    end.value = full.end; apply();
+  } }, "최근 3년"));
   controls.append(el("button", { type: "button", id: `${id}-apply`, class: "btn-ghost", onclick: apply }, "기간 적용"),
     el("button", { type: "button", id: `${id}-all`, class: "btn-ghost", onclick: () => {
       start.value = full.start; end.value = full.end; apply();
-      // A full-history view should include new observations after the next data refresh.
-      delete HEDGE_MERIT_RANGES[code];
+      // Explicit full-history selection keeps tracking new observations on refresh.
+      if (O?.active) HEDGE_MERIT_RANGES[code] = { ...full, full: true };
+      else delete HEDGE_MERIT_RANGES[code];
     } }, "전체"), status);
 }
 
@@ -3871,6 +4109,9 @@ function renderHedge() {
         ? el("span", { class: "card-sub" }, `최근 ${tsToDate(M.t[M.t.length - 1])}`) : null));
     if (!M?.active || !M.t?.length) {
       card.append(el("p", { class: "card-sub", role: "status" }, M?.reason || "데이터 없음"));
+      const analytics = H2.bond_analytics?.[code];
+      if (analytics) renderHedgeDistribution(card, code, analytics.distribution,
+        hedgeCostSnapshot(H2, analytics.currency), pal);
       return;
     }
     const now = M.now || {};
@@ -3887,7 +4128,10 @@ function renderHedge() {
       tile("스프레드", value(now.spread, "%p", true),
         Number.isFinite(now.spread_pctile) ? `백분위 ${fmtNum(now.spread_pctile, 0)}%` : "",
         now.spread > 0 ? "d-down" : "d-up")));
-    renderHedgeMeritChart(card, code, label, M, pal);
+    const analytics = H2.bond_analytics?.[code];
+    renderHedgeMeritChart(card, code, label, M, pal, analytics);
+    if (analytics) renderHedgeDistribution(card, code, analytics.distribution,
+      hedgeCostSnapshot(H2, M.currency || ({ UST: "USD", GER: "EUR" }[code] || code)), pal);
   });
 
 }
