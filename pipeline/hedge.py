@@ -313,6 +313,47 @@ def pack(s: pd.Series, r: int = 2) -> dict:
     return common.pack_values(s, r)
 
 
+def clean_merit_daily(daily: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """국채 메리트 표시용 3σ 정제. 원본·백테스트·공분산에는 적용하지 않는다.
+
+    주간화/화면 기간선택 전 전체 공통 일별 표본의 수준 Z를 한 번만 계산한다.
+    |Z| >= 3인 고립 관측은 양옆 정상 영업일 관측의 산술평균으로 바꾼다.
+    연속 이상치·양끝·평일 공백은 보간하지 않고 그 날짜를 제외한다.
+    공휴일 달력은 추정하지 않으며 금→월은 연속 영업일로 인정한다.
+    전체표본 및 다음 관측을 쓰는 사후 차트 정제이지 실시간 오류 판정이 아니다.
+    실제 위기 관측도 3σ 밖이면 제외될 수 있으므로 투자 통계에 재사용하지 않는다.
+    """
+    raw = daily.replace([np.inf, -np.inf], np.nan).dropna().sort_index().copy()
+    raw = raw[raw.index.dayofweek < 5]
+    raw = raw[~raw.index.duplicated(keep="last")]
+    cleaned = raw.copy()
+    meta = {"policy": "full_sample_level_zscore", "threshold": 3.0, "ddof": 1,
+            "scope": "chart_only", "n_observations": int(len(raw)),
+            "replacement": "isolated_adjacent_weekday_mean",
+            "fallback": "exclude_row", "uses_future_observations": True,
+            "columns": {}}
+    adjacent = np.zeros(len(raw), dtype=bool)
+    for i in range(1, len(raw) - 1):
+        adjacent[i] = (common.is_consecutive_weekday_observation(raw.index[i - 1], raw.index[i])
+                       and common.is_consecutive_weekday_observation(raw.index[i], raw.index[i + 1]))
+    for col in raw:
+        values = raw[col]
+        sigma = values.std(ddof=1)
+        bad = pd.Series(False, index=raw.index)
+        if len(raw) >= 3 and np.isfinite(sigma) and sigma > 0:
+            bad = ((values - values.mean()) / sigma).abs() >= meta["threshold"]
+        isolated = (bad & ~bad.shift(1, fill_value=True)
+                    & ~bad.shift(-1, fill_value=True) & adjacent)
+        cleaned.loc[bad, col] = np.nan
+        cleaned.loc[isolated, col] = ((values.shift(1) + values.shift(-1)) / 2)[isolated]
+        meta["columns"][col] = {"n_flagged": int(bad.sum()),
+                                "n_replaced": int(isolated.sum()),
+                                "n_excluded": int((bad & ~isolated).sum())}
+    cleaned = cleaned.dropna()
+    meta["n_rows_excluded"] = int(len(raw) - len(cleaned))
+    return cleaned, meta
+
+
 def build_bond_merit(series: dict, currency: str, label: str, *,
                      hedge_currency: str | None = None) -> dict:
     """외국 10년 국채 + 같은 날 HP 3M 연율 캐리와 국고 10년을 비교한다.
@@ -327,9 +368,10 @@ def build_bond_merit(series: dict, currency: str, label: str, *,
     if missing:
         return {"active": False, "reason": "원천 시리즈 없음: " + " / ".join(missing)}
     daily = pd.concat({name: series[key] for name, key in keys.items()}, axis=1)
-    daily = daily.replace([np.inf, -np.inf], np.nan).dropna().sort_index()
+    daily, cleaning = clean_merit_daily(daily)
     if daily.empty:
-        return {"active": False, "reason": "국채·헤지비용 공통 관측 없음"}
+        return {"active": False, "reason": "국채·헤지비용 유효 공통 관측 없음",
+                "outlier_filter": cleaning}
     daily["observed"] = daily.index
     weekly = daily.resample("W-FRI").last().dropna()
     weekly.index = pd.DatetimeIndex(weekly.pop("observed"))
@@ -344,7 +386,7 @@ def build_bond_merit(series: dict, currency: str, label: str, *,
         "n_weeks": int(len(weekly)), "t": epoch_seconds(weekly.index),
         "series": {"foreign": f"{label} 10년", "ktb": "국고 10년",
                    "cost": "3개월 헤지비용(HP 원호가, 연율)"},
-        "sources": keys,
+        "sources": keys, "outlier_filter": cleaning,
         **{key: [round(float(x), 3) for x in weekly[key]] for key in fields},
         "now": now,
     }
@@ -580,32 +622,37 @@ def build(series_store: dict, warn) -> dict:
     else:
         jm = pd.concat([ust10, ktb10, smb3], axis=1).dropna()
         jm.columns = ["ust", "ktb", "cost"]
-        wk = jm.resample("W-FRI").last().dropna()
-        hedged = wk["ust"] + wk["cost"]
-        spread = hedged - wk["ktb"]
-        cur = float(spread.iloc[-1])
-        ust_merit = {
-            "active": True,
-            "asof": wk.index[-1].strftime("%Y-%m-%d"),
-            "freq": "W-FRI",
-            "series": {"cost": "3개월 스왑레이트(SMB, 연율)", "ust": "미국채 10년",
-                       "ktb": "국고 10년"},
-            "start": wk.index[0].strftime("%Y-%m"),
-            "n_weeks": int(len(wk)),
-            "t": epoch_seconds(wk.index),
-            "cost": [round(float(x), 3) for x in wk["cost"]],
-            "ust": [round(float(x), 3) for x in wk["ust"]],
-            "ktb": [round(float(x), 3) for x in wk["ktb"]],
-            "hedged": [round(float(x), 3) for x in hedged],
-            "spread": [round(float(x), 3) for x in spread],
-            "now": {"cost": round(float(wk["cost"].iloc[-1]), 3),
-                    "ust": round(float(wk["ust"].iloc[-1]), 3),
-                    "ktb": round(float(wk["ktb"].iloc[-1]), 3),
-                    "hedged": round(float(hedged.iloc[-1]), 3),
-                    "spread": round(cur, 3),
-                    # 현재 스프레드의 자기 이력 내 백분위 — 관측 통계(임의 기준 아님)
-                    "spread_pctile": round(float((spread <= cur).mean() * 100), 1)},
-        }
+        jm, cleaning = clean_merit_daily(jm)
+        if jm.empty:
+            ust_merit = {"active": False, "reason": "국채·헤지비용 유효 공통 관측 없음",
+                         "outlier_filter": cleaning}
+        else:
+            wk = jm.resample("W-FRI").last().dropna()
+            hedged = wk["ust"] + wk["cost"]
+            spread = hedged - wk["ktb"]
+            cur = float(spread.iloc[-1])
+            ust_merit = {
+                "active": True,
+                "asof": wk.index[-1].strftime("%Y-%m-%d"),
+                "freq": "W-FRI", "outlier_filter": cleaning,
+                "series": {"cost": "3개월 스왑레이트(SMB, 연율)", "ust": "미국채 10년",
+                           "ktb": "국고 10년"},
+                "start": wk.index[0].strftime("%Y-%m"),
+                "n_weeks": int(len(wk)),
+                "t": epoch_seconds(wk.index),
+                "cost": [round(float(x), 3) for x in wk["cost"]],
+                "ust": [round(float(x), 3) for x in wk["ust"]],
+                "ktb": [round(float(x), 3) for x in wk["ktb"]],
+                "hedged": [round(float(x), 3) for x in hedged],
+                "spread": [round(float(x), 3) for x in spread],
+                "now": {"cost": round(float(wk["cost"].iloc[-1]), 3),
+                        "ust": round(float(wk["ust"].iloc[-1]), 3),
+                        "ktb": round(float(wk["ktb"].iloc[-1]), 3),
+                        "hedged": round(float(hedged.iloc[-1]), 3),
+                        "spread": round(cur, 3),
+                        # 현재 스프레드의 자기 이력 내 백분위 — 관측 통계(임의 기준 아님)
+                        "spread_pctile": round(float((spread <= cur).mean() * 100), 1)},
+            }
 
     payload = {
         "asof": usdkrw.index[-1].strftime("%Y-%m-%d"),
