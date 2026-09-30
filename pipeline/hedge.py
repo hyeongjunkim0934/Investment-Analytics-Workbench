@@ -28,6 +28,60 @@ CURRENCIES = ["USD", "EUR", "JPY", "CNY", "AUD", "CAD", "GBP"]
 NAME = {"USD": "달러", "EUR": "유로", "JPY": "엔", "CNY": "위안",
         "AUD": "호주달러", "CAD": "캐나다달러", "GBP": "파운드"}
 DEFAULT_TENOR_M = 9        # 사용자 실무 기준: 금액가중평균 9개월
+FX_VOL_SOURCES = {"USD": "bb:달러원", "AUD": "info:AUDKRW",
+                  "JPY": "info:KRWJPY", "EUR": "info:EURKRW"}
+MIN_FX_RETURNS = 252
+MAX_FX_GAP_DAYS = 7
+
+
+def build_fx_volatility(series: dict) -> dict:
+    """전체 이력의 일간 로그수익률 표본 σ. 원본 수준·수익률은 게시하지 않는다.
+
+    관측 거래일 사이 변화로 계산하되 7일을 넘는 공백은 제외한다.
+    공휴일 달력은 추정하지 않으며 최소 252개 수익률이 있어야 활성화한다.
+    같은 날짜의 중복은 마지막 유효 양수 관측 하나만 사용하며 주말은 제외한다.
+    기존 단일일 스파이크 규칙을 공유한다(EUR ×100 후 익일 복귀 등 원천 오류).
+    100엔당 원인 JPY의 호가 배율은 로그수익률에 영향을 주지 않는다.
+    """
+    out = {}
+    for currency, key in FX_VOL_SOURCES.items():
+        meta = {"currency": currency, "source": key, "frequency": "daily",
+                "return_type": "log", "annualization": 252, "ddof": 1,
+                "scope": "full_history", "gap_policy": "max_calendar_gap",
+                "max_gap_days": MAX_FX_GAP_DAYS, "min_returns": MIN_FX_RETURNS,
+                "spike_policy": "existing_two_sided_10pct_reversal"}
+        raw = series.get(key)
+        if raw is None:
+            out[currency] = {**meta, "active": False, "vol_pct": None,
+                             "start": None, "end": None, "n_returns": 0,
+                             "reason": f"환율 시리즈 없음: {key}"}
+            continue
+        dates = pd.to_datetime(raw.index, errors="coerce")
+        values = pd.to_numeric(raw, errors="coerce").to_numpy(dtype=float)
+        levels = pd.Series(values, index=dates).sort_index(kind="stable")
+        levels = levels[levels.index.notna() & np.isfinite(levels) & (levels > 0)]
+        levels.index = levels.index.normalize()
+        levels = levels[levels.index.dayofweek < 5]
+        levels = levels[~levels.index.duplicated(keep="last")]
+        n_before_spikes = len(levels)
+        levels = despike(levels)
+        previous = levels.index.to_series().shift(1)
+        gaps = levels.index.to_series().diff().dt.days
+        returns = np.log(levels).diff()[gaps.between(1, MAX_FX_GAP_DAYS)].dropna()
+        span = {"start": (previous.loc[returns.index[0]].strftime("%Y-%m-%d")
+                          if len(returns) else None),
+                "end": returns.index[-1].strftime("%Y-%m-%d") if len(returns) else None,
+                "n_returns": int(len(returns)),
+                "n_levels": int(len(levels)),
+                "n_excluded_spikes": n_before_spikes - len(levels),
+                "excluded_long_gaps": max(0, len(levels) - 1 - len(returns))}
+        if len(returns) < MIN_FX_RETURNS:
+            out[currency] = {**meta, **span, "active": False, "vol_pct": None,
+                             "reason": f"일간 수익률 최소 {MIN_FX_RETURNS}개 필요"}
+            continue
+        vol = float(returns.std(ddof=1) * math.sqrt(252) * 100)
+        out[currency] = {**meta, **span, "active": True, "vol_pct": round(vol, 6)}
+    return out
 
 
 # 10년 국채와 해당 통화의 3개월 연율 스왑레이트. 금리 키는 process.CURVES와
@@ -195,7 +249,7 @@ def build(series_store: dict, warn) -> dict:
             cost_src[c] = "데이터 필요"
         # 현재 커브는 시뮬레이터·자산배분과 공유한다. 통화별 기준일은 HP 원천의
         # 마지막 유효 관측일이며 USD 일별 이력이나 전체 asof를 빌려 쓰지 않는다.
-        if c in ("JPY", "AUD", "USD"):
+        if c in FX_VOL_SOURCES:
             cost_dashboard[c] = {
                 "curve": cost_curve[c],
                 "dates": {m: hp["dates"][m].strftime("%Y-%m-%d") if hp else None
@@ -372,6 +426,7 @@ def build(series_store: dict, warn) -> dict:
                       "asof": None if hp_asof is None else hp_asof.strftime("%Y-%m-%d")},
         "matrix": matrix,
         "cost_dashboard": cost_dashboard,
+        "fx_volatility": build_fx_volatility(S),
         "curves": curves,
         "backtest": backtest,
         "cost_hist_curve": cost_hist_curve,

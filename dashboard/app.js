@@ -3825,7 +3825,7 @@ function renderHedge() {
   dashboard.append(el("div", { class: "card-head" },
     el("span", { class: "card-title" }, "환헤지비용"),
     el("span", { class: "card-sub" }, `연 % · ${COST_SIGN_KEY}`)));
-  [["USD", "USDKRW"], ["AUD", "AUDKRW"], ["JPY", "JPY/KRW"]].forEach(([currency, pairLabel]) => {
+  [["USD", "USDKRW"], ["AUD", "AUDKRW"], ["JPY", "JPY/KRW"], ["EUR", "EURKRW"]].forEach(([currency, pairLabel]) => {
     const snapshot = hedgeCostSnapshot(H2, currency);
     const source = snapshot.src?.includes("HP") && snapshot.label
       ? `HP · ${snapshot.label}` : snapshot.src || "데이터 없음";
@@ -3842,6 +3842,16 @@ function renderHedge() {
         date ? el("div", { class: "hedge-cost-date" }, date) : null,
         i === 3 ? el("div", { class: "card-sub" }, snapshot.meanNote) : null));
     });
+    const fx = H2.fx_volatility?.[currency];
+    const fxValid = fx?.active && Number.isFinite(fx.vol_pct) && fx.vol_pct >= 0;
+    const fxDetails = fxValid
+      ? `${fx.start} ~ ${fx.end} · ${fx.n_returns}개 일별 로그수익률 · 표본 표준편차 × √${fx.annualization || 252}. 100% 헤지의 환 노출 기준이며 자산 전체의 변동성 감소분과 다릅니다.`
+      : fx?.reason || "환율 표본이 없습니다.";
+    tiles.append(el("div", { class: "card hedge-fx-volatility", "data-currency": currency,
+      title: fxDetails, tabindex: "0", "aria-label": `${pairLabel} 환 변동성. ${fxDetails}` },
+      el("div", { class: "card-title" }, "환 변동성"),
+      el("div", { class: "hedge-cost-value" }, fxValid ? `${fmtNum(fx.vol_pct, 2)}%` : "—"),
+      el("div", { class: "card-sub" }, fxValid ? "장기 · 연환산 σ" : "표본 부족")));
     row.append(tiles);
     dashboard.append(row);
   });
@@ -6628,7 +6638,7 @@ function portDefaults(P) {
   const d = P.defaults || {};
   const grp = { ...(d.group_default || { 주식: 50, 채권: 30, 대체: 20 }) };
   const liq = d.liq_default != null ? +d.liq_default : 10;
-  return { grp, liq, mix: portMixFromGroups(P, grp, liq), mu: {}, sig: {}, corr: {}, win: null, robust_k: 1 };
+  return { grp, liq, mix: portMixFromGroups(P, grp, liq), mu: {}, sig: {}, corr: {}, hedge: {}, win: null, robust_k: 1 };
 }
 
 function portState(P) {
@@ -6673,6 +6683,11 @@ function portState(P) {
   if (!st.mu || typeof st.mu !== "object") st.mu = {};
   if (!st.sig || typeof st.sig !== "object" || Array.isArray(st.sig)) st.sig = {};
   if (!st.corr || typeof st.corr !== "object" || Array.isArray(st.corr)) st.corr = {};
+  if (!st.hedge || typeof st.hedge !== "object" || Array.isArray(st.hedge)) st.hedge = {};
+  st.hedge = Object.fromEntries(P.assets.filter((a) => (P.usd_assets || []).includes(a)).map((a) => {
+    const value = st.hedge[a] || {}, ratio = Number(value.ratio);
+    return [a, { enabled: value.enabled === true, ratio: Number.isFinite(ratio) && ratio >= 0 && ratio <= 100 ? ratio : 100 }];
+  }));
   // The simplified chart always uses the default scenario, including older saved states.
   st.robust_k = d.robust_k;
   return st;
@@ -6681,7 +6696,7 @@ function portState(P) {
 function portSaveState(st) {
   try {
     localStorage.setItem(PORT_LS_KEY, JSON.stringify({
-      grp: st.grp, liq: st.liq, mix: st.mix, mu: st.mu, sig: st.sig, corr: st.corr, win: st.win, saved: true }));
+      grp: st.grp, liq: st.liq, mix: st.mix, mu: st.mu, sig: st.sig, corr: st.corr, hedge: st.hedge, win: st.win, saved: true }));
   } catch {}
   refreshAllocWorkspaceInfo();
 }
@@ -6988,11 +7003,59 @@ function portRiskInputs(P, W, st) {
   return { C, sig, corr, baseSig, baseCorr, error, valid: !error, manual };
 }
 
+// Fixed-notional monthly FX overlay: R_hedged = R_KRW - h * R_FX.
+// Inputs remain unhedged. Carry is a deterministic annual mean, with expected FX drift zero.
+// If sigma is keyed in, retain historical asset/FX correlation; edited asset correlations
+// must still form a PSD JOINT matrix with FX. Never subtract marginal volatilities.
+function portHedgeInputs(P, W, st, risk) {
+  const n = P.assets.length, eligible = new Set(P.usd_assets || []);
+  const h = P.assets.map((a) => eligible.has(a) && st.hedge?.[a]?.enabled ? st.hedge[a].ratio / 100 : 0);
+  const fail = (error) => ({ ...risk, valid: false, error, hedge: { h, active: true } });
+  if (h.some((v) => !Number.isFinite(v) || v < 0 || v > 1)) return fail("헤지비중은 0부터 100% 사이로 입력하십시오.");
+  if (!h.some((v) => v > 0)) return { ...risk, hedge: { h, active: false, carry: 0 } };
+  if (!risk.valid) return { ...risk, hedge: { h, active: true } };
+  const fx = W.fx, cost = P.hedge_cost?.USD;
+  if (!fx?.active || !Number.isFinite(fx.var) || fx.var < 0 || fx.cov_asset?.length !== n
+      || fx.cov_asset.some((v) => !Number.isFinite(v)))
+    return fail("환헤지 계산 불가 — 선택 표본의 자산·USD 환율 공분산이 없습니다.");
+  if (!cost?.active || !Number.isFinite(cost.mean_pct))
+    return fail("환헤지 계산 불가 — USD 3M·6M·12M 평균 헤지비용이 없습니다.");
+  const variance = fx.var * 1e4;
+  const cross = fx.cov_asset.map((v, i) => {
+    if (!risk.manual) return v * 1e4;
+    // A zero historical asset volatility implies a zero covariance with FX.
+    return risk.baseSig[i] > 0 ? v * 1e4 * risk.sig[i] / risk.baseSig[i] : 0;
+  });
+  const joint = risk.C.map((row, i) => [...row, cross[i]]);
+  joint.push([...cross, variance]);
+  const isPSD = (matrix) => {
+    const size = matrix.length, scale = Math.max(1, ...matrix.map((r, i) => r[i]));
+    const L = Array.from({ length: size }, () => Array(size).fill(0));
+    // Tolerance only for the check, never added to published risk moments.
+    for (let i = 0; i < size; i++) for (let j = 0; j <= i; j++) {
+      let value = matrix[i][j] / scale + (i === j ? 1e-10 : 0);
+      for (let k = 0; k < j; k++) value -= L[i][k] * L[j][k];
+      if (!Number.isFinite(value) || (i === j && !(value > 0))) return false;
+      L[i][j] = i === j ? Math.sqrt(value) : value / L[j][j];
+    }
+    return true;
+  };
+  if (!isPSD(joint)) return fail("환헤지 계산 불가 — 입력 상관·변동성과 환율 공분산이 양립하지 않습니다. 상관 또는 σ 기본값을 확인하십시오.");
+  const C = risk.C.map((row, i) => row.map((v, j) => v - h[i] * cross[j] - h[j] * cross[i] + h[i] * h[j] * variance));
+  const scale = Math.max(1, ...risk.C.map((r, i) => r[i]), variance);
+  if (C.some((row, i) => row[i] < -1e-10 * scale) || !isPSD(C))
+    return fail("환헤지 계산 불가 — 조정 공분산을 확인하십시오.");
+  const sig = C.map((row, i) => Math.sqrt(Math.max(0, row[i])));
+  const corr = C.map((row, i) => row.map((v, j) => i === j ? 1 : sig[i] * sig[j] > 0 ? v / (sig[i] * sig[j]) : 0));
+  return { ...risk, C, sig, corr, hedge: { h, active: true, carry: cost.mean_pct,
+    inputSig: risk.sig, inputC: risk.C, variance, cross } };
+}
+
 // Shared input resolution: risk linkage must use precisely the visible portfolio assumptions.
 function portModelInputs(P, st) {
   const wins = P.windows || [];
   const W = wins.find((w) => w.key === st.win) || wins[wins.length - 1];
-  const risk = portRiskInputs(P, W, st), C = risk.C;
+  const risk = portHedgeInputs(P, W, st, portRiskInputs(P, W, st)), C = risk.C;
   const fileMu = (P.cma_input && P.cma_input.mu_pct) || {};
   const mu = [], src = [];
   P.assets.forEach((a, i) => {
@@ -7001,7 +7064,9 @@ function portModelInputs(P, st) {
     else if (fileMu[a] != null && isFinite(+fileMu[a])) { mu.push(+fileMu[a]); src.push("CMA 파일"); }
     else { mu.push(W.mean_pct[i]); src.push("과거 평균(참고)"); }
   });
-  return { W, risk, C, mu, src };
+  const baseMu = mu.slice();
+  if (risk.valid && risk.hedge.active) mu.forEach((v, i) => { mu[i] = v + risk.hedge.h[i] * risk.hedge.carry; });
+  return { W, risk, C, mu, baseMu, src };
 }
 
 function portRiskAllocationEngine(A) {
@@ -7029,7 +7094,7 @@ function renderLinkedAllocRisk() {
 }
 
 function portEngine(P, st) {
-  const { W, risk, C, mu, src } = portModelInputs(P, st);
+  const { W, risk, C, mu, baseMu, src } = portModelInputs(P, st);
   const n = P.assets.length;
   const dot = (a, b) => a.reduce((s, x, i) => s + x * b[i], 0);
   const mv = (M, v) => M.map((r) => dot(r, v));
@@ -7049,7 +7114,7 @@ function portEngine(P, st) {
     return { mu: m, sig: s, sharpe: s > 1e-9 ? (m - rf) / s : null,
              act: m - bench.mu, te, ir: te > 1e-9 ? (m - bench.mu) / te : null };
   };
-  return { W, mu, src, rf, risk, front, robust, optimistic, robustOk, kappa, meanScale, minVar: front[0] || null,
+  return { W, mu, baseMu, src, rf, risk, front, robust, optimistic, robustOk, kappa, meanScale, minVar: front[0] || null,
            maxSharpe, cloud: robustOk ? portPortfolioCloud(P, C, mu, rf) : null,
            bench, wb, sig, muOf, metrics };
 }
@@ -7104,7 +7169,8 @@ function portCorrelationControl(P, W, st, onApply, draft) {
       input.setAttribute("aria-invalid", String(!valid)); bad ||= !valid;
       if (!blank) corr[key] = v;
     });
-    const candidate = portRiskInputs(P, W, { ...st, corr });
+    const candidateState = { ...st, corr };
+    const candidate = portHedgeInputs(P, W, candidateState, portRiskInputs(P, W, candidateState));
     if (bad || !candidate.valid) {
       status.textContent = `${bad ? "상관계수는 −1부터 1 사이로 입력하십시오." : candidate.error} 마지막 적용값을 유지합니다.`;
       status.className = "port-note d-up"; return;
@@ -7193,13 +7259,13 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
 
   /* ② 자산군 입력 — 표 안에 별도 스크롤을 만들지 않고 전체 행을 펼친다. */
   const E0 = portEngine(P, st);
-  const mixInputs = {}, srcCells = {}, sigInputs = {};
+  const mixInputs = {}, srcCells = {}, sigInputs = {}, hedgeCells = {};
   const riskStatus = el("div", { id: "port-risk-status", class: "port-warn d-up", role: "status" });
   const table = el("table", { class: "port-table" });
   // Suppress default-source notes while retaining explicit key-in/CMA indicators.
   const sourceLabel = (source) => source === "과거 평균(참고)" || source === "실측" ? "" : source;
   const assetHeaders = ["자산군", "현재비중", "기대수익 %", "변동성 %", "실현수익 %",
-    "실현변동성 %", "10년 참고 μ/σ"];
+    "실현변동성 %", "10년 참고 μ/σ", "환헤지 / 비중 %"];
   table.append(el("thead", {}, el("tr", {}, ...assetHeaders.map((h) => el("th", { scope: "col" }, h)))));
   const tbody = el("tbody");
   P.assets.forEach((a, i) => {
@@ -7235,7 +7301,8 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       const blank = sigInp.value.trim() === "" && !sigInp.validity?.badInput;
       const v = Number(sigInp.value), next = { ...st.sig };
       if (blank) delete next[a]; else next[a] = v;
-      const candidate = portRiskInputs(P, W, { ...st, sig: next });
+      const candidateState = { ...st, sig: next };
+      const candidate = portHedgeInputs(P, W, candidateState, portRiskInputs(P, W, candidateState));
       if (sigInp.validity?.badInput || !candidate.valid) {
         sigInp.setAttribute("aria-invalid", "true");
         riskStatus.textContent = `${candidate.error || "변동성을 숫자로 입력하십시오."} 마지막 적용값을 유지합니다.`; return;
@@ -7253,6 +7320,32 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
           + (cdRef.overlap ? ` · 실ETF 겹침 ${cdRef.overlap.n_months}개월 corr ${fmtNum(cdRef.overlap.corr, 2)}` : "") },
           `${fmtNum(cdRef.mean_pct, 1)} / ${fmtNum(cdRef.vol_pct, 1)}`)
       : "–";
+    const hedgeCell = el("td", { class: "num", "data-label": assetHeaders[7] });
+    if ((P.usd_assets || []).includes(a)) {
+      const setting = st.hedge[a] || { enabled: false, ratio: 100 };
+      st.hedge[a] = setting;
+      const check = el("input", { type: "checkbox", "aria-label": `${a} 환헤지` });
+      check.checked = setting.enabled;
+      const ratio = el("input", { type: "number", min: "0", max: "100", step: "1",
+        value: String(setting.ratio), "aria-label": `${a} 헤지비중 %`, "aria-describedby": "port-risk-status" });
+      ratio.disabled = !setting.enabled;
+      const applied = el("span", { class: "port-hedge-applied", "aria-live": "polite" });
+      hedgeCells[a] = { applied, i };
+      check.addEventListener("change", () => {
+        setting.enabled = check.checked; ratio.disabled = !setting.enabled;
+        ratio.value = String(setting.ratio); ratio.removeAttribute("aria-invalid");
+        riskStatus.textContent = ""; portSaveState(st); recalc();
+      });
+      ratio.addEventListener("input", () => {
+        const value = Number(ratio.value), valid = ratio.value.trim() !== "" && !ratio.validity?.badInput
+          && Number.isFinite(value) && value >= 0 && value <= 100;
+        ratio.setAttribute("aria-invalid", String(!valid));
+        if (!valid) { riskStatus.textContent = "헤지비중은 0부터 100% 사이로 입력하십시오. 마지막 적용값을 유지합니다."; return; }
+        setting.ratio = value; riskStatus.textContent = ""; portSaveState(st); recalc();
+      });
+      hedgeCell.append(el("label", { class: "port-hedge-control",
+        title: "USD 노출 · 월별 환율 공분산 반영 · 기대 환율변화 0 · 입력 μ/σ·상관은 미헤지 기준" }, check, ratio), applied);
+    } else hedgeCell.textContent = "–";
     tbody.append(el("tr", {},
       el("td", {}, a),
       el("td", { class: "num", "data-label": assetHeaders[1] }, wInp),
@@ -7260,7 +7353,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       el("td", { class: "num", "data-label": assetHeaders[3] }, sigInp, sigNote),
       el("td", { class: "num", "data-label": assetHeaders[4] }, fmtNum(W.mean_pct[i], 2)),
       el("td", { class: "num", "data-label": assetHeaders[5] }, fmtNum(W.vol_pct[i], 2)),
-      el("td", { class: "num", "data-label": assetHeaders[6] }, refCell)));
+      el("td", { class: "num", "data-label": assetHeaders[6] }, refCell), hedgeCell));
   });
   table.append(tbody);
   const sumBadge = el("span", { class: "port-badge" });
@@ -7313,10 +7406,16 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     sumBadge.className = "port-badge" + (sumOk ? "" : " d-up");
     expTa.value = JSON.stringify({
       asof: new Date().toISOString().slice(0, 10),
-      mu_pct: Object.fromEntries(P.assets.map((a, i) => [a, +E.mu[i].toFixed(4)])),
-      note: "워크벤치 화면에서 내보낸 CMA 기대수익 (연 %)",
+      mu_pct: Object.fromEntries(P.assets.map((a, i) => [a, +E.baseMu[i].toFixed(4)])),
+      note: "워크벤치 화면에서 내보낸 미헤지 CMA 기대수익 (연 %)",
     }, null, 2);
 
+    Object.entries(hedgeCells).forEach(([a, { applied, i }]) => {
+      const enabled = st.hedge[a]?.enabled;
+      applied.textContent = !enabled ? "" : E.risk.valid
+        ? `μ ${fmtNum(E.mu[i], 2)} · σ ${fmtNum(E.risk.sig[i], 2)}` : "계산 불가";
+      applied.title = E.risk.manual ? "헤지 후 연 % · 입력 변동성에 과거 자산·환율 상관을 유지한 가정" : "헤지 후 연 %";
+    });
     const wCur = sumOk ? P.assets.map((a) => (+st.mix[a] || 0) / 100) : null;
     portCharts.forEach(destroyChart);
     portCharts = [];

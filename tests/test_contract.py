@@ -286,7 +286,7 @@ def test_hedge_dashboard_publishes_currency_specific_dates(built, parsed):
     out, _ = built
     H = json.loads((out / "hedge.json").read_text(encoding="utf-8"))
     _, p = parsed
-    assert set(H["cost_dashboard"]) == {"JPY", "AUD", "USD"}
+    assert set(H["cost_dashboard"]) == {"JPY", "AUD", "USD", "EUR"}
     for c, d in H["cost_dashboard"].items():
         matrix = next(r for r in H["matrix"] if r["c"] == c)
         assert d["curve"] == matrix["cost_curve"]
