@@ -7,13 +7,18 @@
 | 화면 | 문서 | 주 계산 원본 |
 |---|---|---|
 | 리스크 | `dashboard/pseudo/risk.js` | `pipeline/risk.py` |
-| 자산배분 | `dashboard/pseudo/alloc.js` | `pipeline/port.py`, `dashboard/app.js` |
+| 자산배분·CMA | `dashboard/pseudo/alloc.js` | `pipeline/port.py`, `dashboard/cma.js`, `dashboard/app.js` |
 | 환헤지 | `dashboard/pseudo/hedge.js` | `pipeline/hedge.py`, `dashboard/app.js` |
 
 각 문서는 `id`, `title`, `updated`, `summary`, `inputs`, `outputs`, `sources`, `sections`를 갖는다.
 각 절은 `id`, `title`, `formulas`(expression·legend), `code`, `note`로 구성한다.
 수식과 기호·단위 설명은 코드 블록 밖에 두며, 유사코드는 입력→검사→계산→출력 순서로 짧게 쓴다.
 `sources`에는 실제 경로와 함수명을 적는다. 원자료·수치 시계열·기관 포트폴리오를 기록하지 않는다.
+
+CMA는 자산배분 문서의 별도 절에서 관리하며 Pseudo 하위 탭은 세 개를 유지한다.
+적용된 자산별 CMA → 기존 수기 입력 → 게시 CMA/표본의 우선순위와 미헤지 CMA 이후 환헤지
+반영 순서를 기록한다. 시나리오 확률가중 평균·총분산, 초안/적용값 분리, 기존 상관 유지,
+사용자 3시나리오와 Conservative/Optimistic 경계선의 구분이 달라지면 함께 갱신한다.
 
 ## 모듈 변경 시
 
