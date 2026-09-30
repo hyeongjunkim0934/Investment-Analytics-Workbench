@@ -41,6 +41,17 @@ def test_only_valid_explicitly_applied_inputs_replace_manual_values(cma):
     assert all(cma["persistence"].values()), cma["persistence"]
 
 
+def test_collapsed_asset_cards_show_current_and_historical_moments(cma):
+    assert all(cma["collapsedCards"].values()), cma["collapsedCards"]
+    assert all(cma["summary"].values()), cma["summary"]
+
+
+def test_residual_probability_rejects_invalid_drafts_and_preserves_applied_state(cma):
+    assert all(cma["residualProbability"].values()), cma["residualProbability"]
+    assert all(cma["residualUI"].values()), cma["residualUI"]
+    assert all(cma["legacyResidual"].values()), cma["legacyResidual"]
+
+
 def test_covariance_hedge_and_linked_risk_share_cma_assumptions(cma):
     assert all(cma["model"].values()), cma["model"]
     assert cma["modelValues"]["covariance"] == pytest.approx(0.3 * 3.5 * math.sqrt(82.5))

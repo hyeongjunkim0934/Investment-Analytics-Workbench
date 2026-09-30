@@ -56,6 +56,19 @@ function cmaCopyScenarios(rows) {
     p: rows[i].p, mu: rows[i].mu, sig: rows[i].sig }));
 }
 
+function cmaSyncDraftProbability(rows) {
+  if (!Array.isArray(rows) || rows.length !== 3 || rows.some((s) => !s || typeof s !== "object")) return;
+  const optimistic = cmaNumber(rows[0].p), neutral = cmaNumber(rows[1].p);
+  if (![optimistic, neutral].every((p) => Number.isFinite(p) && p >= 0 && p <= 100)) {
+    rows[2].p = "";
+    return;
+  }
+  const remaining = 100 - optimistic - neutral;
+  // Remove only floating-point roundoff. A genuinely negative residual stays
+  // invalid; do not clip or renormalize the user's optimistic/neutral inputs.
+  rows[2].p = Math.abs(remaining) <= CMA_PROBABILITY_TOLERANCE ? 0 : Number(remaining.toPrecision(15));
+}
+
 function cmaMigrateAssetNames(store) {
   const assets = typeof DATA === "undefined" ? [] : DATA.alloc?.port?.assets || [];
   // Asset labels are storage identities. Preserve the applied values, unfinished
@@ -131,6 +144,7 @@ function cmaEnsureAsset(asset, baseline = { mu: "", sig: "", source: "미설정"
     entry.applied = null;
     cmaStorageError = "저장된 CMA 적용값이 유효하지 않아 적용을 해제했습니다. 초안을 확인한 뒤 다시 적용하십시오.";
   }
+  cmaSyncDraftProbability(entry.draft);
   return entry;
 }
 
@@ -150,6 +164,7 @@ function cmaNotifyAllocation() {
 
 function cmaApplyAsset(asset) {
   const entry = cmaStore().assets[asset];
+  cmaSyncDraftProbability(entry?.draft);
   const moments = cmaMoments(entry?.draft);
   if (!moments.valid) return moments;
   entry.applied = cmaCopyScenarios(entry.draft).map((s) => ({ ...s, p: Number(s.p), mu: Number(s.mu), sig: Number(s.sig) }));
@@ -182,9 +197,7 @@ function renderCma() {
   cmaStore();
   const storage = el("p", { id: "cma-storage-status", class: "cma-warning", role: "status" }, cmaStorageError);
   storage.hidden = !cmaStorageError;
-  host.append(el("div", { class: "cma-heading" },
-    el("span", { class: "cma-subtitle" }, "Capital Market Assumptions"),
-    el("a", { href: "#alloc", class: "btn-ghost" }, "자산배분")), storage);
+  host.append(storage);
   const P = typeof DATA === "undefined" ? null : DATA.alloc?.port;
   if (!P?.active || !P.assets?.length || !P.windows?.length) {
     host.append(el("p", { class: "cma-warning", role: "status" },
@@ -192,17 +205,30 @@ function renderCma() {
     return;
   }
   const st = typeof portPanelDraft !== "undefined" && portPanelDraft?.source === P ? portPanelDraft.st : portState(P);
-  host.append(el("p", { class: "cma-unit" }, "1년 가정 · 연간 기대수익률·변동성 % · 자산별 확률 합계 100% · 적용 후 자산배분 반영"));
   const grid = el("div", { class: "cma-grid" });
   P.assets.forEach((asset, i) => {
     const entry = cmaEnsureAsset(asset, cmaUnderlyingBaseline(P, st, asset));
     const statusId = `cma-asset-status-${i}`;
     const toggle = el("input", { type: "checkbox", "aria-label": `${asset} CMA 적용` });
     const card = el("article", { class: "card cma-card", "aria-label": `${asset} CMA` });
+    const disclosure = el("details", { class: "cma-details" });
+    const summaryState = el("span", { class: "cma-summary-state" });
+    const summary = el("summary", { class: "cma-summary" },
+      el("span", { class: "cma-card-head" }, el("span", { class: "cma-asset-name" }, asset),
+        el("span", { class: "cma-summary-tail" }, summaryState, el("span", { class: "cma-chevron", "aria-hidden": "true" }, "⌄"))));
+    const metrics = el("span", { class: "cma-metrics" }), metricValues = {};
+    [["mu", "시나리오 기대수익률"], ["sig", "시나리오 변동성"],
+      ["ref-mu", "10년 수익률"], ["ref-sig", "10년 변동성"]].forEach(([key, label]) => {
+      const value = el("strong", { class: "cma-metric-value", "data-metric": key });
+      metricValues[key] = value;
+      metrics.append(el("span", { class: "cma-metric" }, el("span", { class: "cma-metric-label" }, label), value));
+    });
+    summary.append(metrics);
+    const editor = el("div", { class: "cma-editor" });
     const stateLabel = el("span", { class: "cma-state" });
-    card.append(el("div", { class: "cma-card-head" }, el("h3", {}, asset),
+    editor.append(el("div", { class: "cma-editor-head" },
       el("label", { class: "cma-enable" }, toggle, stateLabel)));
-    if (P.asset_notes?.[asset]) card.append(el("p", { class: "cma-unit cma-source-note" }, P.asset_notes[asset]));
+    if (P.asset_notes?.[asset]) editor.append(el("p", { class: "cma-unit cma-source-note" }, P.asset_notes[asset]));
     const table = el("table", { class: "cma-table" });
     table.append(el("thead", {}, el("tr", {},
       ...["시나리오", "확률 %", "기대수익 %", "변동성 %"].map((s) => el("th", { scope: "col" }, s)))));
@@ -217,6 +243,7 @@ function renderCma() {
       toggle.disabled = !validApplied;
       stateLabel.textContent = toggle.checked ? "CMA 적용" : "CMA 해제";
       inputs.forEach(({ input, row, field }) => {
+        if (row === 2 && field === "p") input.value = String(entry.draft[row][field] ?? "");
         const v = cmaNumber(entry.draft[row][field]);
         const valid = Number.isFinite(v) && (field !== "p" || v >= 0 && v <= 100) && (field !== "sig" || v >= 0);
         input.setAttribute("aria-invalid", String(!valid));
@@ -226,8 +253,17 @@ function renderCma() {
         el("span", {}, "기대수익 ", el("strong", {}, `${fmtNum(result.mu, 2)}%`)),
         el("span", {}, "변동성 ", el("strong", {}, `${fmtNum(result.sig, 2)}%`)));
       const changed = cmaDraftChanged(entry);
+      const ref = P.ref10y?.per_asset?.[asset];
+      const displayPercent = (value) => Number.isFinite(cmaNumber(value)) ? `${fmtNum(cmaNumber(value), 2)}%` : "—";
+      metricValues.mu.textContent = displayPercent(result.mu);
+      metricValues.sig.textContent = displayPercent(result.sig);
+      metricValues["ref-mu"].textContent = displayPercent(ref?.mean_pct);
+      metricValues["ref-sig"].textContent = displayPercent(ref?.vol_pct);
+      summaryState.textContent = !result.valid ? "입력 확인" : changed ? "미적용 초안" : entry.enabled ? "적용 중" : "CMA 해제";
+      summaryState.classList.toggle("cma-warning", !result.valid);
       status.classList.toggle("cma-warning", !result.valid);
-      status.textContent = !result.valid ? `${result.error} 기존 적용값은 유지됩니다.`
+      const overProbability = cmaNumber(entry.draft[2].p) < 0;
+      status.textContent = !result.valid ? `${overProbability ? "낙관·중립 확률 합계는 100% 이하여야 합니다." : result.error} 기존 적용값은 유지됩니다.`
         : changed ? "미적용 초안" : entry.enabled ? "자산배분 반영 중" : "CMA 해제 · 자산배분 입력 사용";
       const current = cmaAssetAssumption(asset);
       applied.textContent = current ? `적용값 ${fmtNum(current.mu, 2)}% / ${fmtNum(current.sig, 2)}% (μ / σ)`
@@ -242,9 +278,12 @@ function renderCma() {
           "aria-label": `${asset} ${definition.label} ${label} %`, "aria-describedby": statusId };
         if (field !== "mu") attrs.min = "0";
         if (field === "p") attrs.max = "100";
+        if (field === "p" && row === 2) { attrs.readonly = ""; attrs.title = "100% − 낙관 확률 − 중립 확률"; }
         const input = el("input", attrs);
         input.addEventListener("input", () => {
+          if (field === "p" && row === 2) { refresh(); return; }
           entry.draft[row][field] = input.validity?.badInput ? "" : input.value;
+          if (field === "p") cmaSyncDraftProbability(entry.draft);
           cmaSave(); refresh();
         });
         inputs.push({ input, row, field });
@@ -255,13 +294,16 @@ function renderCma() {
     table.append(body);
     apply.addEventListener("click", () => { cmaApplyAsset(asset); refresh(); });
     toggle.addEventListener("change", () => { cmaSetEnabled(asset, toggle.checked); refresh(); });
-    card.append(table, totals, el("div", { class: "cma-card-actions" }, applied, apply), status);
+    editor.append(table, totals, el("div", { class: "cma-card-actions" }, applied, apply), status);
+    disclosure.append(summary, editor); card.append(disclosure);
     refresh(); grid.append(card);
   });
   host.append(grid);
   const details = [
     el("p", {}, "입력·산출: 사용자 가정, 1년 수익률 기준(연 %) · 추가 환헤지 전. 자산별 적용을 누르면 기대수익과 변동성이 자산배분에 함께 반영됩니다."),
     el("p", {}, "초기 확률 25/50/25%는 편집용 가정이며 세 시나리오의 μ·σ는 모두 현재 자산배분 기준값으로 시작합니다. 전망 차이는 직접 입력하십시오."),
+    el("p", {}, "비관 확률은 100%에서 낙관·중립 확률을 뺀 값입니다. 두 확률의 합계가 100%를 넘으면 적용할 수 없습니다. 카드의 시나리오 수치는 현재 초안이며 적용 상태를 함께 표시합니다."),
+    el("p", {}, "10년 수익률은 과거 월 수익률의 산술평균을 연환산한 참고값이며, 10년 변동성은 같은 표본의 연환산 표준편차입니다. 120개월 자료가 없는 자산은 —로 표시합니다."),
     el("p", {}, "기대수익은 확률가중 평균입니다. 변동성은 시나리오 내부 분산과 시나리오 평균 차이의 분산을 합산합니다."),
     el("p", {}, "기존 자산 간 상관계수를 유지합니다. 자산별 시나리오는 공동 시나리오를 정의하지 않으므로 시나리오별 포트폴리오 손익·공분산을 직접 추정한 결과가 아닙니다."),
     el("p", {}, "초안과 적용값은 이 브라우저에 저장됩니다. CMA 해제 시 기존 자산배분 μ·σ 입력을 사용합니다."),
