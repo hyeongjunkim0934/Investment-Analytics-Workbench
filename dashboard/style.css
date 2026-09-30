@@ -1397,3 +1397,32 @@ a.kpi-link .kpi-label > span:first-child::after {
   .port-axis-group > span { width: 100%; }
   .port-palette-panel { max-width: calc(100vw - 48px); }
 }
+
+/* Hedge distributions and forward return bands; all keys precede the plot. */
+.hedge-merit .uplot { display: flex; flex-direction: column; }
+.hedge-merit .u-legend { order: -1; margin: 0 0 10px !important; }
+.hedge-chart-legend { --legend-color: var(--ink-2); display: flex; flex-wrap: wrap; gap: 7px 20px; padding: 5px 0 12px;
+  color: var(--ink-2); font-size: 11.5px; }
+.hedge-chart-legend > span, .hedge-chart-legend > button { display: inline-flex; align-items: center; gap: 7px; }
+.hedge-chart-legend i { display: inline-block; width: 17px; height: 2px; background: var(--legend-color); }
+.hedge-chart-legend i.is-band { height: 9px; opacity: .5; }
+.hedge-outlook-summary { display: flex; flex-wrap: wrap; gap: 7px 18px; margin: 8px 0;
+  font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.hedge-outlook-summary b { color: var(--ink-1); font-weight: 600; }
+.hedge-outlook-method { color: var(--ink-3); font-size: 11px; margin: 7px 0 14px; }
+.hedge-outlook-method summary { cursor: pointer; }
+.hedge-outlook-method p { max-width: 1000px; line-height: 1.7; margin: 6px 0; }
+.hedge-outlook-toggle { display: inline-flex; align-items: center; gap: 5px; }
+.hedge-outlook-toggle input { width: auto !important; min-height: 0 !important; accent-color: var(--accent); }
+.hedge-distribution { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 14px; }
+.hedge-distribution-summary { color: var(--ink-3); font-size: 11px; margin: -5px 0 8px; }
+.hedge-plot-host { width: 100%; }
+@media (max-width: 600px) {
+  .hedge-chart-legend { gap: 6px 12px; font-size: 10.5px; }
+  .hedge-distribution .card-head { flex-wrap: wrap; }
+  .hedge-outlook-summary { font-size: 11px; }
+}
+
+.hedge-chart-legend > button { border: 0; padding: 2px 0; min-height: 24px; cursor: pointer;
+  background: transparent; color: inherit; font: inherit; }
+.hedge-chart-legend > button[aria-pressed="false"] { opacity: .45; }
