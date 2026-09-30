@@ -1,11 +1,11 @@
-"""Two portfolios preserve independent inputs and share one enforced constraint model."""
+"""Current weights and three optimizer portfolios share the applied model."""
 import json
 from pathlib import Path
 import shutil
 import subprocess
 
 
-def test_two_portfolios_migration_constraints_and_live_ui():
+def test_portfolio_objective_columns_migration_constraints_and_update():
     root = Path(__file__).resolve().parents[1]
     node = shutil.which("node")
     assert node, "Node.js is required to exercise the dashboard UI"

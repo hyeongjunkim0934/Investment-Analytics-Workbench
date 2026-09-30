@@ -4,11 +4,11 @@ globalThis.PSEUDO_DOCS.alloc = {
   id: "alloc",
   title: "자산배분",
   updated: "2026-09-30",
-  summary: "7자산군 CMA·최소/최대 제약 → 경계선·비중1/비중2 비교 → 리스크 연계 비중",
-  inputs: "월말 지수·USDKRW, 연 μ·σ(%), CMA 시나리오 확률(%), 상관계수, h(0~1), 그룹 최소·최대(%), 자산별 최소(%). 공분산은 게시 소수² → 계산 %²(×10,000)",
+  summary: "7자산군 CMA·최소/최대 제약 → 현재·Max Sharpe·Target Return·Min. Vol → 리스크 연계 비중",
+  inputs: "월말 지수·USDKRW, 연 μ·σ(%), CMA 시나리오 확률(%), 상관계수, h(0~1), 그룹 최소·최대(%), 자산별 최소(%), 목표수익률(연 %, 빈칸은 현재 기대수익률). 공분산은 게시 소수² → 계산 %²(×10,000)",
   outputs: "포트폴리오 μ·σ, 경계선, Conservative·Optimistic, 현재·잠재 리스크 연계 비중",
   sources: [
-    { path: "dashboard/port-constraints.js", symbols: ["portConstraintSpec", "portConstrainedModel"] },
+    { path: "dashboard/port-constraints.js", symbols: ["portConstraintSpec", "portConstrainedModel", "portTargetReturn"] },
     { path: "pipeline/port.py", symbols: ["build", "_stats", "_fx_stats", "_hedge_cost"] },
     { path: "dashboard/cma.js", symbols: ["cmaMoments", "cmaAssetAssumption", "renderCma", "cmaAssetLabel"] },
     { path: "dashboard/app.js", symbols: ["portRiskInputs", "portModelInputs", "portRobustModel", "portFrontiers", "portHedgeInputs", "allocRiskObservations", "allocRiskOptimize"] }
@@ -72,6 +72,7 @@ globalThis.PSEUDO_DOCS.alloc = {
         { expression: "m(w) = μᵀw;  σ(w) = √(wᵀCw)", legend: "w: 소수 비중. m·σ는 연 %. μ·C는 선택한 입력 가정." },
         { expression: "w*(θ) = argmax [μᵀw − θ × wᵀCw / 2];  wᵢ ≥ 0,  Σᵢwᵢ = 1", legend: "θ≥0: 경계선 탐색 계수. % 단위 목적함수이며 리스크 연계 λ와 스케일이 다름." },
         { expression: "Lɡ ≤ Σᵢ∈ɡ wᵢ ≤ Uɡ;  wᵢ ≥ lᵢ", legend: "Lɡ·Uɡ: 주식·채권·대체 그룹 최소·최대. lᵢ: 개별자산 최소. 입력 %를 100으로 나눈 소수 비중." },
+        { expression: "Target Return: min wᵀCw,  μᵀw ≥ r목표;  Min. Vol: min wᵀCw", legend: "같은 비중·그룹 제약. 목표가 최소분산 수익 이하이면 최소분산 비중, 달성 불가능하면 결과 없음. Max Sharpe는 (μᵀw−rf)/σ(w)를 최대화하며 rf는 기존 국내장부(구 원화유동성) 기대수익률." },
         { expression: "수익기여ᵢ = 100 × wᵢμᵢ / m(w);  위험기여ᵢ = 100 × wᵢ(Cw)ᵢ / (wᵀCw)", legend: "호버 기여도(%). 분모가 0에 가까우면 표시 보류; 음의 기여도도 가능." }
       ],
       code: [
@@ -79,14 +80,16 @@ globalThis.PSEUDO_DOCS.alloc = {
         "model ← validated_mu_and_covariance(applied_snapshot)",
         "bounds ← validate_group_min_max_and_asset_floors()",
         "enumerate_affine_faces_of_feasible_portfolios(model, bounds)",
-        "for theta in frontier_grid_plus_minimum_variance:",
-        "  candidate ← solve_each_feasible_face(theta)",
-        "  certify_dual_gap_over_feasible_vertices(candidate)",
-        "  keep_best_certified_candidate(candidate)",
+        "candidates ← solve_faces_and_certify_dual_gap_on_frontier_grid()",
         "frontier ← remove_dominated_points(candidates)",
-        "compare_weight1_weight2_and_60_40_benchmark(frontier)"
+        "current ← user_entered_weights_with_sum_100()",
+        "selected_model ← hedge_adjusted_model_if_enabled_else_unhedged_model()",
+        "target ← entered_annual_return_else_selected_current_return()",
+        "target_weights ← minimum_variance_above_target_on_feasible_faces()",
+        "show_readonly_max_sharpe_target_return_min_vol_weights(selected_model)",
+        "compare_current_and_optimized_portfolios_with_60_40_benchmark()"
       ].join("\n"),
-      note: "하단 입력은 업데이트 시 검증·저장하고 경계선·비교·리스크 연계에 함께 반영. 제약조건 적용은 검증 후 업데이트 대기. 축·팔레트는 마지막 업데이트 결과를 다시 표시. 비중1/비중2는 각각 합계 100%를 검사하고 제약 밖도 비교용으로 표시. 비중합 오류·불가능한 제약·유효하지 않은 입력이면 마지막 업데이트 결과 유지.",
+      note: "하단 입력은 업데이트 시 검증·저장하고 경계선·비교·리스크 연계에 함께 반영. 제약조건 적용은 검증 후 업데이트 대기. 축·팔레트는 마지막 업데이트 결과를 다시 표시. 현재 비중만 합계 100%를 검사하고 제약 밖도 비교용으로 표시. 3개 최적비중은 읽기 전용이며 선택한 헤지 조건을 반영하고 계산에는 반올림 전 비중을 사용. 구 비중2 저장값은 보관만 하며 최적화 입력으로 사용하지 않음. 유한한 목표수익률이 달성 불가능하면 Target Return만 결측·사유를 표시하고 다른 결과는 갱신. 비중합 오류·불가능한 제약·유효하지 않은 입력이면 마지막 업데이트 결과 유지.",
       sources: [
         { path: "dashboard/app.js", symbols: ["portRobustModel", "portFrontiers", "portContributions", "portEngine"] }
       ]
