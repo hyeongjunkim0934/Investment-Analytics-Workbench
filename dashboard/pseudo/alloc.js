@@ -49,6 +49,7 @@ globalThis.PSEUDO_DOCS.alloc = {
       ],
       code: [
         "draft ← asset_optimistic_neutral_pessimistic_inputs()",
+        "draft.pessimistic_probability ← 100 - optimistic_probability - neutral_probability",
         "require_finite_probability_mean_sigma(draft)",
         "require_nonnegative_probability_sigma_and_probability_sum_100(draft)",
         "mu, sigma ← mixture_mean_and_total_variance(draft)",
@@ -58,9 +59,9 @@ globalThis.PSEUDO_DOCS.alloc = {
         "apply_existing_hedge_after_unhedged_CMA()",
         "show_applied_scenarios_on_allocation_asset_label_hover()"
       ].join("\n"),
-      note: "초안과 적용값은 분리 저장. 초기 25/50/25%와 동일 μ·σ는 편집 시작값이며 전망이 아님. 자산별 주변분포 가정이며 공통 거시 상태·자산 간 독립성을 뜻하지 않음.",
+      note: "비관 확률은 잔여값으로 자동 산출하며 낙관·중립 합계 100% 초과·빈칸은 적용 불가. 초안과 적용값은 분리 저장. 접힌 카드는 초안 μ·σ와 자산별 120개월 연환산 참고 μ·σ를 표시하며 표본 부족은 공란. 초기 25/50/25%는 편집 시작값. 자산별 주변분포 가정이며 공통 거시 상태·자산 간 독립성을 뜻하지 않음.",
       sources: [
-        { path: "dashboard/cma.js", symbols: ["cmaMoments", "cmaAssetAssumption", "renderCma", "cmaAssetLabel"] },
+        { path: "dashboard/cma.js", symbols: ["cmaSyncDraftProbability", "cmaMoments", "cmaAssetAssumption", "renderCma", "cmaAssetLabel"] },
         { path: "dashboard/app.js", symbols: ["portRiskInputs", "portModelInputs"] }
       ]
     },
