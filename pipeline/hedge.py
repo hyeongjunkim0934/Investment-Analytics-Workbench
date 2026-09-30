@@ -98,6 +98,197 @@ BOND_MERIT_SOURCES = {
             "cost": "info:EURKRW_HP_3M", "cost_source": "HP 원호가"},
 }
 
+MIN_BOND_OUTLOOK_MONTHS = 36
+MAX_OUTLOOK_STALENESS_DAYS = 7
+MAX_MONTH_ENDPOINT_GAP_DAYS = 7
+MAX_RISK_SAMPLE_AGE_DAYS = 62
+
+
+def _daily_observations(raw: pd.Series | None, *, positive: bool = False) -> pd.Series:
+    """Finite weekday observations, keeping the last valid duplicate per date."""
+    if raw is None:
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+    dates = pd.to_datetime(raw.index, errors="coerce")
+    values = pd.to_numeric(raw, errors="coerce").to_numpy(dtype=float)
+    out = pd.Series(values, index=dates).sort_index(kind="stable")
+    valid = out.index.notna() & np.isfinite(out)
+    if positive:
+        valid &= out > 0
+    out = out[valid]
+    out.index = out.index.normalize()
+    out = out[out.index.dayofweek < 5]
+    return out[~out.index.duplicated(keep="last")]
+
+
+def build_cost_distribution(series: dict, code: str) -> dict:
+    """Full daily signed 3M carry distribution; no yield/KTB intersection or tail trim."""
+    spec = BOND_MERIT_SOURCES[code]
+    raw = _daily_observations(series.get(spec["cost"]))
+    meta = {"source": spec["cost"], "cost_source": spec["cost_source"],
+            "tenor": "3M", "sign": "positive_received", "unit": "pct_pa",
+            "frequency": "daily", "scope": "full_history",
+            "bin_rule": "freedman_diaconis", "tail_policy": "retain_all_finite_observations",
+            "start": None, "end": None, "n": int(len(raw))}
+    if raw.empty:
+        return {**meta, "active": False, "reason": f"헤지비용 시리즈 없음: {spec['cost']}",
+                "bins": [], "min_pct": None, "max_pct": None, "mean_pct": None}
+    counts, edges = np.histogram(raw.to_numpy(), bins="fd")
+    bins = [{"low": float(lo), "high": float(hi), "count": int(count),
+             "frequency_pct": float(count / len(raw) * 100)}
+            for lo, hi, count in zip(edges[:-1], edges[1:], counts)]
+    return {**meta, "active": True, "start": raw.index[0].strftime("%Y-%m-%d"),
+            "end": raw.index[-1].strftime("%Y-%m-%d"), "min_pct": float(raw.min()),
+            "max_pct": float(raw.max()), "mean_pct": float(raw.mean()), "bins": bins}
+
+
+def par_modified_duration(yield_decimal: float, maturity_years: int = 10) -> float:
+    """Annual-coupon par bond modified duration, including zero/negative yields."""
+    if not math.isfinite(yield_decimal) or yield_decimal <= -1:
+        raise ValueError("연복리 수익률은 -100%보다 커야 합니다")
+    if abs(yield_decimal) < 1e-12:
+        return float(maturity_years)
+    return -math.expm1(-maturity_years * math.log1p(yield_decimal)) / yield_decimal
+
+
+def build_bond_outlook(series: dict, code: str) -> dict:
+    """Current-information 1Y conditional linear-return scenario, not a yield forecast.
+
+    Historical shocks are monthly -D(current 10Y par yield) * change in yield and
+    log(FX_t / FX_prev) on the exact same observed dates. The full joint covariance
+    allows natural currency cushions: full hedging need not reduce total risk.
+    Current yield and the dashboard HP curve set the centers; historical carry
+    changes do not inflate the risk estimate. No realized raw returns are published.
+    """
+    spec = BOND_MERIT_SOURCES[code]
+    currency = spec["currency"]
+    fx_key = FX_VOL_SOURCES[currency]
+    cost_keys = {tenor: f"info:{currency}KRW_HP_{tenor}" for tenor in common.HP_TENORS}
+    meta = {"horizon_months": 12, "unit": "cumulative_return_pct",
+            "range": "conditional_plus_minus_1sigma", "sigma_multiple": 1,
+            "sources": {"bond": spec["bond"], "fx": fx_key, "cost": cost_keys},
+            "method": {"bond": "fixed_current_10y_par_modified_duration_times_negative_yield_change",
+                       "fx": "log_return", "unhedged": "bond_plus_fx_first_order",
+                       "center": "current_yield_plus_signed_hedge_carry_times_years",
+                       "expected_fx_change": 0, "yield_change_expectation": 0,
+                       "annualization": 12, "ddof": 1,
+                       "horizon_scaling": "sqrt_time_uncorrelated_monthly_shocks",
+                       "risk_scope": "full_available_joint_monthly_history",
+                       "min_months": MIN_BOND_OUTLOOK_MONTHS,
+                       "max_current_staleness_days": MAX_OUTLOOK_STALENESS_DAYS,
+                       "current_staleness_inputs": ["bond_yield", "HP_3M", "HP_6M", "HP_12M"],
+                       "max_risk_sample_age_days": MAX_RISK_SAMPLE_AGE_DAYS,
+                       "max_month_endpoint_gap_days": MAX_MONTH_ENDPOINT_GAP_DAYS,
+                       "anchor_month": "excluded_conservatively",
+                       "bond_maturity_years": 10, "coupon_frequency": "annual",
+                       "hedge_ratio": 1, "cost_assumption": "current_curve_mean_fixed_for_1y",
+                       "excludes": ["convexity", "swap_mtm", "roll_down", "transaction_costs"],
+                       "calibrated_prediction_interval": False}}
+
+    def inactive(reason, **details):
+        return {**meta, **details, "active": False, "reason": reason}
+
+    bond = _daily_observations(series.get(spec["bond"]))
+    fx = _daily_observations(series.get(fx_key), positive=True)
+    if bond.empty or fx.empty:
+        return inactive("10년 국채·환율 시리즈 필요")
+    hp = common.hp_curve(series, currency)
+    if hp is None:
+        return inactive("현재 HP 3M·6M·12M 헤지비용 필요")
+    if not all(math.isfinite(v) for v in hp["curve"].values()):
+        return inactive("현재 HP 헤지비용에 유효하지 않은 수치 포함")
+    # The exact common helper makes this the same current curve and simple mean
+    # shown above the graph. Forecast time is the latest information date; every
+    # older current-price input is identified and subject to the freshness bound.
+    # The current FX level is not used in a zero-drift, zero-start return scenario;
+    # FX history instead has a separate completed-month risk-sample freshness gate.
+    quote_date = bond.index[-1]
+    anchor = max(quote_date, hp["asof"])
+    fx = fx[fx.index <= anchor]
+    if fx.empty:
+        return inactive("기준일 이전 환율 관측 없음")
+    # Existing isolated quote-error filter is applied only to FX, never to the
+    # hedge-cost histogram. Sustained crises and statistical 3σ tails are retained.
+    fx_before = len(fx)
+    fx = despike(fx)
+    joint = pd.concat({"yield": bond[bond.index <= anchor], "fx": fx}, axis=1, sort=True).dropna()
+    if joint.empty:
+        return inactive("10년 국채·환율 동일일 관측 없음")
+    cost = {"mean_pct": float(np.mean(list(hp["curve"].values()))),
+            "curve": hp["curve"], "dates": {m: d.strftime("%Y-%m-%d") for m, d in hp["dates"].items()},
+            "asof": hp["asof"].strftime("%Y-%m-%d"), "window": hp["window"],
+            "n_used": hp["n_used"], "label": common.hp_read_label(),
+            "sign": "positive_received", "source": "HP", "unit": "pct_pa"}
+    current = {"asof": anchor.strftime("%Y-%m-%d"), "yield_asof": quote_date.strftime("%Y-%m-%d"),
+               "fx_asof": fx.index[-1].strftime("%Y-%m-%d"), "cost": cost,
+               "yield_pct": float(bond.iloc[-1])}
+    ages = {"bond_yield": int((anchor - quote_date).days),
+            **{tenor: int((anchor - day).days) for tenor, day in hp["dates"].items()}}
+    current["input_age_days"] = ages
+    if max(ages.values()) > MAX_OUTLOOK_STALENESS_DAYS:
+        return inactive(f"현재 입력 관측일 차이 {MAX_OUTLOOK_STALENESS_DAYS}일 초과", **current)
+    y0 = current["yield_pct"] / 100
+    try:
+        duration = par_modified_duration(y0)
+    except ValueError:
+        return inactive("현재 국채금리의 듀레이션 계산 불가", **current)
+
+    history = joint[joint.index < anchor.to_period("M").to_timestamp()].copy()
+    history["observed"] = history.index
+    monthly = history.resample("ME").last().dropna()
+    gap_to_month_end = (monthly.index - pd.DatetimeIndex(monthly["observed"])).days
+    stale_months = int((gap_to_month_end > MAX_MONTH_ENDPOINT_GAP_DAYS).sum())
+    monthly = monthly[gap_to_month_end <= MAX_MONTH_ENDPOINT_GAP_DAYS]
+    periods = monthly.index.to_period("M").asi8
+    contiguous = pd.Series(np.r_[False, np.diff(periods) == 1] if len(monthly) else [],
+                           index=monthly.index, dtype=bool)
+    shocks = pd.DataFrame({"bond": -duration * monthly["yield"].diff() / 100,
+                           "fx": np.log(monthly["fx"]).diff()})
+    shocks = shocks[contiguous].dropna()
+    first_prior = (monthly["observed"].shift(1).loc[shocks.index[0]] if len(shocks) else None)
+    sample = {"start": first_prior.strftime("%Y-%m-%d") if first_prior is not None else None,
+              "end": monthly.loc[shocks.index[-1], "observed"].strftime("%Y-%m-%d") if len(shocks) else None,
+              "n_months": int(len(shocks)), "n_month_endpoints": int(len(monthly)),
+              "excluded_stale_months": stale_months,
+              "excluded_gap_months": int(max(0, len(monthly) - 1 - int(contiguous.sum()))),
+              "excluded_fx_spikes": fx_before - len(fx)}
+    current.update({"duration_years": duration, "sample": sample})
+    if len(shocks) < MIN_BOND_OUTLOOK_MONTHS:
+        return inactive(f"공통 월간 수익률 최소 {MIN_BOND_OUTLOOK_MONTHS}개 필요", **current)
+    sample["age_days"] = int((anchor - pd.Timestamp(sample["end"])).days)
+    if sample["age_days"] > MAX_RISK_SAMPLE_AGE_DAYS:
+        return inactive(f"공통 위험표본 종료 후 {MAX_RISK_SAMPLE_AGE_DAYS}일 초과", **current)
+
+    covariance = shocks.cov(ddof=1).to_numpy() * 12
+    hedge_var = float(covariance[0, 0])
+    open_var = float(np.array([1., 1.]) @ covariance @ np.array([1., 1.]))
+    hedged_vol = math.sqrt(max(0., hedge_var)) * 100
+    unhedged_vol = math.sqrt(max(0., open_var)) * 100
+    risk = {"labels": ["bond", "fx"], "cov_annual": covariance.tolist(),
+            "cov_unit": "decimal_return_squared", "hedged_vol_pct": hedged_vol,
+            "unhedged_vol_pct": unhedged_vol, "fx_vol_pct": math.sqrt(max(0., float(covariance[1, 1]))) * 100,
+            "reduction_pp": unhedged_vol - hedged_vol}
+    months = np.arange(13)
+    years = months / 12
+
+    def paths(mu, sigma):
+        center = mu * years
+        width = sigma * np.sqrt(years)
+        return {"mean_pct": float(mu), "vol_pct": sigma, "center": center.tolist(),
+                "lower": (center - width).tolist(), "upper": (center + width).tolist()}
+
+    horizon_dates = pd.DatetimeIndex([anchor + pd.DateOffset(months=int(m)) for m in months])
+    return {**meta, **current, "active": True, "risk": risk, "months": months.tolist(),
+            "t": epoch_seconds(horizon_dates),
+            "hedged": paths(current["yield_pct"] + cost["mean_pct"], hedged_vol),
+            "unhedged": paths(current["yield_pct"], unhedged_vol)}
+
+
+def build_bond_analytics(series: dict) -> dict:
+    """Additive analytics contract; legacy yield/carry merit histories are untouched."""
+    return {code: {"currency": spec["currency"], "distribution": build_cost_distribution(series, code),
+                   "outlook": build_bond_outlook(series, code)}
+            for code, spec in BOND_MERIT_SOURCES.items()}
+
 
 def despike(s: pd.Series, thr: float = 0.10) -> pd.Series:
     """하루 튀고 다음날 복귀하는 단일일 데이터 오류 제거."""
@@ -433,6 +624,7 @@ def build(series_store: dict, warn) -> dict:
         "cost_hist_usd": pack(smb_m),
         "ust_merit": ust_merit,
         "bond_merits": build_bond_merits(S, warn, ust_merit),
+        "bond_analytics": build_bond_analytics(S),
         "jgb_merit": build_bond_merit(S, "JPY", "일본 국채"),
         "agb_merit": build_bond_merit(S, "AUD", "호주 국채"),
         # 계열명·표본기간·관측수를 함께 싣는다 — 화면이 「25년 평균」을 하드코딩하고
