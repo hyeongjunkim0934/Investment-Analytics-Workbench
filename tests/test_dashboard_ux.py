@@ -2636,7 +2636,7 @@ def test_rates_tenor_selector(probe):
 
 # ---- 리스크 층 맥락 + 밴드 실증 (2026-08-24 사용자 지시 — 개선 6·3번) ------------
 def test_risk_context_and_band_stats(probe):
-    """층 제목 1·3·12개월 변화 + 5년 백분위, 밴드 실증 한 줄·표, 상세 3구간, 폴백."""
+    """층 맥락·방법론을 보존하고 안내 삭제·구간 라벨·기간 선택·호버·폴백을 검증한다."""
     c = probe["riskContext"]
     assert "ERROR" not in c, c.get("ERROR")
     assert c["titleHasTriplet"] is True, "층 제목에 1·3·12개월 변화가 없다"
@@ -2644,9 +2644,7 @@ def test_risk_context_and_band_stats(probe):
     assert c["nullHorizonShowsDash"] is True, (
         "이력이 짧아 없는 구간(null)은 – 로 보여야 한다 — 0 으로 지어내면 안 된다"
     )
-    assert c["bandStatsLineVisible"] is True, (
-        "등급바 아래 구간별 과거 실적 한 줄이 없다 — 밴드에 실증 의미를 주는 자리"
-    )
+    assert c["howtoRemoved"] is True, "점수 읽는 법 카드가 DOM 또는 화면에 남았다"
     assert c["methodHasBandTable"] is True, "방법론에 밴드 실증 표(주수·위기율·변동성)가 없다"
     assert c["detailHasTriplet"] is True, "요인 상세 오버레이에 3구간 변화가 없다"
     assert c["legacyNoTriplet"] is True and c["legacyDetailFallsBack"] is True, (
@@ -2668,8 +2666,15 @@ def test_risk_context_and_band_stats(probe):
     for key in ("legendIsCompact", "liveLegendHidden", "tooltipInitiallyHidden",
                 "tooltipHasDateAndValues", "tooltipAvoidsPointer", "tooltipZeroAndMissing",
                 "tooltipLatest", "tooltipHidesOnExit", "commentaryRemoved", "detailLegendUnchanged",
-                "riskBackRemoved", "detailBackRemoved", "bannerRemoved"):
+                "riskBackRemoved", "detailBackRemoved", "bannerRemoved", "chartHeaderSimplified",
+                "bandLabelsOutsideAtTop", "detailBandLabelsUnchanged", "noGlobalRiskPeriod"):
         assert c[key] is True, f"리스크 간소화/호버 회귀: {key}"
+    for key in ("periodControlsBesideTitle", "periodInitialWindowPreserved",
+                "periodFiltersDatesAndValues", "periodTooltipReset", "periodRejectsReversed",
+                "periodRejectsInvalid", "periodSurvivesRerender", "periodSinglePointVisible",
+                "periodEmptyExplains", "periodAllRestoresHistory", "periodAllIncludesNewLatest",
+                "legacyHistoryFallback"):
+        assert c[key] is True, f"리스크 기간 선택 회귀: {key}"
 
 
 # ---- 시장 국면 참고 카드 (§5.1 ⓐ — 2026-08-31) --------------------------------

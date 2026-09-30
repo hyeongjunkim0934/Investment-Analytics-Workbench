@@ -80,7 +80,7 @@ secNodes.overview.append(elem("div", "ov-groups"), elem("p", "ov-catalog"));
   .forEach((id) => secNodes.rates.append(elem("div", id)));
 
 /* 리스크 뼈대 — renderRisk 가 $("#risk-…") 로 집는 자리들 (층 맥락·밴드 실증 프로브용) */
-["risk-headline", "risk-chart-card", "risk-howto", "risk-events-mini",
+["risk-headline", "risk-chart-card", "risk-events-mini",
  "risk-stress-rows", "risk-vuln-rows",
  "risk-regime-card"].forEach((id) => secNodes.risk.append(elem("div", id)));
 secNodes.risk.append(elem("h3", "risk-stress-title"), elem("h3", "risk-vuln-title"),
@@ -2634,11 +2634,14 @@ safe("ratesTenor", () => {
 });
 
 /* ====== 리스크 층 맥락 + 밴드 실증 (2026-08-24 사용자 지시 — 개선 6·3번) =======
-   층 제목의 1·3·12개월 변화와 5년 백분위, 등급바 아래 실증 한 줄, 방법론의 밴드 표,
-   상세 오버레이의 3구간 — 전부 실행으로 확인한다. 옛 페이로드(chg 없음) 폴백 포함. */
+   층 제목의 1·3·12개월 변화와 5년 백분위, 방법론의 밴드 표, 상세 오버레이의 3구간,
+   기간 선택과 구간 라벨 위치 — 전부 실행으로 확인한다. 옛 페이로드 폴백 포함. */
 safe("riskContext", () => {
   const r = {};
   const hist = { t: [1700000000, 1700604800, 1701209600], v: [40, 45, 50] };
+  const epoch = (day) => Date.parse(day + "T00:00:00Z") / 1000;
+  const oldTs = epoch("2022-01-07"), latestTs = epoch("2030-06-27");
+  const fullT = [oldTs, ...hist.t, latestTs, epoch("2030-07-01")];
   const CHG = { m1: -5.4, m3: 2.1, y1: -8.0 };
   const mkF = (key, layer) => ({
     key, layer, name: key, sub: "s", question: "q", tags: [],
@@ -2653,10 +2656,12 @@ safe("riskContext", () => {
     howto: "howto", limits: "limits",
     layers: {
       stress: { name: "현재 위험", question: "q", score: 53.5, grade: "주의",
-                delta: CHG.m1, chg: CHG, rank5y: 62, method: "m", hist },
+                delta: CHG.m1, chg: CHG, rank5y: 62, method: "m", hist,
+                hist_alloc: { t: [...fullT], v: [12, 40, 45, 50, 53.5, 99] } },
       vuln: { name: "잠재 위험", question: "q", score: 60.1, grade: "주의",
               delta: -13.8, chg: { m1: -13.8, m3: null, y1: 4.2 }, rank5y: 88,
-              method: "m", active: 3, total: 5, hist },
+              method: "m", active: 3, total: 5, hist,
+              hist_alloc: { t: [...fullT], v: [22, 40, 45, 50, 60.1, 98] } },
     },
     weights: { items: [{ key: "vol", name: "변동성", w: 0.3 }], refit: "2030-06-01",
                floor: 0.08, target: "t", desc: "d" },
@@ -2679,11 +2684,30 @@ safe("riskContext", () => {
   P.DATA.events = { events: [] };
   shim.UPlotStub.made.length = 0;
   P.renderSection("risk");
+  const riskCard = () => DOC.getElementById("risk-chart-card");
+  const riskPlot = () => [...shim.UPlotStub.made].reverse().find((u) => riskCard().contains(u.root)
+    && u.opts.series.some((s) => s.label === "현재 위험"));
+  const field = (name) => DOC.getElementById(`risk-period-${name}`);
+  const applyPeriod = (start, end) => {
+    field("start").value = start; field("end").value = end;
+    field("apply").click();
+  };
+  r.periodControlsBesideTitle = ["start", "end", "apply", "all"].every((name) => !!field(name))
+    && field("start").getAttribute("type") === "date" && field("end").getAttribute("type") === "date"
+    && riskCard().querySelector(".card-head").contains(field("start"))
+    && riskCard().querySelector(".card-head").contains(field("end"));
+  r.periodInitialWindowPreserved = field("start").value === "2023-11-14"
+    && field("end").value === "2030-06-27"
+    && JSON.stringify(Array.from(riskPlot().data[0])) === JSON.stringify([...hist.t, latestTs]);
+  r.chartHeaderSimplified = riskCard().querySelector(".card-title").textContent === "위험 수준 추이"
+    && !/기준일|선이 위로|배경 음영|최근 24개월/.test(riskCard().querySelector(".card-head").textContent);
+  r.howtoRemoved = !DOC.getElementById("risk-howto")
+    && !fs.readFileSync(path.join(ROOT, "dashboard", "index.html"), "utf8").includes('id="risk-howto"')
+    && !/점수 읽는 법|구간별 과거 실적/.test(secNodes.risk.textContent);
 
   /* 실제 상황 대조(2026-08-27) — 위험 2계열과 **같은 차트**에 우축(%)으로 겹치고,
      참고선은 pct 축 점선·수치만, 의미 문구 없음 */
-  const bandU = shim.UPlotStub.made.find((u) =>
-    u.opts && u.opts.series && u.opts.series.some((s) => s.label === "현재 위험"));
+  const bandU = riskPlot();
   r.kospi10ChartMade = !!bandU && bandU.opts.series.some(
     (s) => /KOSPI 10영업일/.test(s.label || "") && s.scale === "pct");
   r.legendIsCompact = Array.from(DOC.querySelectorAll("#risk-chart-card .legendline > span"))
@@ -2720,6 +2744,30 @@ safe("riskContext", () => {
   r.kospi10NoMeaningWords = !/위기임박|위기단계/.test(
     DOC.getElementById("risk").textContent);
 
+  /* Canvas 훅을 실제 호출해 텍스트의 기준점·정렬을 측정한다. 1×/2× 화면 모두
+     라벨의 오른쪽 끝이 시계열 영역 바깥이고, 각 밴드 상단에 있어야 한다. */
+  const drawnLabels = (plot, dpr) => {
+    const oldDpr = sandbox.devicePixelRatio;
+    const old = { bbox: plot.bbox, ctx: plot.ctx, valToPos: plot.valToPos };
+    const drawn = [];
+    sandbox.devicePixelRatio = dpr;
+    plot.bbox = { left: 140 * dpr, top: 10 * dpr, width: 600 * dpr, height: 240 * dpr };
+    plot.valToPos = (v, scale) => scale === "y" ? (10 + (100 - v) * 2.4) * dpr : 300 * dpr;
+    plot.ctx = { save() {}, restore() {}, beginPath() {}, arc() {}, fill() {}, stroke() {},
+      fillText(text, x, y) { drawn.push({ text, x, y, align: this.textAlign, baseline: this.textBaseline }); } };
+    try { plot.opts.hooks.draw[0](plot); }
+    finally { sandbox.devicePixelRatio = oldDpr; Object.assign(plot, old); }
+    return drawn.filter((label) => /^(낮음|보통|주의|경계) /.test(label.text));
+  };
+  const expectedBands = [[25, "낮음 0–25"], [50, "보통 25–50"], [75, "주의 50–75"], [100, "경계 75–100"]];
+  r.bandLabelsOutsideAtTop = [1, 2].every((dpr) => {
+    const labels = drawnLabels(bandU, dpr);
+    return labels.length === 4 && labels.every((label, i) => label.text === expectedBands[i][1]
+      && label.align === "right" && label.baseline === "top"
+      && label.x === 106 * dpr && label.x < 140 * dpr
+      && Math.abs(label.y - (16 + (100 - expectedBands[i][0]) * 2.4) * dpr) < 1e-8);
+  }) && bandU.opts.axes[1].size === 118;
+
   const st = DOC.getElementById("risk-stress-title").textContent;
   r.titleHasTriplet = /1개월/.test(st) && /3개월/.test(st) && /1년/.test(st);
   r.titleHasRank = /최근 5년 백분위 62%/.test(st);
@@ -2728,14 +2776,17 @@ safe("riskContext", () => {
     DOC.getElementById("risk-headline").textContent)
     && !/무엇이 흔들리고|무엇이 쌓여/.test(st + vt);
   r.nullHorizonShowsDash = /3개월 –/.test(vt);
-  const hw = DOC.getElementById("risk-howto").textContent;
-  r.bandStatsLineVisible = /구간별 과거 실적/.test(hw) && /경계 41%/.test(hw);
   const mt = DOC.getElementById("risk-method").textContent;
   r.methodHasBandTable = /등급 구간의 과거 실적/.test(mt)
     && /41\.0%/.test(mt) && /24\.7%/.test(mt) && /band-note/.test(mt);
 
   P.openDetail("f1");
-  r.detailLegendUnchanged = shim.UPlotStub.made[shim.UPlotStub.made.length - 1].opts.legend.show === true;
+  const detailPlot = shim.UPlotStub.made[shim.UPlotStub.made.length - 1];
+  r.detailLegendUnchanged = detailPlot.opts.legend.show === true;
+  const detailLabels = drawnLabels(detailPlot, 1);
+  r.detailBandLabelsUnchanged = detailPlot.opts.axes[1].size === 56 && detailLabels.length === 4
+    && detailLabels.every((label, i) => label.align === "left" && label.x === 148
+      && Math.abs(label.y - (14 + (100 - (expectedBands[i][0] - 12.5)) * 2.4)) < 1e-8);
   const ovTxt = DOC.getElementById("detail-overlay").textContent;
   r.detailHasTriplet = /1개월/.test(ovTxt) && /3개월/.test(ovTxt) && /1년/.test(ovTxt);
   P.hideDetail();
@@ -2745,21 +2796,73 @@ safe("riskContext", () => {
   if (back) back.remove();
   shim.location.hash = "#risk"; P.routeView();
   r.riskBackRemoved = !secNodes.risk.querySelector(".village-back");
+  r.noGlobalRiskPeriod = filterRow.hidden;
   shim.location.hash = "#detail-f1"; P.routeView();
   r.detailBackRemoved = !secNodes.risk.querySelector(".village-back");
   r.bannerRemoved = !fs.readFileSync(path.join(ROOT, "dashboard", "index.html"), "utf8")
     .includes('id="data-freshness"');
   shim.location.hash = prevHash;
 
+  /* 날짜·값은 함께 잘리고 종료일 관측도 포함되어야 한다. 최신점·구 이력·KOSPI는
+     같은 선택에 반응하며, 잘못된 입력은 이미 적용한 차트를 바꾸지 않는다. */
+  applyPeriod("2023-11-21", "2023-11-28");
+  r.periodFiltersDatesAndValues = JSON.stringify(riskPlot().data)
+    === JSON.stringify([[hist.t[1], hist.t[2]], [45, 50], [45, 50], [-12.5, 3]]);
+  r.periodTooltipReset = DOC.querySelector("#risk-chart-card .risk-chart-tooltip").hidden;
+  const validData = JSON.stringify(riskPlot().data);
+  applyPeriod("2023-11-28", "2023-11-21");
+  r.periodRejectsReversed = !field("status").hidden && JSON.stringify(riskPlot().data) === validData;
+  applyPeriod("2030-02-30", "2030-03-01");
+  r.periodRejectsInvalid = !field("status").hidden && JSON.stringify(riskPlot().data) === validData;
+  applyPeriod("", "2030-03-01");
+  r.periodRejectsInvalid = r.periodRejectsInvalid && !field("status").hidden
+    && JSON.stringify(riskPlot().data) === validData;
+  P.renderSection("risk");
+  r.periodSurvivesRerender = field("start").value === "2023-11-21"
+    && field("end").value === "2023-11-28" && JSON.stringify(riskPlot().data) === validData;
+  applyPeriod("2030-06-27", "2030-06-27");
+  const single = riskPlot();
+  const showsPoint = single.opts.series[1].points.show;
+  r.periodSinglePointVisible = JSON.stringify(single.data) === JSON.stringify([[latestTs], [53.5], [60.1], [null]])
+    && (typeof showsPoint === "function" ? showsPoint(single, 1) : showsPoint) === true;
+  applyPeriod("2029-01-01", "2029-01-31");
+  const afterEmpty = riskPlot();
+  const plotHidden = (plot) => {
+    if (!plot) return true;
+    for (let node = plot.root; node && node !== riskCard(); node = node.parentElement) {
+      if (node.hidden) return true;
+    }
+    return false;
+  };
+  r.periodEmptyExplains = !field("empty").hidden && /데이터가 없습니다/.test(field("empty").textContent)
+    && plotHidden(afterEmpty);
+  field("all").click();
+  r.periodAllRestoresHistory = field("start").value === "2022-01-07"
+    && field("end").value === "2030-06-27" && field("empty").hidden
+    && JSON.stringify(riskPlot().data[0]) === JSON.stringify([oldTs, ...hist.t, latestTs])
+    && riskPlot().data[1][0] === 12 && riskPlot().data[2][0] === 22
+    && riskPlot().data[3][0] == null;
+  RISK.asof = "2030-06-28";
+  RISK.layers.stress.score = 54.5; RISK.layers.vuln.score = 61.1;
+  P.renderSection("risk");
+  r.periodAllIncludesNewLatest = field("end").value === "2030-06-28"
+    && riskPlot().data[0].at(-1) === epoch("2030-06-28")
+    && riskPlot().data[1].at(-1) === 54.5 && riskPlot().data[2].at(-1) === 61.1;
+  RISK.asof = "2030-06-27";
+  RISK.layers.stress.score = 53.5; RISK.layers.vuln.score = 60.1;
+
   /* 옛 페이로드(chg·rank5y·band_stats 없음) — 조용히 종전 표시로 남고 무너지지 않는다 */
   delete RISK.layers.stress.chg; delete RISK.layers.stress.rank5y;
   delete RISK.layers.vuln.chg; delete RISK.layers.vuln.rank5y;
   delete RISK.grade_band_stats;
   delete RISK.kospi10;
+  delete RISK.layers.stress.hist_alloc; delete RISK.layers.vuln.hist_alloc;
   RISK.factors.forEach((f) => { delete f.chg; });
   P.renderSection("risk");
   r.legacyNoKospi10 = !/KOSPI 10영업일/.test(
     DOC.getElementById("risk-chart-card").textContent);
+  r.legacyHistoryFallback = JSON.stringify(riskPlot().data[0]) === JSON.stringify([...hist.t, latestTs])
+    && riskPlot().data[1].at(-1) === 53.5 && riskPlot().data[2].at(-1) === 60.1;
   const st2 = DOC.getElementById("risk-stress-title").textContent;
   r.legacyNoTriplet = /현재 위험 54점/.test(st2) && !/3개월/.test(st2);
   P.openDetail("f1");

@@ -1151,8 +1151,9 @@ function withToday(hist, asofTs, cur) {
   return { t, v };
 }
 
-/* 0~100 고정 스케일 + 등급 밴드 배경 차트 (기간 필터 미적용) */
-function makeBandChart(box, { seriesDefs, height = 300, extra = null, hoverOnly = false }) {
+/* 0~100 고정 스케일 + 등급 밴드 배경 차트 (전역 기간 필터와 독립) */
+function makeBandChart(box, { seriesDefs, height = 300, extra = null, hoverOnly = false,
+                              bandLabelsAtTop = false }) {
   /* extra: {label, color, t, v, levels} — 점수(0~100, 좌축)와 단위가 다른 대조
      계열(%, 우축)을 **같은 차트**에 겹친다(2026-08-27 사용자 지시). levels 는
      우축 기준 수평 점선 — 수치만 긋고 뜻은 적지 않는다. */
@@ -1165,12 +1166,12 @@ function makeBandChart(box, { seriesDefs, height = 300, extra = null, hoverOnly 
   const series = [{ label: "주", value: "{YYYY}-{MM}-{DD}" }];
   seriesDefs.forEach((sd) => series.push({
     label: sd.label, stroke: sd.color, width: 2.5, spanGaps: true,
-    points: { show: false },
+    points: { show: bandLabelsAtTop ? (u, si) => u.data[si].filter(Number.isFinite).length === 1 : false },
     value: (u, v) => v == null ? "–" : fmtNum(v, 0) + "점",
   }));
   if (extra) series.push({
     label: extra.label, stroke: extra.color, width: 1.5, spanGaps: true,
-    scale: "pct", points: { show: false },
+    scale: "pct", points: { show: bandLabelsAtTop ? (u, si) => u.data[si].filter(Number.isFinite).length === 1 : false },
     value: (u, v) => v == null ? "–" : fmtNum(v, 1) + "%",
   });
   const axes = baseAxes(pal, (v) => fmtNum(v, 0));
@@ -1178,6 +1179,8 @@ function makeBandChart(box, { seriesDefs, height = 300, extra = null, hoverOnly 
   if (extra) axes.push({ ...axes[1], scale: "pct", side: 1,
     values: (u, vs) => vs.map((v) => fmtNum(v, 0) + "%"),
     grid: { show: false } });
+  // 메인 차트는 구간 라벨과 점수 눈금을 위한 왼쪽 여백을 확보한다.
+  if (bandLabelsAtTop) axes[1].size = 118;
   const opts = {
     width: Math.max(280, box.clientWidth), height,
     tzDate: (ts) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
@@ -1203,13 +1206,16 @@ function makeBandChart(box, { seriesDefs, height = 300, extra = null, hoverOnly 
       draw: [(u) => {
         const { ctx, bbox } = u;
         ctx.save();
-        // 등급 라벨 (좌측 안쪽)
+        // 메인은 각 구간 상단·시계열 영역 밖, 요인 상세는 기존 위치를 유지한다.
         ctx.font = `${11 * devicePixelRatio}px system-ui, sans-serif`;
-        ctx.textAlign = "left";
+        ctx.textAlign = bandLabelsAtTop ? "right" : "left";
+        if (bandLabelsAtTop) ctx.textBaseline = "top";
         for (const [lo, hi, c, nm] of BANDS) {
           ctx.fillStyle = c;
-          ctx.fillText(`${nm} ${lo}–${hi}`, bbox.left + 8 * devicePixelRatio,
-                       u.valToPos((lo + hi) / 2, "y", true) + 4 * devicePixelRatio);
+          ctx.fillText(`${nm} ${lo}–${hi}`,
+            bbox.left + (bandLabelsAtTop ? -34 : 8) * devicePixelRatio,
+            u.valToPos(bandLabelsAtTop ? hi : (lo + hi) / 2, "y", true)
+              + (bandLabelsAtTop ? 6 : 4) * devicePixelRatio);
         }
         // 끝점 값 라벨
         let prevY = null;
@@ -1386,6 +1392,101 @@ function buildRiskMethod(r) {
   box.append(el("p", {}, el("b", {}, "한계"), ` — ${r.limits}`));
 }
 
+// undefined = initial published window; null = full history; object = chosen dates.
+let riskChartRange;
+
+function renderRiskTrend(card, r, asofTs, pal) {
+  const S = r.layers.stress, V = r.layers.vuln;
+  const history = (layer) => {
+    const h = layer.hist_alloc?.t?.length ? layer.hist_alloc : layer.hist;
+    const clean = { t: [], v: [] };
+    (h?.t || []).forEach((t, i) => {
+      if (Number.isFinite(t) && t <= asofTs) { clean.t.push(t); clean.v.push(h.v[i]); }
+    });
+    return withToday(clean, asofTs, layer.score);
+  };
+  const sh = history(S), vh = history(V);
+  const defs = [
+    { label: "현재 위험", color: pal.series[0], t: sh.t, v: sh.v },
+    { label: "잠재 위험", color: pal.series[1], t: vh.t, v: vh.v },
+  ];
+  const k10 = r.kospi10;
+  const hasK10 = !!k10?.hist?.t?.length;
+  if (hasK10) defs.push({ label: k10.label, color: pal.series[2],
+    t: k10.hist.t, v: k10.hist.v, levels: k10.levels || [] });
+  const data = joinSeries(defs);
+  const dates = data[0].filter((t) => Number.isFinite(t) && t <= asofTs);
+  const full = { start: tsToDate(dates[0] ?? asofTs), end: tsToDate(asofTs) };
+  const publishedDates = [...(S.hist?.t || []), ...(V.hist?.t || [])]
+    .filter((t) => Number.isFinite(t) && t <= asofTs);
+  const initial = { start: publishedDates.length ? tsToDate(Math.min(...publishedDates)) : full.start,
+    end: full.end };
+  let range = { ...(riskChartRange === undefined ? initial : riskChartRange || full) };
+  card.textContent = "";
+  const head = el("div", { class: "card-head risk-chart-head" },
+    el("span", { class: "card-title" }, "위험 수준 추이"));
+  const status = el("span", { id: "risk-period-status", class: "alloc-period-status d-up", role: "status" });
+  status.hidden = true;
+  const input = (key, label) => el("input", { type: "date", id: `risk-period-${key}`,
+    value: range[key], "aria-label": `위험 수준 추이 ${label}`, "aria-describedby": status.id });
+  const start = input("start", "시작기간"), end = input("end", "종료기간");
+  const controls = el("div", { class: "alloc-period risk-period" },
+    el("label", { for: start.id }, "시작기간", start),
+    el("label", { for: end.id }, "종료기간", end));
+  head.append(controls);
+  card.append(head);
+  const lg = el("div", { class: "legendline" },
+    legendKey(pal.series[0], "현재 위험"), legendKey(pal.series[1], "잠재 위험"));
+  const box = el("div", { class: "chart-box" });
+  const empty = el("p", { id: "risk-period-empty", class: "chart-empty", role: "status" },
+    "해당 기간의 데이터가 없습니다.");
+  empty.hidden = true;
+  card.append(lg, box, empty);
+  let chart = null;
+  const draw = () => {
+    destroyChart(chart); chart = null;
+    box.textContent = "";
+    const from = Date.parse(range.start) / 1000, to = Date.parse(range.end) / 1000 + 86400;
+    const selected = timeRangeData(data, from, Math.min(to, asofTs + 86400));
+    const hasValues = selected.slice(1).some((values) => values.some(Number.isFinite));
+    box.hidden = !hasValues;
+    empty.hidden = hasValues;
+    if (!hasValues) return;
+    const visible = defs.map((sd, i) => ({ ...sd, t: selected[0], v: selected[i + 1] }));
+    chart = makeBandChart(box, { hoverOnly: true, bandLabelsAtTop: true,
+      seriesDefs: visible.slice(0, 2), extra: hasK10 ? visible[2] : null });
+    chart.u.setScale("x", { min: from, max: to });
+  };
+  const validDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v)
+    && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
+  const apply = () => {
+    if (!validDate(start.value) || !validDate(end.value)) {
+      status.textContent = "시작기간과 종료기간을 입력하십시오.";
+    } else if (start.value > end.value) {
+      status.textContent = "시작기간은 종료기간보다 늦을 수 없습니다.";
+    } else {
+      range = { start: start.value, end: end.value };
+      riskChartRange = { ...range };
+      status.hidden = true;
+      draw();
+      return;
+    }
+    status.hidden = false;
+  };
+  [start, end].forEach((field) => {
+    field.addEventListener("input", () => { status.hidden = true; });
+    field.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); apply(); }
+    });
+  });
+  controls.append(el("button", { type: "button", id: "risk-period-apply", class: "btn-ghost", onclick: apply }, "기간 적용"),
+    el("button", { type: "button", id: "risk-period-all", class: "btn-ghost", onclick: () => {
+      start.value = full.start; end.value = full.end;
+      apply(); riskChartRange = null;
+    } }, "전체"), status);
+  draw();
+}
+
 function renderRisk() {
   const r = DATA.risk;
   if (!$("#risk")) return;
@@ -1403,51 +1504,7 @@ function renderRisk() {
   a.append(gradeChip(S.grade), ` · 잠재 위험 ${Math.round(V.score)} `, gradeChip(V.grade));
   hl.append(a);
 
-  const cc = $("#risk-chart-card");
-  cc.textContent = "";
-  cc.append(el("div", { class: "card-head" },
-    el("span", { class: "card-title" }, "위험 수준 추이 — 최근 24개월"),
-    el("span", { class: "card-sub" }, `기준일 ${r.asof} · 선이 위로 갈수록 위험 · 배경 음영 = 등급 구간`)));
-  const lg = el("div", { class: "legendline" });
-  lg.append(legendKey(pal.series[0], "현재 위험"),
-            legendKey(pal.series[1], "잠재 위험"));
-  cc.append(lg);
-  const box = el("div", { class: "chart-box" });
-  cc.append(box);
-  /* 실제 상황 대조 — 같은 차트에 우축(%)으로 겹친다(2026-08-27 사용자 지시
-     "하나의 표에 있어야 비교가 좋다"). 참고선은 점선·수치만 — 뜻은 적지 않는다.
-     옛 페이로드(kospi10 없음)에서는 종전 2계열 차트 그대로다. */
-  const k10 = r.kospi10;
-  const hasK10 = !!(k10 && k10.hist && k10.hist.t && k10.hist.t.length);
-  const sh = withToday(S.hist, asofTs, S.score), vh = withToday(V.hist, asofTs, V.score);
-  makeBandChart(box, {
-    hoverOnly: true,
-    seriesDefs: [
-      { label: "현재 위험", color: pal.series[0], t: sh.t, v: sh.v },
-      { label: "잠재 위험", color: pal.series[1], t: vh.t, v: vh.v },
-    ],
-    extra: hasK10 ? { label: k10.label, color: pal.series[2],
-                      t: k10.hist.t, v: k10.hist.v, levels: k10.levels || [] } : null,
-  });
-
-  const hw = $("#risk-howto");
-  hw.textContent = "";
-  hw.append(explainBox("risk-howto", { label: "점수 읽는 법" }, r.howto));
-  const gb = el("div", { class: "gradebar" });
-  BANDS.forEach(([lo, hi, c, nm]) =>
-    gb.append(el("div", { style: `flex:1;background:${c};color:${bandInk(c)}` }, `${nm} (${lo}–${hi})`)));
-  hw.append(gb);
-  const gbs = r.grade_band_stats;
-  if (gbs && gbs.rows) {
-    const line = el("div", { class: "band-stats" },
-      "구간별 과거 실적 — 다음 1개월 −5% 이상 하락 빈도: ");
-    gbs.rows.forEach((b, i) => {
-      if (i) line.append(" · ");
-      line.append(`${b.grade} `,
-        el("b", {}, b.crisis_rate_pct == null ? "–" : `${fmtNum(b.crisis_rate_pct, 0)}%`));
-    });
-    hw.append(line);
-  }
+  renderRiskTrend($("#risk-chart-card"), r, asofTs, pal);
 
   const em = $("#risk-events-mini");
   em.textContent = "";
