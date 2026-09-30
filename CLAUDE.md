@@ -40,6 +40,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `pytest.ini` | `testpaths = tests` |
 | `dashboard/index.html` `app.js` `style.css` | 정적 대시보드 (섹션 14개, **다크 기본**+라이트, 기간 필터, 마을 홈+관문. 명암과 마을 낮/밤은 **별개 축** — 아래 「어디를 고치면 무엇이 바뀌나」). **app.js 가 DOM 으로 조립하는 표에는 `<tbody>` 가 없다** — `createElement("table")` 에 `<tr>` 을 직접 붙이면 브라우저가 tbody 를 끼워 넣지 않기 때문이다. 그래서 `style.css` 에는 `thead th`/`tbody td` 와 `table > tr > th|td` **두 벌**이 있어야 한다. 한 벌만 두면 조립 표(#hedge·#alloc·#panel)의 숫자 셀이 조용히 padding 1px·왼쪽 정렬로 렌더된다 (실제로 117칸이 그 상태였다). 회귀 테스트 있음 |
 | `dashboard/port-opportunities.js` | `app.js`보다 먼저 로드하는 순수 계산 함수. `portOpportunityHints`는 일반 경계선의 실제 비중에서 개선여지 기준점과 동일 비중의 상관 완화 가정점을 최대 3개씩 선택한다. `portImprovementConditions`는 가상 신규 자산의 기대수익 유지·위험 감소 충분조건과 자산별 상관벡터를 계산하고 확대 공분산 PSD를 검증한다. 난수 점군과 무관하며 기존 금융 입력을 바꾸지 않는다. `portDrawHints`는 화면 겹침·4px 미만 위험 이동을 숨긴다. 탐색은 `iaw-port-hints`, 신규 자산 가정은 `iaw-port-improvement`에 별도 저장한다. |
+| `dashboard/cma.js` | 환헤지와 Pseudo 사이 `#cma` 탭. 현재 `P.assets`에 맞춰 낙관·중립·비관의 확률·연 μ·σ를 입력한다. `cmaMoments`는 확률가중 평균·총분산을 계산하며 `cmaAssetAssumption`은 적용값만 반환한다. `iaw-cma-scenarios-v1`에 초안/적용값을 분리 보관한다. 활성 CMA는 기존 수기 μ·σ보다 우선하고 해제 시 복귀한다. 기존 상관계수를 유지해 공분산을 다시 구성한 뒤 기존 환헤지를 적용한다. `renderCma`는 편집 화면, `cmaAssetLabel`은 자산배분 자산명 호버·포커스 표시를 담당한다. Data 게시 CMA와 별개인 브라우저 입력층이다. |
 | `dashboard/assets/` | 마을 지도 이미지(`village-day.webp`·`village-night.webp`)를 두는 자리. 넣는 법·금지 사항은 같은 폴더 `README.md` |
 | `dashboard/vendor/uplot.min.{js,css}` | 벤더링된 유일한 프런트 의존성 (외부 네트워크 요청 없음) |
 | `.github/workflows/build-dashboard.yml` | dispatch/수동/push 트리거 → **test → build(+배포 게이트) → deploy**. build 잡은 게이트 뒤에 `Build summary` 단계로 시리즈 수·최종 관측일·JSON 수·경고를 `$GITHUB_STEP_SUMMARY` 에 표로 붙인다(`if: always()` — 게이트가 막아 실패한 실행에서도 남는다) |
@@ -50,11 +51,13 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 
 ## Pseudo 인수인계 문서
 
-2026-09-30 사용자 요청으로 환헤지 옆 `#pseudo` 탭을 추가했다.
+2026-09-30 사용자 요청으로 `#pseudo` 탭을 추가했다. 현재 상단 순서는 환헤지 → CMA → Pseudo다.
 내용은 `dashboard/pseudo/{risk,alloc,hedge}.js`, UI는 `dashboard/pseudo.js`에 분리한다.
 계산·입력·단위·부호·결측·제약 의미가 바뀌면 같은 PR에서 관련 문서와 검토일을 갱신한다.
 순수 배치 변경은 문서 변경이 불필요할 수 있다. 자세한 규칙은 `docs/PSEUDO.md`를 따른다.
 문서는 정적 설명이며 금융 엔진·시장 JSON 계약·사용자 입력 저장에는 관여하지 않는다.
+CMA 산식·우선순위·환헤지 연결은 자산배분 문서에 함께 기록한다. CMA의 사용자 3시나리오는
+Conservative/Optimistic 평균 불확실성 경계선과 별개이며 공통 거시 상태를 구성하지 않는다.
 
 ## 자주 쓰는 명령 (아래 여섯은 모두 실제 실행으로 확인함)
 

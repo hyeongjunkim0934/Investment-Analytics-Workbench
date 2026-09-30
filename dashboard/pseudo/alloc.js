@@ -4,12 +4,13 @@ globalThis.PSEUDO_DOCS.alloc = {
   id: "alloc",
   title: "자산배분",
   updated: "2026-09-30",
-  summary: "7자산군·최소/최대 제약 → 경계선·비중1/비중2 비교 → 리스크 연계 비중",
-  inputs: "월말 지수·USDKRW, 연 μ·σ(%), 상관계수, h(0~1), 그룹 최소·최대(%), 자산별 최소(%). 공분산은 게시 소수² → 계산 %²(×10,000)",
+  summary: "7자산군 CMA·최소/최대 제약 → 경계선·비중1/비중2 비교 → 리스크 연계 비중",
+  inputs: "월말 지수·USDKRW, 연 μ·σ(%), CMA 시나리오 확률(%), 상관계수, h(0~1), 그룹 최소·최대(%), 자산별 최소(%). 공분산은 게시 소수² → 계산 %²(×10,000)",
   outputs: "포트폴리오 μ·σ, 경계선, Conservative·Optimistic, 현재·잠재 리스크 연계 비중",
   sources: [
     { path: "dashboard/port-constraints.js", symbols: ["portConstraintSpec", "portConstrainedModel"] },
     { path: "pipeline/port.py", symbols: ["build", "_stats", "_fx_stats", "_hedge_cost"] },
+    { path: "dashboard/cma.js", symbols: ["cmaMoments", "cmaAssetAssumption", "renderCma", "cmaAssetLabel"] },
     { path: "dashboard/app.js", symbols: ["portRiskInputs", "portModelInputs", "portRobustModel", "portFrontiers", "portHedgeInputs", "allocRiskObservations", "allocRiskOptimize"] }
   ],
   sections: [
@@ -19,23 +20,47 @@ globalThis.PSEUDO_DOCS.alloc = {
       formulas: [
         { expression: "rₜ = Pₜ / Pₜ₋₁ − 1;  Pₜ(KRW) = Pₜ(USD) × USDKRWₜ", legend: "P: 월말 지수. 해외시가·해외주식·대체투자는 원화 환산. 해외장부는 bm:장부가 해외채권의 원화 지수를 그대로 사용." },
         { expression: "μ̂ = 100 × 12 × 평균(r);  C = 10,000 × C게시", legend: "r: 월간 소수 수익률. C게시: 월 표본공분산(N−1 분모)의 12배, 연 소수². 화면 C는 연 %²." },
-        { expression: "σᵢ = √Cᵢᵢ;  Cᵢⱼ(수기) = σᵢ × ρᵢⱼ × σⱼ", legend: "ρ: 상관계수. 수기 입력이 없으면 게시 공분산을 ×10,000 단위 변환만 하여 사용." }
+        { expression: "σᵢ = √Cᵢᵢ;  Cᵢⱼ(가정) = σᵢ × ρᵢⱼ × σⱼ", legend: "ρ: 입력 또는 표본 상관계수. 수기·CMA 수정이 없으면 게시 공분산을 ×10,000 단위 변환만 하여 사용." }
       ],
       code: [
         "levels ← completed_month_end_levels()",
         "convert_USD_assets_to_KRW(levels)",
         "returns ← common_asset_monthly_returns(levels)",
         "window ← selected_published_window(returns)",
-        "mu ← key_in_else_CMA_else_sample_mean(window)",
+        "mu ← applied_scenario_else_key_in_else_published_CMA_else_sample_mean(window)",
         "baseC ← decimal_squared_to_percent_squared(window.cov)",
         "C ← baseC",
-        "if manual_sigma_or_corr: C ← covariance_from_sigma_corr()",
+        "if scenario_or_manual_sigma_or_corr: C ← covariance_from_sigma_corr()",
         "validate_finite_inputs_and_PSD_correlation(C)",
         "return_portfolio_model(window, mu, C)"
       ].join("\n"),
-      note: "국내시가·국내장부·해외시가·해외장부·국내주식·해외주식·대체투자 7축. 해외장부 원천 헤지 상태 미검증으로 추가 헤지 제외. 평균은 산술 연환산, 10년 참고값은 공통 공분산에 섞지 않음.",
+      note: "국내시가·국내장부·해외시가·해외장부·국내주식·해외주식·대체투자 7축. 적용 CMA는 수기 μ·σ에 우선하며 해제하면 수기로 복귀. 해외장부 원천 헤지 상태 미검증으로 추가 헤지 제외. 평균은 산술 연환산, 10년 참고값은 공통 공분산에 섞지 않음.",
       sources: [
         { path: "pipeline/port.py", symbols: ["_me_levels", "_stats", "build"] },
+        { path: "dashboard/app.js", symbols: ["portRiskInputs", "portModelInputs"] }
+      ]
+    },
+    {
+      id: "cma-scenarios",
+      title: "CMA · 낙관·중립·비관",
+      formulas: [
+        { expression: "μᵢ = Σₛpᵢₛμᵢₛ;  Σₛpᵢₛ = 1", legend: "s: 낙관·중립·비관. 입력 확률(%)을 100으로 나눈 p, μ는 추가 환헤지 전 원화 기준 연 %. 자산별 확률 합계 100%일 때 적용." },
+        { expression: "σᵢ² = Σₛpᵢₛ[σᵢₛ² + (μᵢₛ − μᵢ)²]", legend: "총분산: 시나리오 내부 분산과 시나리오 평균 차이의 분산을 합산. σ는 연 %, 공분산 계산에는 기존 자산 간 ρ를 유지." }
+      ],
+      code: [
+        "draft ← asset_optimistic_neutral_pessimistic_inputs()",
+        "require_finite_probability_mean_sigma(draft)",
+        "require_nonnegative_probability_sigma_and_probability_sum_100(draft)",
+        "mu, sigma ← mixture_mean_and_total_variance(draft)",
+        "on_apply: persist_valid_draft_as_applied_asset_assumption()",
+        "if enabled: replace_asset_mu_sigma_and_retain_correlation()",
+        "else: restore_underlying_manual_or_published_inputs()",
+        "apply_existing_hedge_after_unhedged_CMA()",
+        "show_applied_scenarios_on_allocation_asset_label_hover()"
+      ].join("\n"),
+      note: "초안과 적용값은 분리 저장. 초기 25/50/25%와 동일 μ·σ는 편집 시작값이며 전망이 아님. 자산별 주변분포 가정이며 공통 거시 상태·자산 간 독립성을 뜻하지 않음.",
+      sources: [
+        { path: "dashboard/cma.js", symbols: ["cmaMoments", "cmaAssetAssumption", "renderCma", "cmaAssetLabel"] },
         { path: "dashboard/app.js", symbols: ["portRiskInputs", "portModelInputs"] }
       ]
     },
@@ -82,7 +107,7 @@ globalThis.PSEUDO_DOCS.alloc = {
         "remove_dominated_points_without_bridging_gaps()",
         "draw_scenarios_and_interpolate_valid_segments()"
       ].join("\n"),
-      note: "키인·CMA의 통계적 신뢰구간이 아닌 시나리오. 두 경계선의 최적 비중은 서로 다를 수 있음.",
+      note: "CMA의 사용자 낙관·중립·비관 입력과 별개의 평균 불확실성 경계선이며 통계적 신뢰구간이 아님. 두 경계선의 최적 비중은 서로 다를 수 있음.",
       sources: [
         { path: "dashboard/app.js", symbols: ["portDefaults", "portState", "portRobustModel", "portFrontiers"] }
       ]
@@ -93,20 +118,20 @@ globalThis.PSEUDO_DOCS.alloc = {
       formulas: [
         { expression: "rᴴᵢ = rᵁᵢ − hᵢe;  μᴴᵢ = μᵁᵢ + hᵢk", legend: "e: USDKRW 월 수익률. h: 헤지비중. k: 최신 HP 3M·6M·12M 단순평균(연 %, 양수 수취·음수 지급)." },
         { expression: "Cᴴᵢⱼ = Cᵁᵢⱼ − hᵢcⱼ − hⱼcᵢ + hᵢhⱼv", legend: "cᵢ: 자산·환율 연 공분산, v: 환율 연 분산. 게시 fx.cov_asset·fx.var(소수²)를 ×10,000 하여 %²로 통일. 자산과 같은 월 표본." },
-        { expression: "cᵢ(수기) = cᵢ(과거) × σᵢ(수기) / σᵢ(과거)", legend: "변동성 수정 시 과거 자산·환율 상관 유지. 과거 σ가 0이면 cᵢ=0." }
+        { expression: "cᵢ(가정) = cᵢ(과거) × σᵢ(가정) / σᵢ(과거)", legend: "수기·CMA 변동성 수정 시 과거 자산·환율 상관 유지. 과거 σ가 0이면 cᵢ=0." }
       ],
       code: [
         "h ← enabled_USD_asset_hedge_ratios()",
         "if no_positive_ratio(h): return unhedged_inputs",
         "require_same_window_FX_moments_and_HP_cost()",
         "cross, variance ← decimal_squared_to_percent_squared(FX_moments)",
-        "cross ← rescale_asset_FX_covariance_if_manual(cross)",
+        "cross ← rescale_asset_FX_covariance_if_manual_or_CMA(cross)",
         "require_PSD_joint_asset_FX_matrix(cross)",
         "muH, CH ← apply_hedge_return_and_covariance(h)",
         "require_PSD_adjusted_covariance(CH)",
         "compare_unhedged_and_hedged_frontiers(muH, CH)"
       ].join("\n"),
-      note: "월초 명목액 고정·기대 환율변화 0·비용 확정값 가정. 표준편차를 직접 차감하지 않음.",
+      note: "CMA 적용 뒤 헤지 대상 자산의 기존 환헤지를 반영. 해외장부는 원천 헤지 상태가 미검증되어 추가 헤지 제외. 월초 명목액 고정·기대 환율변화 0·비용 확정값 가정이며 표준편차를 직접 차감하지 않음.",
       sources: [
         { path: "pipeline/port.py", symbols: ["_fx_stats", "_hedge_cost"] },
         { path: "dashboard/app.js", symbols: ["portHedgeInputs", "portModelInputs"] }

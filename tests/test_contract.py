@@ -710,11 +710,11 @@ def _village_targets() -> set[str]:
 
 
 def test_village_zones_cover_every_section():
-    """시장 섹션은 마을에서, Pseudo 문서는 상단 탭에서 도달한다."""
+    """시장 섹션은 마을에서, CMA·Pseudo는 상단 탭에서 도달한다."""
     ids = set(re.findall(r'<section id="([a-z]+)" class="section"[^>]*>', _index_html()))
-    assert len(ids) == 15, f"섹션 수가 15가 아닙니다: {sorted(ids)}"
-    assert "pseudo" in _nav_hrefs()
-    missing = ids - {"pseudo"} - _village_targets()
+    assert len(ids) == 16, f"섹션 수가 16이 아닙니다: {sorted(ids)}"
+    assert {"cma", "pseudo"} <= set(_nav_hrefs())
+    missing = ids - {"cma", "pseudo"} - _village_targets()
     assert not missing, f"마을에서 도달할 수 없는 섹션: {sorted(missing)}"
 
 
@@ -1168,7 +1168,7 @@ def _renderer_map() -> dict[str, str]:
 
 
 def test_every_section_has_a_renderer():
-    """SECTION_IDS 의 15개가 전부 RENDERERS 에 있어야 한다.
+    """SECTION_IDS 의 16개가 전부 RENDERERS 에 있어야 한다.
 
     빠뜨리면 그 섹션은 **아무 오류 없이 영영 비어 있다** — 클릭해서 들어가야만
     보이는 구조라 눈으로 알아채기까지 오래 걸린다.
@@ -1178,7 +1178,7 @@ def test_every_section_has_a_renderer():
     r = _renderer_map()
     assert set(ids) - set(r) == set(), f"렌더러가 없는 섹션: {sorted(set(ids) - set(r))}"
     assert set(r) - set(ids) == set(), f"섹션에 없는 렌더러: {sorted(set(r) - set(ids))}"
-    assert len(ids) == 15
+    assert len(ids) == 16
 
 
 def test_renderers_named_in_the_map_actually_exist():
@@ -1485,7 +1485,7 @@ def test_built_brief_covers_its_own_events(built):
 # 정보구조 (§7.9, 2026-09-30) — 상단 탭 7개, 나머지는 부모 화면 안의 입구로
 # --------------------------------------------------------------------------
 
-EXPECTED_TABS = ["village", "overview", "events", "risk", "alloc", "hedge", "pseudo"]
+EXPECTED_TABS = ["village", "overview", "events", "risk", "alloc", "hedge", "cma", "pseudo"]
 
 
 def _nav_hrefs() -> list[str]:
@@ -1494,8 +1494,8 @@ def _nav_hrefs() -> list[str]:
     return re.findall(r'href="#([a-z]+)"', block.group(1))
 
 
-def test_top_tabs_include_pseudo_after_hedge():
-    """2026-09-30 사용자 지시: 환헤지 옆에 Pseudo 탭 추가."""
+def test_top_tabs_include_cma_between_hedge_and_pseudo():
+    """2026-09-30 사용자 지시: 환헤지·CMA·Pseudo 순서."""
     assert _nav_hrefs() == EXPECTED_TABS, f"상단 탭이 바뀌었습니다: {_nav_hrefs()}"
 
 
