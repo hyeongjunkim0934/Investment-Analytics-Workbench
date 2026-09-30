@@ -21,6 +21,8 @@ import math
 
 import pandas as pd
 
+import common
+
 ASSETS = ["국내채권", "국내장부", "해외채권", "국내주식", "해외주식", "대체투자"]
 PROXY = {
     "국내채권": "bb:한국종합",
@@ -85,11 +87,58 @@ def _stats(sub: pd.DataFrame) -> dict:
         "mdd_pct": [_rd(mdd[c] * 100, 4) for c in cols],
         "corr": [[_rd(corr.loc[a, b]) if pd.notna(corr.loc[a, b]) else None
                   for b in cols] for a in cols],
-        "cov": [[_rd(cov.loc[a, b]) for b in cols] for a in cols],
+        # Keep the asset block and new FX row at the same precision so a fully
+        # hedged, FX-only asset does not acquire a negative variance by rounding.
+        "cov": [[_rd(cov.loc[a, b], 12) for b in cols] for a in cols],
         "bench": {"mean_pct": _rd(rb.mean() * 12.0 * 100, 4),
                   "vol_pct": _rd(rb.std(ddof=1) * math.sqrt(12.0) * 100, 4),
                   "mdd_pct": _rd(_mdd(rb.to_frame("b"))["b"] * 100, 4)},
     }
+
+
+def _fx_stats(sub: pd.DataFrame, fx_returns: pd.Series) -> dict:
+    """Joint covariance uses exactly the published asset window, never a shorter fit.
+
+    Beginning-of-month notional hedge: rH_i = rU_i - h_i * e. The UI applies
+    C_H[i,j] = C_U[i,j] - h_j*c_i - h_i*c_j + h_i*h_j*var(e).
+    All covariance fields are annual decimal-return squared, in ASSETS order.
+    """
+    meta = {"currency": "USD", "source": FX_KEY, "frequency": "monthly",
+            "return_type": "simple", "annualization": 12, "ddof": 1,
+            "start": str(sub.index.min().date()), "end": str(sub.index.max().date()),
+            "n_months": int(len(sub)), "model": "beginning_period_notional"}
+    e = fx_returns.reindex(sub.index)
+    if len(e) < 2 or e.isna().any() or not all(math.isfinite(float(v)) for v in e):
+        return {**meta, "active": False, "var": None, "vol_pct": None,
+                "cov_asset": None, "reason": "자산 창과 동일한 월간 환율 표본 부족"}
+    variance = float(e.var(ddof=1) * 12.0)
+    cov_asset = [float(sub[a].cov(e, ddof=1) * 12.0) for a in sub.columns]
+    if not math.isfinite(variance) or not all(math.isfinite(c) for c in cov_asset):
+        return {**meta, "active": False, "var": None, "vol_pct": None,
+                "cov_asset": None, "reason": "환율 공분산 산출 불가"}
+    return {**meta, "active": True, "var": _rd(variance, 12),
+            "vol_pct": _rd(math.sqrt(max(0.0, variance)) * 100, 6),
+            "cov_asset": [_rd(c, 12) for c in cov_asset]}
+
+
+def _hedge_cost(series_store: dict) -> dict:
+    """Same current HP curve as the hedge dashboard; positive values are received.
+
+    Embed the mean in alloc.json so a missing hedge.json never becomes zero cost.
+    An unavailable HP tenor keeps the adjustment inactive; no rate-spread fallback.
+    """
+    hp = common.hp_curve({k: v["s"] for k, v in series_store.items()}, "USD")
+    meta = {"currency": "USD", "tenors": list(common.HP_TENORS),
+            "sign": "positive_received", "src": "실측(HP)",
+            "label": common.hp_read_label()}
+    if hp is None or not all(math.isfinite(float(v)) for v in hp["curve"].values()):
+        return {"USD": {**meta, "active": False, "mean_pct": None,
+                        "reason": "USD HP 3M·6M·12M 헤지비용 필요"}}
+    return {"USD": {**meta, "active": True,
+                    "mean_pct": _rd(sum(hp["curve"][m] for m in common.HP_TENORS) / 3, 8),
+                    "curve": hp["curve"], "asof": hp["asof"].strftime("%Y-%m-%d"),
+                    "dates": {m: hp["dates"][m].strftime("%Y-%m-%d") for m in common.HP_TENORS},
+                    "window": hp["window"]}}
 
 
 def load_cma_input(data_dir, warn) -> dict | None:
@@ -154,6 +203,11 @@ def build(series_store: dict, warn, data_dir=None) -> dict:
                 "reason": f"환율 시리즈 없음: {FX_KEY} — 원화 환산 불가"}
 
     fx_me = _me_levels(series_store[FX_KEY]["s"])
+    fx_returns = fx_me.pct_change(fill_method=None)
+    # Do not call a multi-month jump one monthly observation when a month is absent.
+    month_numbers = pd.Series(fx_me.index.to_period("M").asi8, index=fx_me.index)
+    fx_returns = fx_returns.where((month_numbers.diff() == 1) & (fx_me > 0)
+                                  & (fx_me.shift(1) > 0))
     rets, cover = {}, []
     for a in ASSETS:
         me = _me_levels(series_store[PROXY[a]]["s"])
@@ -180,9 +234,11 @@ def build(series_store: dict, warn, data_dir=None) -> dict:
         if len(df) <= need:
             continue
         st = _stats(df.iloc[-need:])
+        st["fx"] = _fx_stats(df.iloc[-need:], fx_returns)
         st["key"] = str(y)
         windows.append(st)
     st_all = _stats(df)
+    st_all["fx"] = _fx_stats(df, fx_returns)
     st_all["key"] = "all"
     windows.append(st_all)
 
@@ -252,6 +308,7 @@ def build(series_store: dict, warn, data_dir=None) -> dict:
         "proxies": PROXY,
         "usd_assets": sorted(USD_ASSETS),
         "fx_key": FX_KEY,
+        "hedge_cost": _hedge_cost(series_store),
         "basis": "KRW 원화 환산(미헤지) — USD 지수는 월말 달러원 환율로 환산",
         "defaults": defaults,
         "bench_w": BENCH_W,

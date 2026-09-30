@@ -609,6 +609,8 @@ const readHedgeDashboard = (currency = "USD") => {
     text: dashboard.textContent,
     rowText: row?.textContent || "",
     currencies: rows.map((node) => node.getAttribute("data-currency")),
+    fxVol: row?.querySelector(".hedge-fx-volatility")?.textContent || "",
+    fxDetails: row?.querySelector(".hedge-fx-volatility")?.getAttribute("title") || "",
     tiles: (row?.querySelectorAll(".hedge-cost-tile") || []).map((tile) => ({
       tenor: tile.getAttribute("data-tenor"), text: tile.textContent,
       value: tile.querySelector(".hedge-cost-value")?.textContent,
@@ -684,7 +686,11 @@ safe("hedgeCurrencyDashboard", () => {
     JPY: entry([1.2, 0.6, 0], "2029-12-03", "JPY", 3),
     AUD: entry([-0.9, -0.6, -0.3], "2029-12-04", "AUD", 5),
     USD: entry([-1.8, -2.1, -2.4], "2029-12-05", "USD", 9),
+    EUR: entry([-0.3, 0, 0.6], "2029-12-06", "EUR", 5),
   };
+  fixture.fx_volatility = Object.fromEntries(["USD", "AUD", "JPY", "EUR"].map((currency, i) =>
+    [currency, { active: true, vol_pct: 7.124 + i, start: "2001-01-02", end: "2029-12-05",
+      n_returns: 7000, annualization: 252 } ]));
   const r = {};
   const read = (f, currency) => ({
     snapshot: P.hedgeCostSnapshot(f, currency), ...readHedgeDashboard(currency),
@@ -699,7 +705,10 @@ safe("hedgeCurrencyDashboard", () => {
   try {
     P.DATA.hedge = fixture;
     P.renderHedge();
-    r.published = Object.fromEntries(["JPY", "AUD", "USD"].map((currency) => [currency, read(fixture, currency)]));
+    r.published = Object.fromEntries(["JPY", "AUD", "USD", "EUR"].map((currency) => [currency, read(fixture, currency)]));
+    run("missingFx", "USD", (_, f) => { delete f.fx_volatility.USD; });
+    run("invalidFx", "JPY", (_, f) => { f.fx_volatility.JPY.vol_pct = Infinity; });
+    run("zeroFx", "EUR", (_, f) => { f.fx_volatility.EUR.vol_pct = 0; });
     run("missingUsdDate", "USD", (entry) => { delete entry.dates["6M"]; });
     run("missingJpyDates", "JPY", (entry) => { delete entry.dates; });
     run("mixedAudDates", "AUD", (entry) => { entry.dates["6M"] = "2029-12-03"; });

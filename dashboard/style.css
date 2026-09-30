@@ -1032,12 +1032,12 @@ details.explain[open] > summary { color: var(--ink-2); }
 .hedge-cost-row + .hedge-cost-row { margin-top: 14px; }
 .hedge-cost-row-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 7px; }
 .hedge-cost-currency { color: var(--ink-1); font-size: 13px; font-weight: 700; letter-spacing: .03em; }
-.hedge-cost-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-.hedge-cost-tile { min-width: 0; padding: 12px 14px; }
-.hedge-cost-tile .card-title { font-size: 12px; }
+.hedge-cost-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.hedge-cost-tile, .hedge-fx-volatility { min-width: 0; padding: 12px 14px; }
+.hedge-cost-tile .card-title, .hedge-fx-volatility .card-title { font-size: 12px; }
 .hedge-cost-value { margin: 5px 0 3px; font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .hedge-cost-date { color: var(--ink-3); font-size: 11px; }
-.hedge-cost-tile .card-sub { display: block; margin-top: 3px; font-size: 11px; }
+.hedge-cost-tile .card-sub, .hedge-fx-volatility .card-sub { display: block; margin-top: 3px; font-size: 11px; }
 .hedge-merit { margin-top: 14px; }
 .hedge-merit-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 8px 0; }
 .hedge-merit-tile { min-width: 0; padding: 10px 14px; }
@@ -1172,6 +1172,12 @@ a.kpi-link .kpi-label > span:first-child::after {
 /* μ 출처는 열이 아니라 키인 칸 아래 주석이다 */
 .port-src { display: block; font-size: 11px; color: var(--ink-3); margin-top: 2px; }
 .port-src:empty { display: none; }
+.port-hedge-control { display: flex; align-items: center; justify-content: center; gap: 5px; }
+.port-hedge-control input[type="checkbox"] { flex: 0 0 auto; width: 14px; height: 14px; margin: 0; accent-color: var(--ink-2); }
+.port-table .port-hedge-control input[type="number"] { width: min(58px, 100%); }
+.port-hedge-control input:disabled { opacity: .4; }
+.port-hedge-applied { display: block; margin-top: 4px; font-size: 11px; color: var(--ink-2); }
+.port-hedge-applied:empty { display: none; }
 .port-badge { font-size: 12.5px; padding: 2px 8px; border: 1px solid var(--border);
   border-radius: 8px; color: var(--ink-2); }
 .port-btns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }

@@ -857,22 +857,37 @@ def test_hedge_currency_dashboard_uses_each_published_curve_date_and_source(prob
         "JPY": ([1.2, 0.6, 0, 0.6], ["+1.20%", "+0.60%", "0.00%", "+0.60%"], "2029-12-03", 3),
         "AUD": ([-0.9, -0.6, -0.3, -0.6], ["-0.90%", "-0.60%", "-0.30%", "-0.60%"], "2029-12-04", 5),
         "USD": ([-1.8, -2.1, -2.4, -2.1], ["-1.80%", "-2.10%", "-2.40%", "-2.10%"], "2029-12-05", 9),
+        "EUR": ([-0.3, 0, 0.6, 0.1], ["-0.30%", "0.00%", "+0.60%", "+0.10%"], "2029-12-06", 5),
     }
     for currency, (values, displayed, date, window) in expected.items():
         row = rows[currency]
-        assert row["currencies"] == ["USD", "AUD", "JPY"]
+        assert row["currencies"] == ["USD", "AUD", "JPY", "EUR"]
         assert [tile["tenor"] for tile in row["tiles"]] == ["3M", "6M", "12M", "mean"]
         assert [tile["value"] for tile in row["tiles"]] == displayed
         assert row["snapshot"]["values"] == pytest.approx(values)
         assert row["snapshot"]["dates"] == [date] * 3
         assert row["snapshot"]["meanDate"] == date
         assert [tile["date"] for tile in row["tiles"]] == [date] * 4
-        assert {"USD": "USDKRW", "AUD": "AUDKRW", "JPY": "JPY/KRW"}[currency] in row["rowText"]
+        assert {"USD": "USDKRW", "AUD": "AUDKRW", "JPY": "JPY/KRW", "EUR": "EURKRW"}[currency] in row["rowText"]
         assert f"HP · {currency} 프로브 {window}관측 중앙값" in row["rowText"]
         assert "프로브전용읽기" not in row["rowText"]
         assert "3M·6M·12M 단순평균" in row["rowText"]
         assert "연 %" in row["text"] and "＋받음 −지불" in row["text"]
     assert probe["hedgeCurrencyDashboard"]["publishedWithoutMatrix"]["snapshot"] == rows["AUD"]["snapshot"]
+
+
+def test_hedge_fx_volatility_is_separate_from_cost_and_keeps_sample(probe):
+    cases = probe["hedgeCurrencyDashboard"]
+    for currency, expected in {"USD": "7.12%", "AUD": "8.12%", "JPY": "9.12%", "EUR": "10.12%"}.items():
+        row = cases["published"][currency]
+        assert expected in row["fxVol"]
+        assert "장기 · 연환산 σ" in row["fxVol"]
+        assert "2001-01-02 ~ 2029-12-05" in row["fxDetails"]
+        assert "7000개" in row["fxDetails"] and "√252" in row["fxDetails"]
+        assert "자산 전체의 변동성 감소분과 다릅니다" in row["fxDetails"]
+    assert "—" in cases["missingFx"]["fxVol"]
+    assert "—" in cases["invalidFx"]["fxVol"]
+    assert "0.00%" in cases["zeroFx"]["fxVol"]
 
 
 def test_hedge_currency_dashboard_ignores_missing_or_invalid_dates_for_mean(probe):
