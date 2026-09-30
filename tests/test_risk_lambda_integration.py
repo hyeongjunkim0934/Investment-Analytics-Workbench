@@ -65,32 +65,23 @@ def test_tenth_scale_matches_closed_form_for_both_layers(linkage):
     assert linkage["scaled"]["csv"] != linkage["baseline"]["csv"]
 
 
-def test_asset_limits_and_free_modes_match_independent_clipping(linkage):
+def test_retired_limits_and_modes_do_not_override_chart_allocations(linkage):
     for case, score_key, scale in [("constrained", "scores", 1),
                                    ("constrainedPotential", "potential", 1),
                                    ("constrainedScaled", "scores", .1)]:
         assert_path(linkage[case], linkage["dates"], linkage[score_key], [3, 7],
-                    [[16, 8], [8, 100]], scale=scale, lower=.2, upper=.45)
+                    [[16, 8], [8, 100]], scale=scale)
+        assert linkage[case]["points"] == []
     assert linkage["freeWithBounds"]["csv"] == linkage["baseline"]["csv"]
     assert linkage["freePotentialWithBounds"]["csv"] == linkage["potentialPath"]["csv"]
-    points = linkage["constrained"]["points"]
-    assert len(points) == 8
-    for layer, score_key in [("stress", "scores"), ("vuln", "potential")]:
-        for mode, lo, hi in [("constrained", .2, .45), ("free", 0, 1)]:
-            actual = {p["asset"]: p["weight"] for p in points if p["layer"] == layer and p["mode"] == mode}
-            bond = expected_weight([3, 7], [[16, 8], [8, 100]], linkage[score_key][-1], lo, hi)
-            np.testing.assert_allclose([actual["국내채권"], actual["해외주식"]],
-                                       [100 * bond, 100 * (1 - bond)], rtol=0, atol=2e-5)
 
 
-def test_infeasible_or_malformed_limits_do_not_contaminate_free_comparison(linkage):
-    for name in ["infeasibleLower", "infeasibleUpper", "malformedBounds"]:
+def test_retired_invalid_limits_cannot_block_current_or_potential_graphs(linkage):
+    for name in ["infeasibleLower", "infeasibleUpper", "malformedBounds", "infeasibleFree"]:
         case = linkage[name]
-        assert case["charts"] == 0 and case["csv"] is None
-        assert "보류" in case["text"]
-        assert len(case["points"]) == 4
-        assert all(point["mode"] == "free" for point in case["points"])
-    assert linkage["infeasibleFree"]["csv"] == linkage["baseline"]["csv"]
+        assert case["csv"] == linkage["baseline"]["csv"]
+        assert case["charts"] == 1 and case["points"] == []
+        assert "보류" not in case["text"]
 
 
 @pytest.mark.parametrize("case,mu,covariance", [

@@ -1809,8 +1809,8 @@ def test_risk_to_optimization_process_card(probe):
 
 def test_risk_workspace_uses_latest_homepage_result_and_weekly_dates(probe):
     c = probe["allocRiskProc"]
-    for key in ("latestSourceMatchesRisk", "latestTableMatchesRisk",
-                "riskSelectionSurvivesUpdate", "missingLatestClearsOldScores"):
+    for key in ("removedSummaryAndLimits", "latestTableMatchesRisk",
+                "riskSelectionSurvivesUpdate", "missingLatestClearsOldGraphs"):
         assert c[key], key
 
 
