@@ -1215,13 +1215,21 @@ a.kpi-link .kpi-label > span:first-child::after {
 /* Keep the selected result above the editable rows, below the responsive site header. */
 .port-results-dock { --port-results-top: 64px; position: sticky; top: var(--port-results-top); z-index: 12;
   min-width: 0; margin: -2px 0 16px; background: var(--surface);
-  border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 8px 16px rgba(0,0,0,.16); }
-.port-result-tabs { display: flex; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  border: 1px solid var(--ink-3); border-bottom: 2px solid var(--port-accent); border-radius: 4px;
+  box-shadow: 0 10px 20px rgba(0,0,0,.32); }
+.port-results-header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px;
+  padding: 6px 10px; border-bottom: 1px solid var(--ink-3); }
+.port-result-tabs { display: flex; gap: 4px; }
+.port-result-tools { margin-left: auto; min-width: 0; max-width: 100%; }
+.port-result-tools .card-head { position: relative; margin: 0; }
+.port-result-tools .card-actions { align-items: center; flex-wrap: wrap; max-width: 100%; }
 #alloc-port-panel .port-result-tabs button { padding: 5px 12px; min-height: 32px;
   border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none;
   color: var(--ink-3); font: inherit; font-size: 13px; cursor: pointer; }
 #alloc-port-panel .port-result-tabs button[aria-selected="true"] { color: var(--ink-1); border-bottom-color: var(--port-accent); }
-.port-results-body { max-height: 54vh; max-height: 54dvh; overflow: auto; overscroll-behavior: contain; }
+.port-results-body { max-height: min(64vh, calc(100vh - var(--port-results-top) - 150px));
+  max-height: min(64dvh, calc(100dvh - var(--port-results-top) - 150px));
+  overflow: auto; overscroll-behavior: contain; }
 .port-results-body > .card { border: 0; padding: 8px 12px; }
 .port-results-body > [hidden] { display: none; }
 .port-results-dock .port-frontier .chart-box { margin-top: 6px; padding: 2px 0; }
@@ -1230,10 +1238,10 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-results-dock .port-sharpe-scale { margin-top: 6px; font-size: 11px; }
 .port-results-dock .port-benchmark { max-height: none; }
 #alloc-port-panel > .card-head { margin-top: 12px; }
-#alloc-port-panel input { scroll-margin-top: 65vh; scroll-margin-bottom: 30px; }
+#alloc-port-panel input { scroll-margin-top: 75vh; scroll-margin-bottom: 30px; }
 @media (max-width: 700px) {
   .port-results-body > .card { padding: 7px 6px; }
-  .port-result-tabs { padding: 5px; }
+  .port-results-header { padding: 5px; }
   .port-results-dock .card-actions { gap: 4px; }
   .port-results-dock .port-sharpe-scale { display: none; }
 }
