@@ -35,7 +35,11 @@ header.append(elem("div", "meta-line"), elem("button", "theme-btn"));
 const nav = elem("nav", "nav");
 header.append(nav);
 const gate = elem("div", "gate", "gate");
-gate.append(elem("form", "gate-form"), elem("input", "gate-pw"), elem("p", "gate-err"));
+const gateForm = elem("form", "gate-form");
+const gateSubmit = elem("button");
+gateSubmit.setAttribute("type", "submit");
+gateForm.append(elem("input", "gate-pw"), gateSubmit, elem("p", "gate-err"));
+gate.append(elem("button", "gate-emblem"), gateForm);
 DOC.body.append(gate);
 
 const filterRow = elem("div", null, "filter-row");
@@ -3897,6 +3901,16 @@ const submitGate = async (pw) => {
     gate.hidden = true;
     P.bindGate();
     r.shownEvenWithLegacyKey = gate.hidden === false;
+    const emblem = DOC.getElementById("gate-emblem");
+    const password = DOC.getElementById("gate-pw");
+    const form = DOC.getElementById("gate-form");
+    r.startsCollapsed = form.hidden && emblem.getAttribute("aria-expanded") === "false";
+    emblem.click();
+    r.revealsPassword = !form.hidden && emblem.getAttribute("aria-expanded") === "true";
+    r.focusesPassword = DOC.activeElement === password;
+    password.value = "discard-me";
+    gate.dispatchEvent({ type: "keydown", key: "Escape", preventDefault() {} });
+    r.escapeCollapses = form.hidden && password.value === "" && DOC.activeElement === emblem;
     /* 두 번 불러도 리스너가 두 벌 걸리면 안 된다 — 제출 한 번에 async 핸들러가
        두 벌 돌고 늦게 끝난 쪽이 판정을 덮어쓴다(실제로 테스트가 간헐 실패했다). */
     let submits = 0;

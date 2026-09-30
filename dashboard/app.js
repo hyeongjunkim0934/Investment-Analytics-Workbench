@@ -2705,12 +2705,41 @@ function bindGate() {
   /* 접속할 때마다 묻는다 — 통과 상태를 저장하지 않고, 예전 버전이 남긴 키는 지운다. */
   try { localStorage.removeItem(GATE_STALE_KEY); } catch { /* 사생활 모드 등 */ }
   gate.hidden = false;
+  const form = $("#gate-form");
+  const emblem = $("#gate-emblem");
+  const password = $("#gate-pw");
+  const error = $("#gate-err");
+  const collapse = (focus = true) => {
+    form.hidden = true;
+    emblem.setAttribute("aria-expanded", "false");
+    password.value = "";
+    error.hidden = true;
+    if (focus) emblem.focus();
+  };
+  collapse(false);
   /* 리스너는 **한 번만** 건다. 두 번 걸리면 제출 한 번에 async 핸들러가 두 벌 돌고,
      늦게 끝난 쪽이 뒤늦게 gate.hidden 을 덮어써 판정이 뒤집힌다(테스트에서 실측).
      지금은 boot() 이 한 번만 부르지만, 재초기화 경로가 생기면 그대로 재현된다. */
-  const form = $("#gate-form");
   if (form.dataset && form.dataset.bound === "1") return;
   if (form.dataset) form.dataset.bound = "1";
+  emblem.addEventListener("click", () => {
+    form.hidden = false;
+    emblem.setAttribute("aria-expanded", "true");
+    password.focus();
+  });
+  gate.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !form.hidden) {
+      e.preventDefault();
+      collapse();
+    } else if (e.key === "Tab") {
+      const last = form.hidden ? emblem : form.querySelector('button[type="submit"]');
+      if (e.shiftKey && document.activeElement === emblem) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); emblem.focus();
+      }
+    }
+  });
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const val = gateNormalize($("#gate-pw").value);
@@ -2726,6 +2755,8 @@ function bindGate() {
     }
     if (ok) {
       gate.hidden = true;
+      password.value = "";
+      $("#main-content").focus();
       /* 관문이 떠 있는 동안은 sceneCycleAllowed() ③ 이 막고 있었다.
          통과한 지금이 자동 순환의 실제 시작점이다 — routeView 는 이미 지나갔다. */
       restartSceneCycle();

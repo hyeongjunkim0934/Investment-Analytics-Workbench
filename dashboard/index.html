@@ -7,7 +7,7 @@
 <meta name="description" content="금리·크레딧·FX·인플레이션·지수 데이터를 자동 갱신하는 투자 분석 대시보드">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%F0%9F%93%88%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="vendor/uplot.min.css">
-<link rel="stylesheet" href="style.css?v=20260930-allocation-constraints-1">
+<link rel="stylesheet" href="style.css?v=20260930-login-postcard-1">
 <link rel="stylesheet" href="cma.css?v=20260930-cma-1">
 </head>
 <body>
@@ -15,16 +15,16 @@
 <!-- 관문의 동작과 공개 호스팅 범위: docs/HANDOVER.md §3.3. -->
 <div class="gate" id="gate" hidden>
   <div class="gate-card">
-    <div class="gate-emblem" id="gate-emblem" aria-hidden="true">✉</div>
-    <h1 class="gate-title">Korea Postal Insurance Service</h1>
-    <form class="gate-form" id="gate-form">
-      <label class="gate-label" for="gate-pw">입장 암구호</label>
+    <button type="button" class="gate-emblem" id="gate-emblem" aria-label="비밀번호 입력 열기"
+            aria-controls="gate-form" aria-expanded="false"><span aria-hidden="true">✉</span></button>
+    <form class="gate-form" id="gate-form" hidden>
+      <label class="gate-label" for="gate-pw">비밀번호</label>
       <!-- 암구호에 공백이 있어 모바일 키보드가 첫 글자를 대문자로 바꾸면 그대로 막힌다.
            autocapitalize/autocorrect 를 끄고, 앞뒤·연속 공백은 JS 가 하나로 접는다. -->
       <input type="password" id="gate-pw" autocomplete="current-password" spellcheck="false"
              autocapitalize="none" autocorrect="off">
       <button type="submit">입장</button>
-      <p class="gate-err" id="gate-err" hidden>암구호가 다릅니다.</p>
+      <p class="gate-err" id="gate-err" role="alert" hidden>암구호가 다릅니다.</p>
     </form>
   </div>
 </div>
@@ -284,6 +284,6 @@
 <script src="pseudo/alloc.js?v=20260930-allocation-cma-2"></script>
 <script src="pseudo/hedge.js?v=20260930-hedge-anchor-1"></script>
 <script src="pseudo.js?v=20260930-pseudo-1"></script>
-<script src="app.js?v=20260930-allocation-cma-2"></script>
+<script src="app.js?v=20260930-login-postcard-1"></script>
 </body>
 </html>
