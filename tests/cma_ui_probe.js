@@ -83,7 +83,7 @@ const input = (box, label) => [...box.querySelectorAll("input")].find(node => no
 const portInput = label => input(portBox(), label);
 const result = {};
 
-const C = inspect("({cmaMoments,cmaStore,cmaEnsureAsset,cmaAssetAssumption,cmaApplyAsset,cmaSetEnabled,CMA_LS_KEY})");
+const C = inspect("({cmaMoments,cmaSyncDraftProbability,cmaStore,cmaEnsureAsset,cmaAssetAssumption,cmaApplyAsset,cmaSetEnabled,CMA_LS_KEY})");
 if (process.argv.includes("--reload")) {
   P.renderSection("cma");
   const model = P.portModelInputs(portfolio, P.portState(portfolio));
@@ -132,6 +132,35 @@ result.boundaries = {
 };
 assert(Object.values(result.boundaries).every(Boolean), JSON.stringify(result.boundaries));
 
+// The third probability is a residual, never a silently rescaled input.
+const residual = (optimistic, neutral) => {
+  const draft = copy(rows); draft[0].p = optimistic; draft[1].p = neutral;
+  C.cmaSyncDraftProbability(draft); return draft;
+};
+const fullNeutral = residual(0,100), fullPessimistic = residual(0,0);
+const decimalResidual = residual(.1,.2), overSubscribed = residual(70,40);
+result.residualProbability = {
+  defaultQuarter: residual(25,50)[2].p === 25,
+  fullNeutral: fullNeutral[2].p === 0 && C.cmaMoments(fullNeutral).valid,
+  fullPessimistic: fullPessimistic[2].p === 100 && C.cmaMoments(fullPessimistic).mu === -2,
+  noRounding: Math.abs(decimalResidual[2].p - 99.7) < 1e-12 && C.cmaMoments(decimalResidual).valid,
+  decimalBoundaryValid: residual(33.3,66.7)[2].p===0 && C.cmaMoments(residual(33.3,66.7)).valid,
+  substantiveNearBoundaryRejected: residual(33.3,66.7000001)[2].p<0
+    && !C.cmaMoments(residual(33.3,66.7000001)).valid,
+  negativeResidualNotClipped: overSubscribed[2].p === -10 && !C.cmaMoments(overSubscribed).valid,
+  enteredValuesNotRescaled: overSubscribed[0].p === 70 && overSubscribed[1].p === 40,
+  emptyOptimistic: residual("",50)[2].p === "",
+  emptyNeutral: residual(25," ")[2].p === "",
+  nonnumeric: residual("bad",50)[2].p === "",
+  nullIsNotZero: residual(null,50)[2].p === "",
+  negativeInputInvalid: !C.cmaMoments(residual(-1,50)).valid,
+  over100InputInvalid: !C.cmaMoments(residual(101,0)).valid,
+  numericStrings: residual("12.5","37.5")[2].p === 50,
+  scenarioMomentsPreserved: JSON.stringify(residual(20,60).map(({mu,sig})=>({mu,sig})))
+    === JSON.stringify(rows.map(({mu,sig})=>({mu,sig}))),
+};
+assert(Object.values(result.residualProbability).every(Boolean),JSON.stringify(result.residualProbability));
+
 // Upgrade old saved names only when the loaded portfolio uses their replacements.
 // Loading before market data, or retaining an old payload, must not hide its CMA.
 const legacyEntry = {enabled:true,applied:copy(rows),draft:copy(changed(0,{p:""})),
@@ -177,6 +206,16 @@ result.assetMigration = {
   reloadPreservesUnfinishedDraft: migratedReload.cmaAssets.해외시가.draft[0].p === "",
 };
 assert(Object.values(result.assetMigration).every(Boolean),JSON.stringify(result.assetMigration));
+const storedLegacyDraft={...copy(legacyEntry),draft:copy(rows)};
+storedLegacyDraft.draft[0].p=20;
+const reconciledReload=reload([[C.CMA_LS_KEY,JSON.stringify({version:1,assets:{[asset]:storedLegacyDraft}})]]);
+result.legacyResidual={
+  recalculatesOldDraftOnly:reconciledReload.cmaAssets[asset].draft[2].p===30,
+  appliedProbabilitiesPreserved:JSON.stringify(reconciledReload.cmaAssets[asset].applied)===JSON.stringify(rows),
+  appliedModelPreserved:reconciledReload.active && reconciledReload.mu===4,
+  renderingDoesNotWrite:reconciledReload.writes===0,
+};
+assert(Object.values(result.legacyResidual).every(Boolean),JSON.stringify(result.legacyResidual));
 
 // Existing manual inputs remain recoverable when the independent CMA layer is disabled.
 const state = P.portDefaults(portfolio);
@@ -192,8 +231,42 @@ const cmaInput = (scenario, label) => input(card(), `${asset} ${scenario} ${labe
 const set = (scenario, label, value) => {const node=cmaInput(scenario,label); node.value=String(value);fire(node,"input");};
 const apply = () => card().querySelector(".cma-apply").click();
 const toggle = enabled => {const node=input(card(), `${asset} CMA 적용`);node.checked=enabled;fire(node,"change");};
+const metric = (name, scope=card()) => [...scope.querySelectorAll(".cma-metric-value")]
+  .find(node=>node.getAttribute("data-metric")===name)?.textContent;
+const summaryState = () => card().querySelector(".cma-summary-state").textContent;
+const allCards = [...cmaBox().querySelectorAll(".cma-card")];
+const bookCard = allCards.find(node=>node.getAttribute("aria-label")==="해외장부 CMA");
+result.collapsedCards = {
+  sevenCollapsedDetails: allCards.length===7 && allCards.every(node=>{
+    const details=node.querySelector("details.cma-details");
+    return details && !details.open && !details.hasAttribute("open");
+  }),
+  summaryAndEditorContained: allCards.every(node=>{
+    const details=node.querySelector(".cma-details");
+    return details.children[0].tagName==="SUMMARY"
+      && details.querySelector(".cma-summary") && details.querySelector(".cma-editor .cma-table")
+      && details.querySelector(".cma-editor .cma-apply");
+  }),
+  fourMetricsEach: allCards.every(node=>node.querySelector(".cma-summary").querySelectorAll(".cma-metric-value").length===4),
+  noControlsInSummary: allCards.every(node=>!node.querySelector(".cma-summary").querySelector("input, button, a")),
+  annualHistoricalMetrics: Number.parseFloat(metric("ref-mu"))===5.5 && Number.parseFloat(metric("ref-sig"))===11.1,
+  missingHistoryIsNotZero: metric("ref-mu",bookCard)==="—" && metric("ref-sig",bookCard)==="—",
+  removedSubtitle: !cmaBox().textContent.includes("Capital Market Assumptions"),
+  removedTopNote: !cmaBox().querySelector(".cma-heading")
+    && !cmaBox().textContent.includes("1년 가정 · 연간 기대수익률·변동성"),
+  removedAllocationLink: ![...cmaBox().querySelectorAll("a")].some(node=>node.getAttribute("href")==="#alloc"),
+  residualReadOnly: cmaInput("비관","확률").hasAttribute("readonly"),
+};
+assert(Object.values(result.collapsedCards).every(Boolean),JSON.stringify(result.collapsedCards));
 const labels = ["낙관","중립","비관"];
-rows.forEach((row,i)=>[["확률",row.p],["기대수익",row.mu],["변동성",row.sig]].forEach(([label,value])=>set(labels[i],label,value)));
+rows.forEach((row,i)=>[["확률",row.p],["기대수익",row.mu],["변동성",row.sig]]
+  .filter(([label])=>i!==2 || label!=="확률").forEach(([label,value])=>set(labels[i],label,value)));
+result.summary = {
+  liveDraftMean: Number.parseFloat(metric("mu"))===4,
+  liveDraftSigma: Math.abs(Number.parseFloat(metric("sig"))-Math.sqrt(82.5))<.0051,
+  draftLabel: summaryState()==="미적용 초안",
+  residualUpdates: Number(cmaInput("비관","확률").value)===25,
+};
 const draftModel = P.portModelInputs(portfolio, P.portState(portfolio));
 const dataBefore = JSON.stringify(P.DATA.alloc);
 apply();
@@ -201,6 +274,7 @@ const liveState = () => inspect("portPanelDraft.st");
 const activeModel = P.portModelInputs(portfolio, liveState());
 const current = C.cmaAssetAssumption(asset);
 near(current.mu,4);near(current.sig,Math.sqrt(82.5));
+result.summary.appliedLabel=summaryState()==="적용 중";
 result.application = {
   unappliedDraftDoesNotChangeModel: draftModel.baseMu[assetIndex] === -1.2 && draftModel.risk.sig[assetIndex] === 6.5,
   appliedMean: activeModel.baseMu[assetIndex] === 4,
@@ -218,6 +292,7 @@ result.application = {
 assert(Object.values(result.application).every(Boolean), JSON.stringify(result.application));
 const enabledReload = reload();
 toggle(false);
+result.summary.disabledLabel=summaryState()==="CMA 해제";
 const disabledModel = P.portModelInputs(portfolio, liveState()), disabledReload = reload();
 result.persistence = {
   enabledReload: enabledReload.active && enabledReload.mu === 4 && Math.abs(enabledReload.sig-Math.sqrt(82.5)) < 1e-9,
@@ -229,6 +304,19 @@ result.persistence = {
 toggle(true);
 
 // Invalid/unfinished editing must retain the applied state through tab rerenders/reloads.
+const appliedBeforeInvalid=JSON.stringify(C.cmaStore().assets[asset].applied);
+set("낙관","확률",70);set("중립","확률",40);
+result.residualUI={
+  overSubscribedVisible:Number(cmaInput("비관","확률").value)===-10,
+  overSubscribedRejected:card().querySelector(".cma-apply").disabled,
+  invalidResidualFlagged:cmaInput("비관","확률").getAttribute("aria-invalid")==="true",
+  invalidSummary:metric("mu")==="—" && metric("sig")==="—" && summaryState()==="입력 확인",
+  appliedUntouched:JSON.stringify(C.cmaStore().assets[asset].applied)===appliedBeforeInvalid,
+};
+const overSubscribedReload=reload();
+result.residualUI.reloadRetainsApplied=overSubscribedReload.active && overSubscribedReload.mu===4
+  && overSubscribedReload.cmaAssets[asset].draft[2].p===-10;
+set("낙관","확률",25);set("중립","확률",50);
 set("낙관","확률",""); apply();
 const invalidReload = reload();
 P.renderSection("cma");
@@ -238,9 +326,14 @@ result.invalidDraft = {
   retainedApplied: C.cmaAssetAssumption(asset).mu === 4 && P.portModelInputs(portfolio,liveState()).baseMu[assetIndex] === 4,
   retainedAfterReload: invalidReload.active && invalidReload.mu === 4,
   draftSurvivesRerender: cmaInput("낙관","확률").value === "",
+  residualBlankSurvivesRerender: cmaInput("비관","확률").value === "",
   explicitStatus: card().querySelector(".cma-status").textContent.includes("기존 적용값은 유지"),
 };
 set("낙관","확률",25);
+result.residualUI.validEditingRecovers=Number(cmaInput("비관","확률").value)===25
+  && !card().querySelector(".cma-apply").disabled && summaryState()==="적용 중";
+assert(Object.values(result.residualUI).every(Boolean),JSON.stringify(result.residualUI));
+assert(Object.values(result.summary).every(Boolean),JSON.stringify(result.summary));
 
 // Hover reports applied scenarios, with focus/keyboard access and Escape dismissal.
 const assetTrigger = () => [...portBox().querySelectorAll("button")].find(node=>node.getAttribute("aria-label") === `${asset} 시나리오 보기`);

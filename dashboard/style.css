@@ -409,13 +409,8 @@ table > tr > th.rowhead { color: var(--ink-2); white-space: normal; }
 :root { --g-low: #3fbf3f; --g-warn: #e8b84a; --g-crit: #e66767; }
 :root[data-theme="light"] { --g-low: #006300; --g-warn: #8a6100; --g-crit: #a02c2c; }
 
-.risk-top { display: grid; grid-template-columns: 1fr 400px; gap: 14px; align-items: stretch; }
-@media (max-width: 1000px) { .risk-top { grid-template-columns: 1fr; } }
-.risk-side { display: flex; flex-direction: column; gap: 14px; }
-.risk-side .card { flex: 1; }
 #risk .qa { margin-bottom: 8px; }
-#risk > h2 { margin-bottom: 8px; }
-.risk-top > * { min-width: 0; }
+#risk-chart-card { min-width: 0; }
 .risk-chart-head { align-items: center; gap: 8px 16px; }
 #risk-chart-card .risk-period { gap: 6px 10px; }
 #risk-chart-card .risk-period input[type="date"] { width: 132px; }

@@ -79,14 +79,11 @@ secNodes.overview.append(elem("div", "ov-groups"), elem("p", "ov-catalog"));
 ["card-curve", "card-ts10", "card-spreads", "card-policy"]
   .forEach((id) => secNodes.rates.append(elem("div", id)));
 
-/* 리스크 뼈대 — renderRisk 가 $("#risk-…") 로 집는 자리들 (층 맥락·밴드 실증 프로브용) */
-["risk-headline", "risk-chart-card", "risk-events-mini",
+/* 리스크 뼈대 — 삭제된 보조 패널 없이 차트·요인 표를 렌더한다. */
+["risk-headline", "risk-chart-card",
  "risk-stress-rows", "risk-vuln-rows",
  "risk-regime-card"].forEach((id) => secNodes.risk.append(elem("div", id)));
-secNodes.risk.append(elem("h3", "risk-stress-title"), elem("h3", "risk-vuln-title"),
-  elem("details", "risk-method"));
-/* 리스크 안의 관계분석 입구 */
-secNodes.risk.append(elem("p", "risk-panel-link"));
+secNodes.risk.append(elem("h3", "risk-stress-title"), elem("h3", "risk-vuln-title"));
 
 /* 카탈로그 뼈대 */
 const catTable = elem("table", "catalog-table");
@@ -2650,7 +2647,7 @@ safe("ratesTenor", () => {
 });
 
 /* ====== 리스크 층 맥락 + 밴드 실증 (2026-08-24 사용자 지시 — 개선 6·3번) =======
-   층 제목의 1·3·12개월 변화와 5년 백분위, 방법론의 밴드 표, 상세 오버레이의 3구간,
+   층 제목의 1·3·12개월 변화와 5년 백분위, 보조 패널 제거, 상세 오버레이의 3구간,
    기간 선택과 구간 라벨 위치 — 전부 실행으로 확인한다. 옛 페이로드 폴백 포함. */
 safe("riskContext", () => {
   const r = {};
@@ -2792,9 +2789,14 @@ safe("riskContext", () => {
     DOC.getElementById("risk-headline").textContent)
     && !/무엇이 흔들리고|무엇이 쌓여/.test(st + vt);
   r.nullHorizonShowsDash = /3개월 –/.test(vt);
-  const mt = DOC.getElementById("risk-method").textContent;
-  r.methodHasBandTable = /등급 구간의 과거 실적/.test(mt)
-    && /41\.0%/.test(mt) && /24\.7%/.test(mt) && /band-note/.test(mt);
+  const riskHtml = fs.readFileSync(path.join(ROOT, "dashboard", "index.html"), "utf8")
+    .match(/<section id="risk"[\s\S]*?<\/section>/)[0];
+  r.supplementaryPanelsRemoved = ["risk-events-mini", "risk-method", "risk-panel-link"]
+    .every((id) => !DOC.getElementById(id) && !riskHtml.includes(id))
+    && !/<h2>|<details|risk-top|risk-side/.test(riskHtml)
+    && riskHtml.includes('aria-label="리스크"')
+    && !/최근 이벤트|산식 · 가중치 · 검증|관계분석/.test(secNodes.risk.textContent)
+    && !secNodes.risk.querySelector(".render-error");
 
   P.openDetail("f1");
   const detailPlot = shim.UPlotStub.made[shim.UPlotStub.made.length - 1];
