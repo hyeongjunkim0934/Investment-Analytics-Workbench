@@ -184,7 +184,7 @@ const chartData = () => JSON.stringify(shim.UPlotStub.made.filter((u) =>
 const beforePeriodChart = chartData();
 change(input("alloc-port-panel", "국내채권 비중"), 30.4);
 change(byId("port-period"), "3", "change");
-const firstRow = byId("alloc-port-panel").querySelector("tbody tr");
+const firstRow = byId("alloc-port-panel").querySelector(".port-table tbody tr");
 const cells = [...firstRow.querySelectorAll("td")];
 r.periodUpdatesStatistics = +cells[4].textContent === three.mean_pct[0]
   && Math.abs(+cells[5].textContent - three.vol_pct[0]) < 1e-9

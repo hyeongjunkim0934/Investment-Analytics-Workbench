@@ -501,7 +501,8 @@ edit('국내채권 변동성','');assert.equal(state().sig.국내채권,undefine
 assert(!DOC.getElementById('port-frontier-panel').hidden&&!DOC.getElementById('port-correlation-panel').hidden);
 const flow=Array.from(panel.children);
 assert(flow.indexOf(panel.querySelector('.port-input-table-wrap'))<flow.indexOf(DOC.getElementById('port-correlation-panel')));
-assert(flow.indexOf(DOC.getElementById('port-correlation-panel'))<flow.indexOf(DOC.getElementById('port-frontier-panel')));
+assert(flow[0]===DOC.getElementById('port-frontier-panel'));
+assert(flow.indexOf(DOC.getElementById('port-frontier-panel'))<flow.indexOf(panel.querySelector('.port-input-table-wrap')));
 assert(!DOC.getElementById('port-tab-corr')&&!DOC.getElementById('port-tab-frontier'));
 assert.equal(panel.querySelectorAll('.port-corr-table input').length,15);
 edit('국내채권 · 해외채권 상관계수',.1234);

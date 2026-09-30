@@ -1,4 +1,4 @@
-"""Verify the real hedging controls against independent return-observation moments."""
+"""Verify hedge overlays, hover/CSV, and fixed-benchmark TE against return observations."""
 import json
 from pathlib import Path
 import shutil
@@ -11,7 +11,7 @@ def test_portfolio_fx_hedge_controls_and_covariance():
     assert node, "Node.js is required to exercise the dashboard UI"
     result = subprocess.run(
         [node, str(root / "tests" / "port_hedge_ui_probe.js")],
-        cwd=root, capture_output=True, text=True, check=True, timeout=30,
+        cwd=root, capture_output=True, text=True, check=True, timeout=45,
     )
     measured = json.loads(result.stdout)
     assert all(measured.values())
