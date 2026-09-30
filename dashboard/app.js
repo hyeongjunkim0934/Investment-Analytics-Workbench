@@ -5150,50 +5150,13 @@ function allocRiskOptimize(E, lambda) {
 }
 
 const allocRiskCache = new Map();
-const allocRiskLimitDrafts = new WeakMap();
 function allocRiskViewState() {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(ALLOC_LS_KEY)) || {}; } catch {}
   return { rp_layer: saved.rp_layer === "vuln" ? "vuln" : "stress",
     rp_range: ["1", "3", "5", "all"].includes(saved.rp_range) ? saved.rp_range : "3",
-    rp_scale: saved.rp_scale === .1 ? .1 : 1,
-    rp_mode: saved.rp_mode === "free" ? "free" : "constrained",
-    rp_bounds: saved.rp_bounds && typeof saved.rp_bounds === "object" ? saved.rp_bounds : {} };
+    rp_scale: saved.rp_scale === .1 ? .1 : 1 };
 }
-function renderAllocRiskSource() {
-  const card = $("#alloc-risk-source");
-  if (!card) return;
-  const R = DATA.risk;
-  card.textContent = "";
-  card.append(el("div", { class: "card-head" },
-    el("span", { class: "card-title" }, "리스크 결과"),
-    el("span", { class: "card-sub" }, R?.asof ? `기준일 ${R.asof}` : "기준일 없음"),
-    el("a", { href: "#risk" }, "리스크 보기")));
-  const scores = el("div", { class: "alloc-risk-scores" });
-  [["stress", "현재 위험"], ["vuln", "잠재 위험"]].forEach(([key, label]) => {
-    const L = R?.layers?.[key];
-    const available = L?.score != null && Number.isFinite(+L.score);
-    scores.append(el("div", {}, label, " ",
-      el("strong", { id: `alloc-risk-score-${key}` }, available ? String(Math.round(+L.score)) : "—"),
-      " ", gradeChip(available ? L.grade : null)));
-  });
-  card.append(scores);
-  if (!R?.layers) card.append(el("div", { class: "card-sub" }, "리스크 데이터를 불러오지 못했습니다."));
-}
-
-// Asset-specific limits are local risk-scenario inputs, expressed in percent.
-// "Free" releases these limits only; it remains fully invested and long-only.
-function allocRiskBoundedEngine(E, bounds = {}) {
-  if (!E || E.error) return E;
-  const bands = E.V.keys.map((key, i) => bounds[key] ?? [E.lo[i] * 100, E.hi[i] * 100]);
-  if (bands.some((b) => !Array.isArray(b) || b.length !== 2 || b.some((v) => !Number.isFinite(v))
-      || b[0] < 0 || b[1] > 100 || b[0] > b[1]))
-    return { error: "투자한도는 0~100% 안에서 하한 ≤ 상한으로 입력하십시오." };
-  const bounded = { ...E, lo: bands.map((b) => b[0] / 100), hi: bands.map((b) => b[1] / 100), total: 1 };
-  const errors = allocFeasibility(bounded);
-  return errors.length ? { error: errors.join(" · ") } : bounded;
-}
-
 function allocRiskObservations(E, st, layer) {
   if (!E || E.error) return { error: E?.error || "포트폴리오 데이터를 불러오지 못했습니다." };
   const R = DATA.risk, hist = R?.layers?.[layer]?.hist_alloc;
@@ -5223,7 +5186,7 @@ function allocRiskObservations(E, st, layer) {
       || v < E.lo[i] - 1e-5 || v > E.hi[i] + 1e-5)
       || Math.abs(m.w.reduce((a, b) => a + b, 0) - 1) > 1e-5
       || E.groups.some((g) => g.cap != null && g.idx.reduce((sum, i) => sum + m.w[i], 0) > g.cap + 1e-5)))
-    return { error: "최적화 수렴·제약을 확인하지 못했습니다 — 투자한도를 확인하십시오." };
+    return { error: "최적화 수렴·제약을 확인하지 못했습니다 — 포트폴리오 입력을 확인하십시오." };
   return {observations, keys: V.keys};
 }
 
@@ -5252,112 +5215,25 @@ function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
   };
   choices("rp_range", [["1","1Y"],["3","3Y"],["5","5Y"],["all","전체"]], st.rp_range || "3", "range", "기간");
   choices("rp_scale", [[1,"×1"],[.1,"×0.1"]], st.rp_scale === .1 ? .1 : 1, "scale", "λ 배율");
-  choices("rp_mode", [["constrained","제약적용"],["free","무제약"]], st.rp_mode === "free" ? "free" : "constrained", "mode", "비중 경로");
   card.append(controls);
   if (!E || E.error || infeas?.length) {
     card.append(el("div", {class: "card-sub", role: "status"}, `리스크 연계 — 보류 · ${E?.error || infeas?.join(" · ") || "포트폴리오 데이터가 없습니다."}`));
     return;
   }
-  const bounds = st.rp_bounds && typeof st.rp_bounds === "object" ? st.rp_bounds : {};
-  const bounded = allocRiskBoundedEngine(E, bounds);
-  const free = {...E, lo: E.V.keys.map(() => 0), hi: E.V.keys.map(() => 1), groups: []};
+  // Retired risk-only limits/modes must not invisibly override portfolio inputs.
   const results = {};
   ["stress", "vuln"].forEach((layer) => {
-    results[layer] = {constrained: allocRiskObservations(bounded, st, layer), free: allocRiskObservations(free, st, layer)};
+    results[layer] = allocRiskObservations(E, st, layer);
   });
-  const limitBox = el("details", {class: "rp-limits"}, el("summary", {}, "투자한도"));
-  const draftKey = JSON.stringify([E.V.keys, bounds]);
-  const previousDraft = allocRiskLimitDrafts.get(card);
-  const draft = previousDraft?.key === draftKey ? previousDraft : {key: draftKey, values: null, dirty: false, open: previousDraft?.open || false};
-  allocRiskLimitDrafts.set(card, draft);
-  limitBox.open = draft.open || !!bounded.error;
-  limitBox.addEventListener("toggle", () => {draft.open = limitBox.open;});
-  const inputs = [], grid = el("div", {class: "rp-limit-grid"});
-  const error = el("div", {class: "card-sub", role: "status"}, bounded.error || (draft.dirty ? "미적용" : ""));
-  E.V.keys.forEach((key, i) => {
-    const b = Array.isArray(bounds[key]) ? bounds[key] : [E.lo[i] * 100, E.hi[i] * 100];
-    const pair = ["lo", "hi"].map((side, j) => el("input", {id: `alloc-rp-${side}-${i}`, type: "number", min: 0, max: 100,
-      step: .1, value: draft.values?.[i]?.[j] ?? String(b[j] ?? ""), "aria-label": `${allocShortK(key)} ${j ? "상한" : "하한"} %`}));
-    const remember = () => {
-      draft.values = inputs.map((p) => p.map((input) => input.value));
-      draft.dirty = true; draft.open = true; error.textContent = "미적용";
-    };
-    pair.forEach((input) => {input.addEventListener("input", remember); input.addEventListener("change", remember);});
-    inputs.push(pair);
-    grid.append(el("div", {}, el("span", {}, allocShortK(key)), pair[0], el("span", {}, "~"), pair[1], el("span", {}, "%")));
-  });
-  limitBox.append(grid, el("div", {class: "rp-controls"},
-    el("button", {id: "alloc-rp-bounds-apply", type: "button", class: "btn-ghost", onclick: () => {
-      const next = Object.fromEntries(E.V.keys.map((key, i) => [key, inputs[i].map((input) => input.value.trim() === "" ? NaN : Number(input.value))]));
-      const checked = allocRiskBoundedEngine(E, next);
-      if (checked.error) {error.textContent = `미적용 · ${checked.error}`; return;}
-      draft.open = true; draft.key = null;
-      select("rp_bounds", next, "alloc-rp-bounds-apply");
-    }}, "제약 적용"),
-    el("button", {id: "alloc-rp-bounds-reset", type: "button", class: "btn-ghost", onclick: () => {
-      draft.open = true; draft.key = null; select("rp_bounds", {}, "alloc-rp-bounds-reset");
-    }}, "한도 초기화")), error);
-  card.append(limitBox);
-  renderAllocRiskComparison(card, E, bounded, results, pal);
-  const mode = st.rp_mode === "free" ? "free" : "constrained";
-  const dates = ["stress", "vuln"].flatMap((layer) => (results[layer][mode].observations || []).map((m) => m.t));
+  const dates = ["stress", "vuln"].flatMap((layer) => (results[layer].observations || []).map((m) => m.t));
   const extent = dates.length ? [Math.min(...dates), Math.max(...dates)] : null;
   const panels = el("div", {class: "rp-panels"});
   ["stress", "vuln"].forEach((layer) => {
     const panel = el("section", {id: `alloc-rp-panel-${layer}`, class: "rp-layer", "aria-label": layer === "stress" ? "현재" : "잠재"});
     panels.append(panel);
-    renderAllocRiskLayer(panel, mode === "free" ? free : bounded, {...st, rp_layer: layer, rp_extent: extent}, pal, results[layer][mode]);
+    renderAllocRiskLayer(panel, E, {...st, rp_layer: layer, rp_extent: extent}, pal, results[layer]);
   });
-  card.append(panels, el("div", {class: "card-sub rp-scope"}, "무제약: 개별 투자한도 해제 · 공매도 금지 · 합계 100%"));
-}
-
-function renderAllocRiskComparison(card, E, bounded, results, pal) {
-  const keys = E.V.keys, colors = portChartColors();
-  const specs = [["stress", "constrained", "현재", colors.nominal], ["vuln", "constrained", "잠재", colors.robust],
-    ["stress", "free", "현재 무제약", colors.nominal], ["vuln", "free", "잠재 무제약", colors.robust]];
-  const latest = specs.map(([layer, mode]) => results[layer][mode].observations?.at(-1));
-  const rows = keys.map((key, i) => [allocShortK(key), bounded.error ? null : bounded.lo[i] * 100,
-    bounded.error ? null : bounded.hi[i] * 100, ...latest.map((m) => m ? m.w[i] * 100 : null)]);
-  const box = el("div", {id: "alloc-rp-comparison", class: "rp-comparison"});
-  card.append(box);
-  const labels = specs.map((spec, j) => `${spec[2]}${latest[j] ? ` · ${tsToDate(latest[j].t)} · λ ${fmtNum(latest[j].lam, 2)}` : " · 보류"}`);
-  const chart = cardScaffold(box, {title: "투자한도 · 최적비중", sub: "실선 범위 · ● 제약적용 · ○ 무제약",
-    csvName: "리스크_투자한도_최적비중.csv", tableFn: (cap = 400, raw = false) => ({
-      headers: ["자산", "하한 %", "상한 %", ...labels.map((label) => `${label} %`)],
-      rows: rows.map((row) => row.map((v, i) => i === 0 ? v : v == null ? (raw ? "" : "—") : raw ? v : fmtNum(v, 2)))})});
-  const mk = (tag, attrs, parent) => {
-    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
-    Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, v));
-    parent?.append(node); return node;
-  };
-  const W = 1000, left = 115, right = 40, top = 30, rowH = 58, H = top + keys.length * rowH + 24;
-  const X = (v) => left + (W - left - right) * v / 100;
-  const svg = mk("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "자산별 투자한도와 현재·잠재의 제약 및 무제약 최적비중"}, chart);
-  [0, 25, 50, 75, 100].forEach((v) => {
-    mk("line", {x1: X(v), x2: X(v), y1: top - 12, y2: H - 28, stroke: pal.grid, "stroke-width": .7}, svg);
-    mk("text", {x: X(v), y: H - 8, fill: pal.ink3, "text-anchor": "middle", "font-size": 11}, svg).textContent = `${v}%`;
-  });
-  rows.forEach((row, i) => {
-    const y = top + i * rowH + 16;
-    mk("text", {x: left - 14, y: y + 4, fill: pal.ink2, "text-anchor": "end", "font-size": 12}, svg).textContent = row[0];
-    if (row[1] != null) {
-      const line = mk("line", {x1: X(row[1]), x2: X(row[2]), y1: y, y2: y, stroke: pal.ink3, "stroke-width": 5,
-        "stroke-opacity": .35, "data-asset": keys[i], "data-lo": row[1], "data-hi": row[2]}, svg);
-      mk("title", {}, line).textContent = `${row[0]} ${fmtNum(row[1], 2)}~${fmtNum(row[2], 2)}%`;
-      [row[1], row[2]].forEach((v) => mk("line", {x1: X(v), x2: X(v), y1: y - 6, y2: y + 6, stroke: pal.ink3}, svg));
-      mk("text", {x: (X(row[1]) + X(row[2])) / 2, y: y + 29, fill: pal.ink3, "text-anchor": "middle", "font-size": 10}, svg)
-        .textContent = `${fmtNum(row[1], 2)}–${fmtNum(row[2], 2)}%`;
-    }
-    specs.forEach(([layer, mode, label, color], j) => {
-      const value = row[j + 3]; if (value == null) return;
-      const dot = mk("circle", {cx: X(value), cy: y + [-15, -5, 5, 15][j], r: 4,
-        fill: mode === "free" ? pal.surface : color, stroke: color, "stroke-width": 1.5,
-        "data-asset": keys[i], "data-layer": layer, "data-mode": mode, "data-weight": value}, svg);
-      mk("title", {}, dot).textContent = `${row[0]} · ${label} ${fmtNum(value, 2)}%`;
-    });
-  });
-  box.append(el("div", {class: "port-frontier-key rp-legend"}, ...specs.map((spec, j) =>
-    el("span", {class: "port-marker-key", style: `color:${spec[3]}`}, `${spec[1] === "free" ? "○" : "●"} ${labels[j]}`))));
+  card.append(panels);
 }
 
 function renderAllocRiskLayer(panel, E, st, pal, result = allocRiskObservations(E, st, st.rp_layer)) {
@@ -5370,7 +5246,7 @@ function renderAllocRiskLayer(panel, E, st, pal, result = allocRiskObservations(
   const box = cardScaffold(panel, {
     title: st.rp_layer === "stress" ? "현재" : "잠재",
     sub: `주간 · 기준일 ${tsToDate(observations[observations.length - 1].t)} · ${observations.length}개`,
-    csvName: `리스크배분경로_${st.rp_layer}_${st.rp_mode || "constrained"}_x${st.rp_scale === .1 ? "0.1" : "1"}.csv`,
+    csvName: `리스크배분경로_${st.rp_layer}_x${st.rp_scale === .1 ? "0.1" : "1"}.csv`,
     tableFn: (cap = 400, raw = false) => {
       const num = (v) => raw ? v : fmtNum(v, 2);
       const rows = observations.slice().reverse().slice(0, cap).map((m) =>
@@ -5735,7 +5611,7 @@ function allocDonutSVG(entries, size) {
 let allocWorkspace = "port";
 const ALLOC_WORKSPACES = {
   port: { label: "포트폴리오", panels: ["alloc-port-panel"] },
-  risk: { label: "리스크연계", panels: ["alloc-risk-source", "alloc-risk-proc"] },
+  risk: { label: "리스크연계", panels: ["alloc-risk-proc"] },
 };
 const ALLOC_RETIRED_PANELS = ["alloc-sim-panel", "alloc-headline", "alloc-summary",
   "alloc-controls", "alloc-cards", "alloc-levers"];
@@ -7649,7 +7525,6 @@ function renderAlloc() {
   if (!$("#alloc")) return;
   renderAllocWorkspace();
   renderPortPanel(A, { preserveDraft: true });
-  renderAllocRiskSource();
   renderLinkedAllocRisk();
   if (!A || !A.sets || !A.sets.length) {
     ALLOC_RETIRED_PANELS.forEach((id) => {

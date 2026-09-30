@@ -73,7 +73,7 @@ r.institutionTocRemoved = byId("alloc-toc") === null;
 r.workspaceLabels = [...byId("alloc-workspace").querySelectorAll("button")]
   .map((b) => b.textContent);
 choose("risk");
-r.onlyRiskVisible = !byId("alloc-risk-source").hidden && !byId("alloc-risk-proc").hidden
+r.onlyRiskVisible = byId("alloc-risk-source") === null && !byId("alloc-risk-proc").hidden
   && byId("alloc-port-panel").hidden && institutionPanels.every((id) => byId(id).hidden)
   && byId("alloc-workspace-risk").getAttribute("aria-pressed") === "true";
 r.retiredSettingsLinkRemoved = byId("alloc-risk-settings") === null;
