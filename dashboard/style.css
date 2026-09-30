@@ -1028,9 +1028,13 @@ details.explain[open] > summary { color: var(--ink-2); }
 }
 .sec-toc:empty { display: none; }
 
-/* 자산배분: 포트폴리오 / 리스크연계 / 기관배분·헤지. */
+/* 자산배분 탭과 결과는 사이트 헤더 아래에 차례로 고정한다. */
+#alloc { --alloc-workspace-top: 60px; --port-results-top: 108px; }
 .alloc-workspace {
+  position: sticky; top: var(--alloc-workspace-top); z-index: 14;
   margin: 8px 0 10px;
+  padding: 4px 0; background: var(--page);
+  border-bottom: 1px solid var(--ink-3);
 }
 .alloc-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); }
 .alloc-tabs button {
@@ -1220,7 +1224,7 @@ a.kpi-link .kpi-label > span:first-child::after {
   border-radius: 8px; padding: 8px; }
 .port-two { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 12px; }
 /* Keep the selected result above the editable rows, below the responsive site header. */
-.port-results-dock { --port-results-top: 64px; position: sticky; top: var(--port-results-top); z-index: 12;
+.port-results-dock { position: sticky; top: var(--port-results-top); z-index: 12;
   min-width: 0; margin: -2px 0 16px; background: var(--surface);
   border: 1px solid var(--ink-3); border-bottom: 2px solid var(--port-accent); border-radius: 4px;
   box-shadow: 0 10px 20px rgba(0,0,0,.32); }

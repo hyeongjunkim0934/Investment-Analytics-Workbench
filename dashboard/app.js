@@ -1069,10 +1069,11 @@ function renderCatalog() {
 
 function renderMetaLine() {
   refreshObservationBadges();
+  const status = $("#meta-line");
+  status.textContent = "";
+  status.hidden = true;
   const m = DATA.meta;
   if (!m) return;
-  $("#meta-line").textContent =
-    `기준일 ${m.last_observation} · 빌드 ${m.built_at_kst} · ${m.series_count}개 시리즈`;
   if (m.warnings && m.warnings.length) console.warn("pipeline warnings:", m.warnings);
 }
 
@@ -5898,6 +5899,7 @@ function allocDonutSVG(entries, size) {
 /* 화면은 포트폴리오·리스크연계만 표시한다. 리스크연계가 사용하는 기존 기관 엔진과
    저장값은 유지하되 기관배분/헤지 패널은 모든 화면 전환에서 숨긴다. */
 let allocWorkspace = "port";
+let allocDockObserver = null;
 const ALLOC_WORKSPACES = {
   port: { label: "포트폴리오", panels: ["alloc-port-panel"] },
   risk: { label: "리스크연계", panels: ["alloc-risk-proc"] },
@@ -5939,6 +5941,8 @@ function selectAllocWorkspace(key) {
 function renderAllocWorkspace() {
   const box = $("#alloc-workspace");
   if (!box) return;
+  allocDockObserver?.disconnect();
+  allocDockObserver = null;
   box.textContent = "";
   const seg = el("div", { class: "alloc-tabs", role: "group", "aria-label": "분석 체계" });
   Object.entries(ALLOC_WORKSPACES).forEach(([key, spec]) => {
@@ -5947,6 +5951,19 @@ function renderAllocWorkspace() {
   });
   box.append(seg, el("div", { class: "alloc-workspace-info d-up", id: "alloc-workspace-info", role: "status" }));
   selectAllocWorkspace(allocWorkspace);
+  const section = $("#alloc"), topbar = $(".topbar");
+  if (section && topbar) {
+    // Both sticky layers share measured offsets, including wrapped tabs/warnings.
+    const syncDock = () => {
+      const top = Math.ceil(topbar.getBoundingClientRect().height);
+      section.style.setProperty("--alloc-workspace-top", `${top}px`);
+      section.style.setProperty("--port-results-top", `${top + Math.ceil(box.getBoundingClientRect().height) + 6}px`);
+    };
+    syncDock();
+    allocDockObserver = new ResizeObserver(syncDock);
+    allocDockObserver.observe(topbar);
+    allocDockObserver.observe(box);
+  }
 }
 
 /* 설정은 화면 이동과 구별되는 네이티브 선택 입력으로 표시한다. */
@@ -6301,7 +6318,6 @@ const PORT_LS_KEY = "iaw-port";
 let portCharts = [];
 let portPanelDraft = null;      // 같은 데이터의 재렌더·기관 입력 변경에서 초안을 보존
 let portResultTab = "frontier";
-let portDockObserver = null;
 function portResultChartHeight() {
   const viewport = typeof window !== "undefined" && window.innerHeight || 900;
   return Math.max(220, Math.min(420, Math.round(viewport * 0.44)));
@@ -7380,8 +7396,6 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   if (!box) return;
   portCharts.forEach(destroyChart);
   portCharts = [];
-  portDockObserver?.disconnect();
-  portDockObserver = null;
   box.textContent = "";
   const P = A && A.port;
   const head = el("div", { class: "card-head" });
@@ -7651,13 +7665,6 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     portCorrelationControl(P, W, st, recalc, portPanelDraft));
   box.prepend(results);
   box.append(correlation);
-  const topbar = $(".topbar");
-  if (topbar) {
-    const syncDock = () => results.style.setProperty("--port-results-top", `${Math.ceil(topbar.getBoundingClientRect().height) + 6}px`);
-    syncDock();
-    portDockObserver = new ResizeObserver(syncDock);
-    portDockObserver.observe(topbar);
-  }
 
   function recalc() {
     refreshAllocWorkspaceInfo();
@@ -9607,6 +9614,7 @@ async function boot() {
   });
   if (!DATA.meta && !DATA.overview) {
     $("#meta-line").textContent = "데이터를 불러오지 못했습니다 — 파이프라인 실행 여부를 확인하세요.";
+    $("#meta-line").hidden = false;
     return;
   }
   renderMetaLine();

@@ -310,11 +310,12 @@ def test_brief_container_exists_in_markup():
     assert 'id="events-brief"' in html
 
 
-# ---- 푸터 제거 후 상단 메타 갱신 ------------------------------------------
+# ---- 상단 메타 주석 제거 후 콘솔 진단 유지 ---------------------------------
 def test_metadata_updates_without_footer_nodes(probe):
     w = probe["metaWithoutFooter"]
     assert w["noFooterNodes"] is True
-    assert w["headerText"] == "기준일 2026-07-27 · 빌드 K · 444개 시리즈"
+    assert w["headerText"] == ""
+    assert w["headerHidden"] is True
     assert w["warnings"] == [["pipeline warnings:", ["w1", "w2", "w3"]]]
 
 

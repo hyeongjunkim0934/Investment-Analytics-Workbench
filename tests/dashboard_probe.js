@@ -517,7 +517,7 @@ safe("eventsBrief", () => {
   return r;
 });
 
-/* ============ P9. 푸터 없이 상단 메타와 콘솔 진단을 갱신한다 =================== */
+/* ============ P9. 상단 메타 주석 없이 콘솔 진단을 갱신한다 =================== */
 safe("metaWithoutFooter", () => {
   P.DATA.meta = { last_observation: "2026-07-27", built_at_kst: "K", built_at_utc: "U",
     series_count: 444, files: [1, 2, 3, 4], warnings: ["w1", "w2", "w3"] };
@@ -526,6 +526,7 @@ safe("metaWithoutFooter", () => {
   try { P.renderMetaLine(); } finally { sandbox.console.warn = oldWarn; }
   return {
     headerText: DOC.getElementById("meta-line").textContent,
+    headerHidden: DOC.getElementById("meta-line").hidden,
     noFooterNodes: !DOC.getElementById("build-line") && !DOC.getElementById("build-warnings"),
     warnings: calls,
   };
