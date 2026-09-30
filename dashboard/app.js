@@ -3747,16 +3747,33 @@ function hedgeCostSnapshot(H2, currency = "USD") {
 
 const HEDGE_MERIT_RANGES = {};
 
-/* Historical yields remain on the left. Future paths are cumulative KRW holding
-   returns on a separate right scale; FX return dispersion is never a yield band. */
+/* Keep yield and holding-return units separate, but join their display origins at
+   each market's last finite hedged yield. No return is added to a yield level. */
+function hedgeOutlookAnchor(M) {
+  for (let i = M.t.length - 1; i >= 0; i--) {
+    if (Number.isFinite(M.t[i]) && Number.isFinite(M.hedged[i]))
+      return { t: M.t[i], yield: M.hedged[i] };
+  }
+  return null;
+}
+
+function hedgeOutlookTimes(anchor, count) {
+  const start = new Date(anchor * 1000), year = start.getUTCFullYear(), month = start.getUTCMonth();
+  return Array.from({ length: count }, (_, i) => {
+    const day = Math.min(start.getUTCDate(), new Date(Date.UTC(year, month + i + 1, 0)).getUTCDate());
+    return Date.UTC(year, month + i, day) / 1000;
+  });
+}
+
 function hedgeMeritData(M, outlook, range, showOutlook = true) {
   const lo = Date.parse(range.start) / 1000, hi = Date.parse(range.end) / 1000 + 86400;
   const history = timeRangeData([M.t, M.hedged, M.ktb, M.spread], lo, hi);
-  const visible = !!(showOutlook && outlook?.active && history[0].length
-    && hi > M.t[M.t.length - 1]);
+  const anchor = hedgeOutlookAnchor(M);
+  const visible = !!(showOutlook && outlook?.active && anchor && history[0].includes(anchor.t));
   if (!outlook?.active) return { data: history, visible: false };
+  const future = anchor ? hedgeOutlookTimes(anchor.t, outlook.t.length) : [];
   const rows = new Map(history[0].map((t, i) => [t, [history[1][i], history[2][i], history[3][i], ...Array(6).fill(null)]]));
-  if (visible) outlook.t.forEach((t, i) => {
+  if (visible) future.forEach((t, i) => {
     const row = rows.get(t) || Array(9).fill(null);
     [outlook.hedged.center, outlook.hedged.lower, outlook.hedged.upper,
       outlook.unhedged.center, outlook.unhedged.lower, outlook.unhedged.upper]
@@ -3764,7 +3781,8 @@ function hedgeMeritData(M, outlook, range, showOutlook = true) {
     rows.set(t, row);
   });
   const times = [...rows.keys()].sort((a, b) => a - b);
-  return { data: [times, ...Array.from({ length: 9 }, (_, j) => times.map((t) => rows.get(t)[j]))], visible };
+  return { data: [times, ...Array.from({ length: 9 }, (_, j) => times.map((t) => rows.get(t)[j]))],
+    visible, anchor, future };
 }
 
 function hedgeChartLegend(box, entries, onToggle) {
@@ -3801,27 +3819,44 @@ function makeHedgeOutlookChart(box, M, O, range, selection, empty, labels, pal) 
   const series = [{ label: "일자" }, ...labels.map((label, i) => ({
     label, scale: i < 3 ? "y" : "return", stroke: i < 3 ? colors[i] : i < 6 ? colors[3] : colors[4],
     width: i < 3 ? 1.7 : [3, 6].includes(i) ? 1.2 : 0,
-    dash: [3, 6].includes(i) ? [4, 4] : [], spanGaps: false,
+    // Future monthly knots are validated as finite. Nulls between them only come
+    // from the joined historical calendar, and must not break the anchor link.
+    dash: [3, 6].includes(i) ? [4, 4] : [], spanGaps: i >= 3,
     points: { show: (u, si) => u.data[si].filter(Number.isFinite).length === 1 }, value: fmt,
   }))];
   const axes = baseAxes(pal, (v) => fmtNum(v, 2));
   axes[1].label = "금리 % / 스프레드 %p"; axes[1].labelSize = 18;
   axes.push({ ...baseAxes(pal, (v) => fmtNum(v, 2))[1], scale: "return", side: 1,
     grid: { show: false }, label: "누적 원화수익률 %", labelSize: 18 });
-  const returnLimit = Math.max(1, ...[O.hedged, O.unhedged].flatMap((row) => [...row.lower, ...row.upper]).map(Math.abs)) * 1.12;
   let current = selection();
+  const scaleBounds = () => {
+    const values = current.data.slice(1, 4).flat().filter(Number.isFinite);
+    const low = values.length ? Math.min(...values) : 0, high = values.length ? Math.max(...values) : 1;
+    const historicalSpan = Math.max(.2, high - low);
+    const returns = current.visible ? current.data.slice(4).flat().filter(Number.isFinite) : [0];
+    const rlow = Math.min(0, ...returns), rhigh = Math.max(0, ...returns);
+    // A common positive affine scale preserves both scenario widths while placing
+    // right-axis 0% at the left-axis latest yield. Scale choice is visual only.
+    const factor = historicalSpan / Math.max(1, rhigh - rlow);
+    const anchorYield = current.anchor?.yield ?? high;
+    const bottom = Math.min(low, anchorYield + factor * rlow);
+    const top = Math.max(high, anchorYield + factor * rhigh);
+    const pad = Math.max(.1, (top - bottom) * .08);
+    const y = [bottom - pad, top + pad];
+    return { y, return: y.map((v) => (v - anchorYield) / factor) };
+  };
   const cfg = {
     width: Math.max(280, box.clientWidth), height: 310,
     tzDate: (ts) => uPlot.tzDate(new Date(ts * 1000), "Etc/UTC"),
     series, axes, legend: { show: false, live: false },
-    scales: { return: { range: () => [-returnLimit, returnLimit] } },
+    scales: { y: { range: () => scaleBounds().y }, return: { range: () => scaleBounds().return } },
     bands: [{ series: [9, 8], fill: hexA(colors[4], 0.13) }, { series: [6, 5], fill: hexA(colors[3], 0.20) }],
     cursor: { y: false, points: { size: 5 }, drag: { setScale: false } },
     hooks: {
       drawClear: [(u) => {
         if (!current.visible) return;
         const { ctx, bbox } = u, dpr = devicePixelRatio || 1;
-        const x = u.valToPos(O.t[0], "x", true);
+        const x = u.valToPos(current.anchor.t, "x", true);
         ctx.save(); ctx.beginPath(); ctx.rect(bbox.left, bbox.top, bbox.width, bbox.height); ctx.clip();
         ctx.fillStyle = hexA(pal.ink3, 0.045); ctx.fillRect(x, bbox.top, bbox.left + bbox.width - x, bbox.height);
         ctx.strokeStyle = pal.ink3; ctx.lineWidth = dpr; ctx.setLineDash([3 * dpr, 4 * dpr]);
@@ -3856,13 +3891,10 @@ function makeHedgeOutlookChart(box, M, O, range, selection, empty, labels, pal) 
     current = selection(); u.setData(current.data, false);
     empty.hidden = current.data.slice(1).some((ys) => ys.some(Number.isFinite));
     u.setScale("x", { min: Date.parse(range.start) / 1000,
-      max: current.visible ? Math.max(O.t.at(-1), Date.parse(range.end) / 1000) : Date.parse(range.end) / 1000 + 86400 });
+      max: current.visible ? Math.max(current.future.at(-1), Date.parse(range.end) / 1000) : Date.parse(range.end) / 1000 + 86400 });
     // uPlot setData(false) preserves stale y limits; explicitly recompute when the window changes.
-    const values = current.data.slice(1, 4).flat().filter(Number.isFinite);
-    if (values.length) {
-      const low = Math.min(...values), high = Math.max(...values), pad = Math.max(.1, (high - low) * .08);
-      u.setScale("y", { min: low - pad, max: high + pad });
-    }
+    const bounds = scaleBounds();
+    ["y", "return"].forEach((key) => u.setScale(key, { min: bounds[key][0], max: bounds[key][1] }));
   };
   registry.push({ u, isTime: true, applyRange: update }); update();
   const ro = new ResizeObserver(() => u.setSize({ width: Math.max(280, box.clientWidth), height: 310 }));
@@ -3888,24 +3920,26 @@ function renderHedgeDistribution(card, code, D, snapshot, pal) {
   hedgeChartLegend(box, [["전체 이력 · 일별 빈도", colors[0]],
     ...(Number.isFinite(mean) ? [["최근 3M·6M·12M 평균", colors[1]]] : [])]);
   box.append(el("div", { class: "hedge-distribution-summary" },
-    `최저 ${fmtNum(D.min_pct, 2)}% · 최고 ${fmtNum(D.max_pct, 2)}% · ${COST_SIGN_KEY}`));
+    `최저 ${fmtNum(D.min_pct, 2)}% · 최고 ${fmtNum(D.max_pct, 2)}% · ${COST_SIGN_KEY}` +
+    (D.display_sigma_limit === 5 ? ` · 표시 ±5σ${D.display_n < D.n ? ` · ${D.n - D.display_n}일 생략` : ""}` : "")));
   const plotHost = el("div", { class: "hedge-plot-host" }); box.append(plotHost);
   const tip = el("div", { class: "time-chart-tooltip", role: "status" }); tip.hidden = true; box.append(tip);
   box.addEventListener("mouseleave", () => { tip.hidden = true; });
-  const bins = D.bins, xs = bins.map((b) => (b.low + b.high) / 2);
-  let xmin = Math.min(bins[0].low, Number.isFinite(mean) ? mean : Infinity);
-  let xmax = Math.max(bins.at(-1).high, Number.isFinite(mean) ? mean : -Infinity);
-  const pad = Math.max(.01, (xmax - xmin) * .04); xmin -= pad; xmax += pad;
+  const bins = D.display_bins?.length ? D.display_bins : D.bins;
+  const xs = bins.map((b) => (b.low + b.high) / 2);
+  const xmin = Number.isFinite(D.display_low_pct) ? D.display_low_pct : bins[0].low;
+  const xmax = Number.isFinite(D.display_high_pct) ? D.display_high_pct : bins.at(-1).high;
+  const markerVisible = Number.isFinite(mean) && mean >= xmin && mean <= xmax;
   const cfg = { width: Math.max(280, box.clientWidth), height: 190,
     scales: { x: { time: false, range: () => [xmin, xmax] }, y: { range: (u, lo, hi) => [0, Math.max(1, hi * 1.12)] } },
     axes: [{ ...baseAxes(pal, (v) => fmtNum(v, 2))[1], side: 2, scale: "x", label: "헤지비용 (연 %)", labelSize: 18 },
       { ...baseAxes(pal, (v) => `${fmtNum(v, 0)}%`)[1], label: "빈도", labelSize: 18 }],
-    series: [{ label: "헤지비용" }, { label: "빈도", paths: uPlot.paths.bars({ size: [.9, 40] }),
-      fill: hexA(colors[0], .5), stroke: colors[0], width: 0, points: { show: false } }],
+    series: [{ label: "헤지비용" }, { label: "빈도", stroke: colors[0], width: 1.8,
+      points: { show: bins.length === 1 } }],
     legend: { show: false, live: false }, cursor: { y: false, points: { show: false }, drag: { setScale: false } },
     hooks: {
       draw: [(u) => {
-        if (!Number.isFinite(mean)) return;
+        if (!markerVisible) return;
         const { ctx, bbox } = u, x = u.valToPos(mean, "x", true), dpr = devicePixelRatio || 1;
         ctx.save(); ctx.strokeStyle = colors[1]; ctx.lineWidth = 1.5 * dpr; ctx.setLineDash([4 * dpr, 3 * dpr]);
         ctx.beginPath(); ctx.moveTo(x, bbox.top); ctx.lineTo(x, bbox.top + bbox.height); ctx.stroke(); ctx.restore();
@@ -3934,13 +3968,13 @@ function hedgeOutlookValid(O) {
       || !Number.isFinite(O.duration_years) || !Number.isFinite(O.sample?.n_months)) return false;
   return [O.hedged, O.unhedged].every((row) => Number.isFinite(row?.vol_pct) && row.vol_pct >= 0
     && ["center", "lower", "upper"].every((key) => Array.isArray(row[key])
-      && row[key].length === O.t.length && row[key].every(Number.isFinite))
+      && row[key].length === O.t.length && row[key].every(Number.isFinite) && row[key][0] === 0)
     && row.center.every((v, i) => row.lower[i] <= v && v <= row.upper[i]));
 }
 
 function renderHedgeMeritChart(card, code, label, M, pal, analytics) {
   const supplied = analytics?.outlook;
-  const O = !supplied?.active || hedgeOutlookValid(supplied) ? supplied
+  const O = !supplied?.active || (hedgeOutlookValid(supplied) && hedgeOutlookAnchor(M)) ? supplied
     : { active: false, reason: "예상 범위 데이터가 불완전합니다." };
   let showOutlook = true;
   const id = `hedge-merit-${code}`;
@@ -3987,7 +4021,9 @@ function renderHedgeMeritChart(card, code, label, M, pal, analytics) {
       el("b", {}, `${change >= 0 ? "감소" : "증가"} ${fmtNum(Math.abs(change), 2)}%p`),
       el("span", {}, `적용 헤지비용 ${fmtNum(O.cost.mean_pct, 2)}%`)));
     card.append(el("details", { class: "hedge-outlook-method" }, el("summary", {}, "1년 범위 · 조건부 ±1σ"),
-      el("p", {}, `기준 ${O.asof}. 우축은 0%에서 시작하는 누적 원화 보유수익률입니다. ` +
+      el("p", {}, `추정 기준 ${O.asof}. 표시 시작 ${tsToDate(hedgeOutlookAnchor(M).t)}의 ` +
+        `최근 헤지 후 10년 금리 위치에 우축 누적 원화수익률 0%를 맞춥니다. ` +
+        `금리 전망이 아닌 수익률 시나리오이며, 날짜 정렬은 재추정이 아닙니다. ` +
         `현재 금리·평균 헤지비용 유지, 환율 추세 0, 100% 원금 헤지를 가정합니다. ` +
         `금리·환율 공통 월간 표본 ${O.sample.start} ~ ${O.sample.end} (${O.sample.n_months}개), ` +
         `10년 국채 수정듀레이션 ${fmtNum(O.duration_years, 2)}년의 가격변화 근사입니다. ` +

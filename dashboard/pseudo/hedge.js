@@ -69,6 +69,7 @@ publish(hedged_yield_and_ktb_spread(weekly))`,
       title: '과거 헤지비용 분포',
       formulas: [
         { expression: '구간 빈도ⱼ = 100 × 구간 j의 관측 수 / 전체 관측 수', legend: '전체 가용 3M 원호가의 일별 빈도 % · 구간은 NumPy Freedman–Diaconis 규칙' },
+        { expression: 'zₜ = (cₜ − μ전체) / σ전체; 표시 범위 |zₜ| < 5', legend: '전체 일별 평균·표본 표준편차(ddof=1) · 축 단위는 연 % 유지 · 상수·단일표본은 단일 구간' },
         { expression: '과거 최저 = min(cₜ); 과거 최고 = max(cₜ)', legend: '부호 있는 연 % · 더 큰 지불 비용은 더 음수인 관측' }
       ],
       code: `source = SMB_USD_3M if market == UST else HP_currency_3M
@@ -76,9 +77,11 @@ daily = finite_weekday_observations(source)
 daily = keep_last_valid_observation_per_date(daily)
 if daily is empty: return inactive
 bins = histogram(daily, rule="fd")
-publish(bins, minimum, maximum, sample_dates)
-overlay(current_three_tenor_mean)`,
-      note: '3σ 꼬리를 유지하며 국채 공통표본·화면 조회기간으로 자르지 않는다. 현재 평균선은 3개 만기, 과거 분포는 3M이다.'
+display_bins = clip_bin_edges_and_recount(daily, bins, abs_z_less_than=5)
+publish(bins, display_bins, full_sample_stats)
+plot_solid_line(bin_midpoints(display_bins), frequency_divided_by_full_n)
+overlay_current_mean_only_inside_display_bounds()`,
+      note: '5σ 이상 꼬리는 화면에서만 생략하며 빈도를 재정규화하지 않는다. 전체 통계·표·CSV는 유지한다. 현재 평균선은 3개 만기, 과거 분포는 3M이다.'
     },
     {
       id: 'outlook',
@@ -92,16 +95,16 @@ overlay(current_three_tenor_mean)`,
       code: `current = latest_bond_yield_and_hp_curve()
 anchor = later_of(bond_last_date, hp_latest_date)  # 오늘 날짜 아님
 if any_current_input_age_from(anchor) > 7: return inactive
-joint = same_date_bond_and_despiked_fx()
-history = dates_before_anchor_month(joint, anchor)  # 기준월은 말일에도 제외
-monthly = month_last_joint_observations(history)
+monthly = completed_month_last_joint_bond_and_despiked_fx(anchor)  # 기준월 제외
 monthly = keep_month_end_lag_at_most_7_days(monthly)
 shocks = consecutive_month_shocks_at_current_duration(monthly)
 if count(shocks) < 36 or sample_age_from(anchor) > 62: return inactive
-covariance = annualize_sample_covariance(shocks)
-paths = conditional_paths_for_months_0_to_12(current, covariance)
-publish(paths, risk_reduction, assumptions, sample_dates)`,
-      note: '환율·금리 변화 기대 0, 현재 비용 고정, 월별 충격 무상관 가정. 확률 보장 구간이 아니며 볼록성·롤다운·거래비용·스왑 MTM을 제외한다. 과거 금리와 별도 수익률 축이다.'
+paths = conditional_paths_for_months_0_to_12(current, annualize_covariance(shocks))
+publish(paths, risk_reduction, assumptions, sample_dates)
+display_anchor = latest_finite_hedged_yield_point(market)
+align_right_axis_zero_to_left_axis(display_anchor.yield)
+plot_unchanged_returns(paths, calendar_months_0_to_12(display_anchor.date))`,
+      note: '각 시장 최근 헤지 후 금리 위치에서 시작하도록 날짜·우축 0%를 정렬한다. 추정 기준일·수익률은 유지하며 금리 전망이나 재추정이 아니다. 환율·금리 변화 기대 0, 현재 비용 고정, 월별 충격 무상관 가정. 확률 보장 구간이 아니며 볼록성·롤다운·거래비용·스왑 MTM을 제외한다.'
     }
   ]
 };

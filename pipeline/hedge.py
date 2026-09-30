@@ -121,24 +121,56 @@ def _daily_observations(raw: pd.Series | None, *, positive: bool = False) -> pd.
 
 
 def build_cost_distribution(series: dict, code: str) -> dict:
-    """Full daily signed 3M carry distribution; no yield/KTB intersection or tail trim."""
+    """Full daily 3M carry histogram plus a display-only, full-sample 5σ crop.
+
+    Full bins and extrema retain every valid observation for exports. Display bins
+    reuse those empirical FD boundaries, cut at ±5 sample standard deviations,
+    and omit observations with |z| >= 5 without renormalizing their frequencies.
+    """
     spec = BOND_MERIT_SOURCES[code]
     raw = _daily_observations(series.get(spec["cost"]))
     meta = {"source": spec["cost"], "cost_source": spec["cost_source"],
             "tenor": "3M", "sign": "positive_received", "unit": "pct_pa",
             "frequency": "daily", "scope": "full_history",
             "bin_rule": "freedman_diaconis", "tail_policy": "retain_all_finite_observations",
+            "display_sigma_limit": 5, "display_ddof": 1,
+            "display_tail_policy": "omit_abs_z_gte",
             "start": None, "end": None, "n": int(len(raw))}
     if raw.empty:
         return {**meta, "active": False, "reason": f"헤지비용 시리즈 없음: {spec['cost']}",
-                "bins": [], "min_pct": None, "max_pct": None, "mean_pct": None}
-    counts, edges = np.histogram(raw.to_numpy(), bins="fd")
+                "bins": [], "min_pct": None, "max_pct": None, "mean_pct": None,
+                "std_pct": None, "display_bins": [], "display_n": 0,
+                "display_low_pct": None, "display_high_pct": None}
+    values = raw.to_numpy()
+    mean = float(raw.mean())
+    std = float(raw.std(ddof=1)) if len(raw) > 1 else 0.
+    counts, edges = np.histogram(values, bins="fd")
     bins = [{"low": float(lo), "high": float(hi), "count": int(count),
              "frequency_pct": float(count / len(raw) * 100)}
             for lo, hi, count in zip(edges[:-1], edges[1:], counts)]
+    # The crop changes only the plotted domain/counts. Its mean, sample σ and
+    # probability denominator still use the same untrimmed history as exports.
+    # Constant/singleton samples have no standardized tails; keep their one bin.
+    display_low, display_high = float(edges[0]), float(edges[-1])
+    display_values = values
+    display_bins = bins
+    if std > 0:
+        radius = meta["display_sigma_limit"] * std
+        display_low = max(display_low, mean - radius)
+        display_high = min(display_high, mean + radius)
+        display_values = values[np.abs(values - mean) < radius]
+        display_edges = np.r_[display_low,
+                              edges[(edges > display_low) & (edges < display_high)],
+                              display_high]
+        display_counts, _ = np.histogram(display_values, bins=display_edges)
+        display_bins = [{"low": float(lo), "high": float(hi), "count": int(count),
+                         "frequency_pct": float(count / len(raw) * 100)}
+                        for lo, hi, count in zip(display_edges[:-1], display_edges[1:], display_counts)]
     return {**meta, "active": True, "start": raw.index[0].strftime("%Y-%m-%d"),
             "end": raw.index[-1].strftime("%Y-%m-%d"), "min_pct": float(raw.min()),
-            "max_pct": float(raw.max()), "mean_pct": float(raw.mean()), "bins": bins}
+            "max_pct": float(raw.max()), "mean_pct": mean, "std_pct": std, "bins": bins,
+            "display_bins": display_bins, "display_n": int(len(display_values)),
+            "display_low_pct": display_low, "display_high_pct": display_high}
 
 
 def par_modified_duration(yield_decimal: float, maturity_years: int = 10) -> float:

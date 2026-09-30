@@ -57,6 +57,12 @@ const input=(code,part)=>DOC.getElementById('hedge-merit-'+code+'-'+part);
 const apply=(code,start,end)=>{input(code,'start').value=start;input(code,'end').value=end;input(code,'apply').click();};
 const checkbox=code=>Array.from(card(code).querySelectorAll('input')).find(n=>n.getAttribute('type')==='checkbox');
 const hasFuture=u=>u.data.slice(4).some(row=>row.some(Number.isFinite));
+// An affine screen-coordinate invariant, independent of the renderer's scale formula.
+const aligned=(u,anchor)=>{
+  const {y,return:r}=u.scales;
+  near((anchor-y.min)/(y.max-y.min),(0-r.min)/(r.max-r.min),1e-12);
+  u.data.slice(4).flat().filter(Number.isFinite).forEach(v=>assert(v>=r.min&&v<=r.max));
+};
 const tableRows=host=>Array.from(host.querySelectorAll('tbody tr')).map(row=>Array.from(row.querySelectorAll('td')).map(c=>c.textContent));
 const csvRows=()=>CSV_DOWNLOADS.at(-1).replace(/^\uFEFF/,'').split('\n').map(row=>row.split(','));
 CODES.forEach(code=>{
@@ -75,6 +81,8 @@ CODES.forEach(code=>{
   assert(u.opts.axes[2].label.includes('누적 원화수익률'));
   u.opts.series.slice(1,4).forEach(s=>assert.equal(s.scale,'y'));
   u.opts.series.slice(4).forEach(s=>assert.equal(s.scale,'return'));
+  u.opts.series.slice(1,4).forEach(s=>assert.equal(s.spanGaps,false));
+  u.opts.series.slice(4).forEach(s=>assert.equal(s.spanGaps,true));
   assert.equal(u.data[0].at(-1),forecast.at(-1));assert.equal(u.scales.x.max,forecast.at(-1));
   for(const [high,low] of u.opts.bands.map(b=>b.series)){
     const center=low-1;
@@ -89,10 +97,13 @@ CODES.forEach(code=>{
   u.data.slice(4).forEach(row=>assert.equal(row[at0],0));
   // Historical yield is retained at the shared anchor, and stops before all future returns.
   assert.equal(u.data[1][at0],fixture.bond_merits[code].hedged.at(-1));
+  aligned(u,fixture.bond_merits[code].hedged.at(-1));
   for(let j=at0+1;j<u.data[0].length;j++)u.data.slice(1,4).forEach(row=>assert.equal(row[j],null));
   near(u.data[4].at(-1),o.hedged.mean_pct);near(u.data[7].at(-1),o.unhedged.mean_pct);
   const D=fixture.bond_analytics[code].distribution;
   same(h.data[1],D.bins.map(b=>b.frequency_pct));
+  assert.equal(h.opts.series[1].paths,undefined);assert(h.opts.series[1].width>0);
+  assert.equal(h.opts.series[1].fill,undefined);assert(!h.opts.series[1].dash?.length);
   near(h.data[1].reduce((a,b)=>a+b,0),100);
   const distribution=c.querySelector('.hedge-distribution');
   assert(c.children.indexOf(distribution)>c.children.indexOf(timeBox.parentElement));
@@ -151,6 +162,7 @@ hedgeLegend.click();[4,5,6].forEach(i=>assert.equal(ust.series[i].show,true));
 const jpyBefore=JSON.stringify(time('JPY').data);
 apply('UST','2026-09-25','2026-09-25');
 assert(hasFuture(ust)&&ust.data[0].at(-1)===forecast.at(-1));
+aligned(ust,fixture.bond_merits.UST.hedged.at(-1));
 assert.equal(ust.data[0].length,13);assert.equal(tableRows(ustHost).length,13);
 apply('UST','2020-01-02','2025-09-25');
 assert(!hasFuture(ust));assert.equal(ust.data[0].at(-1),stamp('2025-09-25'));
@@ -189,6 +201,54 @@ assert.equal(refreshedCharts.find(u=>card('UST').contains(u.root)&&u.data.length
 assert(!hasFuture(refreshedCharts.find(u=>card('JPY').contains(u.root)&&u.data.length===10)));
 vm.runInContext('Object.keys(HEDGE_MERIT_RANGES).forEach(k=>delete HEDGE_MERIT_RANGES[k])',sandbox);
 
+// Each market owns its anchor, even when model and weekly chart vintages differ.
+// Month ends are clamped (Jan 31 -> Feb 28), and a missing final quote is skipped.
+const staggered=JSON.parse(JSON.stringify(fixture));
+const ends={UST:'2026-01-31',JPY:'2026-09-23',AUD:'2026-09-28',GER:'2026-09-24'};
+CODES.forEach((c,i)=>{
+  const m=staggered.bond_merits[c];
+  m.t=[stamp('2025-01-01'),stamp(ends[c]),stamp(ends[c])+86400];
+  m.hedged=[1,-2+i,null];m.ktb=[2,3,3.1];m.spread=[-1,-5+i,null];
+});
+let staggeredCharts=render(staggered);
+CODES.forEach((c,i)=>{
+  const u=staggeredCharts.find(u=>card(c).contains(u.root)&&u.data.length===10);
+  const at=u.data[0].indexOf(stamp(ends[c]));
+  u.data.slice(4).forEach(row=>assert.equal(row[at],0));
+  aligned(u,-2+i);
+  assert.equal(u.data[0].at(-1),stamp(ends[c].replace('2026','2027')));
+  const forecastStart=u.data[0].findIndex((_,j)=>u.data[4][j]!=null);
+  assert.equal(forecastStart,at);
+  assert(card(c).querySelector('.hedge-outlook-method').textContent.includes('추정 기준 2026-09-25'));
+  assert(card(c).querySelector('.hedge-outlook-method').textContent.includes('표시 시작 '+ends[c]));
+});
+const jan=staggeredCharts.find(u=>card('UST').contains(u.root)&&u.data.length===10);
+assert(jan.data[0].includes(stamp('2026-02-28')));assert(!jan.data[0].includes(stamp('2026-03-03')));
+apply('UST','2025-01-01','2026-01-30');assert(!hasFuture(jan));
+
+// Display-only tail crop does not renormalize or corrupt full-history exports.
+const clipped=JSON.parse(JSON.stringify(fixture));
+CODES.forEach(c=>Object.assign(clipped.bond_analytics[c].distribution,{
+  std_pct:.5,display_sigma_limit:5,display_low_pct:-4.5,display_high_pct:.5,display_n:8,
+  display_bins:[{low:-4.5,high:-3,count:1,frequency_pct:10},
+    {low:-3,high:-1,count:3,frequency_pct:30},{low:-1,high:.5,count:4,frequency_pct:40}]}));
+clipped.cost_dashboard.EUR.curve={'3M':9,'6M':9,'12M':9};
+const clippedCharts=render(clipped);
+CODES.forEach(c=>{
+  const u=clippedCharts.find(u=>card(c).contains(u.root)&&u.data.length===2);
+  same(u.opts.scales.x.range(),[-4.5,.5]);same(u.data[1],[10,30,40]);
+  assert(u.data[0].every(v=>v>=-4.5&&v<=.5));
+  const host=card(c).querySelector('.hedge-distribution');
+  assert(host.textContent.includes('표시 ±5σ')&&host.textContent.includes('2일 생략'));
+  button(host,'CSV').click();
+  near(csvRows().slice(1).reduce((sum,row)=>sum+Number(row[2]),0),10);
+  const markers=[];u.valToPos=v=>{markers.push(v);return 12;};
+  u.bbox={top:0,height:100};u.ctx=new Proxy({},{get:()=>()=>{},set:()=>true});
+  u.opts.hooks.draw.forEach(fn=>fn(u));
+  assert.equal(markers.length,c==='GER'?0:1,'out-of-range mean must not expand axis');
+});
+vm.runInContext('Object.keys(HEDGE_MERIT_RANGES).forEach(k=>delete HEDGE_MERIT_RANGES[k])',sandbox);
+
 // Existing published datasets and inactive statistics still render historical curves.
 for(const analytics of [undefined,null,Object.fromEntries(CODES.map(c=>[c,{outlook:{active:false,reason:'공통 표본 부족'},distribution:{active:false,reason:'분포 없음'}}]))]){
   const legacy={...fixture,bond_analytics:analytics};const made=render(legacy);
@@ -210,10 +270,25 @@ for(const missing of ['risk','cost','sample','hedged']){
     assert(card(c).textContent.includes('예상 범위 데이터가 불완전합니다.'));
   });
 }
+// A nonzero cumulative-return origin and absent historical anchor fail closed.
+for(const mode of ['nonzero','missing-anchor']){
+  const broken=JSON.parse(JSON.stringify(fixture));
+  CODES.forEach(c=>{
+    if(mode==='nonzero')broken.bond_analytics[c].outlook.hedged.upper[0]=1;
+    else broken.bond_merits[c].hedged.fill(null);
+  });
+  const made=render(broken);
+  CODES.forEach(c=>{
+    assert(made.find(u=>card(c).contains(u.root)&&u.data.length===4));
+    assert(!checkbox(c));
+  });
+}
 console.log(JSON.stringify({fourMarkets:true,topLegends:true,separateUnitsAndScales:true,
   bandIndicesAndZeroAnchor:true,fullHorizonAtLatestDate:true,periodToggleAndIsolation:true,
   plotTableCsvAgreement:true,futureHover:true,fullHistoryDistribution:true,
-  currentMeanMarker:true,naturalHedgeIncrease:true,legacyFallback:true}));
+  currentMeanMarker:true,naturalHedgeIncrease:true,legacyFallback:true,
+  endpointAxisAlignment:true,marketSpecificDates:true,monthEndClamp:true,
+  solidFrequencyLine:true,fiveSigmaDisplayCrop:true,fullTailExports:true}));
 `;
 const filename=path.join(repo,'tests/hedge_analytics_ui_runtime.js');
 const m=new Module(filename,module);m.filename=filename;m.paths=Module._nodeModulePaths(path.dirname(filename));
