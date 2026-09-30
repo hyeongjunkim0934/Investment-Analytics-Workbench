@@ -101,8 +101,8 @@ def test_existing_spike_filter_removes_quote_error_but_preserves_sustained_move(
 def _portfolio_fixture(n=156):
     rng = np.random.default_rng(504)
     e = rng.normal(0.0004, 0.027, n)
-    local = rng.normal(0.002, 0.012, (n, 6))
-    local[:, 4] -= e * 0.65  # Natural currency cushion; hedging can increase risk.
+    local = rng.normal(0.002, 0.012, (n, len(port.ASSETS)))
+    local[:, port.ASSETS.index("해외주식")] -= e * 0.65  # Natural currency cushion.
     dates = pd.date_range("2010-01-31", periods=n + 1, freq="ME")
     store = {port.FX_KEY: {"s": pd.Series(1000 * np.r_[1, np.cumprod(1 + e)], index=dates)}}
     unhedged = local.copy()
@@ -124,8 +124,8 @@ def test_window_covariance_matches_direct_transformed_returns(hedge_ratio):
         assert fx["active"] and fx["n_months"] == n
         assert (fx["start"], fx["end"]) == (window["start"], window["end"])
         expected_joint = np.cov(np.column_stack([r_u[-n:], e[-n:]]), rowvar=False, ddof=1) * 12
-        np.testing.assert_allclose(fx["cov_asset"], expected_joint[:6, 6], atol=5.1e-13)
-        assert fx["var"] == pytest.approx(expected_joint[6, 6], abs=5.1e-13)
+        np.testing.assert_allclose(fx["cov_asset"], expected_joint[:-1, -1], atol=5.1e-13)
+        assert fx["var"] == pytest.approx(expected_joint[-1, -1], abs=5.1e-13)
         c = np.array(fx["cov_asset"])
         adjusted = np.asarray(window["cov"]) - np.outer(c, h) - np.outer(h, c) + np.outer(h, h) * fx["var"]
         direct = r_u[-n:] - np.outer(e[-n:], h)
@@ -145,9 +145,9 @@ def test_missing_fx_observations_are_not_zero_covariance_or_shorter_sample():
 
 def test_full_hedge_of_pure_fx_asset_keeps_zero_variance_boundary():
     store, _, _ = _portfolio_fixture()
-    store[port.PROXY["해외채권"]]["s"][:] = 100.0
+    store[port.PROXY["해외시가"]]["s"][:] = 100.0
     result = port.build(store, lambda _: None)
-    i = port.ASSETS.index("해외채권")
+    i = port.ASSETS.index("해외시가")
     for window in result["windows"]:
         fx = window["fx"]
         assert abs(window["cov"][i][i] - 2 * fx["cov_asset"][i] + fx["var"]) < 2e-12

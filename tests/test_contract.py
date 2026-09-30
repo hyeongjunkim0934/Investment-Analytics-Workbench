@@ -387,7 +387,7 @@ def test_alloc_cma_active_end_to_end_on_synth(built):
 
 
 def test_alloc_port_active_end_to_end_on_synth(built):
-    """`alloc.json.port` — 6자산군 배선 전체 (판정→파싱→build→게시).
+    """`alloc.json.port` — 7자산군 배선 전체 (판정→파싱→build→게시).
 
     단위 수학·CMA 파일 검증은 `tests/test_port.py` 가 정본이다. 여기서는
     합성 픽스처의 늦개시 원화유동성이 창 게이팅으로 이어지는지까지 본다.
@@ -404,7 +404,7 @@ def test_alloc_port_active_end_to_end_on_synth(built):
     assert "all" in keys and "1" in keys and "3" in keys
     assert "10" not in keys and "5" not in keys, "늦개시 원화유동성이 있는데 장기 창이 열렸다"
     assert p["missing_windows"] == [5, 10]
-    assert p["assets"] == ["국내채권", "국내장부", "해외채권", "국내주식", "해외주식", "대체투자"]
+    assert p["assets"] == ["국내시가", "국내장부", "해외시가", "해외장부", "국내주식", "해외주식", "대체투자"]
     cov_liq = next(c for c in p["coverage"] if c["asset"] == "국내장부")
     assert cov_liq["first"] and cov_liq["first"] >= "2022-06-30"
     assert p["ref10y"]["per_asset"]["국내장부"] is None
@@ -412,6 +412,9 @@ def test_alloc_port_active_end_to_end_on_synth(built):
     assert p["ref10y"]["bench"] is not None and p["ref10y"]["bench"]["n_months"] == 120
     assert p["cma_input"] is None
     assert "usd_liq_check" not in p
+    book_source = next(c for c in p["coverage"] if c["asset"] == "해외장부")
+    assert book_source["key"] == "bm:장부가 해외채권" and book_source["currency"] == "KRW"
+    assert "해외장부" not in p["usd_assets"]
     ref = p["krw_liq_ref"]
     assert ref is not None and ref["key"] == port.KRW_LIQ_CD_KEY
     assert "참고 전용" in ref["note"], "CD 적립 수치는 참고 전용 — 공통 행렬 미포함 표기"
@@ -419,15 +422,15 @@ def test_alloc_port_active_end_to_end_on_synth(built):
 
     for w in p["windows"]:
         C = np.array(w["cov"])
-        assert C.shape == (6, 6)
+        assert C.shape == (7, 7)
         assert np.allclose(C, C.T, atol=1e-12)
         assert float(np.linalg.eigvalsh(C)[0]) > -1e-10
         for row in w["corr"]:
             for v in row:
                 assert v is None or -1.0000001 <= v <= 1.0000001
         # 벤치마크 항등식 — 게시된 μ·Σ 만으로 재구성해 일치해야 한다
-        iu, ik = p["assets"].index("해외주식"), p["assets"].index("국내채권")
-        wv = np.zeros(6)
+        iu, ik = p["assets"].index("해외주식"), p["assets"].index("국내시가")
+        wv = np.zeros(7)
         wv[iu], wv[ik] = 0.6, 0.4
         mu_b = float(wv @ np.array(w["mean_pct"]))
         sig_b = math.sqrt(float(wv @ C @ wv)) * 100

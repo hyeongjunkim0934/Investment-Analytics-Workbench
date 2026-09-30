@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""포트폴리오 구성(6자산군) — 프록시 통계 + CMA 입력 파일 로드 (§7.14 인프라).
+"""포트폴리오 구성(7자산군) — 프록시 통계 + CMA 입력 파일 로드 (§7.14 인프라).
 
 게시물은 `alloc.json.port`. 원본 수준·수익률은 게시하지 않는다 — 창별 연환산
 평균·σ·상관·공분산·MDD 와 표본 메타만 나간다(alloc 유출 가드가 강제).
 
 CMA 입력 파일(선택): Data 저장소 어디든 `port_cma.json` 하나.
-    {"asof": "YYYY-MM-DD", "mu_pct": {"국내채권": 3.2, ...}, ...}
+    {"asof": "YYYY-MM-DD", "mu_pct": {"국내시가": 3.2, ...}, ...}
 자산군 이름은 ASSETS 와 문자 단위 일치, 값은 연 % (−50~50).
-구 입력의 원화유동성은 국내장부로 읽고 달러유동성은 제외한다.
+구 입력의 국내채권·해외채권·원화유동성은 새 이름으로 읽고 달러유동성은 제외한다.
 
 공개 경계(2026-08-22 사용자 지시): 게시되는 것은 **최종 수치(asof·mu_pct)뿐**이다.
 파일에 빌딩블록·산출 과정·메모 등 다른 필드가 있어도 파이프라인은 읽지 않고
@@ -23,27 +23,29 @@ import pandas as pd
 
 import common
 
-ASSETS = ["국내채권", "국내장부", "해외채권", "국내주식", "해외주식", "대체투자"]
+ASSETS = ["국내시가", "국내장부", "해외시가", "해외장부", "국내주식", "해외주식", "대체투자"]
 PROXY = {
-    "국내채권": "bb:한국종합",
+    "국내시가": "bb:한국종합",
     "국내장부": "bb:원화유동성",
-    "해외채권": "bb:미국종합",
+    "해외시가": "bb:미국종합",
+    "해외장부": "bm:장부가 해외채권",
     "국내주식": "bb:한국_KOSPI_TR",
     "해외주식": "bb:미국_S&P500_TR",
     "대체투자": "bb:S&P GSCI TR CME",
 }
-# 국내장부는 기존 원화유동성의 표시 이름만 변경한다. 프록시·환 기준은 그대로다.
-USD_ASSETS = frozenset(["해외채권", "해외주식", "대체투자"])
+# 국내장부의 기존 원화 프록시는 유지한다. 해외장부는 원천 KRW 손익 BM이다.
+# 원천의 환노출·헤지 상태를 임의로 추정하거나 달러원을 재차 곱하지 않는다.
+USD_ASSETS = frozenset(["해외시가", "해외주식", "대체투자"])
+ASSET_NOTES = {"해외장부": "원화 장부가 BM · 원천 환노출·헤지 상태 미확인 — 추가 환헤지 미적용"}
+ASSET_ALIASES = {"국내채권": "국내시가", "해외채권": "해외시가", "원화유동성": "국내장부"}
 FX_KEY = "bb:달러원"
 WINDOW_YEARS = [1, 3, 5, 10]
 REF_YEARS = 10
-BENCH_W = {"해외주식": 0.6, "국내채권": 0.4}
+BENCH_W = {"해외주식": 0.6, "국내시가": 0.4}
 
-GROUPS = {"주식": ["국내주식", "해외주식"], "채권": ["국내채권", "해외채권"],
-          "대체": ["대체투자"], "유동성": ["국내장부"]}
+GROUPS = {"주식": ["국내주식", "해외주식"],
+          "채권": ["국내시가", "국내장부", "해외시가", "해외장부"], "대체": ["대체투자"]}
 GROUP_DEFAULT = {"주식": 50.0, "채권": 30.0, "대체": 20.0}
-LIQ_DEFAULT = 10.0
-LIQ_RANGE = [0.0, 20.0]
 
 CMA_FILE = "port_cma.json"
 MU_BAND = (-50.0, 50.0)
@@ -165,10 +167,10 @@ def load_cma_input(data_dir, warn) -> dict | None:
         # 무관하게 우선하며, 삭제한 달러유동성은 유효성 경고 대상에서도 제외한다.
         if k == "달러유동성":
             continue
-        if k == "원화유동성":
-            if "국내장부" in mu_in:
+        if k in ASSET_ALIASES:
+            if ASSET_ALIASES[k] in mu_in:
                 continue
-            k = "국내장부"
+            k = ASSET_ALIASES[k]
         if k not in ASSETS:
             warn(f"port: {p.name} 의 알 수 없는 자산군 '{k}' 무시")
             continue
@@ -187,8 +189,7 @@ def load_cma_input(data_dir, warn) -> dict | None:
 def build(series_store: dict, warn, data_dir=None) -> dict:
     defaults = {
         "groups": GROUPS, "group_default": GROUP_DEFAULT,
-        "liq_default": LIQ_DEFAULT, "liq_range": LIQ_RANGE,
-        "split_note": "그룹 내 국내/해외 균등 분할은 기본값 가정 — 화면에서 조정",
+        "split_note": "그룹 내 자산 균등 분할은 기본값 가정 — 화면에서 조정",
     }
     missing = [PROXY[a] for a in ASSETS if PROXY[a] not in series_store]
     if missing:
@@ -217,6 +218,7 @@ def build(series_store: dict, warn, data_dir=None) -> dict:
         rets[a] = r
         ccy = "USD→KRW" if a in USD_ASSETS else "KRW"
         cover.append({"asset": a, "key": PROXY[a], "currency": ccy,
+                      **({"note": ASSET_NOTES[a]} if a in ASSET_NOTES else {}),
                       "first": str(r.index.min().date()) if len(r) else None,
                       "last": str(r.index.max().date()) if len(r) else None,
                       "n_months": int(len(r))})
@@ -306,10 +308,11 @@ def build(series_store: dict, warn, data_dir=None) -> dict:
         "asof": str(df.index.max().date()),
         "assets": ASSETS,
         "proxies": PROXY,
+        "asset_notes": ASSET_NOTES,
         "usd_assets": sorted(USD_ASSETS),
         "fx_key": FX_KEY,
         "hedge_cost": _hedge_cost(series_store),
-        "basis": "KRW 원화 환산(미헤지) — USD 지수는 월말 달러원 환율로 환산",
+        "basis": "KRW 기준 — USD 지수는 미헤지 원화 환산, 해외장부는 원천 원화 BM",
         "defaults": defaults,
         "bench_w": BENCH_W,
         "coverage": cover,
@@ -321,8 +324,10 @@ def build(series_store: dict, warn, data_dir=None) -> dict:
         "cma_input": cma_input,
         "krw_liq_ref": krw_liq_ref,
         "method": "월말 수준 → 월간 수익률 → 연환산(평균 ×12, σ ×√12, 공분산 ×12) · "
-                  "마지막 부분월 폐기 · USD 표시 자산(해외채권·해외주식·대체투자)은 "
+                  "마지막 부분월 폐기 · USD 표시 자산(해외시가·해외주식·대체투자)은 "
                   "월말 달러원 곱으로 원화 환산(미헤지) · "
+                  "해외장부는 장부가 해외채권 BM의 원화 수익률을 그대로 사용하며 "
+                  "원천 환노출·헤지 상태 미확인으로 추가 환헤지에서 제외 · "
                   "창 종료 = 공통 표본 마지막 월말(경계 포함) · "
                   "대체투자 프록시 = S&P GSCI TR CME(2026-08-22 사용자 확정 — 롤·담보수익 "
                   "포함 총수익. 스팟(S&P GSCI SPOT)은 지시 문자열과 티커가 일치하나 TR 로 확정) · "

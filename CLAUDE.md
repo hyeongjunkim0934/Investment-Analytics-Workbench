@@ -21,7 +21,8 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `pipeline/hedge.py` | `build(SERIES, warn)` → `hedge.json` (7통화 헤지 매트릭스·백테스트·시뮬레이터 공분산·`ust_merit` 미국채 투자 메리트 모니터 §7.7.14 — 헤지 후 UST = UST10y + 스왑레이트, 시리즈 없으면 `active:false` 게시) |
 | `pipeline/alloc.py` | `build(SERIES, warn)` → `alloc.json` (자산배분 원천 10개 공분산·현재 금리·동일 샤프 앵커·블록 부트스트랩 사전계산. **원본 수익률 미게시** — 공분산·평균·분위수만) |
 | `pipeline/bm.py` | 자산군 전략 벤치마크(BM) 파서 + `build_cma(SERIES, warn)` → `alloc.json.cma` (자본시장가정 사전계산 — §7.7 재설계의 데이터층). **원본 수준·수익률 미게시** — 창별 연환산 σ·상관·공분산·과거 평균과 표본 메타만. BM 파일이 없어도 `active:false` 블록을 항상 게시한다(체인 안전장치) |
-| `pipeline/port.py` | 포트폴리오 구성(6자산군 §7.25) → `alloc.json.port`. 자산 순서 = 국내채권·국내장부·해외채권·국내주식·해외주식·대체투자. 달러유동성은 제외. 국내장부는 기존 `bb:원화유동성` 프록시·유동성 분류를 유지한다. 창별 μ·σ·상관·공분산·MDD·60/40 벤치, KRW 미헤지 환산, 월말 표본. Data `port_cma.json`의 최종 `{asof, mu_pct}`만 읽으며 구 원화유동성 키를 국내장부로 이관한다. 원본 수익률·빌딩블록 미게시. 짧은 국내장부 ETF 표본으로 10년 공통 창은 아직 미충족이며 CD(AAA) 3M 적립 수치를 `krw_liq_ref`로 참고만 게시한다(공통 행렬 미포함). |
+| `pipeline/port.py` | 포트폴리오 7축 → `alloc.json.port`. 국내시가·국내장부·해외시가·해외장부·국내주식·해외주식·대체투자. 국내장부는 기존 `bb:원화유동성`, 해외장부는 `bm:장부가 해외채권` 원화 BM. 해외장부 원천 환노출 미검증이므로 FX 재환산·추가 헤지 제외. 구 국내채권/해외채권/원화유동성 CMA·브라우저 키 이관, 새 이름 우선. 누락 원천은 전체 블록 비활성 사유를 명시. 원본 수익률 미게시. |
+| `dashboard/port-constraints.js` | 그룹 최소·최대와 개별 최소 비중의 실행 가능성 검사, 제약 다면체의 면별 일반·Conservative·Optimistic 최적화. 입력 %, 계산 소수비중. 불가능 제약은 적용하지 않고 기존값 유지. `app.js` 앞에서 로드. |
 | `pipeline/panel.py` | `build(SERIES, risk_weekly, warn)` → `panel.json` (관계분석용 주간 정렬 패널. 공개 변수는 `VARS` 화이트리스트로만 통제) |
 | `pipeline/breadth.py` | 미국 증시 데일리 리포트 → **집계 지표만** (`us:*` 12개). 파일 하나 = 관측 하루라 이력은 날짜별 파일이 쌓여야 생긴다. **종목 단위(티커·회사명·현재가)는 한 줄도 읽지 않는다** — 공개 저장소이므로 그 계약이 값 정확도만큼 중요하고, `tests/test_breadth.py` 가 상세 시트를 일부러 넣고 유출이 없는지 확인한다 |
 | `pipeline/common.py` | 공용 산식 한 벌 — `epoch_seconds`/`pack_values`/`spearman`/`auc`. 위 넷과 연구 하네스가 전부 여기서 가져온다 |
