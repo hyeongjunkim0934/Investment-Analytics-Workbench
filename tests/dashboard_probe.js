@@ -48,7 +48,7 @@ filterRow.append(rangeGroup);
 main.append(filterRow);
 
 /* 섹션 — SECTION_IDS 와 같은 목록. 마을 포함. */
-const SECTIONS = ["overview", "summary", "risk", "alloc", "hedge", "events", "panel", "rates",
+const SECTIONS = ["overview", "summary", "risk", "alloc", "hedge", "fxoutlook", "events", "panel", "rates",
   "irs", "credit", "fx", "inflation", "acwi", "macro", "catalog"];
 const secNodes = {};
 SECTIONS.forEach((id) => { const n = elem("section", id, "section"); secNodes[id] = n; main.append(n); });
@@ -105,6 +105,7 @@ secNodes.events.append(elem("details", "events-rules"));
    이 목록 자체가 index.html 과의 계약이다. */
 ["hedge-cost-dashboard", "hedge-merit-card"]
   .forEach((id) => secNodes.hedge.append(elem("div", id, "card")));
+secNodes.fxoutlook.append(elem("div", "fxoutlook-content"));
 
 /* ACWI 뼈대 — 시장 폭 카드 포함 */
 ["acwi-stats", "card-acwi-price", "card-acwi-dd", "card-breadth"]
@@ -186,6 +187,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "port-opportunities
   { filename: "dashboard/port-opportunities.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "port-constraints.js"), "utf8"), sandbox,
   { filename: "dashboard/port-constraints.js" });
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-outlook.js"), "utf8"), sandbox,
+  { filename: "dashboard/fx-outlook.js" });
 /* app.js 의 top-level `const`/`function` 은 스크립트 렉시컬 스코프에 산다 —
    밖에서 잡으려면 같은 스크립트 안에서 내보내야 한다. */
 const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "sectionHasRangedChart",

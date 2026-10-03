@@ -56,7 +56,8 @@ const nextTick = () => new Promise((resolve) => setImmediate(resolve));
   const links = [...nav.querySelectorAll("a")];
   const hashes = links.map((node) => node.getAttribute("href"));
   result.navigation = {
-    adjacent: hashes[hashes.indexOf("#hedge") + 1] === "#cma"
+    adjacent: hashes[hashes.indexOf("#hedge") + 1] === "#fxoutlook"
+      && hashes[hashes.indexOf("#fxoutlook") + 1] === "#cma"
       && hashes[hashes.indexOf("#cma") + 1] === "#pseudo",
     registered: P.SECTION_IDS.includes("pseudo") && typeof P.RENDERERS.pseudo === "function",
     visible: !section.hidden && byId("village").hidden && byId("hedge").hidden,

@@ -2,14 +2,16 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.hedge = {
   id: 'hedge',
   title: '환헤지',
-  updated: '2026-09-30',
+  updated: '2026-10-03',
   summary: '현재 비용 → 환 변동성 → 국채 메리트 → 과거 분포 → 1년 조건부 범위',
   inputs: 'HP 3M·6M·12M, SMB USD 3M, 10년 국채금리: 연 % · 환율: 외화당 원(JPY는 100엔당 원)',
-  outputs: '비용·금리·연 변동성: % · 메리트·변동성 감소: %p · 1년 경로: 누적수익률 %',
+  outputs: '비용·금리·연 변동성: % · 메리트·변동성 감소: %p · 국채 1년 경로: 누적수익률 % · 환율전망: 원/달러',
   sources: [
     { path: 'pipeline/common.py', symbols: ['hp_curve'] },
     { path: 'pipeline/hedge.py', symbols: ['build', 'build_fx_volatility', 'despike', 'clean_merit_daily', 'build_bond_merit', 'build_bond_merits', 'build_cost_distribution', 'par_modified_duration', 'build_bond_outlook'] },
-    { path: 'dashboard/app.js', symbols: ['hedgeCostSnapshot', 'renderHedgeDistribution', 'renderHedgeMeritChart'] }
+    { path: 'dashboard/app.js', symbols: ['hedgeCostSnapshot', 'renderHedgeDistribution', 'renderHedgeMeritChart'] },
+    { path: 'pipeline/fx_outlook.py', symbols: ['build'] },
+    { path: 'dashboard/fx-outlook.js', symbols: ['fxOutlookQuarters', 'fxOutlookSelection', 'renderFxOutlook'] }
   ],
   sections: [
     {
@@ -105,6 +107,27 @@ display_anchor = latest_finite_hedged_yield_point(market)
 align_right_axis_zero_to_left_axis(display_anchor.yield)
 plot_unchanged_returns(paths, calendar_months_0_to_12(display_anchor.date))`,
       note: '각 시장 최근 헤지 후 금리 위치에서 시작하도록 날짜·우축 0%를 정렬한다. 추정 기준일·수익률은 유지하며 금리 전망이나 재추정이 아니다. 환율·금리 변화 기대 0, 현재 비용 고정, 월별 충격 무상관 가정. 확률 보장 구간이 아니며 볼록성·롤다운·거래비용·스왑 MTM을 제외한다.'
+    },
+    {
+      id: 'fx-outlook',
+      title: '환율전망 · 전체 표본과 6개 분기',
+      formulas: [
+        { expression: 'rₜ = ln(Sₜ / Sₜ₋₁); σ = std표본(r) × √252', legend: 'S: 원/달러 · σ: 소수 단위 연 로그변동성 · 전체 가용 일별 표본, ddof=1' },
+        { expression: '하단(τ) = S₀ exp(−σ√τ); 기준(τ) = S₀; 상단(τ) = S₀ exp(+σ√τ)', legend: 'τ = 0, 1/12, …, 1년 · S₀: 최신 유효 호가 · 기준은 조건부 중앙값, 산술 기대값 아님' }
+      ],
+      code: `levels = full_positive_finite_weekday_bb_usdkrw()
+if levels are empty: levels = explicit_info_usdkrw_fallback()
+levels = keep_last_valid_observation_per_date(levels)  # 급등락 유지
+returns = log_returns_with_calendar_gap_between_1_and_7_days(levels)
+publish(full_history, source, sample_dates)
+if count(returns) >= 252:
+  range = latest_quote_times_exp_plus_minus_sigma_sqrt_time(months=0..12)
+  publish(range)
+quarters = next_6_quarter_ends_after(max(latest_quote_date, today_KST))
+forecasts = user_values_keyed_by_year_and_quarter(quarters)
+plot(history, range, forecast_points_and_small_quarter_value_labels)
+persist_valid_positive_forecasts_in_browser_only()`,
+      note: 'Bloomberg 전체 계열이 정본이며 원천을 이어 붙이지 않는다. 표시기간 변경·사용자 전망은 통계 범위를 재추정하지 않는다. 급변값을 삭제하는 환헤지 σ와 정제 정책이 다르다. 로그 추세 0·충격 무상관·고정 변동성 근사이며 보정된 예측구간이나 경로 전체의 확률 보장이 아니다.'
     }
   ]
 };

@@ -410,7 +410,8 @@ assert(Object.values(result.sevenAssetIntegration).every(Boolean),JSON.stringify
 
 const links=[...nav.querySelectorAll("a")],hashes=links.map(node=>node.getAttribute("href"));
 sandbox.location.hash="#cma";P.routeView();
-result.navigation={ordered:hashes[hashes.indexOf("#hedge")+1]==="#cma" && hashes[hashes.indexOf("#cma")+1]==="#pseudo",
+result.navigation={ordered:hashes[hashes.indexOf("#hedge")+1]==="#fxoutlook"
+  && hashes[hashes.indexOf("#fxoutlook")+1]==="#cma" && hashes[hashes.indexOf("#cma")+1]==="#pseudo",
   registered:P.SECTION_IDS.includes("cma") && typeof P.RENDERERS.cma==="function" && P.SECTION_LABELS.cma==="CMA",
   visible:!DOC.getElementById("cma").hidden && DOC.getElementById("alloc").hidden,
   active:links.find(node=>node.getAttribute("href")==="#cma").getAttribute("aria-current")==="page",

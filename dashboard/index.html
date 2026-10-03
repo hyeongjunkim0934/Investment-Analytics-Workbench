@@ -7,7 +7,7 @@
 <meta name="description" content="금리·크레딧·FX·인플레이션·지수 데이터를 자동 갱신하는 투자 분석 대시보드">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%F0%9F%93%88%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="vendor/uplot.min.css">
-<link rel="stylesheet" href="style.css?v=20261003-summary-cards-1">
+<link rel="stylesheet" href="style.css?v=20261003-fx-outlook-2">
 <link rel="stylesheet" href="cma.css?v=20260930-cma-cards-1">
 </head>
 <body>
@@ -45,7 +45,7 @@
     <nav class="nav" id="nav">
       <!-- 순서는 사용자 지정(2026-08-11): 마을·개요·리스크 다음에 자산배분·환헤지 —
            자산배분 포트폴리오 최적화가 이 대시보드의 중심 기능이라 앞으로 뺐다. -->
-      <!-- 2026-09-30: 환헤지 · CMA · Pseudo. -->
+      <!-- 2026-10-03: 환헤지 · 환율전망 · CMA · Pseudo. -->
       <a href="#village" class="home">마을</a>
       <a href="#overview">개요</a>
       <a href="#events">이벤트</a>
@@ -53,6 +53,7 @@
       <a href="#risk">리스크</a>
       <a href="#alloc">자산배분</a>
       <a href="#hedge">환헤지</a>
+      <a href="#fxoutlook">환율전망</a>
       <a href="#cma">CMA</a>
       <a href="#pseudo">Pseudo</a>
     </nav>
@@ -142,6 +143,10 @@
     <h2>환헤지</h2>
     <div class="card" id="hedge-cost-dashboard"></div>
     <div id="hedge-merit-card"></div>
+  </section>
+
+  <section id="fxoutlook" class="section" aria-label="환율전망">
+    <div id="fxoutlook-content"></div>
   </section>
 
   <section id="cma" class="section">
@@ -274,8 +279,9 @@
 <script src="cma.js?v=20260930-cma-cards-1"></script>
 <script src="pseudo/risk.js?v=20260930-pseudo-1"></script>
 <script src="pseudo/alloc.js?v=20261003-summary-cards-1"></script>
-<script src="pseudo/hedge.js?v=20260930-hedge-anchor-1"></script>
+<script src="pseudo/hedge.js?v=20261003-fx-outlook-1"></script>
 <script src="pseudo.js?v=20260930-pseudo-1"></script>
-<script src="app.js?v=20261003-summary-cards-1"></script>
+<script src="fx-outlook.js?v=20261003-fx-outlook-1"></script>
+<script src="app.js?v=20261003-fx-outlook-2"></script>
 </body>
 </html>
