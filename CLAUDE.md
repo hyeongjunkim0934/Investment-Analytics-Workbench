@@ -86,6 +86,16 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 CMA 산식·우선순위·환헤지 연결은 자산배분 문서에 함께 기록한다. CMA의 사용자 3시나리오는
 Conservative/Optimistic 평균 불확실성 경계선과 별개이며 공통 거시 상태를 구성하지 않는다.
 
+## 요약카드 (2026-10-03)
+
+`#summary`는 리스크 탭 왼쪽의 세 가지 카드다. `renderSummaryCards`는 자산배분의
+마지막 `applied` 상태를 `portEngine`에 전달하고 Min volatility·Max Sharpe Ratio는
+기존 엔진 결과를 공유한다. Target Return 4.0%는 `portConstrainedModel.atReturn(4)`로
+정확 목표를 충족하는 최소분산 해를 구하며 불가능하면 사유와 결측 수치를 표시한다.
+CMA·환헤지·그룹 및 개별 제약은 같은 경로다. 초안은 반영하지 않으며 업데이트·CMA 적용·
+탭 진입 시 다시 표시한다. `portSummaryWeights`는 최대잔여법으로 정수 합계100만 표시하고
+원비중·μ·σ는 바꾸지 않는다. 클릭은 native details 상세 펼침으로 입력을 변경하지 않는다.
+
 ## 포트폴리오 입력 적용 (2026-09-30)
 
 `renderPortPanel`의 `portPanelDraft.st`는 편집 초안, `applied`는 마지막 업데이트 결과다.

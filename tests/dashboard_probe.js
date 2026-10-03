@@ -48,7 +48,7 @@ filterRow.append(rangeGroup);
 main.append(filterRow);
 
 /* 섹션 — SECTION_IDS 와 같은 목록. 마을 포함. */
-const SECTIONS = ["overview", "risk", "alloc", "hedge", "fxoutlook", "events", "panel", "rates",
+const SECTIONS = ["overview", "summary", "risk", "alloc", "hedge", "fxoutlook", "events", "panel", "rates",
   "irs", "credit", "fx", "inflation", "acwi", "macro", "catalog"];
 const secNodes = {};
 SECTIONS.forEach((id) => { const n = elem("section", id, "section"); secNodes[id] = n; main.append(n); });
@@ -79,6 +79,7 @@ secNodes.alloc.append(elem("div", "alloc-workspace"));
 /* 개요 뼈대(§7.9) — 상단 탭이 7개로 줄면서 시장 화면들이 여기로 내려왔다.
    renderOverview 는 구역을 #ov-groups 에 조립하고 카탈로그 입구를 #ov-catalog 에 둔다. */
 secNodes.overview.append(elem("div", "ov-groups"), elem("p", "ov-catalog"));
+secNodes.summary.append(elem("div", "summary-cards"));
 /* 금리 뼈대 — renderRates 가 집는 카드 4자리 (ts_tenor 콤보박스 프로브용) */
 ["card-curve", "card-ts10", "card-spreads", "card-policy"]
   .forEach((id) => secNodes.rates.append(elem("div", id)));
@@ -208,6 +209,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "SECTION_LABELS", "sectionLink",
   "explainBox", "EXPLAIN_OPEN",
   "renderPortPanel", "portState", "portDefaults", "portMixFromGroups", "portEngine",
+  "renderSummaryCards", "portSummaryResults", "portSummaryWeights", "portModelInputs",
   "portRound01", "projSimplex", "PORT_LS_KEY", "openDetail", "deltaTriplet",
   "portRiskAllocationEngine", "allocRiskOptimize"];
 vm.runInContext(`${APP}\n;globalThis.__probe = { ${EXPORTS.join(", ")} };`, sandbox,

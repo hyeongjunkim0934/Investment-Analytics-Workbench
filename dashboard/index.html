@@ -7,7 +7,7 @@
 <meta name="description" content="금리·크레딧·FX·인플레이션·지수 데이터를 자동 갱신하는 투자 분석 대시보드">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%F0%9F%93%88%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="vendor/uplot.min.css">
-<link rel="stylesheet" href="style.css?v=20261003-fx-outlook-1">
+<link rel="stylesheet" href="style.css?v=20261003-fx-outlook-2">
 <link rel="stylesheet" href="cma.css?v=20260930-cma-cards-1">
 </head>
 <body>
@@ -49,6 +49,7 @@
       <a href="#village" class="home">마을</a>
       <a href="#overview">개요</a>
       <a href="#events">이벤트</a>
+      <a href="#summary">요약카드</a>
       <a href="#risk">리스크</a>
       <a href="#alloc">자산배분</a>
       <a href="#hedge">환헤지</a>
@@ -99,6 +100,10 @@
     <div id="ov-groups"></div>
     <!-- 카탈로그는 상단 탭에서 내려와 여기 한 줄로만 남는다(2026-08-13 사용자 지시) -->
     <p id="ov-catalog" style="margin-top:18px"></p>
+  </section>
+
+  <section id="summary" class="section" aria-label="요약카드">
+    <div id="summary-cards"></div>
   </section>
 
   <section id="risk" class="section" aria-label="리스크">
@@ -269,14 +274,14 @@
 <div class="detail-overlay" id="detail-overlay" hidden></div>
 
 <script src="vendor/uplot.min.js"></script>
-<script src="port-constraints.js?v=20260930-allocation-constraints-1"></script>
+<script src="port-constraints.js?v=20261003-summary-cards-1"></script>
 <script src="port-opportunities.js?v=20260913-improvement-conditions-1"></script>
 <script src="cma.js?v=20260930-cma-cards-1"></script>
 <script src="pseudo/risk.js?v=20260930-pseudo-1"></script>
-<script src="pseudo/alloc.js?v=20260930-frontier-merge-3"></script>
+<script src="pseudo/alloc.js?v=20261003-summary-cards-1"></script>
 <script src="pseudo/hedge.js?v=20261003-fx-outlook-1"></script>
 <script src="pseudo.js?v=20260930-pseudo-1"></script>
 <script src="fx-outlook.js?v=20261003-fx-outlook-1"></script>
-<script src="app.js?v=20261003-fx-outlook-1"></script>
+<script src="app.js?v=20261003-fx-outlook-2"></script>
 </body>
 </html>
