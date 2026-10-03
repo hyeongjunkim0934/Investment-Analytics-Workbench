@@ -29,6 +29,7 @@ import pandas as pd
 import alloc
 import bm
 import breadth
+import fx_outlook
 import hedge
 import panel
 import port
@@ -720,7 +721,8 @@ def build_fx() -> dict:
     # `cost_hist_curve` 로 싣고 #hedge 화면이 그린다. 같은 값을 두 JSON 에 실으면
     # 새 이중 진실이 되고, `renderHedge` 가 `DATA.fx` 를 읽으면 fx.json 하나가
     # 깨질 때 #hedge 까지 함께 빈다. #fx 는 순수 시세 화면이다.
-    return {"ts": ts}
+    return {"ts": ts, "outlook": fx_outlook.build({key: entry["s"]
+                                                    for key, entry in SERIES.items()})}
 
 
 def build_inflation() -> dict:

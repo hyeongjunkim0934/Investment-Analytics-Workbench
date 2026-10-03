@@ -9,6 +9,7 @@
 | 리스크 | `dashboard/pseudo/risk.js` | `pipeline/risk.py` |
 | 자산배분·CMA | `dashboard/pseudo/alloc.js` | `pipeline/port.py`, `dashboard/cma.js`, `dashboard/app.js` |
 | 환헤지 | `dashboard/pseudo/hedge.js` | `pipeline/hedge.py`, `dashboard/app.js` |
+| 환율전망(환헤지 문서 내 별도 절) | `dashboard/pseudo/hedge.js` | `pipeline/fx_outlook.py`, `dashboard/fx-outlook.js` |
 
 각 문서는 `id`, `title`, `updated`, `summary`, `inputs`, `outputs`, `sources`, `sections`를 갖는다.
 각 절은 `id`, `title`, `formulas`(expression·legend), `code`, `note`로 구성한다.

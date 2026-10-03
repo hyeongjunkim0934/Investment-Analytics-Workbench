@@ -52,6 +52,7 @@ META_FIELDS = ["built_at_utc", "last_observation", "series_count", "files", "war
 # 여기 적는 것은 **화면이 이름으로 집는 키**뿐이다. 값의 타당성(범위·부호)은
 # 게이트의 일이 아니다 — 그건 pytest 와 프로브가 본다.
 REQUIRED_KEYS = {
+    "fx": ["ts", "outlook"],  # 원달러 전체 표본 분석. 결측이어도 비활성 블록은 필수.
     "hedge": ["asof", "default_tenor_m", "matrix", "curves", "backtest",
               "cost_hist_curve", "cost_hist_usd", "cost_dashboard", "fx_volatility", "cost_stats", "mtm", "sim",
               # ust_merit = 미국채 투자 메리트 모니터(§7.7.14). 시리즈가 없어도

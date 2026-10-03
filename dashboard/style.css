@@ -1475,3 +1475,25 @@ a.kpi-link .kpi-label > span:first-child::after {
 .hedge-chart-legend > button { border: 0; padding: 2px 0; min-height: 24px; cursor: pointer;
   background: transparent; color: inherit; font: inherit; }
 .hedge-chart-legend > button[aria-pressed="false"] { opacity: .45; }
+
+/* FX outlook: chart first, six quarter-end inputs beneath it. */
+.fx-outlook-card, .fx-forecast-card { min-width: 0; }
+.fx-outlook-card { margin-bottom: 14px; }
+.fx-outlook-period { margin-left: auto; font-size: 11px; color: var(--ink-2); }
+.fx-outlook-period select { padding: 4px 8px; min-height: 28px; font: inherit; }
+.fx-forecast-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.fx-forecast-input { display: flex; flex-direction: column; gap: 7px; min-width: 0;
+  font-size: 11px; color: var(--ink-2); }
+.fx-forecast-input input { width: 100%; min-width: 0; padding: 8px; font: inherit; font-size: 14px;
+  font-variant-numeric: tabular-nums; color: var(--ink-1); background: var(--page);
+  border: 1px solid var(--border); border-radius: 4px; }
+.fx-forecast-input input[aria-invalid="true"] { border-color: var(--up-ink); }
+.fx-forecast-error, .fx-forecast-status { font-size: 10px; color: var(--up-ink); margin: 0; }
+.fx-forecast-error:empty { display: none; }
+@media (max-width: 700px) {
+  .fx-forecast-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .fx-outlook-card .card-head { flex-wrap: wrap; gap: 8px; }
+}
+@media (max-width: 400px) {
+  .fx-forecast-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
