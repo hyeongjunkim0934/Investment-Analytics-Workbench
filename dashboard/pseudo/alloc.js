@@ -3,7 +3,7 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.alloc = {
   id: "alloc",
   title: "자산배분",
-  updated: "2026-09-30",
+  updated: "2026-10-03",
   summary: "7자산군 CMA·최소/최대 제약 → 경계선·비중1/비중2 비교 → 리스크 연계 비중",
   inputs: "월말 지수·USDKRW, 연 μ·σ(%), CMA 시나리오 확률(%), 상관계수, h(0~1), 그룹 최소·최대(%), 자산별 최소(%). 공분산은 게시 소수² → 계산 %²(×10,000)",
   outputs: "포트폴리오 μ·σ, 경계선, Conservative·Optimistic, 현재·잠재 리스크 연계 비중",
@@ -89,6 +89,28 @@ globalThis.PSEUDO_DOCS.alloc = {
       note: "하단 입력은 업데이트 시 검증·저장하고 경계선·비교·리스크 연계에 함께 반영. 제약조건 적용은 검증 후 업데이트 대기. 축·팔레트는 마지막 업데이트 결과를 다시 표시. 비중1/비중2는 각각 합계 100%를 검사하고 제약 밖도 비교용으로 표시. 비중합 오류·불가능한 제약·유효하지 않은 입력이면 마지막 업데이트 결과 유지.",
       sources: [
         { path: "dashboard/app.js", symbols: ["portRobustModel", "portFrontiers", "portContributions", "portEngine"] }
+      ]
+    },
+    {
+      id: "summary-cards",
+      title: "요약카드 · 세 가지 최적화 안",
+      formulas: [
+        { expression: "Min volatility: min wᵀCw;  Target Return: min wᵀCw, μᵀw = 4.0", legend: "같은 적용 입력·환헤지·그룹 및 개별 제약 사용. μ 단위는 연 %. 4.0% 정확 목표가 불가능하면 해당 카드의 결과를 보류." },
+        { expression: "Max Sharpe Ratio: max (μᵀw − r𝒇) / √(wᵀCw)", legend: "기존 자산배분 최대 샤프 해를 공유. r𝒇는 기존 엔진의 국내장부(구 원화유동성) 기대수익 입력으로 별도 무위험 수익률 추정치가 아님." }
+      ],
+      code: [
+        "model ← portfolio_engine(last_applied_inputs)",
+        "cards ← minimum_variance, minimum_variance_at_exact_return(4.0), maximum_sharpe",
+        "validate_feasibility_and_finite_moments(cards)",
+        "display_weights ← floor(100 * original_weights)",
+        "distribute_remaining_integer_points_by_largest_fractional_remainders()",
+        "show_all_assets_and_total_100_without_changing_original_weights()",
+        "show_mu_sigma_from_original_weights_with_two_decimals()"
+      ].join("\n"),
+      note: "요약카드는 마지막 업데이트 결과를 읽으며 미적용 초안을 반영하지 않음. CMA 적용/해제는 기존 즉시 반영 유지. 카드 클릭은 상세 열기이며 입력 비중을 변경하지 않음. 정수 표시는 표시용이라 원비중의 소수 제약 및 정확 목표를 그대로 재현하지 않을 수 있음.",
+      sources: [
+        { path: "dashboard/app.js", symbols: ["portEngine", "portSummaryWeights", "portSummaryResults", "renderSummaryCards"] },
+        { path: "dashboard/port-constraints.js", symbols: ["portConstrainedModel"] }
       ]
     },
     {

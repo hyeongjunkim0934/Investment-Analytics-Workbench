@@ -524,7 +524,7 @@ function deltaSpan(label, v, kind, big = false) {
    이름을 화면 안에서 부를 자리가 필요해졌다 — index.html 의 <h2> 와 같은 문자열이며
    계약 테스트가 둘을 대조한다(어긋나면 버튼 이름과 도착 화면 제목이 달라진다). */
 const SECTION_LABELS = {
-  overview: "시장 개요", risk: "리스크", alloc: "자산배분",
+  overview: "시장 개요", summary: "요약카드", risk: "리스크", alloc: "자산배분",
   hedge: "환헤지", cma: "CMA", pseudo: "Pseudo", events: "이벤트", panel: "관계분석", rates: "금리",
   irs: "IRS 포워드", credit: "크레딧", fx: "FX · 환율", inflation: "기대인플레이션",
   acwi: "MSCI ACWI", macro: "매크로", catalog: "시리즈 카탈로그",
@@ -1935,7 +1935,7 @@ const VILLAGE_ZONES = [
   { key: "workshop", x: 10.8, y: 48.9, name: "공방", sub: "모델 랩 — 준비 중", soon: true },
 ];
 
-const SECTION_IDS = ["overview", "risk", "alloc", "hedge", "cma", "pseudo", "events", "panel",
+const SECTION_IDS = ["overview", "summary", "risk", "alloc", "hedge", "cma", "pseudo", "events", "panel",
                      "rates", "irs", "credit", "fx", "inflation", "acwi", "macro", "catalog"];
 
 /* 오버레이 해시는 그 아래에 어느 섹션이 깔려 있어야 하는지를 정한다 */
@@ -2585,7 +2585,7 @@ function routeView() {
   const hash = location.hash.replace(/^#/, "");
   const sec = underlyingSection(hash);
   const showVillage = !sec;
-  if (sec === "cma") renderSection("cma");
+  if (sec === "cma" || sec === "summary") renderSection(sec);
   /* 브리핑 음성은 화면 전환과 함께 끝낸다 — 이벤트 화면을 떠났는데 목소리만 남아
      따라오는 상태를 만들지 않는다(멱등이라 어느 전환에서 불려도 무해). */
   stopBrief();
@@ -2625,7 +2625,7 @@ function routeView() {
 }
 
 function ensureVillageBack(sec) {
-  if (sec === "alloc" || sec === "risk" || sec === "cma" || sec === "pseudo") return; // These workspaces use the top navigation.
+  if (sec === "alloc" || sec === "risk" || sec === "summary" || sec === "cma" || sec === "pseudo") return; // These workspaces use the top navigation.
   const node = document.getElementById(sec);
   if (!node || node.querySelector(".village-back")) return;
   const p = el("p", { class: "village-back" }, el("a", { href: "#village" }, "‹ 마을로 돌아가기"));
@@ -7268,6 +7268,107 @@ function portEngine(P, st) {
            bench, wb, sig, muOf, metrics };
 }
 
+// Integer display only. Largest remainders keep the visible total exactly 100;
+// all optimization and reported moments retain the original fractional weights.
+function portSummaryWeights(weights) {
+  if (!Array.isArray(weights) || !weights.length || weights.some((v) => !Number.isFinite(v) || v < -2e-8)
+      || Math.abs(weights.reduce((s, v) => s + v, 0) - 1) > 2e-8) return null;
+  const total = weights.reduce((s, v) => s + Math.max(0, v), 0);
+  const exact = weights.map((v) => Math.max(0, v) / total * 100);
+  const rounded = exact.map(Math.floor);
+  const order = exact.map((v, i) => ({ i, remainder: v - rounded[i] }))
+    .sort((a, b) => b.remainder - a.remainder || a.i - b.i);
+  const remaining = 100 - rounded.reduce((s, v) => s + v, 0);
+  for (let i = 0; i < remaining; i++) rounded[order[i].i]++;
+  return rounded;
+}
+
+const PORT_SUMMARY_CACHE = new WeakMap();
+function portSummaryResults(P, E) {
+  const cards = [
+    { key: "min", label: "Min volatility", point: E?.minVar },
+    { key: "target", label: "Target Return 4.0%", point: null },
+    { key: "sharpe", label: "Max Sharpe Ratio", point: E?.maxSharpe },
+  ];
+  const error = !E ? P?.reason || "포트폴리오 데이터가 없습니다."
+    : !E.risk.valid ? E.risk.error : !E.constraints.ok ? E.constraints.error
+    : E.mu.some((v) => !Number.isFinite(v)) ? "기대수익률 입력을 확인하십시오." : "";
+  if (error) return cards.map((card) => ({ ...card, point: null, error }));
+  const key = JSON.stringify([E.mu, E.risk.C, E.W.n_months, E.constraints.lower, E.constraints.groups]);
+  let target = PORT_SUMMARY_CACHE.get(P);
+  if (target?.key !== key) {
+    const model = portConstrainedModel(E.risk.C, E.mu, E.W.n_months, E.constraints);
+    const point = model?.atReturn(4) || null;
+    const means = model?.vertices.map((p) => p.mu) || [];
+    const outside = means.length && (4 < Math.min(...means) - 1e-8 || 4 > Math.max(...means) + 1e-8);
+    target = { key, point, error: point ? "" : outside
+      ? "적용한 입력·제약에서 목표수익률 4.0%를 달성할 수 없습니다."
+      : "목표수익률 계산 불가 — 입력·공분산을 확인하십시오." };
+    PORT_SUMMARY_CACHE.set(P, target);
+  }
+  cards[1].point = target.point;
+  cards[1].error = target.error;
+  return cards.map((card) => {
+    const weights = card.point && portSummaryWeights(card.point.w);
+    const metrics = weights && E.metrics(card.point.w);
+    if (!weights || !Number.isFinite(metrics?.mu) || !Number.isFinite(metrics?.sig))
+      return { ...card, point: null, error: card.error || "최적화 결과를 계산할 수 없습니다." };
+    return { ...card, weights, metrics, error: "" };
+  });
+}
+
+function renderSummaryCards(A = DATA.alloc, engine = null) {
+  const box = $("#summary-cards");
+  if (!box) return;
+  const opened = new Set([...box.querySelectorAll("details[open]")].map((node) => node.getAttribute("data-plan")));
+  box.textContent = "";
+  const P = A?.port;
+  const active = P?.active && P.assets?.length && P.windows?.length;
+  const st = active ? portPanelDraft?.source === P ? portPanelDraft.applied : portState(P) : null;
+  const E = active ? engine || portEngine(P, st) : null;
+  const rows = portSummaryResults(P, E);
+  const head = el("div", { class: "summary-heading" },
+    el("span", { class: "card-sub" }, "마지막 적용 기준 · 연율"),
+    el("a", { href: "#alloc", class: "btn-ghost" }, "자산배분"));
+  const grid = el("div", { class: "summary-grid" });
+  rows.forEach((row, index) => {
+    const card = el("details", { class: "summary-card", "data-plan": row.key });
+    if (opened.has(row.key)) card.setAttribute("open", "");
+    const summary = el("summary", { "aria-label": `${row.label} 상세` });
+    summary.append(el("span", { class: "summary-card-heading" },
+      el("span", { class: "summary-number" }, String(index + 1).padStart(2, "0")),
+      el("span", { class: "summary-title" }, row.label),
+      el("span", { class: "summary-toggle", "aria-hidden": "true" }, "+")));
+    const metrics = el("span", { class: "summary-metrics" });
+    [["기대수익률", row.metrics?.mu], ["변동성", row.metrics?.sig]].forEach(([label, value]) => {
+      metrics.append(el("span", { class: "summary-metric" },
+        el("span", { class: "summary-label" }, label),
+        el("strong", {}, value == null ? "—" : `${fmtNum(value, 2)}%`)));
+    });
+    summary.append(metrics);
+    if (row.error) summary.append(el("span", { class: "summary-unavailable", role: "status" }, row.error));
+    else {
+      const weights = el("span", { class: "summary-weights", "aria-label": "자산군별 비중" });
+      P.assets.forEach((asset, i) => {
+        weights.append(el("span", { class: "summary-weight" },
+          el("span", {}, asset), el("b", {}, `${row.weights[i]}%`)));
+      });
+      weights.append(el("span", { class: "summary-weight summary-total" }, el("span", {}, "합계"), el("b", {}, "100%")));
+      summary.append(weights);
+    }
+    const detail = el("div", { class: "summary-detail" });
+    if (E) detail.append(el("p", {}, `표본 ${E.W.start} ~ ${E.W.end}`),
+      el("p", {}, E.risk.hedge?.active ? "선택한 환헤지 반영" : "추가 환헤지 미적용"));
+    if (row.metrics) detail.append(el("p", {}, `Sharpe Ratio ${fmtNum(row.metrics.sharpe, 2)}`),
+      el("p", {}, "비중은 정수 표시 · 수익·위험은 원비중 기준"));
+    if (row.key === "target") detail.append(el("p", {}, "기대수익률 4.0%를 충족하는 최소변동성 안"));
+    detail.append(el("a", { href: "#alloc", class: "btn-ghost" }, "자산배분에서 조건 조정"));
+    card.append(summary, detail);
+    grid.append(card);
+  });
+  box.append(head, grid);
+}
+
 function portCorrelationControl(P, W, st, onApply, draft) {
   const risk = portRiskInputs(P, W, st), inputs = {}, mirrors = {};
   const badNumber = (input) => input.validity?.badInput || input.getAttribute("data-draft-invalid") === "true";
@@ -7359,6 +7460,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   const head = el("div", { class: "card-head" });
   if (!P || !P.active || !(P.windows || []).length) {
     portPanelDraft = null;
+    renderSummaryCards(A);
     allocWorkspaceContext.port = { warning: `비활성 — ${(P && P.reason) || "데이터 없음"}` };
     refreshAllocWorkspaceInfo();
     head.append(el("span", { class: "card-sub d-up" },
@@ -7734,6 +7836,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     refreshAllocWorkspaceInfo();
     // Keep the original opportunity set visible; selected hedges are an overlay.
     const selected = portEngine(P, applied);
+    renderSummaryCards(A, selected);
     const hedgeActive = selected.risk.hedge?.active;
     const E = hedgeActive ? portEngine(P, { ...applied, hedge: {} }) : selected;
     const H = hedgeActive && selected.risk.valid && selected.front.length ? selected : null;
@@ -9496,7 +9599,7 @@ function renderPseudo() {
 /* 섹션 id → 그 섹션을 그리는 함수. SECTION_IDS 와 1:1 이며 계약 테스트가 강제한다.
    순서는 화면 순서(마을 구역 순)와 같게 둔다 — 읽는 사람이 대조하기 쉽게. */
 const RENDERERS = {
-  overview: renderOverview, risk: renderRisk, events: renderEvents,
+  overview: renderOverview, summary: renderSummaryCards, risk: renderRisk, events: renderEvents,
   panel: renderPanel, hedge: renderHedge, alloc: renderAlloc, cma: renderCmaSection, pseudo: renderPseudo,
   rates: renderRates, irs: renderIRS, credit: renderCredit,
   fx: renderFX, inflation: renderInflation, acwi: renderACWI,

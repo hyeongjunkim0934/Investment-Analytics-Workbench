@@ -71,6 +71,38 @@
 
 * { box-sizing: border-box; }
 
+/* Optimization summary cards share the portfolio's applied assumptions. */
+.summary-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.summary-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; align-items:start; }
+.summary-card { min-width:0; background:var(--surface); border:1px solid var(--baseline); border-radius:12px; overflow:hidden; }
+.summary-card[open] { border-color:var(--accent-ink); }
+.summary-card > summary { display:block; cursor:pointer; padding:22px; list-style:none; }
+.summary-card > summary::-webkit-details-marker { display:none; }
+.summary-card > summary:focus-visible { outline:2px solid var(--accent-ink); outline-offset:-4px; border-radius:12px; }
+.summary-card-heading { display:flex; align-items:baseline; gap:10px; min-height:28px; }
+.summary-number { color:var(--ink-3); font-size:11px; font-variant-numeric:tabular-nums; }
+.summary-title { color:var(--ink-1); font-size:16px; font-weight:600; overflow-wrap:anywhere; }
+.summary-toggle { margin-left:auto; font-size:18px; color:var(--ink-3); }
+.summary-card[open] .summary-toggle { transform:rotate(45deg); }
+.summary-metrics { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:24px 0; }
+.summary-metric { display:flex; flex-direction:column; gap:8px; }
+.summary-label { color:var(--ink-3); font-size:12px; }
+.summary-metric strong { color:var(--ink-1); font-size:clamp(22px,2.3vw,32px); font-weight:600; font-variant-numeric:tabular-nums; }
+.summary-weights { display:block; border-top:1px solid var(--border); padding-top:10px; }
+.summary-weight { display:flex; justify-content:space-between; gap:16px; padding:8px 0; color:var(--ink-2); font-size:13px; }
+.summary-weight b { color:var(--ink-1); font-weight:500; font-variant-numeric:tabular-nums; }
+.summary-total { margin-top:8px; border-top:1px solid var(--border); padding-top:14px; }
+.summary-unavailable { display:block; min-height:100px; font-size:13px; line-height:1.7; color:var(--ink-2); }
+.summary-detail { margin:0 22px; padding:16px 0 20px; border-top:1px solid var(--border); color:var(--ink-3); font-size:12px; }
+.summary-detail p { margin:0 0 8px; }
+.summary-detail .btn-ghost { display:inline-block; margin-top:4px; }
+@media (max-width:900px) {
+  .summary-grid { grid-template-columns:1fr; gap:12px; }
+  .summary-card > summary { padding:18px; }
+  .summary-metrics { padding:20px 0; }
+  .summary-detail { margin:0 18px; }
+}
+
 /* Pseudo handoff: content follows each module; no market-data dependency. */
 .pseudo-tabs { margin: 0 0 16px; }
 .pseudo-overview { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }

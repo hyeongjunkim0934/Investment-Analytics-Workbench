@@ -215,5 +215,29 @@ function portConstrainedModel(C, mu, months, spec) {
     }
     return best;
   };
-  return { solve, atRisk, meanScale, vertices };
+  // Minimum variance at an exact nominal return, on either side of the GMV.
+  // A displayed frontier only contains its efficient half and sampled returns;
+  // using it to interpolate a target would miss feasible low-return mandates.
+  const atReturn = (target) => {
+    if (!Number.isFinite(target)) return null;
+    const tolerance = 1e-8 * Math.max(1, Math.abs(target), ...mu.map(Math.abs));
+    const minimum = Math.min(...vertices.map((p) => p.mu)), maximum = Math.max(...vertices.map((p) => p.mu));
+    if (target < minimum - tolerance || target > maximum + tolerance) return null;
+    const shifted = mu.map((v) => v - mu[0]);
+    let best = null;
+    for (const f of faces) {
+      const start = dot(mu, f.w0), slope = dot(shifted, f.d);
+      // Constant-return faces contribute their GMV when it is feasible. If it
+      // lies outside the face, its constrained minimum appears on a subface.
+      if (Math.abs(slope) <= 1e-24 && Math.abs(start - target) > tolerance) continue;
+      const t = Math.abs(slope) > 1e-24 ? (target - start) / slope : 0;
+      const w = f.w0.map((v, i) => v + t * f.d[i]);
+      if (!spec.contains(w)) continue;
+      const p = point(w);
+      if (Math.abs(p.mu - target) > tolerance || !Number.isFinite(p.sig)) continue;
+      if (!best || p.sig < best.sig) best = p;
+    }
+    return best;
+  };
+  return { solve, atRisk, atReturn, meanScale, vertices };
 }
