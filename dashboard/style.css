@@ -1508,24 +1508,52 @@ a.kpi-link .kpi-label > span:first-child::after {
   background: transparent; color: inherit; font: inherit; }
 .hedge-chart-legend > button[aria-pressed="false"] { opacity: .45; }
 
-/* FX outlook: chart first, six quarter-end inputs beneath it. */
+/* FX outlook: chart first, expandable quarter consensus cards beneath it. */
 .fx-outlook-card, .fx-forecast-card { min-width: 0; }
 .fx-outlook-card { margin-bottom: 14px; }
-.fx-outlook-period { margin-left: auto; font-size: 11px; color: var(--ink-2); }
-.fx-outlook-period select { padding: 4px 8px; min-height: 28px; font: inherit; }
-.fx-forecast-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
-.fx-forecast-input { display: flex; flex-direction: column; gap: 7px; min-width: 0;
+.fx-outlook-period { margin-left: auto; font-size: 11px; color: var(--ink-2); white-space: nowrap; }
+.fx-outlook-period select { padding: 4px 8px; min-height: 28px; font: inherit;
+  color: var(--ink-1); background: var(--page); border: 1px solid var(--border); border-radius: 4px; }
+.fx-forecast-card .card-head { flex-wrap: wrap; gap: 8px; }
+.fx-forecast-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px; align-items: start; }
+.fx-consensus-quarter { min-width: 0; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--page); }
+.fx-consensus-quarter[open] { border-color: var(--up-ink); }
+.fx-consensus-quarter > summary { display: flex; flex-direction: column; gap: 5px;
+  position: relative; padding: 12px 10px; cursor: pointer; list-style: none; }
+.fx-consensus-quarter > summary::-webkit-details-marker { display: none; }
+.fx-consensus-quarter > summary::after { content: "+"; position: absolute; top: 9px; right: 10px;
+  color: var(--ink-3); font-size: 16px; line-height: 20px; }
+.fx-consensus-quarter[open] > summary::after { content: "−"; }
+.fx-consensus-quarter > summary:focus-visible { outline-offset: -3px; }
+.fx-consensus-quarter-label { padding-right: 18px; color: var(--ink-2); font-size: 11px; }
+.fx-consensus-mean { color: var(--ink-1); font-size: 20px; font-weight: 600; line-height: 1.3;
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.fx-consensus-spread { color: var(--ink-3); font-size: 10px; font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere; }
+.fx-consensus-fields { display: flex; flex-direction: column; gap: 10px; padding: 0 10px; }
+.fx-consensus-row { display: grid; grid-template-columns: minmax(0, 1fr) 24px;
+  gap: 6px; align-items: start; }
+.fx-forecast-input { display: flex; flex-direction: column; gap: 4px; min-width: 0;
   font-size: 11px; color: var(--ink-2); }
-.fx-forecast-input input { width: 100%; min-width: 0; padding: 8px; font: inherit; font-size: 14px;
+.fx-forecast-input input { width: 100%; min-width: 0; min-height: 32px; padding: 6px;
+  font: inherit; font-size: 14px;
   font-variant-numeric: tabular-nums; color: var(--ink-1); background: var(--page);
   border: 1px solid var(--border); border-radius: 4px; }
 .fx-forecast-input input[aria-invalid="true"] { border-color: var(--up-ink); }
+.fx-consensus-add, .fx-consensus-remove { border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface); color: var(--ink-2); font: inherit; font-size: 11px; cursor: pointer; }
+.fx-consensus-add { width: calc(100% - 20px); margin: 10px; min-height: 30px; padding: 4px; }
+.fx-consensus-remove { width: 24px; height: 32px; margin-top: 20px; padding: 0; }
+.fx-consensus-add:hover, .fx-consensus-remove:hover { border-color: var(--ink-3); color: var(--ink-1); }
 .fx-forecast-error, .fx-forecast-status { font-size: 10px; color: var(--up-ink); margin: 0; }
+.fx-forecast-error { overflow-wrap: anywhere; }
 .fx-forecast-error:empty { display: none; }
-@media (max-width: 700px) {
+@media (max-width: 900px) {
   .fx-forecast-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .fx-outlook-card .card-head { flex-wrap: wrap; gap: 8px; }
 }
-@media (max-width: 400px) {
+@media (max-width: 520px) {
   .fx-forecast-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

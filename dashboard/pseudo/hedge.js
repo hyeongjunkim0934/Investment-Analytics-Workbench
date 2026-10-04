@@ -2,7 +2,7 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.hedge = {
   id: 'hedge',
   title: '환헤지',
-  updated: '2026-10-03',
+  updated: '2026-10-04',
   summary: '현재 비용 → 환 변동성 → 국채 메리트 → 과거 분포 → 1년 조건부 범위',
   inputs: 'HP 3M·6M·12M, SMB USD 3M, 10년 국채금리: 연 % · 환율: 외화당 원(JPY는 100엔당 원)',
   outputs: '비용·금리·연 변동성: % · 메리트·변동성 감소: %p · 국채 1년 경로: 누적수익률 % · 환율전망: 원/달러',
@@ -110,10 +110,10 @@ plot_unchanged_returns(paths, calendar_months_0_to_12(display_anchor.date))`,
     },
     {
       id: 'fx-outlook',
-      title: '환율전망 · 전체 표본과 6개 분기',
+      title: '환율전망 · 전체 표본과 1년 범위',
       formulas: [
         { expression: 'rₜ = ln(Sₜ / Sₜ₋₁); σ = std표본(r) × √252', legend: 'S: 원/달러 · σ: 소수 단위 연 로그변동성 · 전체 가용 일별 표본, ddof=1' },
-        { expression: '하단(τ) = S₀ exp(−σ√τ); 기준(τ) = S₀; 상단(τ) = S₀ exp(+σ√τ)', legend: 'τ = 0, 1/12, …, 1년 · S₀: 최신 유효 호가 · 기준은 조건부 중앙값, 산술 기대값 아님' }
+        { expression: '하단(τ) = S₀ exp(−σ√τ); 기준(τ) = S₀; 상단(τ) = S₀ exp(+σ√τ)', legend: '파란 범위 · τ = 0, 1/12, …, 1년 · S₀: 최신 유효 호가 · 기준은 조건부 중앙값, 산술 기대값 아님' }
       ],
       code: `levels = full_positive_finite_weekday_bb_usdkrw()
 if levels are empty: levels = explicit_info_usdkrw_fallback()
@@ -123,11 +123,29 @@ publish(full_history, source, sample_dates)
 if count(returns) >= 252:
   range = latest_quote_times_exp_plus_minus_sigma_sqrt_time(months=0..12)
   publish(range)
-quarters = next_6_quarter_ends_after(max(latest_quote_date, today_KST))
-forecasts = user_values_keyed_by_year_and_quarter(quarters)
-plot(history, range, forecast_points_and_small_quarter_value_labels)
-persist_valid_positive_forecasts_in_browser_only()`,
-      note: 'Bloomberg 전체 계열이 정본이며 원천을 이어 붙이지 않는다. 표시기간 변경·사용자 전망은 통계 범위를 재추정하지 않는다. 급변값을 삭제하는 환헤지 σ와 정제 정책이 다르다. 로그 추세 0·충격 무상관·고정 변동성 근사이며 보정된 예측구간이나 경로 전체의 확률 보장이 아니다.'
+plot_history_and_unchanged_blue_range()`,
+      note: 'Bloomberg 전체 계열이 정본이며 원천을 이어 붙이지 않는다. 표시기간·분기 수·컨센서스 입력은 파란 1년 범위를 재추정하지 않는다. 로그 추세 0·충격 무상관·고정 변동성 근사이며 보정된 예측구간이나 경로 전체의 확률 보장이 아니다. 급변값을 삭제하는 환헤지 σ와 정제 정책이 다르다.'
+    },
+    {
+      id: 'fx-consensus',
+      title: '환율전망 · 분기 컨센서스',
+      formulas: [
+        { expression: 'μq = Σᵢ xq,i / Nq; σq = √[Σᵢ(xq,i − μq)² / Nq]', legend: 'xq,i: 분기 q의 유효 양수 입력(원/달러) · 동일 가중 평균 · σq: 입력 수준의 모집단 표준편차, 평균 표준오차 아님' },
+        { expression: '컨센서스 하단q = μq − σq; 상단q = μq + σq', legend: '붉은 범위 · Nq ≥ 2인 인접 분기 사이 선형 보간 · 최신 관측에서 폭 0 · 빈 분기나 단일 입력에서는 범위를 끊음' }
+      ],
+      code: `state = load_v2_or_migrate_v1_forecasts_to_first_inputs()
+quarters = next_quarter_ends_after(max(latest_quote_date, today_KST), count=1..12)
+for quarter in quarters:
+  inputs = valid_positive_inputs_from_numbered_rows(state[quarter])
+  mean, sigma = arithmetic_mean_and_population_sd(inputs)
+  emit_mean_point(mean)
+  if count(inputs) >= 2: emit_consensus_bounds(mean, sigma)
+red_band = interpolate_adjacent_valid_bounds_from_zero_width_latest_anchor()
+break_red_band_at_empty_or_single_input_quarters()
+plot(history, blue_1year_range, consensus_mean_points, red_band)
+display_fx_as_integers_without_rounding_calculations_or_raw_csv()
+persist_arrays_and_quarter_count_in_browser_only(keep_hidden_quarters=True)`,
+      note: '붉은 σ는 입력된 전망 수준의 괴리로 σ/√N이나 예측오차가 아니며, 같은 입력 2개는 σ=0이다. 각 유효 분기에 ±σ 세로선도 표시하여 고립된 분기의 괴리를 보여준다. 첫 분기에 범위가 있으면 최신 관측에서 폭 0으로 연결한다. 보정된 예측구간이 아니며 파란 1년 범위와 합산하지 않는다. 입력은 브라우저에만 저장한다. 기본 6개 분기이며 축소 후 숨긴 값도 보존한다. 환율은 정수로 표시하고 계산·저장·raw CSV는 원래 정밀도를 유지한다.'
     }
   ]
 };

@@ -1,4 +1,4 @@
-"""Run the real FX outlook renderer with synthetic prices and a fixed KST clock."""
+"""Exercise FX consensus UI, storage, calendar and independent dispersion oracles."""
 
 import json
 from html.parser import HTMLParser
@@ -20,6 +20,13 @@ def test_fx_outlook_controls_graph_storage_calendar_and_exports():
     assert result.returncode == 0, result.stderr[-8000:]
     measured = json.loads(result.stdout)
     assert measured and all(measured.values())
+    required = {
+        "independentPopulationDispersion", "legacyMigrationAndV2Precedence",
+        "numberedContributorAddRemove", "selectablePersistedQuarterCount",
+        "twelveQuarterDenseLabels", "isolatedConsensusWhisker",
+        "consensusBandInterpolationAndGapSeparation", "integerDisplayRawCsvPrecision",
+    }
+    assert required <= measured.keys()
 
 
 def test_fx_outlook_navigation_and_script_host_contract():
