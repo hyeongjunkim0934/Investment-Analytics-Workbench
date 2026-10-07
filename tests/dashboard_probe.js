@@ -105,7 +105,15 @@ secNodes.events.append(elem("details", "events-rules"));
    이 목록 자체가 index.html 과의 계약이다. */
 ["hedge-cost-dashboard", "hedge-merit-card"]
   .forEach((id) => secNodes.hedge.append(elem("div", id, "card")));
-secNodes.fxoutlook.append(elem("div", "fxoutlook-content"));
+secNodes.fxoutlook.append(elem("div", "fxoutlook-workspace", "fx-outlook-workspace"));
+[["fxoutlook-content", "consensus"], ["fxoutlook-model-a", "modelA"], ["fxoutlook-model-b", "modelB"]]
+  .forEach(([id, key]) => {
+    const panel = elem("div", id);
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", `fx-outlook-tab-${key}`);
+    panel.hidden = key !== "consensus";
+    secNodes.fxoutlook.append(panel);
+  });
 
 /* ACWI 뼈대 — 시장 폭 카드 포함 */
 ["acwi-stats", "card-acwi-price", "card-acwi-dd", "card-breadth"]

@@ -8,6 +8,136 @@ const fxForecastDrafts = {};
 let fxOutlookYears = 3;
 let fxOutlookChartEntry = null;
 
+const FX_WORKSPACE_STORAGE = "iaw-fx-outlook-workspaces-v1";
+const FX_WORKSPACES = {
+  consensus: { label: "컨센서스", panel: "fxoutlook-content" },
+  modelA: { label: "환율모형A", panel: "fxoutlook-model-a" },
+  modelB: { label: "환율모형B", panel: "fxoutlook-model-b" },
+};
+let fxOutlookWorkspace = "consensus";
+let fxOutlookModelNames = null;
+let fxOutlookNameDraft = null;
+
+function fxOutlookNames() {
+  if (fxOutlookModelNames) return fxOutlookModelNames;
+  fxOutlookModelNames = { modelA: FX_WORKSPACES.modelA.label, modelB: FX_WORKSPACES.modelB.label };
+  try {
+    const saved = JSON.parse(localStorage.getItem(FX_WORKSPACE_STORAGE) || "{}");
+    Object.keys(fxOutlookModelNames).forEach((key) => {
+      const name = typeof saved?.[key] === "string" ? saved[key].replace(/\s+/g, " ").trim() : "";
+      if (name && name.length <= 30) fxOutlookModelNames[key] = name;
+    });
+  } catch { /* Invalid or unavailable storage leaves the default model names. */ }
+  return fxOutlookModelNames;
+}
+
+function selectFxOutlookWorkspace(key) {
+  if (!Object.hasOwn(FX_WORKSPACES, key)) return;
+  if (fxOutlookWorkspace !== key) {
+    fxOutlookNameDraft = null;
+    const editor = document.getElementById("fx-outlook-name-editor");
+    if (editor) editor.hidden = true;
+  }
+  fxOutlookWorkspace = key;
+  Object.entries(FX_WORKSPACES).forEach(([id, spec]) => {
+    const active = id === key, button = document.getElementById(`fx-outlook-tab-${id}`);
+    if (button) {
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", String(active));
+      button.setAttribute("tabindex", active ? "0" : "-1");
+    }
+    const panel = document.getElementById(spec.panel);
+    if (panel) panel.hidden = !active;
+  });
+}
+
+function renderFxOutlookWorkspace() {
+  const host = document.getElementById("fxoutlook-workspace");
+  if (!host) return;
+  host.textContent = "";
+  const names = fxOutlookNames(), keys = Object.keys(FX_WORKSPACES);
+  const tabs = el("div", { class: "alloc-tabs fx-outlook-tabs", role: "tablist", "aria-label": "환율전망 분석" });
+  const editor = el("form", { id: "fx-outlook-name-editor", class: "fx-outlook-name-editor", "aria-label": "모형 탭 이름 수정" });
+  const input = el("input", { id: "fx-outlook-name-input", type: "text", maxlength: "30", autocomplete: "off",
+    "aria-label": "모형 탭 이름", "aria-describedby": "fx-outlook-name-status" });
+  const status = el("span", { id: "fx-outlook-name-status", class: "fx-forecast-status", role: "status" });
+  const close = () => {
+    const key = fxOutlookNameDraft?.key;
+    fxOutlookNameDraft = null; editor.hidden = true;
+    if (key) document.getElementById(`fx-outlook-tab-${key}`)?.focus();
+  };
+  const begin = (key) => {
+    selectFxOutlookWorkspace(key);
+    fxOutlookNameDraft = { key, value: names[key] };
+    input.value = names[key]; input.setAttribute("aria-invalid", "false");
+    status.textContent = ""; editor.hidden = false; input.focus(); input.select();
+  };
+  const refreshNames = () => {
+    Object.keys(names).forEach((key) => {
+      const button = document.getElementById(`fx-outlook-tab-${key}`);
+      if (button) button.textContent = names[key];
+      const title = document.getElementById(`fx-outlook-title-${key}`);
+      if (title) title.textContent = names[key];
+    });
+  };
+  keys.forEach((key, index) => {
+    const spec = FX_WORKSPACES[key];
+    const button = el("button", { type: "button", id: `fx-outlook-tab-${key}`, role: "tab",
+      "aria-controls": spec.panel, onclick: () => selectFxOutlookWorkspace(key) }, names[key] || spec.label);
+    button.addEventListener("keydown", (event) => {
+      if (event.isComposing) return;
+      if (key !== "consensus" && event.key === "F2") { event.preventDefault(); begin(key); return; }
+      const next = event.key === "ArrowRight" ? (index + 1) % keys.length
+        : event.key === "ArrowLeft" ? (index + keys.length - 1) % keys.length
+        : event.key === "Home" ? 0 : event.key === "End" ? keys.length - 1 : null;
+      if (next === null) return;
+      event.preventDefault(); selectFxOutlookWorkspace(keys[next]);
+      document.getElementById(`fx-outlook-tab-${keys[next]}`)?.focus();
+    });
+    if (key !== "consensus") {
+      button.title = "더블클릭 또는 F2로 이름 수정";
+      button.addEventListener("dblclick", () => begin(key));
+      const panel = document.getElementById(spec.panel);
+      if (panel) {
+        panel.textContent = "";
+        panel.append(el("div", { class: "card fx-outlook-model" },
+          el("div", { class: "card-head" },
+            el("span", { id: `fx-outlook-title-${key}`, class: "card-title" }, names[key]),
+            el("button", { type: "button", class: "btn-ghost", onclick: () => begin(key) }, "이름 수정")),
+          el("p", { class: "card-sub" }, "등록된 모형이 없습니다.")));
+      }
+    }
+    tabs.append(button);
+  });
+  input.addEventListener("input", () => {
+    if (fxOutlookNameDraft) fxOutlookNameDraft.value = input.value;
+    status.textContent = ""; input.setAttribute("aria-invalid", "false");
+  });
+  editor.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !event.isComposing) { event.preventDefault(); close(); }
+    // Enter during Korean IME composition must not submit a partial name.
+    if (event.key === "Enter" && event.isComposing) event.preventDefault();
+  });
+  editor.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!fxOutlookNameDraft) return;
+    const name = input.value.replace(/\s+/g, " ").trim();
+    if (!name || name.length > 30) {
+      input.setAttribute("aria-invalid", "true"); status.textContent = "이름을 1~30자로 입력하십시오."; input.focus(); return;
+    }
+    const key = fxOutlookNameDraft.key;
+    try { localStorage.setItem(FX_WORKSPACE_STORAGE, JSON.stringify({ ...names, [key]: name })); }
+    catch { status.textContent = "이름을 저장하지 못했습니다. 다시 시도하십시오."; return; }
+    names[key] = name; refreshNames(); close();
+  });
+  editor.append(input, el("button", { type: "submit", class: "btn-primary" }, "저장"),
+    el("button", { type: "button", class: "btn-ghost", onclick: close }, "취소"), status);
+  editor.hidden = !fxOutlookNameDraft;
+  if (fxOutlookNameDraft) input.value = fxOutlookNameDraft.value;
+  host.append(tabs, editor);
+  selectFxOutlookWorkspace(fxOutlookWorkspace);
+}
+
 function fxOutlookToday(now = new Date()) {
   // Calendar quarters follow Korea even if the browser's local timezone differs.
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul",
@@ -208,6 +338,7 @@ function fxOutlookDrawDispersion(u, points, color) {
 }
 
 function renderFxOutlook() {
+  renderFxOutlookWorkspace();
   const host = document.getElementById("fxoutlook-content");
   if (!host) return;
   if (fxOutlookChartEntry && uplots.includes(fxOutlookChartEntry)) destroyChart(fxOutlookChartEntry);
