@@ -7283,6 +7283,34 @@ function portSummaryWeights(weights) {
   return rounded;
 }
 
+// Central coverage of a one-year normal approximation, not a confidence interval
+// for the estimated mean or the probability of exceeding a return target.
+function portSummaryReturnRanges(metrics) {
+  const mu = metrics?.mu, sig = metrics?.sig;
+  if (!Number.isFinite(mu) || !Number.isFinite(sig) || sig < 0) return [];
+  const levels = [[68, 0.994457883209753], [90, 1.644853626951472],
+    [95, 1.959963984540054], [99, 2.575829303548900]];
+  const ranges = levels.map(([probability, z]) => ({ probability, z,
+    lower: mu - z * sig, upper: mu + z * sig }));
+  return ranges.every((range) => Number.isFinite(range.lower) && Number.isFinite(range.upper)) ? ranges : [];
+}
+
+function portSummaryComparison(P, st, optimizedWeights) {
+  const values = P.assets.map((asset) => st?.mix?.[asset]);
+  if (values.some((v) => !Number.isFinite(v) || v < 0 || v > 100)
+      || Math.abs(values.reduce((sum, v) => sum + v, 0) - 100) > 1e-6
+      || optimizedWeights?.length !== values.length || !portSummaryWeights(optimizedWeights)) return null;
+  const current = portSummaryWeights(values.map((v) => v / 100));
+  return current ? { current, delta: optimizedWeights.map((v, i) => v * 100 - values[i]) } : null;
+}
+
+function portSummaryDelta(value) {
+  if (!Number.isFinite(value)) return "—";
+  // Avoid a negative zero or an apparent 'no change' for a real small adjustment.
+  if (Math.abs(value) < 1e-8) return "0.00";
+  return `${value > 0 ? "+" : "−"}${Math.abs(value) < 0.005 ? "<0.01" : fmtNum(Math.abs(value), 2)}`;
+}
+
 const PORT_SUMMARY_CACHE = new WeakMap();
 function portSummaryResults(P, E) {
   const cards = [
@@ -7311,7 +7339,7 @@ function portSummaryResults(P, E) {
   return cards.map((card) => {
     const weights = card.point && portSummaryWeights(card.point.w);
     const metrics = weights && E.metrics(card.point.w);
-    if (!weights || !Number.isFinite(metrics?.mu) || !Number.isFinite(metrics?.sig))
+    if (!weights || !Number.isFinite(metrics?.mu) || !Number.isFinite(metrics?.sig) || metrics.sig < 0)
       return { ...card, point: null, error: card.error || "최적화 결과를 계산할 수 없습니다." };
     return { ...card, weights, metrics, error: "" };
   });
@@ -7348,19 +7376,46 @@ function renderSummaryCards(A = DATA.alloc, engine = null) {
     summary.append(metrics);
     if (row.error) summary.append(el("span", { class: "summary-unavailable", role: "status" }, row.error));
     else {
-      const weights = el("span", { class: "summary-weights", "aria-label": "자산군별 비중" });
+      const ranges = el("span", { class: "summary-ranges", "aria-label": "정규근사 1년 수익률 중앙 범위" },
+        el("span", { class: "summary-range-heading" }, "1년 수익률 범위 · 정규근사"));
+      const intervals = portSummaryReturnRanges(row.metrics);
+      intervals.forEach((range) => ranges.append(el("span", { class: "summary-range" },
+        el("span", { class: "summary-range-label" }, `${range.probability}%`),
+        el("span", { class: "summary-range-value" }, `${fmtNum(range.lower, 2)}% ~ ${fmtNum(range.upper, 2)}%`))));
+      if (!intervals.length) ranges.append(el("span", {}, "범위 계산 불가"));
+      ranges.append(el("span", { class: "summary-range-note" }, "범위 내 포함확률 · 목표 달성확률과 다름"));
+      summary.append(ranges);
+      const comparison = portSummaryComparison(P, st, row.point.w);
+      const weights = el("span", { class: "summary-weights", "aria-label": "자산군별 현재 비중1과 최적화 비중 비교" },
+        el("span", { class: "summary-weight-head" }, el("span", {}, "자산군"),
+          el("span", {}, "현재"), el("span", {}, "최적화"), el("span", {}, "차이(%p)")));
       P.assets.forEach((asset, i) => {
+        const delta = comparison?.delta[i];
+        const direction = !Number.isFinite(delta) ? "현재 비중 확인 필요"
+          : Math.abs(delta) < 1e-8 ? "유지" : delta > 0 ? "확대" : "축소";
         weights.append(el("span", { class: "summary-weight" },
-          el("span", {}, asset), el("b", {}, `${row.weights[i]}%`)));
+          el("span", {}, asset),
+          el("span", { class: "summary-current" }, comparison ? `${comparison.current[i]}%` : "—"),
+          el("b", { class: "summary-optimized" }, `${row.weights[i]}%`),
+          el("span", { class: `summary-delta${delta > 1e-8 ? " d-up" : delta < -1e-8 ? " d-down" : ""}`,
+            "aria-label": `${asset} ${direction}${Number.isFinite(delta) ? ` ${portSummaryDelta(delta)}%p` : ""}` }, portSummaryDelta(delta))));
       });
-      weights.append(el("span", { class: "summary-weight summary-total" }, el("span", {}, "합계"), el("b", {}, "100%")));
+      weights.append(el("span", { class: "summary-weight summary-total" }, el("span", {}, "합계"),
+        el("span", { class: "summary-current" }, comparison ? "100%" : "—"),
+        el("b", { class: "summary-optimized" }, "100%"),
+        el("span", { class: "summary-delta" }, comparison ? "0.00" : "—")));
+      weights.append(el("span", { class: "summary-weight-note" }, comparison
+        ? "현재 = 비중1 · + 확대 / − 축소 · 차이는 원비중 기준"
+        : "현재 비중1을 확인하십시오. 최적화 비중만 표시합니다."));
       summary.append(weights);
     }
     const detail = el("div", { class: "summary-detail" });
     if (E) detail.append(el("p", {}, `표본 ${E.W.start} ~ ${E.W.end}`),
       el("p", {}, E.risk.hedge?.active ? "선택한 환헤지 반영" : "추가 환헤지 미적용"));
     if (row.metrics) detail.append(el("p", {}, `Sharpe Ratio ${fmtNum(row.metrics.sharpe, 2)}`),
-      el("p", {}, "비중은 정수 표시 · 수익·위험은 원비중 기준"));
+      el("p", {}, "현재·최적화 비중은 정수 표시 · 차이·수익·위험은 원비중 기준"),
+      el("p", {}, "범위는 연율 산술 기대수익률·변동성을 1년 정규분포의 모수로 사용한 중앙 구간입니다. 복리 경로·모수 추정오차·꼬리위험을 반영하지 않으며 실제 포함확률은 검증되지 않았습니다."),
+      el("p", {}, "정규근사 범위: 기대수익률 ± z × 변동성. 68·90·95·99%의 z는 각각 0.99446·1.64485·1.95996·2.57583입니다."));
     if (row.key === "target") detail.append(el("p", {}, "기대수익률 4.0%를 충족하는 최소변동성 안"));
     detail.append(el("a", { href: "#alloc", class: "btn-ghost" }, "자산배분에서 조건 조정"));
     card.append(summary, detail);

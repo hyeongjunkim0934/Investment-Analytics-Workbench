@@ -3,7 +3,7 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.alloc = {
   id: "alloc",
   title: "자산배분",
-  updated: "2026-10-03",
+  updated: "2026-10-07",
   summary: "7자산군 CMA·최소/최대 제약 → 경계선·비중1/비중2 비교 → 리스크 연계 비중",
   inputs: "월말 지수·USDKRW, 연 μ·σ(%), CMA 시나리오 확률(%), 상관계수, h(0~1), 그룹 최소·최대(%), 자산별 최소(%). 공분산은 게시 소수² → 계산 %²(×10,000)",
   outputs: "포트폴리오 μ·σ, 경계선, Conservative·Optimistic, 현재·잠재 리스크 연계 비중",
@@ -96,7 +96,9 @@ globalThis.PSEUDO_DOCS.alloc = {
       title: "요약카드 · 세 가지 최적화 안",
       formulas: [
         { expression: "Min volatility: min wᵀCw;  Target Return: min wᵀCw, μᵀw = 4.0", legend: "같은 적용 입력·환헤지·그룹 및 개별 제약 사용. μ 단위는 연 %. 4.0% 정확 목표가 불가능하면 해당 카드의 결과를 보류." },
-        { expression: "Max Sharpe Ratio: max (μᵀw − r𝒇) / √(wᵀCw)", legend: "기존 자산배분 최대 샤프 해를 공유. r𝒇는 기존 엔진의 국내장부(구 원화유동성) 기대수익 입력으로 별도 무위험 수익률 추정치가 아님." }
+        { expression: "Max Sharpe Ratio: max (μᵀw − r𝒇) / √(wᵀCw)", legend: "기존 자산배분 최대 샤프 해를 공유. r𝒇는 기존 엔진의 국내장부(구 원화유동성) 기대수익 입력으로 별도 무위험 수익률 추정치가 아님." },
+        { expression: "R₁년 ∼ N(m, σ²);  [Lₚ, Uₚ] = [m − zₚσ, m + zₚσ];  zₚ = Φ⁻¹((1+p)/2)", legend: "연율 산술 m·σ를 1년 수익률 정규근사의 모수로 사용. p=68·90·95·99%의 z는 0.9944578832·1.6448536270·1.9599639845·2.5758293035. 중앙 포함확률이며 목표 달성확률·평균 신뢰구간이 아님." },
+        { expression: "Δwᵢ(%p) = 100wᵢ(최적화) − 비중1ᵢ(%)", legend: "동일한 마지막 적용 스냅샷의 자산명을 맞춰 원비중에서 계산. 양수 확대·음수 축소. 현재·최적화 비중은 각각 최대잔여법 정수 합계100, 차이는 소수2자리이므로 표시된 정수 비중의 차이와 다를 수 있음." }
       ],
       code: [
         "model ← portfolio_engine(last_applied_inputs)",
@@ -105,11 +107,15 @@ globalThis.PSEUDO_DOCS.alloc = {
         "display_weights ← floor(100 * original_weights)",
         "distribute_remaining_integer_points_by_largest_fractional_remainders()",
         "show_all_assets_and_total_100_without_changing_original_weights()",
-        "show_mu_sigma_from_original_weights_with_two_decimals()"
+        "show_mu_sigma_from_original_weights_with_two_decimals()",
+        "show_four_central_normal_ranges_from_unrounded_annual_moments()",
+        "current ← last_applied_weight1_matched_by_asset_name()",
+        "if valid_current: show_current_and_original_weight_differences()",
+        "else: keep_optimized_weights_and_show_missing_current_comparison()"
       ].join("\n"),
-      note: "요약카드는 마지막 업데이트 결과를 읽으며 미적용 초안을 반영하지 않음. CMA 적용/해제는 기존 즉시 반영 유지. 카드 클릭은 상세 열기이며 입력 비중을 변경하지 않음. 정수 표시는 표시용이라 원비중의 소수 제약 및 정확 목표를 그대로 재현하지 않을 수 있음.",
+      note: "요약카드는 마지막 업데이트 결과를 읽으며 미적용 초안을 반영하지 않음. CMA 적용/해제는 기존 즉시 반영 유지. 카드 클릭은 상세 열기이며 입력 비중을 변경하지 않음. 정수 표시는 원비중의 소수 제약·정확 목표를 그대로 재현하지 않을 수 있음. 정규근사는 복리 경로·추정오차·꼬리위험을 반영하지 않으며 실제 포함확률 미검증. σ=0은 점 구간, 음의 하한은 유지, 비유효 모수·불가능한 최적화 결과는 범위를 표시하지 않음. 조정 방향은 각 목적함수 기준이며 수익 증가를 보장하지 않음.",
       sources: [
-        { path: "dashboard/app.js", symbols: ["portEngine", "portSummaryWeights", "portSummaryResults", "renderSummaryCards"] },
+        { path: "dashboard/app.js", symbols: ["portEngine", "portSummaryWeights", "portSummaryReturnRanges", "portSummaryComparison", "portSummaryResults", "renderSummaryCards"] },
         { path: "dashboard/port-constraints.js", symbols: ["portConstrainedModel"] }
       ]
     },
