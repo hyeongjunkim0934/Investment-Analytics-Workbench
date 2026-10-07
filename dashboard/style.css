@@ -1509,6 +1509,17 @@ a.kpi-link .kpi-label > span:first-child::after {
 .hedge-chart-legend > button[aria-pressed="false"] { opacity: .45; }
 
 /* FX outlook: chart first, expandable quarter consensus cards beneath it. */
+.fx-outlook-workspace { margin: 8px 0 12px; }
+.fx-outlook-tabs button { max-width: 100%; overflow-wrap: anywhere; }
+.fx-outlook-name-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 0 0; }
+.fx-outlook-name-editor input { width: 240px; max-width: 100%; min-width: 0; min-height: 34px;
+  padding: 6px 10px; font: inherit; font-size: 13px; color: var(--ink-1); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 5px; }
+.fx-outlook-name-editor input[aria-invalid="true"] { border-color: var(--up-ink); }
+.fx-outlook-model { min-height: 160px; }
+.fx-outlook-model .card-head { flex-wrap: wrap; gap: 8px; }
+.fx-outlook-model .card-title { overflow-wrap: anywhere; min-width: 0; }
+.fx-outlook-model .btn-ghost { margin-left: auto; }
 .fx-outlook-card, .fx-forecast-card { min-width: 0; }
 .fx-outlook-card { margin-bottom: 14px; }
 .fx-outlook-period { margin-left: auto; font-size: 11px; color: var(--ink-2); white-space: nowrap; }

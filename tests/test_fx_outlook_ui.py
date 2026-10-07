@@ -10,6 +10,24 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_fx_workspace_subtabs_model_name_editing_and_storage():
+    node = shutil.which("node")
+    assert node, "Node.js is required to exercise the dashboard UI"
+    result = subprocess.run(
+        [node, str(ROOT / "tests" / "fx_workspace_ui_probe.js")],
+        cwd=ROOT, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr[-8000:]
+    measured = json.loads(result.stdout)
+    assert measured and all(measured.values())
+    assert {
+        "threeSubtabsAndAria", "inactiveDoubleClickStableDom",
+        "consensusChartAndDraftPreserved", "namesIndependentPersistRerenderReload",
+        "invalidNamesRejected", "cancelEscapeAndDraftRerender",
+        "storageFailureRecovery", "namesRenderedAsText", "keyboardTabsAndIme",
+    } <= measured.keys()
+
+
 def test_fx_outlook_controls_graph_storage_calendar_and_exports():
     node = shutil.which("node")
     assert node, "Node.js is required to exercise the dashboard UI"
@@ -38,6 +56,7 @@ def test_fx_outlook_navigation_and_script_host_contract():
             self.scripts = []
             self.section = None
             self.forecast_host_section = None
+            self.fx_hosts = {}
 
         def handle_starttag(self, tag, attrs):
             attrs = dict(attrs)
@@ -49,6 +68,8 @@ def test_fx_outlook_navigation_and_script_host_contract():
                 self.section = attrs.get("id")
             if attrs.get("id") == "fxoutlook-content":
                 self.forecast_host_section = self.section
+            if attrs.get("id", "").startswith("fxoutlook-"):
+                self.fx_hosts[attrs["id"]] = (self.section, attrs)
             if tag == "script" and attrs.get("src"):
                 self.scripts.append(attrs["src"].split("?")[0])
 
@@ -68,4 +89,15 @@ def test_fx_outlook_navigation_and_script_host_contract():
     assert hrefs[hrefs.index("#hedge") + 1] == "#fxoutlook"
     assert dict(index.links)["#fxoutlook"] == "환율전망"
     assert index.forecast_host_section == "fxoutlook"
+    assert index.fx_hosts["fxoutlook-workspace"][0] == "fxoutlook"
+    for panel_id, tab in [
+        ("fxoutlook-content", "consensus"),
+        ("fxoutlook-model-a", "modelA"),
+        ("fxoutlook-model-b", "modelB"),
+    ]:
+        section, attrs = index.fx_hosts[panel_id]
+        assert section == "fxoutlook"
+        assert attrs["role"] == "tabpanel"
+        assert attrs["aria-labelledby"] == f"fx-outlook-tab-{tab}"
+        assert ("hidden" in attrs) == (tab != "consensus")
     assert index.scripts.index("fx-outlook.js") < index.scripts.index("app.js")
