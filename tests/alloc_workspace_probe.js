@@ -188,7 +188,7 @@ choose("port");
 const options = (id) => [...byId(id).querySelectorAll("option")].map((n) => n.getAttribute("value"));
 r.availablePeriodsOnly = JSON.stringify(options("port-period")) === JSON.stringify(sampled.port.windows.map((w) => w.key));
 const chartData = () => JSON.stringify(shim.UPlotStub.made.filter((u) =>
-  u.opts.series.some((s) => s.label === "경계선")).at(-1).data);
+  u.opts.series.some((s) => s.label === "Baseline")).at(-1).data);
 const beforePeriodChart = chartData();
 change(input("alloc-port-panel", "국내채권 비중1"), 30.4);balanceMix();
 change(byId("port-period"), "3", "change");
