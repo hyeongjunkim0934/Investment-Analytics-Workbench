@@ -1225,6 +1225,12 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-constraint-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
   margin: 16px 0 8px; }
 .port-constraint-heading .port-sec-title { margin: 0; }
+.port-scenario-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-left: 6px; }
+#alloc-port-panel .port-scenario-tabs button { min-height: 28px; padding: 3px 12px;
+  border: 1px solid transparent; border-bottom: 2px solid transparent; border-radius: 3px 3px 0 0;
+  background: transparent; color: var(--ink-3); font: inherit; font-size: 12px; cursor: pointer; }
+#alloc-port-panel .port-scenario-tabs button[aria-selected="true"] {
+  color: var(--ink-1); border-bottom-color: var(--port-accent); background: var(--surface); }
 .port-groups { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
 .port-constraints { display: grid; gap: 10px; }
 .port-constraints > .btn-ghost { justify-self: start; }
@@ -1423,6 +1429,7 @@ a.kpi-link .kpi-label > span:first-child::after {
   font-variant-numeric: tabular-nums;
 }
 #alloc-port-panel input[type="number"]::placeholder { color: var(--ink-3); opacity: 1; }
+#alloc-port-panel input.port-auto-weight { color: var(--port-accent); border-style: dashed; cursor: default; }
 #alloc-port-panel input:focus-visible, #alloc-port-panel button:focus-visible {
   outline: 2px solid var(--port-accent); outline-offset: 2px;
 }
@@ -1450,6 +1457,14 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-corr-table input { width: 74px; text-align: center; }
 .port-corr-diagonal { color: var(--ink-3); background: var(--surface); }
 .port-corr-mirror { color: var(--ink-2); }
+.port-scenarios { position: relative; }
+#alloc-port-panel .port-scenarios-toggle { min-height: 32px; padding: 4px 8px; font-size: 12px; white-space: nowrap; }
+.port-scenarios-panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 5; min-width: 162px;
+  padding: 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+.port-scenarios-panel label { display: flex; align-items: center; gap: 8px; padding: 5px 4px;
+  color: var(--ink-2); font-size: 12px; white-space: nowrap; cursor: pointer; }
+#alloc-port-panel .port-scenarios-panel input[type="checkbox"] { width: 14px; min-height: 14px; height: 14px; padding: 0; margin: 0; }
 .port-palette { position: relative; }
 #alloc-port-panel .port-palette-toggle { display: grid; grid-template-columns: repeat(2, 6px); gap: 3px;
   align-content: center; justify-content: center; width: 32px; height: 32px; padding: 5px; }

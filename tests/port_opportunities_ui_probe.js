@@ -18,7 +18,7 @@ vm.runInContext(
 shim.UPlotStub.prototype.destroy = function(){ this.dead=true; };
 const panel=DOC.getElementById('alloc-port-panel');
 const card=()=>panel.querySelector('.port-frontier');
-const chart=()=>shim.UPlotStub.made.filter(c=>!c.dead&&c.opts.series.some(s=>s.label==='경계선')).pop();
+const chart=()=>shim.UPlotStub.made.filter(c=>!c.dead&&c.opts.series.some(s=>s.label==='Baseline')).pop();
 const byId=(id)=>DOC.getElementById(id);
 const click=(text)=>{const b=Array.from(panel.querySelector('.port-result-tools').querySelectorAll('button')).find(n=>n.textContent===text);assert(b,text);b.click();};
 const tip=()=>card().querySelector('.port-portfolio-tooltip');

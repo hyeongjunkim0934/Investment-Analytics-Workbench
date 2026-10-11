@@ -35,7 +35,11 @@ const reloadCode = String.raw`
 const assert = require('node:assert/strict');
 P.DATA.alloc = SIX_ASSET_FIXTURE;
 P.renderPortPanel(SIX_ASSET_FIXTURE);
-const c = shim.UPlotStub.made.filter(n => n.opts.series.some(s => s.label === '경계선')).pop();
+for (const key of ['conservative', 'optimistic']) {
+  const input=DOC.getElementById('port-scenario-'+key);
+  input.checked=true;input.dispatchEvent({type:'change'});
+}
+const c = shim.UPlotStub.made.filter(n => n.opts.series.some(s => s.label === 'Baseline')).pop();
 const expected = JSON.parse(process.env.IAW_TEST_AXIS_EXPECTED);
 assert.deepEqual(Array.from(c.opts.scales.x.range), expected.x);
 assert.deepEqual(Array.from(c.opts.scales.y.range()), expected.y);
@@ -57,7 +61,7 @@ const card=()=>panel.querySelector('.port-frontier');
 const button=(text)=>Array.from(panel.querySelector('.port-result-tools').querySelectorAll('button')).find(n=>n.textContent===text);
 const click=(text)=>{const n=button(text);assert(n,text+' missing');n.click();};
 shim.UPlotStub.prototype.destroy=function(){this.dead=true;};
-const chart=()=>shim.UPlotStub.made.filter(n=>!n.dead&&n.opts.series.some(s=>s.label==='경계선')).pop();
+const chart=()=>shim.UPlotStub.made.filter(n=>!n.dead&&n.opts.series.some(s=>s.label==='Baseline')).pop();
 const live=()=>shim.UPlotStub.made.filter(n=>!n.dead);
 function draw(c,dpr=1){
   const commands=[],bbox={left:50*dpr,top:10*dpr,width:650*dpr,height:300*dpr};
@@ -127,6 +131,11 @@ function assertContained(c){
   assert(Math.min(...ys)>yr[0]);
 }
 P.DATA.alloc=SIX_ASSET_FIXTURE;shim.localStorage.removeItem(P.PORT_LS_KEY);P.renderPortPanel(SIX_ASSET_FIXTURE);
+// Optional curves start hidden; opt in for the scenario geometry/hover regression.
+for (const key of ['conservative', 'optimistic']) {
+  const input=DOC.getElementById('port-scenario-'+key);
+  input.checked=true;input.dispatchEvent({type:'change'});
+}
 const initial=chart(),allRange=initial.opts.scales.x.range.slice();
 assert.equal(DOC.getElementById('port-range-sigma').value,'0.25');
 assert.equal(DOC.getElementById('port-range-sigma').getAttribute('step'),'0.25');
@@ -158,7 +167,7 @@ click('CSV');
 assert(sandbox.robustCSV[2].some(row=>row[0]==='Conservative' && typeof row[2]==='number' && row[4]<=row[3]));
 assert(sandbox.robustCSV[2].some(row=>row[0]==='Optimistic' && typeof row[2]==='number' && row[5]>=row[3]));
 assert(!sandbox.robustCSV[2].some(row=>row[0]==='Robust'));
-assert.deepEqual(Array.from(initial.opts.series,s=>s.label).slice(1),['경계선','Conservative','Optimistic']);
+assert.deepEqual(Array.from(initial.opts.series,s=>s.label).slice(1),['Baseline','Conservative','Optimistic']);
 assert.equal(initial.opts.series[3].spanGaps,false);
 const E0=P.portEngine(SIX_ASSET_FIXTURE.port,P.portState(SIX_ASSET_FIXTURE.port));
 for(const p of E0.optimistic){

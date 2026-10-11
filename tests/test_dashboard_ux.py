@@ -2622,7 +2622,7 @@ def test_port_panel_frontier_hover_and_review(probe):
     )
     assert c["reviewHasRows"] is True and c["reviewNotesRemoved"] is True
     assert c["periodNotesRemoved"] is True, "사용자가 제거한 주석·번호가 남아 있다"
-    assert c["sumWarnAfterDrift"] is True, "합계≠100 인데 몰래 정규화했거나 침묵했다"
+    assert c["sumWarnAfterOverflow"] is True, "나머지 비중 합계가 100%를 넘는데 음수 잔여를 숨기거나 업데이트했다"
     assert c["inactiveShowsReason"] is True, "비활성 사유가 화면에 없다 — 조용한 대체 금지"
 
 

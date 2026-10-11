@@ -67,7 +67,7 @@ const panel=DOC.getElementById('alloc-port-panel');
 const input=(label)=>Array.from(panel.querySelectorAll('input')).find(n=>n.getAttribute('aria-label')===label);
 const fire=(node,type)=>node.dispatchEvent({type});
 const update=()=>DOC.getElementById('port-update-btn').click();
-const chart=()=>shim.UPlotStub.made.filter(c=>c.opts.series.some(series=>series.label==='경계선')).at(-1);
+const chart=()=>shim.UPlotStub.made.filter(c=>c.opts.series.some(series=>series.label==='Baseline')).at(-1);
 const baseChart=chart(),baseData=JSON.parse(JSON.stringify(baseChart.data));
 const baseSeries=baseChart.opts.series.map(series=>series.label);
 const verifyBaseline=(actual)=>{
