@@ -2344,7 +2344,7 @@ safe("portPanel", () => {
   shim.UPlotStub.made.length = 0;
   P.renderSection("alloc");
   const panel = DOC.getElementById("alloc-port-panel");
-  r.panelRendered = /제약조건/.test(panel.textContent);
+  r.panelRendered = !!DOC.getElementById("port-saa-tab-current") && !!DOC.getElementById("port-taa-tab-current");
   /* 패널이 시뮬레이터보다 위(제일 상단)인가 — DOM 순서로 잰다 */
   const kids = DOC.getElementById("alloc").childNodes;
   r.panelAboveSim = kids.indexOf(panel) >= 0 &&
@@ -2409,7 +2409,7 @@ safe("portPanel", () => {
   /* ④ 효율적 경계선 — 차트가 실제로 만들어지고 hover 훅이 상세를 적는가.
      recalc 마다 다시 만들므로 **마지막** 인스턴스를 집는다(앞 것의 hover 는 떼어졌다). */
   const chart = shim.UPlotStub.made.filter((u) =>
-    u.opts && u.opts.series && u.opts.series.some((s) => s.label === "경계선")).pop();
+    u.opts && u.opts.series && u.opts.series.some((s) => s.label === "Baseline")).pop();
   r.frontierChartMade = !!chart;
   const hook = chart && chart.opts.hooks && chart.opts.hooks.setCursor
     && chart.opts.hooks.setCursor[0];
@@ -2449,10 +2449,12 @@ safe("portPanel", () => {
   /* 2026-09-09 사용자 지시: 표본 부족 안내·산출 기준·번호 제거. */
   r.periodNotesRemoved = !/창 미충족|산출 기준|7자산군|원화 미헤지|① 제약조건|② 자산군/.test(panel.textContent);
 
-  /* ⑦ 합계 오류는 업데이트 전체를 보류하며 마지막 결과를 유지한다. */
+  /* ⑦ 나머지 비중 합계 초과는 음수 잔여를 유지하고 전체 업데이트를 보류한다. */
   const beforeInvalidWeight = panel.querySelector(".port-benchmark").textContent;
-  wIn.value = "19"; wIn.dispatchEvent({ type: "input", target: wIn }); update();
-  r.sumWarnAfterDrift = /100%/.test(DOC.getElementById("port-risk-status").textContent)
+  wIn.value = "100"; wIn.dispatchEvent({ type: "input", target: wIn }); update();
+  const residualInput = mixIn.find((input) => input.getAttribute("aria-label") === "대체투자 비중1");
+  r.sumWarnAfterOverflow = residualInput.hasAttribute("readonly") && Number(residualInput.value) < 0
+    && /100%/.test(DOC.getElementById("port-risk-status").textContent)
     && panel.querySelector(".port-benchmark").textContent === beforeInvalidWeight;
   wIn.value = "20"; wIn.dispatchEvent({ type: "input", target: wIn });
 

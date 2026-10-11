@@ -3,10 +3,10 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.alloc = {
   id: "alloc",
   title: "자산배분",
-  updated: "2026-10-11",
-  summary: "7자산군 CMA·최소/최대 제약 → 경계선·비중1/비중2 비교 → 리스크 연계 비중",
+  updated: "2026-10-12",
+  summary: "SAA 제약·TAA 입력 시나리오 → Baseline·비중1/비중2 비교 → 리스크 연계 비중",
   inputs: "월말 지수·USDKRW, 연 μ·σ(%), CMA 시나리오 확률(%), 상관계수, h(0~1), 그룹 최소·최대(%), 자산별 최소(%). 공분산은 게시 소수² → 계산 %²(×10,000)",
-  outputs: "포트폴리오 μ·σ, 경계선, Conservative·Optimistic, 현재·잠재 리스크 연계 비중",
+  outputs: "포트폴리오 μ·σ, Baseline, 선택 Conservative·Optimistic, 현재·잠재 리스크 연계 비중",
   sources: [
     { path: "dashboard/port-constraints.js", symbols: ["portConstraintSpec", "portConstrainedModel"] },
     { path: "pipeline/port.py", symbols: ["build", "_stats", "_fx_stats", "_hedge_cost"] },
@@ -75,7 +75,9 @@ globalThis.PSEUDO_DOCS.alloc = {
         { expression: "수익기여ᵢ = 100 × wᵢμᵢ / m(w);  위험기여ᵢ = 100 × wᵢ(Cw)ᵢ / (wᵀCw)", legend: "호버 기여도(%). 분모가 0에 가까우면 표시 보류; 음의 기여도도 가능." }
       ],
       code: [
-        "on_update: validate_all_draft_inputs_and_commit_applied_snapshot()",
+        "on_tab_switch: retain_SAA_TAA_drafts_without_changing_results()",
+        "alternative_weight_pct ← 100 - sum(other_asset_weights_pct)",
+        "on_update: validate_active_SAA_TAA_pair_and_commit_applied_snapshot()",
         "model ← validated_mu_and_covariance(applied_snapshot)",
         "bounds ← validate_group_min_max_and_asset_floors()",
         "enumerate_affine_faces_of_feasible_portfolios(model, bounds)",
@@ -86,7 +88,7 @@ globalThis.PSEUDO_DOCS.alloc = {
         "frontier ← remove_dominated_points(candidates)",
         "compare_weight1_weight2_and_60_40_benchmark(frontier)"
       ].join("\n"),
-      note: "하단 입력은 업데이트 시 검증·저장하고 경계선·비교·리스크 연계에 함께 반영. 제약조건 적용은 검증 후 업데이트 대기. 축·팔레트는 마지막 업데이트 결과를 다시 표시. 비중1/비중2는 각각 합계 100%를 검사하고 제약 밖도 비교용으로 표시. 비중합 오류·불가능한 제약·유효하지 않은 입력이면 마지막 업데이트 결과 유지.",
+      note: "SAA(현재/SAA 1/SAA 2)는 그룹·개별 제약, TAA(현재/TAA 1/TAA 2)는 비중1/비중2·μ/σ·상관·헤지를 별도 보존. 기간과 적용 CMA는 공통. 탭 선택은 초안이며 업데이트 시 활성 SAA/TAA 쌍만 검증·저장하여 경계선·비교·리스크 연계에 반영. 비활성 초안은 메모리에 보존하며 저장값 복원/새로고침 시 폐기. 각 비중열의 대체투자는 100%에서 다른 자산 비중 합계를 뺀 자동값이며 음수·빈칸·범위 오류는 업데이트 거부. SAA 최소·최대 한도는 자동 잔여 배분 대상이 아님. 불가능 제약·입력 오류는 마지막 결과 유지.",
       sources: [
         { path: "dashboard/app.js", symbols: ["portRobustModel", "portFrontiers", "portContributions", "portEngine"] }
       ]
@@ -133,9 +135,10 @@ globalThis.PSEUDO_DOCS.alloc = {
         "  optimistic.add(upper_mean(w, a))",
         "include_vertices_and_frontier_endpoints()",
         "remove_dominated_points_without_bridging_gaps()",
-        "draw_scenarios_and_interpolate_valid_segments()"
+        "draw_baseline_without_mean_uncertainty_adjustment()",
+        "draw_only_checked_scenarios_and_interpolate_valid_segments()"
       ].join("\n"),
-      note: "CMA의 사용자 낙관·중립·비관 입력과 별개의 평균 불확실성 경계선이며 통계적 신뢰구간이 아님. 두 경계선의 최적 비중은 서로 다를 수 있음.",
+      note: "CMA의 사용자 낙관·중립·비관 입력과 별개의 평균 불확실성 경계선이며 통계적 신뢰구간이 아님. 두 경계선의 최적 비중은 서로 다를 수 있음. Baseline은 평균 불확실성 가산/차감이 없는 기본 경계선. 두 추가 경계선 체크는 초기 해제이며 표시 선택은 금융 입력을 바꾸지 않음. 적용된 CMA 가정은 Baseline에도 공통 사용.",
       sources: [
         { path: "dashboard/app.js", symbols: ["portDefaults", "portState", "portRobustModel", "portFrontiers"] }
       ]

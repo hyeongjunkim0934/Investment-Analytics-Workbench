@@ -15,7 +15,7 @@ const panel=DOC.getElementById('alloc-port-panel'), byId=id=>DOC.getElementById(
 const dock=()=>byId('port-frontier-panel');
 const front=()=>byId('port-result-frontier'), benchmark=()=>byId('port-result-benchmark');
 const tab=key=>byId('port-result-tab-'+key);
-const chart=()=>shim.UPlotStub.made.filter(c=>!c.dead&&c.opts.series.some(s=>s.label==='경계선')).at(-1);
+const chart=()=>shim.UPlotStub.made.filter(c=>!c.dead&&c.opts.series.some(s=>s.label==='Baseline')).at(-1);
 const data=()=>JSON.stringify(chart().data);
 const input=label=>Array.from(panel.querySelectorAll('input')).find(n=>n.getAttribute('aria-label')===label);
 const edit=(label,value)=>{const n=input(label);n.value=String(value);n.dispatchEvent({type:'input'});};
@@ -34,7 +34,7 @@ assert(dock().querySelector('.port-results-header').contains(dock().querySelecto
 const saved=shim.localStorage.getItem(P.PORT_LS_KEY), before=data(), beforeLinked=linked();
 const tools=Array.from(dock().querySelector('.card-actions').children);
 assert(tools.indexOf(byId('port-update-btn'))>tools.indexOf(dock().querySelector('.port-palette')));
-assert(byId('port-constraint-apply').parentElement.textContent.includes('제약조건'));
+assert(byId('port-constraint-apply').parentElement.textContent.includes('SAA'));
 assert.equal(byId('port-constraint-apply').textContent,'적용');
 tab('benchmark').click();
 assert(front().hidden&&!benchmark().hidden);

@@ -39,7 +39,7 @@ const edit=(label,value)=>{const n=input(label);assert(n,label+' missing');n.val
 const update=()=>byId('port-update-btn').click();
 const applyConstraints=()=>byId('port-constraint-apply').click();
 const button=text=>Array.from(panel.querySelectorAll('button')).find(n=>n.textContent===text);
-const chart=()=>shim.UPlotStub.made.filter(n=>!n.dead&&n.opts.series.some(s=>s.label==='경계선')).at(-1);
+const chart=()=>shim.UPlotStub.made.filter(n=>!n.dead&&n.opts.series.some(s=>s.label==='Baseline')).at(-1);
 const state=()=>P.portState(p);
 const rows=()=>Array.from(panel.querySelectorAll('.port-benchmark tbody tr'));
 const row=name=>rows().find(n=>n.querySelector('td').textContent===name);
@@ -89,9 +89,9 @@ for(const [name,m] of [['비중1',expected1],['비중2',expected2]]){
 }
 const saved=JSON.parse(shim.localStorage.getItem(P.PORT_LS_KEY));same(saved.mix,migrated.mix);same(saved.mix2,mix2);
 P.renderPortPanel(alloc);assets.forEach(a=>{assert.equal(input(a+' 비중1').value,String(migrated.mix[a]));assert.equal(input(a+' 비중2').value,String(mix2[a]));});
-// Invalid totals reject the full update and never normalize the user's draft.
+// Overflow rejects the full update rather than clamping the automatic residual.
 const validRows=panel.querySelector('.port-benchmark').textContent,validStore=shim.localStorage.getItem(P.PORT_LS_KEY);
-edit('국내시가 비중2',14);update();assert(row('비중1')&&row('비중2'));assert.equal(input('국내시가 비중2').value,'14');
+edit('국내시가 비중2',99);update();assert(row('비중1')&&row('비중2'));assert.equal(input('국내시가 비중2').value,'99');
 assert.equal(panel.querySelector('.port-benchmark').textContent,validRows);assert.equal(shim.localStorage.getItem(P.PORT_LS_KEY),validStore);
 edit('국내시가 비중2',15);update();assert(row('비중2'));
 
