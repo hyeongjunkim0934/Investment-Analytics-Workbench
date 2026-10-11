@@ -89,6 +89,8 @@ if (process.argv.includes("--reload")) {
   const model = P.portModelInputs(portfolio, P.portState(portfolio));
   console.log(JSON.stringify({mu: model.baseMu[assetIndex], sig: model.risk.sig[assetIndex],
     source: model.src[assetIndex], active: !!C.cmaAssetAssumption(asset),
+    sigmaInputs: ["낙관", "중립", "비관"].map(scenario =>
+      input(cmaBox(), `${asset} ${scenario} 변동성 %`).value),
     noRenderError: !DOC.getElementById("cma").querySelector(".render-error"),
     warning: cmaBox().textContent.includes("저장된 CMA를 읽지 못했습니다"), writes: writes.length,
     cmaAssets: C.cmaStore().assets}));
@@ -417,6 +419,45 @@ result.navigation={ordered:hashes[hashes.indexOf("#hedge")+1]==="#fxoutlook"
   active:links.find(node=>node.getAttribute("href")==="#cma").getAttribute("aria-current")==="page",
   routeClosesPopup:!DOC.querySelector(".cma-popup"),
   noUnrelatedPeriod: DOC.querySelector(".filter-row").hidden};
+
+// Editing hundredths must survive the real input/apply/store/model/reload path.
+// The two-place input display must not quantize previously saved calculations.
+P.renderSection("cma");
+const sigmaInputs = labels.map(label=>cmaInput(label,"변동성"));
+result.volatilityPrecision = {
+  hundredthStep: sigmaInputs.every(node=>node.getAttribute("step")==="0.01"),
+  twoPlaceDisplay: sigmaInputs.every(node=>/^\d+\.\d{2}$/.test(node.value)),
+};
+labels.forEach(label=>{set(label,"기대수익",3.5);set(label,"변동성","1.23");});
+const draftBeforeApply = copy(C.cmaStore().assets[asset].draft);
+apply();
+const hundredthModel=P.portModelInputs(portfolio,P.portState(portfolio)), hundredthReload=reload();
+result.volatilityPrecision.nonzeroDraftPreserved=draftBeforeApply.every(row=>row.sig==="1.23");
+result.volatilityPrecision.nonzeroApplied=C.cmaStore().assets[asset].applied.every(row=>row.sig===1.23)
+  && Math.abs(hundredthModel.risk.sig[assetIndex]-1.23)<1e-12;
+result.volatilityPrecision.nonzeroReload=hundredthReload.active && Math.abs(hundredthReload.sig-1.23)<1e-12
+  && hundredthReload.sigmaInputs.every(value=>value==="1.23");
+labels.forEach(label=>set(label,"변동성","0.00"));
+apply();
+const zeroModel=P.portModelInputs(portfolio,P.portState(portfolio)), zeroReload=reload();
+result.volatilityPrecision.zeroDraftPreserved=C.cmaStore().assets[asset].draft.every(row=>row.sig==="0.00");
+result.volatilityPrecision.zeroApplied=C.cmaStore().assets[asset].applied.every(row=>row.sig===0)
+  && zeroModel.risk.sig[assetIndex]===0;
+result.volatilityPrecision.zeroReload=zeroReload.active && zeroReload.sig===0
+  && zeroReload.sigmaInputs.every(value=>value==="0.00");
+const precisionState=copy([...saved]);
+const precisionRecord=precisionState.find(([key])=>key===C.CMA_LS_KEY);
+const precisionStore=JSON.parse(precisionRecord[1]), precisionEntry=precisionStore.assets[asset];
+precisionEntry.draft.forEach(row=>{row.sig="1.234567";});
+precisionEntry.applied.forEach(row=>{row.sig=1.234567;});
+precisionRecord[1]=JSON.stringify(precisionStore);
+const precisionReload=reload(precisionState);
+result.volatilityPrecision.legacyPrecisionPreserved=Math.abs(precisionReload.sig-1.234567)<1e-12
+  && precisionReload.cmaAssets[asset].draft.every(row=>row.sig==="1.234567")
+  && precisionReload.cmaAssets[asset].applied.every(row=>row.sig===1.234567);
+result.volatilityPrecision.legacyFormattedWithoutWrite=precisionReload.sigmaInputs.every(value=>value==="1.23")
+  && precisionReload.writes===0;
+assert(Object.values(result.volatilityPrecision).every(Boolean),JSON.stringify(result.volatilityPrecision));
 P.DATA.alloc=null;P.renderSection("cma");
 const missingMessage=cmaBox().textContent;
 P.DATA.alloc=allocation;

@@ -274,7 +274,11 @@ function renderCma() {
     CMA_SCENARIOS.forEach((definition, row) => {
       const tr = el("tr", {}, el("th", { scope: "row", class: `cma-${definition.id}` }, definition.label));
       [["p", "확률"], ["mu", "기대수익"], ["sig", "변동성"]].forEach(([field, label]) => {
-        const attrs = { type: "number", step: "any", value: entry.draft[row][field] ?? "",
+        const value = entry.draft[row][field], sigma = field === "sig" ? cmaNumber(value) : NaN;
+        // Format the editor only. Existing high-precision drafts/applied values
+        // remain unchanged until the user actually edits the field.
+        const attrs = { type: "number", step: field === "sig" ? "0.01" : "any",
+          value: Number.isFinite(sigma) ? sigma.toFixed(2) : value ?? "",
           "aria-label": `${asset} ${definition.label} ${label} %`, "aria-describedby": statusId };
         if (field !== "mu") attrs.min = "0";
         if (field === "p") attrs.max = "100";

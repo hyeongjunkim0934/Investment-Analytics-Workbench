@@ -7283,6 +7283,20 @@ function portSummaryWeights(weights) {
   return rounded;
 }
 
+// Central one-year return coverage under a normal model, not a confidence
+// interval for the estimated mean. Inputs and outputs retain annual percent units.
+function portSummaryReturnRanges(mu, sig) {
+  if (!Number.isFinite(mu) || !Number.isFinite(sig) || sig < 0) return null;
+  const levels = [
+    [68, 0.994457883209753], [90, 1.6448536269514722],
+    [95, 1.959963984540054], [99, 2.5758293035489004],
+  ];
+  const ranges = levels.map(([probability, z]) => ({
+    probability, lower: mu - z * sig, upper: mu + z * sig,
+  }));
+  return ranges.every(({ lower, upper }) => Number.isFinite(lower) && Number.isFinite(upper)) ? ranges : null;
+}
+
 const PORT_SUMMARY_CACHE = new WeakMap();
 function portSummaryResults(P, E) {
   const cards = [
@@ -7311,9 +7325,10 @@ function portSummaryResults(P, E) {
   return cards.map((card) => {
     const weights = card.point && portSummaryWeights(card.point.w);
     const metrics = weights && E.metrics(card.point.w);
-    if (!weights || !Number.isFinite(metrics?.mu) || !Number.isFinite(metrics?.sig))
+    const ranges = metrics && portSummaryReturnRanges(metrics.mu, metrics.sig);
+    if (!weights || !ranges)
       return { ...card, point: null, error: card.error || "최적화 결과를 계산할 수 없습니다." };
-    return { ...card, weights, metrics, error: "" };
+    return { ...card, weights, metrics, ranges, error: "" };
   });
 }
 
@@ -7348,6 +7363,15 @@ function renderSummaryCards(A = DATA.alloc, engine = null) {
     summary.append(metrics);
     if (row.error) summary.append(el("span", { class: "summary-unavailable", role: "status" }, row.error));
     else {
+      const ranges = el("span", { class: "summary-ranges", "aria-label": "정규분포 가정에 따른 1년 수익률 범위" },
+        el("span", { class: "summary-range-title" }, "1년 수익률 범위 · 정규분포 가정"),
+        el("span", { class: "summary-range-heading" }, el("span", {}, "포함확률"), el("span", {}, "하단 ~ 상단")));
+      row.ranges.forEach(({ probability, lower, upper }) => {
+        ranges.append(el("span", { class: "summary-range" },
+          el("span", {}, `${probability}%`), el("b", {}, `${fmtNum(lower, 2)}% ~ ${fmtNum(upper, 2)}%`)));
+      });
+      if (row.metrics.sig === 0) ranges.append(el("span", { class: "summary-range-note" }, "변동성 0 · 단일 수익률(모형상 100%)"));
+      summary.append(ranges);
       const weights = el("span", { class: "summary-weights", "aria-label": "자산군별 비중" });
       P.assets.forEach((asset, i) => {
         weights.append(el("span", { class: "summary-weight" },
@@ -7360,7 +7384,9 @@ function renderSummaryCards(A = DATA.alloc, engine = null) {
     if (E) detail.append(el("p", {}, `표본 ${E.W.start} ~ ${E.W.end}`),
       el("p", {}, E.risk.hedge?.active ? "선택한 환헤지 반영" : "추가 환헤지 미적용"));
     if (row.metrics) detail.append(el("p", {}, `Sharpe Ratio ${fmtNum(row.metrics.sharpe, 2)}`),
-      el("p", {}, "비중은 정수 표시 · 수익·위험은 원비중 기준"));
+      el("p", {}, "비중은 정수 표시 · 수익·위험은 원비중 기준"),
+      el("p", {}, "범위는 연간 기대수익률 ± 정규분포 분위수 × 연간 변동성입니다. 평균 추정치의 신뢰구간이 아니며 실제 달성확률을 보장하지 않습니다."),
+      el("p", {}, "포함확률 68·90·95·99%의 양측 이탈확률(α)은 각각 32·10·5·1%입니다."));
     if (row.key === "target") detail.append(el("p", {}, "기대수익률 4.0%를 충족하는 최소변동성 안"));
     detail.append(el("a", { href: "#alloc", class: "btn-ghost" }, "자산배분에서 조건 조정"));
     card.append(summary, detail);

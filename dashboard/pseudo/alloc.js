@@ -3,7 +3,7 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.alloc = {
   id: "alloc",
   title: "자산배분",
-  updated: "2026-10-03",
+  updated: "2026-10-11",
   summary: "7자산군 CMA·최소/최대 제약 → 경계선·비중1/비중2 비교 → 리스크 연계 비중",
   inputs: "월말 지수·USDKRW, 연 μ·σ(%), CMA 시나리오 확률(%), 상관계수, h(0~1), 그룹 최소·최대(%), 자산별 최소(%). 공분산은 게시 소수² → 계산 %²(×10,000)",
   outputs: "포트폴리오 μ·σ, 경계선, Conservative·Optimistic, 현재·잠재 리스크 연계 비중",
@@ -59,7 +59,7 @@ globalThis.PSEUDO_DOCS.alloc = {
         "apply_existing_hedge_after_unhedged_CMA()",
         "show_applied_scenarios_on_allocation_asset_label_hover()"
       ].join("\n"),
-      note: "비관 확률은 잔여값으로 자동 산출하며 낙관·중립 합계 100% 초과·빈칸은 적용 불가. 초안과 적용값은 분리 저장. 접힌 카드는 초안 μ·σ와 자산별 120개월 연환산 참고 μ·σ를 표시하며 표본 부족은 공란. 초기 25/50/25%는 편집 시작값. 자산별 주변분포 가정이며 공통 거시 상태·자산 간 독립성을 뜻하지 않음.",
+      note: "비관 확률은 잔여값으로 자동 산출하며 낙관·중립 합계 100% 초과·빈칸은 적용 불가. 초안과 적용값은 분리 저장. 변동성 입력은 0.01 단위·두 자리 표시이며 기존 저장 원정밀도는 유지. 접힌 카드는 초안 μ·σ와 자산별 120개월 연환산 참고 μ·σ를 표시하며 표본 부족은 공란. 초기 25/50/25%는 편집 시작값. 자산별 주변분포 가정이며 공통 거시 상태·자산 간 독립성을 뜻하지 않음.",
       sources: [
         { path: "dashboard/cma.js", symbols: ["cmaSyncDraftProbability", "cmaMoments", "cmaAssetAssumption", "renderCma", "cmaAssetLabel"] },
         { path: "dashboard/app.js", symbols: ["portRiskInputs", "portModelInputs"] }
@@ -96,7 +96,8 @@ globalThis.PSEUDO_DOCS.alloc = {
       title: "요약카드 · 세 가지 최적화 안",
       formulas: [
         { expression: "Min volatility: min wᵀCw;  Target Return: min wᵀCw, μᵀw = 4.0", legend: "같은 적용 입력·환헤지·그룹 및 개별 제약 사용. μ 단위는 연 %. 4.0% 정확 목표가 불가능하면 해당 카드의 결과를 보류." },
-        { expression: "Max Sharpe Ratio: max (μᵀw − r𝒇) / √(wᵀCw)", legend: "기존 자산배분 최대 샤프 해를 공유. r𝒇는 기존 엔진의 국내장부(구 원화유동성) 기대수익 입력으로 별도 무위험 수익률 추정치가 아님." }
+        { expression: "Max Sharpe Ratio: max (μᵀw − r𝒇) / √(wᵀCw)", legend: "기존 자산배분 최대 샤프 해를 공유. r𝒇는 기존 엔진의 국내장부(구 원화유동성) 기대수익 입력으로 별도 무위험 수익률 추정치가 아님." },
+        { expression: "1년 수익률 범위 = m(w) ± Φ⁻¹((1+p)/2) × σ(w);  α = 1 − p", legend: "정규분포 가정의 중앙 포함확률 p=68·90·95·99%. μ·σ 모두 연 %, 표준오차나 표본수로 축소하지 않음. 양측 이탈확률 α=32·10·5·1%." }
       ],
       code: [
         "model ← portfolio_engine(last_applied_inputs)",
@@ -105,11 +106,14 @@ globalThis.PSEUDO_DOCS.alloc = {
         "display_weights ← floor(100 * original_weights)",
         "distribute_remaining_integer_points_by_largest_fractional_remainders()",
         "show_all_assets_and_total_100_without_changing_original_weights()",
-        "show_mu_sigma_from_original_weights_with_two_decimals()"
+        "show_mu_sigma_from_original_weights_with_two_decimals()",
+        "ranges ← central_normal_return_ranges(mu, sigma, probabilities=[0.68, 0.90, 0.95, 0.99])",
+        "show_two_decimal_ranges_between_moments_and_weights()",
+        "if sigma_is_zero: label_degenerate_return_with_model_probability_100()"
       ].join("\n"),
-      note: "요약카드는 마지막 업데이트 결과를 읽으며 미적용 초안을 반영하지 않음. CMA 적용/해제는 기존 즉시 반영 유지. 카드 클릭은 상세 열기이며 입력 비중을 변경하지 않음. 정수 표시는 표시용이라 원비중의 소수 제약 및 정확 목표를 그대로 재현하지 않을 수 있음.",
+      note: "요약카드는 마지막 업데이트 결과를 읽으며 미적용 초안을 반영하지 않음. CMA 적용/해제는 기존 즉시 반영 유지. 범위는 평균 추정의 신뢰구간이나 실증 검증된 달성확률이 아님. 정확한 중앙 68% 분위수를 쓰며 1σ(약68.27%)로 대체하지 않음. 음의 하단은 보존하고 불가능 목표·결측·음수 변동성은 범위를 표시하지 않음. σ=0이면 모든 범위가 μ로 수렴(모형상100%). 카드 클릭은 상세 열기이며 입력 비중을 변경하지 않음. 정수 표시는 표시용이라 원비중의 소수 제약 및 정확 목표를 그대로 재현하지 않을 수 있음.",
       sources: [
-        { path: "dashboard/app.js", symbols: ["portEngine", "portSummaryWeights", "portSummaryResults", "renderSummaryCards"] },
+        { path: "dashboard/app.js", symbols: ["portEngine", "portSummaryWeights", "portSummaryReturnRanges", "portSummaryResults", "renderSummaryCards"] },
         { path: "dashboard/port-constraints.js", symbols: ["portConstrainedModel"] }
       ]
     },

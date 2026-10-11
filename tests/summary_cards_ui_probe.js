@@ -47,6 +47,15 @@ const assertRows=()=>{
     same(weights.map(v=>parseInt(v,10)),Array.from(rows[i].weights));
     const metrics=Array.from(summary.querySelectorAll('strong')).map(n=>n.textContent);
     same(metrics,[rows[i].metrics.mu.toFixed(2)+'%',rows[i].metrics.sig.toFixed(2)+'%']);
+    const rangeBox=summary.querySelector('.summary-ranges');assert(rangeBox);
+    const children=Array.from(summary.children);
+    assert(children.indexOf(summary.querySelector('.summary-metrics'))<children.indexOf(rangeBox));
+    assert(children.indexOf(rangeBox)<children.indexOf(summary.querySelector('.summary-weights')));
+    assert(rangeBox.textContent.includes('1년 수익률 범위 · 정규분포 가정'));
+    const rangeRows=Array.from(rangeBox.querySelectorAll('.summary-range'));
+    same(rangeRows.map(n=>n.querySelector('span').textContent),['68%','90%','95%','99%']);
+    same(rangeRows.map(n=>n.querySelector('b').textContent),rows[i].ranges.map(r=>
+      r.lower.toFixed(2)+'% ~ '+r.upper.toFixed(2)+'%'));
     assert(node.querySelector('.summary-detail').querySelector('a').getAttribute('href')==='#alloc');
   });
   return rows;
@@ -115,17 +124,27 @@ shim.localStorage.removeItem(P.PORT_LS_KEY);C.cmaStore().assets={};
 P.DATA.alloc=narrow;P.renderPortPanel(narrow);
 assert(card('target').textContent.includes('달성할 수 없습니다'));
 assert(!card('target').querySelector('.summary-weights'));
+assert(!card('target').querySelector('.summary-ranges'));
 assert(card('min').querySelector('.summary-weights'));assert(card('sharpe').querySelector('.summary-weights'));
 assert(Array.from(card('target').querySelectorAll('strong')).every(n=>n.textContent==='—'));
 P.renderSummaryCards({port:{active:false,reason:'자료 없음'}});
 assert.equal(cards().length,3);
 assert(cards().every(n=>n.textContent.includes('자료 없음')&&!n.querySelector('.summary-weights')));
+assert(cards().every(n=>!n.querySelector('.summary-ranges')));
 const invalid=JSON.parse(JSON.stringify(narrow));invalid.port.windows.forEach(w=>{w.cov[0][0]=-1;});
 P.renderSummaryCards(invalid);
 assert(cards().every(n=>n.querySelector('.summary-unavailable')&&!n.querySelector('.summary-weights')));
+assert(cards().every(n=>!n.querySelector('.summary-ranges')));
+// Zero volatility is a degenerate distribution: ranges collapse, coverage is 100%.
+const zero=JSON.parse(JSON.stringify(narrow));
+zero.port.windows.forEach(w=>{w.cov=w.cov.map(row=>row.map(()=>0));});
+P.DATA.alloc=zero;P.renderPortPanel(zero);
+assert(card('min').querySelector('.summary-range-note').textContent.includes('모형상 100%'));
+assert(Array.from(card('min').querySelectorAll('.summary-range')).every(n=>n.querySelector('b').textContent==='2.00% ~ 2.00%'));
 console.log(JSON.stringify({pass:true,navigation:true,proposalOrder:true,allSevenAssets:true,integerTotal100:true,
   exactTargetReturn:true,portfolioResultsMatch:true,draftIsolation:true,rejectedUpdateRetained:true,
-  disclosureStateRetained:true,cmaAppliedOnly:true,hedgeApplied:true,infeasibleTarget:true,invalidData:true}));
+  disclosureStateRetained:true,cmaAppliedOnly:true,hedgeApplied:true,infeasibleTarget:true,invalidData:true,
+  probabilityRanges:true,rangePlacement:true,zeroVolatility:true}));
 `;
 const filename=path.join(repo,'tests/summary_cards_ui_regression.js');
 const m=new Module(filename,module);m.filename=filename;m.paths=Module._nodeModulePaths(path.dirname(filename));
