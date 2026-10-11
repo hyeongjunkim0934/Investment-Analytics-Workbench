@@ -88,6 +88,12 @@
 .summary-metric { display:flex; flex-direction:column; gap:8px; }
 .summary-label { color:var(--ink-3); font-size:12px; }
 .summary-metric strong { color:var(--ink-1); font-size:clamp(22px,2.3vw,32px); font-weight:600; font-variant-numeric:tabular-nums; }
+.summary-ranges { display:block; border-top:1px solid var(--border); padding:12px 0; font-size:12px; color:var(--ink-2); }
+.summary-range-title { display:block; margin-bottom:8px; line-height:1.5; }
+.summary-range-heading, .summary-range { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 12px; padding:4px 0; }
+.summary-range-heading, .summary-range-note { color:var(--ink-3); font-size:11px; }
+.summary-range b { margin-left:auto; color:var(--ink-1); font-weight:500; font-variant-numeric:tabular-nums; }
+.summary-range-note { display:block; margin-top:6px; }
 .summary-weights { display:block; border-top:1px solid var(--border); padding-top:10px; }
 .summary-weight { display:flex; justify-content:space-between; gap:16px; padding:8px 0; color:var(--ink-2); font-size:13px; }
 .summary-weight b { color:var(--ink-1); font-weight:500; font-variant-numeric:tabular-nums; }
