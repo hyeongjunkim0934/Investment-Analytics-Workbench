@@ -156,7 +156,7 @@ DOC.getElementById('port-axis-toggle').click();
 assert(panel.querySelector('.port-axis-controls').hidden);
 assert(!/오차 강도|합계 100%|공매도 금지|Robust 기준|경계선에 마우스|점선 ·/.test(card().textContent));
 assert(draw(initial).filter(x=>x[0]==='arc').length>5000);
-assert(card().querySelector('.port-sharpe-scale').textContent.includes('6,006'));
+assert(!/6,006|배분/.test(card().querySelector('.port-sharpe-scale').textContent));
 assert(card().querySelector('.port-frontier-key').textContent.includes('Max.Sharpe'));
 assert(draw(initial).filter(x=>x[0]==='arc').every(x=>x.slice(1).every(Number.isFinite)));
 click('표');
