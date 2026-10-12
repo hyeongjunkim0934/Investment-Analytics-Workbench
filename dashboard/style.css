@@ -1308,7 +1308,7 @@ a.kpi-link .kpi-label > span:first-child::after {
   box-shadow: 0 10px 20px rgba(0,0,0,.32); }
 .port-results-header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px;
   padding: 6px 10px; border-bottom: 1px solid var(--ink-3); }
-.port-result-tabs { display: flex; gap: 4px; }
+.port-result-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
 .port-result-tools { margin-left: auto; min-width: 0; max-width: 100%; }
 .port-result-tools .card-head { position: relative; margin: 0; }
 .port-result-tools .card-actions { align-items: center; flex-wrap: wrap; max-width: 100%; }
@@ -1326,6 +1326,38 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-results-dock .port-asset-key { display: none; } /* Values remain on the asset point hover. */
 .port-results-dock .port-sharpe-scale { margin-top: 6px; font-size: 11px; }
 .port-results-dock .port-benchmark { max-height: none; }
+.port-target-context { margin: 2px 0 10px; color: var(--ink-3); font-size: 11px; }
+.port-target-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.port-target-card { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); font-variant-numeric: tabular-nums; }
+.port-target-center { border-color: var(--port-accent); box-shadow: inset 0 3px 0 var(--port-accent); }
+.port-target-offset { color: var(--ink-3); font-size: 11px; }
+.port-target-heading h3 { margin: 4px 0 8px; color: var(--port-accent); font-size: 22px; font-weight: 600; }
+.port-target-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 32px; }
+.port-target-controls label { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; font-size: 12px; }
+#alloc-port-panel .port-target-controls input { width: 100%; min-width: 0; padding: 5px; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--page); color: var(--ink-1); font: inherit; scroll-margin-top: 180px; }
+.port-target-controls input[aria-invalid="true"] { outline: 1px solid var(--up-ink); }
+.port-target-controls .btn-ghost { padding: 5px 8px; min-height: 30px; font-size: 12px; }
+.port-target-controls button[data-pending="true"] { border-color: var(--port-accent); }
+.port-target-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 14px 0; }
+.port-target-metrics span { display: block; color: var(--ink-3); font-size: 11px; }
+.port-target-metrics strong { display: block; margin-top: 5px; font-size: clamp(14px, 1.4vw, 20px); color: var(--ink-1); }
+.port-target-weights { border-top: 1px solid var(--border); padding-top: 8px; }
+.port-target-weight { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 6px;
+  padding: 5px 0; font-size: 12px; color: var(--ink-2); }
+.port-target-weight b { margin-left: auto; font-weight: 500; color: var(--ink-1); }
+.port-target-error { border-top: 1px solid var(--border); padding-top: 12px; font-size: 12px; color: var(--ink-2); line-height: 1.6; }
+.port-target-status { margin-top: 8px; font-size: 12px; color: var(--ink-2); }
+.port-target-status:empty { display: none; }
+@media (max-width: 900px) {
+  .port-target-grid { gap: 6px; }
+  .port-target-card { padding: 8px; }
+  .port-target-metrics { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .port-target-grid { grid-template-columns: repeat(5, minmax(155px, 1fr)); overflow-x: auto; }
+}
 #alloc-port-panel > .card-head { margin-top: 12px; }
 #alloc-port-panel input { scroll-margin-top: 75vh; scroll-margin-bottom: 30px; }
 @media (max-width: 700px) {
