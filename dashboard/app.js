@@ -7400,6 +7400,175 @@ function portSummaryResults(P, E) {
   });
 }
 
+function portSummaryCovarianceValid(C, n) {
+  if (!Array.isArray(C) || C.length !== n || C.some((row, i) => !Array.isArray(row) || row.length !== n
+      || row.some((v, j) => !Number.isFinite(v) || Math.abs(v - C[j]?.[i]) > 1e-8))) return false;
+  const scale = Math.max(1, ...C.map((row, i) => Math.abs(row[i])));
+  const L = Array.from({ length: n }, () => Array(n).fill(0));
+  // Same PSD tolerance as the optimizer; the ridge is never added to reported risk.
+  for (let i = 0; i < n; i++) for (let j = 0; j <= i; j++) {
+    let v = C[i][j] / scale + (i === j ? 1e-12 : 0);
+    for (let k = 0; k < j; k++) v -= L[i][k] * L[j][k];
+    if (!Number.isFinite(v) || (i === j && !(v > 0))) return false;
+    L[i][j] = i === j ? Math.sqrt(v) : v / L[j][j];
+  }
+  return true;
+}
+
+function portSummaryBundle(P, st, E) {
+  const context = E ? { start: E.W.start, end: E.W.end,
+    saa: st.saaTab || "current", taa: st.taaTab || "current", hedge: !!E.risk.hedge?.active } : null;
+  const rows = ["current", "taa1", "taa2"].map((key, i) => {
+    const card = { key, label: ["현재", "TAA 1", "TAA 2"][i], basis: "비중1" };
+    if (!E) return { ...card, error: P?.reason || "포트폴리오 데이터가 없습니다." };
+    // These are saved TAA slots, never the active tab's mix or uncommitted drafts.
+    const values = st.scenarios?.taa?.[key] || portScenarioValues(st, "taa");
+    const M = portModelInputs(P, { ...st, ...values });
+    const w = P.assets.map((a) => values.mix?.[a] / 100), weights = portSummaryWeights(w);
+    const error = !weights ? "비중1은 0~100%, 합계 100%로 입력하십시오."
+      : !M.risk.valid ? M.risk.error
+      : !portSummaryCovarianceValid(M.C, P.assets.length) ? "공분산행렬을 확인하십시오."
+      : M.mu.some((v) => !Number.isFinite(v)) ? "기대수익률 입력을 확인하십시오." : "";
+    if (error) return { ...card, error };
+    const mu = w.reduce((sum, v, j) => sum + v * M.mu[j], 0);
+    const variance = w.reduce((sum, v, j) => sum + v * M.C[j].reduce((s, c, k) => s + c * w[k], 0), 0);
+    const sig = Math.sqrt(Math.max(0, variance));
+    const rf = M.mu[P.assets.indexOf(P.assets.includes("국내장부") ? "국내장부" : "원화유동성")] ?? 0;
+    const metrics = { mu, sig, sharpe: sig > 1e-9 ? (mu - rf) / sig : null };
+    const ranges = portSummaryReturnRanges(mu, sig);
+    if (!ranges) return { ...card, error: "포트폴리오 수익·위험을 계산할 수 없습니다." };
+    return { ...card, point: { w }, weights, metrics, ranges, error: "",
+      context: { start: M.W.start, end: M.W.end, taa: key, hedge: !!M.risk.hedge?.active } };
+  });
+  return { assets: P?.assets?.slice() || [], context,
+    rows: rows.concat(portSummaryResults(P, E).map((row) => ({ ...row, context }))) };
+}
+
+const SUMMARY_GROUPS_KEY = "iaw-summary-groups-v1";
+function summaryGroupsRead() {
+  const empty = () => ({ version: 1, selectedOwner: "live", owners: ["A", "B", "C"].map((name) =>
+    ({ id: `owner-${name}`, name, selectedBundle: null, bundles: [] })) });
+  try {
+    const raw = localStorage.getItem(SUMMARY_GROUPS_KEY);
+    if (!raw) return { value: empty(), error: "" };
+    const value = JSON.parse(raw), ids = new Set();
+    if (value?.version !== 1 || !Array.isArray(value.owners) || !value.owners.length) throw new Error();
+    for (const owner of value.owners) {
+      if (!owner || typeof owner.id !== "string" || owner.id === "live" || ids.has(owner.id)
+          || typeof owner.name !== "string" || !owner.name.trim() || !Array.isArray(owner.bundles)) throw new Error();
+      ids.add(owner.id);
+      const bundleIds = new Set();
+      for (const bundle of owner.bundles) {
+        if (!bundle || typeof bundle.id !== "string" || bundleIds.has(bundle.id)
+            || typeof bundle.name !== "string" || typeof bundle.savedAt !== "string"
+            || !Array.isArray(bundle.assets) || !bundle.assets.every((a) => typeof a === "string")
+            || !Array.isArray(bundle.rows) || bundle.rows.length !== 6) throw new Error();
+        bundleIds.add(bundle.id);
+        const keys = ["current", "taa1", "taa2", "min", "target", "sharpe"];
+        bundle.rows.forEach((row, index) => {
+          if (!row || row.key !== keys[index] || typeof row.label !== "string" || typeof row.error !== "string") throw new Error();
+          if (!row.error && (!Array.isArray(row.point?.w) || row.point.w.length !== bundle.assets.length
+              || !portSummaryWeights(row.point.w) || !portSummaryReturnRanges(row.metrics?.mu, row.metrics?.sig)
+              || !Array.isArray(row.weights) || row.weights.length !== bundle.assets.length
+              || row.weights.some((w) => !Number.isInteger(w) || w < 0) || row.weights.reduce((s, w) => s + w, 0) !== 100
+              || !Array.isArray(row.ranges) || row.ranges.length !== 4
+              || row.ranges.some((r, j) => r?.probability !== [68, 90, 95, 99][j]
+                || !Number.isFinite(r.lower) || !Number.isFinite(r.upper)))) throw new Error();
+        });
+      }
+      if (!bundleIds.has(owner.selectedBundle)) owner.selectedBundle = owner.bundles[0]?.id || null;
+    }
+    if (value.selectedOwner !== "live" && !ids.has(value.selectedOwner)) value.selectedOwner = "live";
+    return { value, error: "" };
+  } catch {
+    // Keep unreadable storage untouched; never claim that a failed save succeeded.
+    return { value: empty(), error: "저장된 담당자 묶음을 읽을 수 없습니다. 기존 저장값을 보존합니다." };
+  }
+}
+
+function summaryGroupControls(A, live, saved, status) {
+  const groups = saved.value, owner = groups.owners.find((o) => o.id === groups.selectedOwner);
+  const workspace = el("div", { class: "summary-workspace" });
+  const commit = (change, message, focusId) => {
+    if (saved.error) { status.textContent = saved.error; return; }
+    const next = portCopyDraft(groups);
+    change(next);
+    try { localStorage.setItem(SUMMARY_GROUPS_KEY, JSON.stringify(next)); }
+    catch { status.textContent = "저장하지 못했습니다. 기존 담당자 묶음을 유지합니다."; return; }
+    renderSummaryCards(A);
+    $("#summary-status").textContent = message;
+    if (focusId) $(`#${focusId}`)?.focus();
+  };
+  const tabs = el("div", { class: "summary-owner-tabs", role: "tablist", "aria-label": "요약카드 담당자" });
+  const entries = [{ id: "live", name: "현재 입력" }, ...groups.owners];
+  entries.forEach((entry, index) => {
+    const selected = groups.selectedOwner === entry.id;
+    const button = el("button", { type: "button", id: `summary-owner-${entry.id}`, class: "summary-owner-tab",
+      role: "tab", "aria-selected": String(selected), "aria-controls": "summary-group-panel", tabindex: selected ? "0" : "-1" }, entry.name);
+    const choose = () => commit((next) => { next.selectedOwner = entry.id; }, "", button.id);
+    button.addEventListener("click", choose);
+    button.addEventListener("keydown", (event) => {
+      const offset = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+      const target = event.key === "Home" ? 0 : event.key === "End" ? entries.length - 1
+        : offset ? (index + offset + entries.length) % entries.length : null;
+      if (target == null) return;
+      event.preventDefault();
+      const entry = entries[target];
+      commit((next) => { next.selectedOwner = entry.id; }, "", `summary-owner-${entry.id}`);
+    });
+    tabs.append(button);
+  });
+  const add = el("button", { type: "button", id: "summary-owner-add", class: "btn-ghost" }, "+ 담당자");
+  add.addEventListener("click", () => commit((next) => {
+    let n = next.owners.length;
+    const nameAt = (n) => n < 26 ? String.fromCharCode(65 + n) : `담당자 ${n + 1}`;
+    while (next.owners.some((o) => o.name === nameAt(n))) n++;
+    const id = `owner-${Date.now()}-${next.owners.length}`;
+    next.owners.push({ id, name: nameAt(n), selectedBundle: null, bundles: [] }); next.selectedOwner = id;
+  }, "담당자를 추가했습니다.", "summary-owner-name"));
+  workspace.append(tabs, add);
+  if (owner) {
+    const actions = el("div", { class: "summary-group-actions" });
+    const name = el("input", { id: "summary-owner-name", type: "text", maxlength: "30", "aria-label": "담당자 이름" });
+    name.value = owner.name;
+    const rename = el("button", { id: "summary-owner-rename", type: "button", class: "btn-ghost" }, "이름 저장");
+    const renameOwner = () => {
+      const value = name.value.trim();
+      if (!value || value.length > 30 || groups.owners.some((o) => o.id !== owner.id && o.name === value)) {
+        status.textContent = "담당자 이름은 중복 없이 1~30자로 입력하십시오."; return;
+      }
+      commit((next) => { next.owners.find((o) => o.id === owner.id).name = value; }, "담당자 이름을 저장했습니다.", name.id);
+    };
+    rename.addEventListener("click", renameOwner);
+    name.addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); renameOwner(); } });
+    const select = el("select", { id: "summary-bundle-select", "aria-label": "저장된 요약카드 묶음" });
+    if (!owner.bundles.length) select.append(el("option", { value: "" }, "저장된 묶음 없음"));
+    owner.bundles.forEach((b) => select.append(el("option", { value: b.id }, b.name)));
+    select.value = owner.selectedBundle || "";
+    select.addEventListener("change", () => commit((next) => {
+      next.owners.find((o) => o.id === owner.id).selectedBundle = select.value;
+    }, "", select.id));
+    const save = (replace) => {
+      if (live.rows.every((row) => row.error)) { status.textContent = "저장할 수 있는 현재 결과가 없습니다."; return; }
+      commit((next) => {
+        const target = next.owners.find((o) => o.id === owner.id);
+        const old = replace && target.bundles.find((b) => b.id === target.selectedBundle);
+        const bundle = { ...portCopyDraft(live), id: old?.id || `bundle-${Date.now()}-${target.bundles.length}`,
+          name: old?.name || `묶음 ${target.bundles.length + 1}`, savedAt: new Date().toISOString() };
+        if (old) target.bundles[target.bundles.indexOf(old)] = bundle; else target.bundles.push(bundle);
+        target.selectedBundle = bundle.id;
+      }, `${owner.name}에 현재 결과를 저장했습니다.`, replace ? "summary-save-replace" : "summary-save-new");
+    };
+    const create = el("button", { id: "summary-save-new", type: "button", class: "btn-ghost" }, "현재 결과 새 묶음 저장");
+    const replace = el("button", { id: "summary-save-replace", type: "button", class: "btn-ghost" }, "이 묶음 갱신");
+    create.disabled = !!saved.error || live.rows.every((r) => r.error);
+    replace.disabled = create.disabled || !owner.bundles.length;
+    create.addEventListener("click", () => save(false)); replace.addEventListener("click", () => save(true));
+    actions.append(name, rename, select, create, replace); workspace.append(actions);
+  }
+  return workspace;
+}
+
 function renderSummaryCards(A = DATA.alloc, engine = null) {
   const box = $("#summary-cards");
   if (!box) return;
@@ -7409,11 +7578,21 @@ function renderSummaryCards(A = DATA.alloc, engine = null) {
   const active = P?.active && P.assets?.length && P.windows?.length;
   const st = active ? portPanelDraft?.source === P ? portPanelDraft.applied : portState(P) : null;
   const E = active ? engine || portEngine(P, st) : null;
-  const rows = portSummaryResults(P, E);
+  const live = portSummaryBundle(P, st, E), saved = summaryGroupsRead();
+  const owner = saved.value.owners.find((o) => o.id === saved.value.selectedOwner);
+  const bundle = owner?.bundles.find((b) => b.id === owner.selectedBundle);
+  const shown = bundle || (!owner ? live : { assets: [], rows: live.rows.map((row) =>
+    ({ key: row.key, label: row.label, error: "저장된 요약카드가 없습니다." })) });
+  const rows = shown.rows;
+  const status = el("div", { id: "summary-status", class: "summary-status", role: "status" }, saved.error);
+  const workspace = summaryGroupControls(A, live, saved, status);
   const head = el("div", { class: "summary-heading" },
-    el("span", { class: "card-sub" }, "마지막 적용 기준 · 연율"),
+    el("span", { class: "card-sub summary-context" }, bundle
+      ? `${owner.name} · ${bundle.name} · 저장 ${new Date(bundle.savedAt).toLocaleString("ko-KR")} · 연율`
+      : owner ? `${owner.name} · 현재 결과를 새 묶음으로 저장하십시오.` : "마지막 적용 기준 · 연율 · 현재/TAA는 비중1"),
     el("a", { href: "#alloc", class: "btn-ghost" }, "자산배분"));
-  const grid = el("div", { class: "summary-grid" });
+  const grid = el("div", { id: "summary-group-panel", class: "summary-grid", role: "tabpanel",
+    "aria-labelledby": `summary-owner-${saved.value.selectedOwner}` });
   rows.forEach((row, index) => {
     const card = el("details", { class: "summary-card", "data-plan": row.key });
     if (opened.has(row.key)) card.setAttribute("open", "");
@@ -7441,7 +7620,7 @@ function renderSummaryCards(A = DATA.alloc, engine = null) {
       if (row.metrics.sig === 0) ranges.append(el("span", { class: "summary-range-note" }, "변동성 0 · 단일 수익률(모형상 100%)"));
       summary.append(ranges);
       const weights = el("span", { class: "summary-weights", "aria-label": "자산군별 비중" });
-      P.assets.forEach((asset, i) => {
+      shown.assets.forEach((asset, i) => {
         weights.append(el("span", { class: "summary-weight" },
           el("span", {}, asset), el("b", {}, `${row.weights[i]}%`)));
       });
@@ -7449,8 +7628,12 @@ function renderSummaryCards(A = DATA.alloc, engine = null) {
       summary.append(weights);
     }
     const detail = el("div", { class: "summary-detail" });
-    if (E) detail.append(el("p", {}, `표본 ${E.W.start} ~ ${E.W.end}`),
-      el("p", {}, E.risk.hedge?.active ? "선택한 환헤지 반영" : "추가 환헤지 미적용"));
+    const context = row.context;
+    const scenarioName = (key, kind) => key === "current" ? "현재" : `${kind} ${key?.slice(-1)}`;
+    if (context) detail.append(el("p", {}, `표본 ${context.start} ~ ${context.end}`),
+      el("p", {}, context.hedge ? "선택한 환헤지 반영" : "추가 환헤지 미적용"),
+      el("p", {}, row.basis ? `${scenarioName(context.taa, "TAA")} · 비중1 · 입력 포트폴리오`
+        : `제약 ${scenarioName(context.saa, "SAA")} / 입력 ${scenarioName(context.taa, "TAA")}`));
     if (row.metrics) detail.append(el("p", {}, `Sharpe Ratio ${fmtNum(row.metrics.sharpe, 2)}`),
       el("p", {}, "비중은 정수 표시 · 수익·위험은 원비중 기준"),
       el("p", {}, "범위는 연간 기대수익률 ± 정규분포 분위수 × 연간 변동성입니다. 평균 추정치의 신뢰구간이 아니며 실제 달성확률을 보장하지 않습니다."),
@@ -7460,7 +7643,7 @@ function renderSummaryCards(A = DATA.alloc, engine = null) {
     card.append(summary, detail);
     grid.append(card);
   });
-  box.append(head, grid);
+  box.append(workspace, status, head, grid);
 }
 
 function portCorrelationControl(P, W, st, onApply, draft) {
