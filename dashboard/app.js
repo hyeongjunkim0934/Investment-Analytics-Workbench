@@ -7418,6 +7418,39 @@ function portSummaryCovarianceValid(C, n) {
   return true;
 }
 
+// Exact-return minimum variance, including feasible targets below the GMV.
+// Cache the model across center edits; each card retains unrounded weights.
+const PORT_TARGET_RETURN_CACHE = new WeakMap();
+function portTargetReturnResults(P, E, center) {
+  const targets = [-1, -0.5, 0, 0.5, 1].map((offset) => ({ offset, target: center + offset }));
+  const error = !E ? "포트폴리오 데이터가 없습니다."
+    : !E.risk.valid ? E.risk.error : !E.constraints.ok ? E.constraints.error
+    : !Number.isFinite(center) || E.mu.some((v) => !Number.isFinite(v)) ? "기대수익률 입력을 확인하십시오."
+    : !portSummaryCovarianceValid(E.risk.C, P.assets.length) ? "공분산 입력을 확인하십시오." : "";
+  if (error) return targets.map((row) => ({ ...row, error }));
+  const key = JSON.stringify([E.mu, E.risk.C, E.W.n_months, E.constraints.lower, E.constraints.groups]);
+  let cached = PORT_TARGET_RETURN_CACHE.get(P);
+  if (cached?.key !== key) {
+    const model = portConstrainedModel(E.risk.C, E.mu, E.W.n_months, E.constraints);
+    const means = model?.vertices.map((p) => p.mu) || [];
+    cached = { key, model, min: Math.min(...means), max: Math.max(...means), center: null };
+    PORT_TARGET_RETURN_CACHE.set(P, cached);
+  }
+  if (cached.center === center) return cached.rows;
+  cached.rows = targets.map((row) => {
+    const point = cached.model?.atReturn(row.target);
+    const metrics = point && E.metrics(point.w);
+    if (point && portSummaryWeights(point.w) && E.constraints.contains(point.w)
+        && Number.isFinite(metrics.mu) && Number.isFinite(metrics.sig)
+        && Math.abs(metrics.mu - row.target) <= 1e-7 * Math.max(1, Math.abs(row.target)))
+      return { ...row, point, metrics, error: "" };
+    const outside = cached.model && (row.target < cached.min - 1e-8 || row.target > cached.max + 1e-8);
+    return { ...row, error: outside ? "적용한 입력·제약에서 달성 불가" : "계산 불가 · 입력·공분산 확인" };
+  });
+  cached.center = center;
+  return cached.rows;
+}
+
 function portSummaryBundle(P, st, E) {
   const context = E ? { start: E.W.start, end: E.W.end,
     saa: st.saaTab || "current", taa: st.taaTab || "current", hedge: !!E.risk.hedge?.active } : null;
@@ -7759,7 +7792,8 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     applied: previousDraft?.applied || portCopyDraft(st),
     pending: previousDraft?.pending || false, inputDraft: previousDraft?.inputDraft || {},
     scenarioDrafts: previousDraft?.scenarioDrafts || { saa: {}, taa: {} },
-    corrDraft: previousDraft?.corrDraft || null, corrBad: previousDraft?.corrBad || null };
+    corrDraft: previousDraft?.corrDraft || null, corrBad: previousDraft?.corrBad || null,
+    targetReturn: previousDraft?.targetReturn || { center: 4, draft: "4.00", error: "" } };
   const markPending = () => {
     portPanelDraft.pending = true;
     const button = $("#port-update-btn");
@@ -8076,10 +8110,12 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     role: "tabpanel", "aria-labelledby": "port-result-tab-frontier" });
   const reviewCard = el("div", { id: "port-result-benchmark", class: "card port-sub-card",
     role: "tabpanel", "aria-labelledby": "port-result-tab-benchmark" });
+  const targetCard = el("div", { id: "port-result-target", class: "card port-sub-card",
+    role: "tabpanel", "aria-labelledby": "port-result-tab-target" });
   const resultTabs = el("div", { class: "port-result-tabs", role: "tablist", "aria-label": "포트폴리오 결과" });
   const resultTools = el("div", { class: "port-result-tools" });
   const resultHeader = el("div", { class: "port-results-header" }, resultTabs, resultTools);
-  const resultBody = el("div", { class: "port-results-body" }, frontCard, reviewCard);
+  const resultBody = el("div", { class: "port-results-body" }, frontCard, reviewCard, targetCard);
   const results = el("section", { id: "port-frontier-panel", class: "port-results-dock", "aria-label": "포트폴리오 결과" }, resultHeader, resultBody);
   const tabs = {};
   const selectResult = (key, focus = false) => {
@@ -8091,17 +8127,20 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     frontCard.hidden = key !== "frontier";
     resultTools.hidden = key !== "frontier";
     reviewCard.hidden = key !== "benchmark";
+    targetCard.hidden = key !== "target";
     resultBody.scrollTop = 0;
     if (focus) tabs[key].focus();
   };
-  [["frontier", "효율적 경계선"], ["benchmark", "벤치마크 비교"]].forEach(([key, label]) => {
+  const resultOptions = [["frontier", "효율적 경계선"], ["benchmark", "벤치마크 비교"], ["target", "Target Return"]];
+  resultOptions.forEach(([key, label], i) => {
     const button = el("button", { id: `port-result-tab-${key}`, type: "button", role: "tab",
       "aria-controls": `port-result-${key}`, onclick: () => selectResult(key) }, label);
     button.addEventListener("keydown", (ev) => {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(ev.key)) return;
       ev.preventDefault();
-      selectResult(ev.key === "Home" ? "frontier" : ev.key === "End" ? "benchmark"
-        : key === "frontier" ? "benchmark" : "frontier", true);
+      const index = ev.key === "Home" ? 0 : ev.key === "End" ? resultOptions.length - 1
+        : (i + (ev.key === "ArrowRight" ? 1 : -1) + resultOptions.length) % resultOptions.length;
+      selectResult(resultOptions[index][0], true);
     });
     tabs[key] = button; resultTabs.append(button);
   });
@@ -8187,11 +8226,77 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     $("#port-update-btn")?.focus();
   }
 
+  let targetEngine = null;
+  function renderTargetReturns() {
+    const state = portPanelDraft.targetReturn, applied = portPanelDraft.applied;
+    const rows = portTargetReturnResults(P, targetEngine, state.center);
+    targetCard.textContent = "";
+    const grid = el("div", { class: "port-target-grid" });
+    const status = el("div", { id: "port-target-status", class: "port-target-status", role: "status" }, state.error);
+    const scenario = (key, label) => key === "current" ? `${label} 현재` : `${label} ${key.slice(-1)}`;
+    targetCard.append(el("div", { class: "port-target-context" },
+      `${scenario(applied.saaTab, "SAA")} · ${scenario(applied.taaTab, "TAA")} · 연 %${targetEngine?.risk.hedge?.active ? " · 환헤지 반영" : ""}`), grid, status);
+    rows.forEach((row, index) => {
+      const center = row.offset === 0;
+      const card = el("section", { class: `port-target-card${center ? " port-target-center" : ""}`,
+        "data-target": String(row.target), "aria-labelledby": `port-target-heading-${index}` });
+      const header = el("div", { class: "port-target-heading" },
+        el("span", { class: "port-target-offset" }, center ? "중심" : `${row.offset > 0 ? "+" : "−"}${fmtNum(Math.abs(row.offset), 1)}%p`),
+        el("h3", { id: `port-target-heading-${index}` }, `${fmtNum(row.target, 2)}%`));
+      const controls = el("div", { class: "port-target-controls" });
+      if (center) {
+        const input = el("input", { id: "port-target-center", type: "number", step: "0.01", value: state.draft,
+          "aria-label": "중심 Target Return %", "aria-describedby": "port-target-status", "aria-invalid": String(!!state.error) });
+        const apply = () => {
+          const raw = input.value.trim(), value = Number(raw);
+          const targets = [-1, -0.5, 0, 0.5, 1].map((offset) => value + offset);
+          if (!raw || input.validity?.badInput || !Number.isFinite(value)
+              || Math.abs(value * 100 - Math.round(value * 100)) > 1e-7
+              || targets.some((v, i) => !Number.isFinite(v) || (i > 0 && Math.abs(v - targets[i - 1] - 0.5) > 1e-8))) {
+            state.error = "중심 Target Return을 소수점 두 자리 이내 숫자로 입력하십시오.";
+            input.setAttribute("aria-invalid", "true"); status.textContent = state.error; input.focus(); return;
+          }
+          state.center = value; state.draft = value.toFixed(2); state.error = "";
+          renderTargetReturns();
+          $("#port-target-apply").focus();
+          $("#port-target-status").textContent = "적용 완료";
+        };
+        input.addEventListener("input", () => {
+          state.draft = input.value; state.error = "";
+          input.setAttribute("aria-invalid", "false"); status.textContent = "";
+          $("#port-target-apply").setAttribute("data-pending", "true");
+        });
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); apply(); }
+        });
+        controls.append(el("label", { for: input.id }, input, el("span", {}, "%")),
+          el("button", { id: "port-target-apply", type: "button", class: "btn-ghost",
+            "data-pending": String(Number(state.draft) !== state.center || !state.draft.trim()), onclick: apply }, "적용"));
+      }
+      header.append(controls); card.append(header);
+      const metrics = el("div", { class: "port-target-metrics" });
+      [["기대수익률", row.metrics?.mu], ["변동성", row.metrics?.sig]].forEach(([label, value]) => {
+        metrics.append(el("div", {}, el("span", {}, label), el("strong", {}, value == null ? "—" : `${fmtNum(value, 2)}%`)));
+      });
+      card.append(metrics);
+      if (row.error) card.append(el("div", { class: "port-target-error" }, row.error));
+      else {
+        const weights = el("div", { class: "port-target-weights", "aria-label": "자산군별 비중 %" });
+        P.assets.forEach((asset, i) => weights.append(el("div", { class: "port-target-weight" },
+          el("span", {}, asset), el("b", {}, `${fmtNum(row.point.w[i] * 100, 2)}%`))));
+        card.append(weights);
+      }
+      grid.append(card);
+    });
+  }
+
   function recalc() {
     const applied = portPanelDraft.applied;
     refreshAllocWorkspaceInfo();
     // Keep the original opportunity set visible; selected hedges are an overlay.
     const selected = portEngine(P, applied);
+    targetEngine = selected;
+    renderTargetReturns();
     renderSummaryCards(A, selected);
     const hedgeActive = selected.risk.hedge?.active;
     const E = hedgeActive ? portEngine(P, { ...applied, hedge: {} }) : selected;
