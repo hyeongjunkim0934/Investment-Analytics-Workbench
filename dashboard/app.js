@@ -6271,7 +6271,7 @@ let portResultTab = "frontier";
 let portDockObserver = null;
 function portResultChartHeight() {
   const viewport = typeof window !== "undefined" && window.innerHeight || 900;
-  return Math.max(220, Math.min(420, Math.round(viewport * 0.44)));
+  return Math.max(220, Math.min(360, Math.round(viewport * 0.38)));
 }
 const PORT_AXIS_LS_KEY = "iaw-port-axis";
 function portLoadAxisLimits() {
@@ -7072,9 +7072,12 @@ function portMaxSharpe(model, C, mu, rf) {
 }
 
 const PORT_CLOUD_CACHE = new WeakMap();
+// Shared stops keep the point colors and Sharpe legend on the same linear scale.
+const PORT_CLOUD_COLORS = [[161,112,231], [57,185,202], [65,202,151],
+  [174,215,83], [246,204,75], [244,133,73]];
 function portCloudColor(t) {
-  const colors = [[129,118,207], [72,174,201], [110,211,183], [229,199,118]];
-  const x = Math.max(0, Math.min(1, t)) * (colors.length - 1), i = Math.min(2, Math.floor(x));
+  const colors = PORT_CLOUD_COLORS;
+  const x = Math.max(0, Math.min(1, t)) * (colors.length - 1), i = Math.min(colors.length - 2, Math.floor(x));
   return "#" + colors[i].map((v, j) => Math.round(v + (colors[i + 1][j] - v) * (x - i))
     .toString(16).padStart(2, "0")).join("");
 }
@@ -8356,7 +8359,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
           v: plotX.map((x) => at(H.front, "mu", x)), spanGaps: false }] : []),
       ],
       area: conservative.length && E.kappa > 0 ? { x: xsF, upper: ysF, lower, color: colors.robust, opacity: [0.025, 0.06, 0.12] } : null,
-      cloud: E.cloud, cloudOpacity: 0.25,
+      cloud: E.cloud, cloudOpacity: 0.40,
       xLabel: "변동성 · 연 %", axisTitles: { y: "기대수익 · 연 %", inside: true }, unit: "%", height: portResultChartHeight,
       markers: visibleMarkers, markerLegend: true, intervals, hints,
       xRange, yRange, hoverDecimals: 2,
@@ -8389,12 +8392,12 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       el("span", { class: "port-asset-coordinates" }, `${fmtNum(m.x, 2)} / ${fmtNum(m.y, 2)}`))));
     frontCard.append(assetKey);
     if (E.cloud && Number.isFinite(E.cloud.min)) {
-      const stops = [0, 1 / 3, 2 / 3, 1].map((t) => portCloudColor(t));
+      const stops = PORT_CLOUD_COLORS.map((_, i) => portCloudColor(i / (PORT_CLOUD_COLORS.length - 1)));
       frontCard.append(el("div", { class: "port-sharpe-scale", role: "img",
         "aria-label": `점 색상 샤프비율 ${fmtNum(E.cloud.min, 2)}부터 ${fmtNum(E.cloud.max, 2)}` },
         el("span", {}, "샤프"), el("span", {}, fmtNum(E.cloud.min, 2)),
         el("div", { class: "port-sharpe-ramp", style: `background:linear-gradient(90deg,${stops.join(",")})` }),
-        el("span", {}, fmtNum(E.cloud.max, 2)), el("span", {}, `${cloudPoints.length.toLocaleString()} 배분`)));
+        el("span", {}, fmtNum(E.cloud.max, 2))));
     }
     if (hedgeError) frontCard.append(el("div", { class: "port-warn d-up", role: "status" }, hedgeError));
     if (!E.robustOk && Object.values(portFrontierScenarios).some(Boolean)) frontCard.append(el("div", { class: "port-warn d-up", role: "status" },
