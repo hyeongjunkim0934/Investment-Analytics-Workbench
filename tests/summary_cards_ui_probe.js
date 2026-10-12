@@ -33,7 +33,13 @@ const bundle=()=>inspect('portSummaryBundle')(portfolio,inspect('portPanelDraft.
 const assertRows=()=>{
   const E=engine(), {rows}=bundle();
   same(rows.map(row=>row.key),['current','taa1','taa2','min','target','sharpe']);
-  assert.equal(cards().length,6);
+  const shown=[rows[0],rows[bundle().context?.taa==='taa2'?2:1],...rows.slice(3)].map((row,i)=>
+    ({...row,key:['current','taa','min','target','sharpe'][i],label:['현재','TAA','Min Volatility','Target Return 4.0%','Max Sharpe Ratio'][i]}));
+  same(inspect('summaryDisplayRows')(bundle()),shown);
+  assert.equal(cards().length,5);
+  assert(!box().querySelector('.summary-context'));
+  assert(!box().querySelector('.summary-range-title'));
+  assert(!box().querySelector('.summary-range-heading'));
   assert(rows.every(row=>!row.error),'all six fixture portfolios feasible');
   same(rows[3].point.w,E.minVar.w);same(rows[5].point.w,E.maxSharpe.w);
   near(rows[4].metrics.mu,4);
@@ -41,23 +47,26 @@ const assertRows=()=>{
     assert.equal(node.tagName,'DETAILS');
     const summary=node.querySelector('summary');assert(summary);
     assert(!summary.querySelector('a, button, input'),'native disclosure summary has no nested controls');
-    assert.equal(summary.getAttribute('aria-label'),rows[i].label+' 상세');
+    assert.equal(summary.getAttribute('aria-label'),shown[i].label+' 상세');
     const weightRows=Array.from(summary.querySelectorAll('.summary-weight')).filter(n=>!n.classList.contains('summary-total'));
     same(weightRows.map(n=>n.querySelector('span').textContent),portfolio.assets);
     const weights=weightRows.map(n=>n.querySelector('b').textContent);
     assert(weights.every(v=>/^\d+%$/.test(v)),'integer weight labels');
     assert.equal(weights.reduce((s,v)=>s+parseInt(v,10),0),100);
-    same(weights.map(v=>parseInt(v,10)),Array.from(rows[i].weights));
+    same(weights.map(v=>parseInt(v,10)),Array.from(shown[i].weights));
     const metrics=Array.from(summary.querySelectorAll('strong')).map(n=>n.textContent);
-    same(metrics,[displayed(rows[i].metrics.mu)+'%',displayed(rows[i].metrics.sig)+'%']);
+    same(metrics,[displayed(shown[i].metrics.mu)+'%',displayed(shown[i].metrics.sig)+'%']);
     const rangeBox=summary.querySelector('.summary-ranges');assert(rangeBox);
     const children=Array.from(summary.children);
     assert(children.indexOf(summary.querySelector('.summary-metrics'))<children.indexOf(rangeBox));
     assert(children.indexOf(rangeBox)<children.indexOf(summary.querySelector('.summary-weights')));
-    assert(rangeBox.textContent.includes('1년 수익률 범위 · 정규분포 가정'));
+    assert(!rangeBox.textContent.includes('1년 수익률 범위 · 정규분포 가정'));
+    assert(!rangeBox.textContent.includes('포함확률'));
+    assert(!rangeBox.textContent.includes('하단 ~ 상단'));
+    assert.equal(rangeBox.getAttribute('aria-label'),'정규분포 가정에 따른 1년 수익률 범위');
     const rangeRows=Array.from(rangeBox.querySelectorAll('.summary-range'));
     same(rangeRows.map(n=>n.querySelector('span').textContent),['68%','90%','95%','99%']);
-    same(rangeRows.map(n=>n.querySelector('b').textContent),rows[i].ranges.map(r=>
+    same(rangeRows.map(n=>n.querySelector('b').textContent),shown[i].ranges.map(r=>
       displayed(r.lower)+'% ~ '+displayed(r.upper)+'%'));
     assert(node.querySelector('.summary-detail').querySelector('a').getAttribute('href')==='#alloc');
   });
@@ -72,7 +81,7 @@ assert(P.SECTION_IDS.includes('summary'));assert.equal(P.SECTION_LABELS.summary,
 assert.equal(P.RENDERERS.summary,P.renderSummaryCards);
 P.renderPortPanel(A);
 assertRows();
-same(cards().map(n=>n.querySelector('.summary-title').textContent),['현재','TAA 1','TAA 2','Min volatility','Target Return 4.0%','Max Sharpe Ratio']);
+same(cards().map(n=>n.querySelector('.summary-title').textContent),['현재','TAA','Min Volatility','Target Return 4.0%','Max Sharpe Ratio']);
 assert.equal(card('target').querySelector('strong').textContent,'4.00%');
 card('target').setAttribute('open','');
 const before=signature(), stored=shim.localStorage.getItem(P.PORT_LS_KEY);
@@ -131,7 +140,7 @@ assert(!card('target').querySelector('.summary-ranges'));
 assert(card('min').querySelector('.summary-weights'));assert(card('sharpe').querySelector('.summary-weights'));
 assert(Array.from(card('target').querySelectorAll('strong')).every(n=>n.textContent==='—'));
 P.renderSummaryCards({port:{active:false,reason:'자료 없음'}});
-assert.equal(cards().length,6);
+assert.equal(cards().length,5);
 assert(cards().every(n=>n.textContent.includes('자료 없음')&&!n.querySelector('.summary-weights')));
 assert(cards().every(n=>!n.querySelector('.summary-ranges')));
 const invalid=JSON.parse(JSON.stringify(narrow));invalid.port.windows.forEach(w=>{w.cov[0][0]=-1;});
@@ -147,7 +156,7 @@ assert(Array.from(card('min').querySelectorAll('.summary-range')).every(n=>n.que
 console.log(JSON.stringify({pass:true,navigation:true,proposalOrder:true,allSevenAssets:true,integerTotal100:true,
   exactTargetReturn:true,portfolioResultsMatch:true,draftIsolation:true,rejectedUpdateRetained:true,
   disclosureStateRetained:true,cmaAppliedOnly:true,hedgeApplied:true,infeasibleTarget:true,invalidData:true,
-  probabilityRanges:true,rangePlacement:true,zeroVolatility:true}));
+  probabilityRanges:true,rangePlacement:true,zeroVolatility:true,fiveCardProjection:true,visibleAnnotationsRemoved:true}));
 `;
 const filename=path.join(repo,'tests/summary_cards_ui_regression.js');
 const m=new Module(filename,module);m.filename=filename;m.paths=Module._nodeModulePaths(path.dirname(filename));

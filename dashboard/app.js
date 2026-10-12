@@ -7445,9 +7445,22 @@ function portSummaryBundle(P, st, E) {
 }
 
 const SUMMARY_GROUPS_KEY = "iaw-summary-groups-v1";
+const SUMMARY_CARD_TYPES = [
+  { key: "current", label: "현재" }, { key: "taa", label: "TAA" },
+  { key: "min", label: "Min Volatility" }, { key: "target", label: "Target Return 4.0%" },
+  { key: "sharpe", label: "Max Sharpe Ratio" },
+];
+function summaryDisplayRows(bundle) {
+  // Keep both TAA snapshots in storage; only the presentation is reduced to five.
+  const taa = bundle.context?.taa === "taa2" ? "taa2" : "taa1";
+  return SUMMARY_CARD_TYPES.map((type) => ({
+    ...bundle.rows.find((row) => row.key === (type.key === "taa" ? taa : type.key)), ...type,
+  }));
+}
 function summaryGroupsRead() {
-  const empty = () => ({ version: 1, selectedOwner: "live", owners: ["A", "B", "C"].map((name) =>
-    ({ id: `owner-${name}`, name, selectedBundle: null, bundles: [] })) });
+  const empty = () => ({ version: 1, uiVersion: 2, selectedOwner: "owner-A", owners: ["A", "B"].map((name) =>
+    ({ id: `owner-${name}`, name: `Group ${name}`, visibleCards: SUMMARY_CARD_TYPES.map((c) => c.key),
+      selectedBundle: null, bundles: [] })) });
   try {
     const raw = localStorage.getItem(SUMMARY_GROUPS_KEY);
     if (!raw) return { value: empty(), error: "" };
@@ -7457,6 +7470,9 @@ function summaryGroupsRead() {
       if (!owner || typeof owner.id !== "string" || owner.id === "live" || ids.has(owner.id)
           || typeof owner.name !== "string" || !owner.name.trim() || !Array.isArray(owner.bundles)) throw new Error();
       ids.add(owner.id);
+      if (owner.visibleCards == null) owner.visibleCards = SUMMARY_CARD_TYPES.map((c) => c.key);
+      else if (!Array.isArray(owner.visibleCards) || new Set(owner.visibleCards).size !== owner.visibleCards.length
+          || owner.visibleCards.some((key) => !SUMMARY_CARD_TYPES.some((c) => c.key === key))) throw new Error();
       const bundleIds = new Set();
       for (const bundle of owner.bundles) {
         if (!bundle || typeof bundle.id !== "string" || bundleIds.has(bundle.id)
@@ -7476,17 +7492,27 @@ function summaryGroupsRead() {
                 || !Number.isFinite(r.lower) || !Number.isFinite(r.upper)))) throw new Error();
         });
       }
-      if (!bundleIds.has(owner.selectedBundle)) owner.selectedBundle = owner.bundles[0]?.id || null;
+      if (owner.selectedBundle != null && !bundleIds.has(owner.selectedBundle)) owner.selectedBundle = owner.bundles[0]?.id || null;
     }
-    if (value.selectedOwner !== "live" && !ids.has(value.selectedOwner)) value.selectedOwner = "live";
+    if (value.uiVersion !== 2) {
+      // Only an unused legacy default C is retired. Never discard saved/custom groups.
+      value.owners = value.owners.filter((o) => !(o.id === "owner-C" && o.name === "C" && !o.bundles.length));
+      if (!value.owners.length) value.owners = empty().owners;
+      value.owners.forEach((o) => {
+        const name = `Group ${o.name}`;
+        if (/^[A-C]$/.test(o.name) && !value.owners.some((other) => other.id !== o.id && other.name === name)) o.name = name;
+      });
+      value.uiVersion = 2;
+    }
+    if (!value.owners.some((o) => o.id === value.selectedOwner)) value.selectedOwner = value.owners[0].id;
     return { value, error: "" };
   } catch {
     // Keep unreadable storage untouched; never claim that a failed save succeeded.
-    return { value: empty(), error: "저장된 담당자 묶음을 읽을 수 없습니다. 기존 저장값을 보존합니다." };
+    return { value: empty(), error: "저장된 그룹 묶음을 읽을 수 없습니다. 기존 저장값을 보존합니다." };
   }
 }
 
-function summaryGroupControls(A, live, saved, status) {
+function summaryGroupControls(A, live, saved, status, selectedCard) {
   const groups = saved.value, owner = groups.owners.find((o) => o.id === groups.selectedOwner);
   const workspace = el("div", { class: "summary-workspace" });
   const commit = (change, message, focusId) => {
@@ -7494,13 +7520,13 @@ function summaryGroupControls(A, live, saved, status) {
     const next = portCopyDraft(groups);
     change(next);
     try { localStorage.setItem(SUMMARY_GROUPS_KEY, JSON.stringify(next)); }
-    catch { status.textContent = "저장하지 못했습니다. 기존 담당자 묶음을 유지합니다."; return; }
+    catch { status.textContent = "저장하지 못했습니다. 기존 그룹과 카드를 유지합니다."; return; }
     renderSummaryCards(A);
     $("#summary-status").textContent = message;
     if (focusId) $(`#${focusId}`)?.focus();
   };
-  const tabs = el("div", { class: "summary-owner-tabs", role: "tablist", "aria-label": "요약카드 담당자" });
-  const entries = [{ id: "live", name: "현재 입력" }, ...groups.owners];
+  const tabs = el("div", { class: "summary-owner-tabs", role: "tablist", "aria-label": "요약카드 그룹" });
+  const entries = groups.owners;
   entries.forEach((entry, index) => {
     const selected = groups.selectedOwner === entry.id;
     const button = el("button", { type: "button", id: `summary-owner-${entry.id}`, class: "summary-owner-tab",
@@ -7518,35 +7544,62 @@ function summaryGroupControls(A, live, saved, status) {
     });
     tabs.append(button);
   });
-  const add = el("button", { type: "button", id: "summary-owner-add", class: "btn-ghost" }, "+ 담당자");
+  const add = el("button", { type: "button", id: "summary-owner-add", class: "btn-ghost" }, "+Group");
   add.addEventListener("click", () => commit((next) => {
     let n = next.owners.length;
-    const nameAt = (n) => n < 26 ? String.fromCharCode(65 + n) : `담당자 ${n + 1}`;
+    const nameAt = (n) => `Group ${n < 26 ? String.fromCharCode(65 + n) : n + 1}`;
     while (next.owners.some((o) => o.name === nameAt(n))) n++;
     const id = `owner-${Date.now()}-${next.owners.length}`;
-    next.owners.push({ id, name: nameAt(n), selectedBundle: null, bundles: [] }); next.selectedOwner = id;
-  }, "담당자를 추가했습니다.", "summary-owner-name"));
+    next.owners.push({ id, name: nameAt(n), visibleCards: SUMMARY_CARD_TYPES.map((c) => c.key),
+      selectedBundle: null, bundles: [] }); next.selectedOwner = id;
+  }, "그룹을 추가했습니다.", "summary-owner-add"));
   workspace.append(tabs, add);
   if (owner) {
+    const cardActions = el("div", { class: "summary-card-actions" });
+    const cardSelect = el("select", { id: "summary-card-select", "aria-label": "관리할 요약카드" });
+    SUMMARY_CARD_TYPES.forEach((type) => cardSelect.append(el("option", { value: type.key }, type.label)));
+    cardSelect.value = SUMMARY_CARD_TYPES.some((c) => c.key === selectedCard) ? selectedCard : "current";
+    const addCard = el("button", { id: "summary-card-add", type: "button", class: "btn-ghost" }, "요약카드 추가");
+    const deleteCard = el("button", { id: "summary-card-delete", type: "button", class: "btn-ghost" }, "요약카드 삭제");
+    const syncActions = () => {
+      const visible = owner.visibleCards.includes(cardSelect.value);
+      addCard.disabled = !!saved.error || visible;
+      deleteCard.disabled = !!saved.error || !visible;
+    };
+    cardSelect.addEventListener("change", syncActions);
+    const changeCard = (visible) => {
+      const key = cardSelect.value, type = SUMMARY_CARD_TYPES.find((c) => c.key === key);
+      if (!type || owner.visibleCards.includes(key) === visible) return;
+      commit((next) => {
+        const target = next.owners.find((o) => o.id === owner.id);
+        target.visibleCards = SUMMARY_CARD_TYPES.filter((c) => c.key === key ? visible : target.visibleCards.includes(c.key))
+          .map((c) => c.key);
+      }, `${type.label} 카드를 ${visible ? "추가" : "삭제"}했습니다.`, cardSelect.id);
+    };
+    addCard.addEventListener("click", () => changeCard(true));
+    deleteCard.addEventListener("click", () => changeCard(false));
+    syncActions(); cardActions.append(cardSelect, addCard, deleteCard); workspace.append(cardActions);
+    const settings = el("details", { id: "summary-group-settings", class: "summary-group-settings" },
+      el("summary", {}, "그룹 설정"));
     const actions = el("div", { class: "summary-group-actions" });
-    const name = el("input", { id: "summary-owner-name", type: "text", maxlength: "30", "aria-label": "담당자 이름" });
+    const name = el("input", { id: "summary-owner-name", type: "text", maxlength: "30", "aria-label": "그룹 이름" });
     name.value = owner.name;
     const rename = el("button", { id: "summary-owner-rename", type: "button", class: "btn-ghost" }, "이름 저장");
     const renameOwner = () => {
       const value = name.value.trim();
       if (!value || value.length > 30 || groups.owners.some((o) => o.id !== owner.id && o.name === value)) {
-        status.textContent = "담당자 이름은 중복 없이 1~30자로 입력하십시오."; return;
+        status.textContent = "그룹 이름은 중복 없이 1~30자로 입력하십시오."; return;
       }
-      commit((next) => { next.owners.find((o) => o.id === owner.id).name = value; }, "담당자 이름을 저장했습니다.", name.id);
+      commit((next) => { next.owners.find((o) => o.id === owner.id).name = value; }, "그룹 이름을 저장했습니다.", name.id);
     };
     rename.addEventListener("click", renameOwner);
     name.addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); renameOwner(); } });
     const select = el("select", { id: "summary-bundle-select", "aria-label": "저장된 요약카드 묶음" });
-    if (!owner.bundles.length) select.append(el("option", { value: "" }, "저장된 묶음 없음"));
+    select.append(el("option", { value: "" }, "최신 결과"));
     owner.bundles.forEach((b) => select.append(el("option", { value: b.id }, b.name)));
     select.value = owner.selectedBundle || "";
     select.addEventListener("change", () => commit((next) => {
-      next.owners.find((o) => o.id === owner.id).selectedBundle = select.value;
+      next.owners.find((o) => o.id === owner.id).selectedBundle = select.value || null;
     }, "", select.id));
     const save = (replace) => {
       if (live.rows.every((row) => row.error)) { status.textContent = "저장할 수 있는 현재 결과가 없습니다."; return; }
@@ -7562,9 +7615,10 @@ function summaryGroupControls(A, live, saved, status) {
     const create = el("button", { id: "summary-save-new", type: "button", class: "btn-ghost" }, "현재 결과 새 묶음 저장");
     const replace = el("button", { id: "summary-save-replace", type: "button", class: "btn-ghost" }, "이 묶음 갱신");
     create.disabled = !!saved.error || live.rows.every((r) => r.error);
-    replace.disabled = create.disabled || !owner.bundles.length;
+    replace.disabled = create.disabled || !owner.selectedBundle;
+    rename.disabled = !!saved.error;
     create.addEventListener("click", () => save(false)); replace.addEventListener("click", () => save(true));
-    actions.append(name, rename, select, create, replace); workspace.append(actions);
+    actions.append(name, rename, select, create, replace); settings.append(actions); workspace.append(settings);
   }
   return workspace;
 }
@@ -7573,6 +7627,8 @@ function renderSummaryCards(A = DATA.alloc, engine = null) {
   const box = $("#summary-cards");
   if (!box) return;
   const opened = new Set([...box.querySelectorAll("details[open]")].map((node) => node.getAttribute("data-plan")));
+  const settingsOpen = $("#summary-group-settings")?.hasAttribute("open");
+  const selectedCard = $("#summary-card-select")?.value;
   box.textContent = "";
   const P = A?.port;
   const active = P?.active && P.assets?.length && P.windows?.length;
@@ -7581,18 +7637,17 @@ function renderSummaryCards(A = DATA.alloc, engine = null) {
   const live = portSummaryBundle(P, st, E), saved = summaryGroupsRead();
   const owner = saved.value.owners.find((o) => o.id === saved.value.selectedOwner);
   const bundle = owner?.bundles.find((b) => b.id === owner.selectedBundle);
-  const shown = bundle || (!owner ? live : { assets: [], rows: live.rows.map((row) =>
-    ({ key: row.key, label: row.label, error: "저장된 요약카드가 없습니다." })) });
-  const rows = shown.rows;
+  const shown = bundle || live;
+  const rows = summaryDisplayRows(shown).filter((row) => owner.visibleCards.includes(row.key));
   const status = el("div", { id: "summary-status", class: "summary-status", role: "status" }, saved.error);
-  const workspace = summaryGroupControls(A, live, saved, status);
+  const workspace = summaryGroupControls(A, live, saved, status, selectedCard);
+  if (settingsOpen) workspace.querySelector(".summary-group-settings")?.setAttribute("open", "");
   const head = el("div", { class: "summary-heading" },
-    el("span", { class: "card-sub summary-context" }, bundle
-      ? `${owner.name} · ${bundle.name} · 저장 ${new Date(bundle.savedAt).toLocaleString("ko-KR")} · 연율`
-      : owner ? `${owner.name} · 현재 결과를 새 묶음으로 저장하십시오.` : "마지막 적용 기준 · 연율 · 현재/TAA는 비중1"),
     el("a", { href: "#alloc", class: "btn-ghost" }, "자산배분"));
   const grid = el("div", { id: "summary-group-panel", class: "summary-grid", role: "tabpanel",
     "aria-labelledby": `summary-owner-${saved.value.selectedOwner}` });
+  grid.style.setProperty("--summary-card-count", String(Math.max(1, rows.length)));
+  if (!rows.length) grid.append(el("p", { class: "summary-empty" }, "표시할 요약카드가 없습니다."));
   rows.forEach((row, index) => {
     const card = el("details", { class: "summary-card", "data-plan": row.key });
     if (opened.has(row.key)) card.setAttribute("open", "");
@@ -7610,9 +7665,7 @@ function renderSummaryCards(A = DATA.alloc, engine = null) {
     summary.append(metrics);
     if (row.error) summary.append(el("span", { class: "summary-unavailable", role: "status" }, row.error));
     else {
-      const ranges = el("span", { class: "summary-ranges", "aria-label": "정규분포 가정에 따른 1년 수익률 범위" },
-        el("span", { class: "summary-range-title" }, "1년 수익률 범위 · 정규분포 가정"),
-        el("span", { class: "summary-range-heading" }, el("span", {}, "포함확률"), el("span", {}, "하단 ~ 상단")));
+      const ranges = el("span", { class: "summary-ranges", "aria-label": "정규분포 가정에 따른 1년 수익률 범위" });
       row.ranges.forEach(({ probability, lower, upper }) => {
         ranges.append(el("span", { class: "summary-range" },
           el("span", {}, `${probability}%`), el("b", {}, `${fmtNum(lower, 2)}% ~ ${fmtNum(upper, 2)}%`)));

@@ -1,4 +1,4 @@
-/* Six-card scenario identity and durable owner snapshots through production DOM events. */
+/* Five-card projection, independently checked scenario moments, and durable group state. */
 'use strict';
 const fs = require('node:fs'), path = require('node:path'), Module = require('node:module');
 const repo = process.argv[2] || path.resolve(__dirname, '..');
@@ -22,10 +22,15 @@ proto.querySelectorAll=function(sel){return sel==='details[open]'
 shim.UPlotStub.prototype.destroy=function(){this.dead=true;};
 const A=SEVEN_ASSET_FIXTURE,p=A.port,assets=p.assets,byId=id=>DOC.getElementById(id);
 const key='iaw-summary-groups-v1',store=()=>JSON.parse(shim.localStorage.getItem(key));
+const read=()=>inspect('summaryGroupsRead')().value;
+const visibleKeys=['current','taa','min','target','sharpe'];
 const cards=()=>Array.from(byId('summary-cards').querySelectorAll('.summary-card'));
 const card=key=>cards().find(n=>n.getAttribute('data-plan')===key);
 const cardView=()=>cards().map(n=>({key:n.getAttribute('data-plan'),text:n.querySelector('summary').textContent}));
 const click=id=>{const n=byId(id);assert(n,id+' missing');assert(!n.disabled,id+' unexpectedly disabled');n.click();};
+const selectCard=value=>{const n=byId('summary-card-select');assert(n);n.value=value;n.dispatchEvent({type:'change'});};
+const selectBundle=id=>{const n=byId('summary-bundle-select');assert(n);n.value=id;n.dispatchEvent({type:'change'});};
+const keys=()=>cards().map(n=>n.getAttribute('data-plan'));
 const edit=(label,value)=>{const n=Array.from(byId('alloc-port-panel').querySelectorAll('input'))
   .find(n=>n.getAttribute('aria-label')===label);assert(n,label+' missing');n.value=String(value);n.dispatchEvent({type:'input'});};
 const applied=()=>inspect('portPanelDraft.applied');
@@ -37,7 +42,7 @@ p.hedge_cost={USD:{active:true,mean_pct:-2.4}};
 P.DATA.alloc=A;
 if(process.env.IAW_SUMMARY_RELOAD){
   P.renderPortPanel(A);
-  console.log(JSON.stringify({store:store(),view:cardView(),ownerNames:store().owners.map(o=>o.name)}));
+  console.log(JSON.stringify({store:store(),view:cardView(),state:read(),ownerNames:read().owners.map(o=>o.name)}));
   process.exit(0);
 }
 
@@ -61,7 +66,30 @@ P.renderPortPanel(A);
 assert.equal(applied().taaTab,'taa2');
 const first=bundle();
 same(first.rows.map(r=>r.key),['current','taa1','taa2','min','target','sharpe']);
-same(cards().map(n=>n.getAttribute('data-plan')),first.rows.map(r=>r.key));
+same(keys(),visibleKeys);
+same(cards().map(n=>n.querySelector('.summary-title').textContent),
+  ['현재','TAA','Min Volatility','Target Return 4.0%','Max Sharpe Ratio']);
+const display=inspect('summaryDisplayRows');
+const projected=display(first);
+same(projected.map(r=>r.key),visibleKeys);
+same(projected[1].metrics,first.rows[2].metrics);
+same(projected[1].weights,first.rows[2].weights);
+for(const taa of ['current','taa1','taa2']){
+  const projected=display({...first,context:{...first.context,taa}}),raw=first.rows[taa==='taa2'?2:1];
+  same(projected[1].metrics,raw.metrics);same(projected[1].weights,raw.weights);
+}
+assert.equal(shim.localStorage.getItem(key),null,'reading default groups does not persist');
+same(read().owners.map(o=>o.name),['Group A','Group B']);
+assert.equal(read().selectedOwner,'owner-A');
+assert(!byId('summary-owner-live'));assert(!byId('summary-owner-owner-C'));
+assert.equal(byId('summary-owner-add').textContent,'+Group');
+same(Array.from(byId('summary-card-select').querySelectorAll('option')).map(n=>n.value),visibleKeys);
+assert.equal(byId('summary-card-select').value,'current');
+assert(byId('summary-card-add').disabled);assert(!byId('summary-card-delete').disabled);
+const settings=byId('summary-owner-name').closest('details');
+assert(settings);assert.equal(settings.querySelector('summary').textContent,'그룹 설정');
+assert(!settings.hasAttribute('open'));
+assert.equal(byId('summary-bundle-select').querySelector('option').textContent,'최신 결과');
 same(first.assets,assets);
 const quantiles=[.994457883209753,1.6448536269514722,1.959963984540054,2.5758293035489004];
 first.rows.slice(0,3).forEach((row,k)=>{
@@ -80,10 +108,13 @@ first.rows.slice(0,3).forEach((row,k)=>{
   same(row.ranges.map(r=>r.probability),[68,90,95,99]);
   row.ranges.forEach((range,i)=>{near(range.lower,expectedMu-quantiles[i]*Math.sqrt(variance));
     near(range.upper,expectedMu+quantiles[i]*Math.sqrt(variance));});
-  const shown=Array.from(card(row.key).querySelectorAll('strong')).map(n=>n.textContent);
-  same(shown,[expectedMu.toFixed(2)+'%',Math.sqrt(variance).toFixed(2)+'%']);
-  assert(card(row.key).querySelector('.summary-detail').textContent.includes(
-    k===0?'추가 환헤지 미적용':'선택한 환헤지 반영'));
+  if(k!==1){
+    const node=card(k===0?'current':'taa');
+    const shown=Array.from(node.querySelectorAll('strong')).map(n=>n.textContent);
+    same(shown,[expectedMu.toFixed(2)+'%',Math.sqrt(variance).toFixed(2)+'%']);
+    assert(node.querySelector('.summary-detail').textContent.includes(
+      k===0?'추가 환헤지 미적용':'선택한 환헤지 반영'));
+  }
 });
 assert.notEqual(first.rows[0].metrics.mu,first.rows[2].metrics.mu);
 
@@ -120,8 +151,8 @@ const currentApplied=bundle(),liveInitial=cardView();
 near(currentApplied.rows[0].metrics.mu,first.rows[0].metrics.mu+.1*1.75);
 same(currentApplied.rows.slice(1,3).map(r=>r.metrics),first.rows.slice(1,3).map(r=>r.metrics));
 
-// Owners start independently; a set captures all six rows, including a local target error.
-for(const id of ['live','owner-A','owner-B','owner-C'])assert(byId('summary-owner-'+id),id+' owner tab');
+// Groups start with live results; snapshots retain all six internal scenario rows.
+for(const id of ['owner-A','owner-B'])assert(byId('summary-owner-'+id),id+' owner tab');
 click('summary-owner-owner-A');
 click('summary-save-new');
 const a1=copy(store().owners.find(o=>o.id==='owner-A').bundles[0]);
@@ -145,7 +176,6 @@ click('summary-save-new');
 const a=store().owners.find(o=>o.id==='owner-A');assert.equal(a.bundles.length,2);
 const a2=copy(a.bundles[1]);assert.notEqual(a1.id,a2.id);same(a2.rows,later.rows);
 same(a.bundles[0],a1);assert.equal(a.selectedBundle,a2.id);
-const selectBundle=id=>{const n=byId('summary-bundle-select');assert(n);n.value=id;n.dispatchEvent({type:'change'});};
 selectBundle(a1.id);same(cardView(),liveInitial);
 assert.equal(store().owners.find(o=>o.id==='owner-A').selectedBundle,a1.id);
 click('summary-save-replace');
@@ -154,11 +184,36 @@ assert.equal(replaced.bundles[0].id,a1.id);same(replaced.bundles[0].rows,later.r
 
 click('summary-owner-owner-B');click('summary-save-new');
 const b1=copy(store().owners.find(o=>o.id==='owner-B').bundles[0]);same(b1.rows,later.rows);
-assert.equal(store().owners.find(o=>o.id==='owner-C').bundles.length,0);
 const count=store().owners.length;click('summary-owner-add');assert.equal(store().owners.length,count+1);
 const added=store().owners.at(-1);assert(added.id&&added.name);assert.equal(added.bundles.length,0);
+assert.equal(added.name,'Group C');const cId=added.id;
+same(keys(),visibleKeys);assert(card('current').querySelector('.summary-weights'),'new group shows latest live results');
 assert.equal(new Set(store().owners.map(o=>o.id)).size,count+1);
 click('summary-owner-owner-A');selectBundle(a1.id);
+
+// Card visibility belongs to one group and never changes saved portfolio arithmetic.
+const snapshotRows=copy(store().owners.find(o=>o.id==='owner-A').bundles);
+selectCard('current');click('summary-card-delete');
+same(keys(),visibleKeys.slice(1));assert.equal(byId('summary-card-select').value,'current');
+assert(byId('summary-card-delete').disabled);assert(!byId('summary-card-add').disabled);
+assert.strictEqual(DOC.activeElement,byId('summary-card-select'));
+same(store().owners.find(o=>o.id==='owner-A').visibleCards,visibleKeys.slice(1));
+same(store().owners.find(o=>o.id==='owner-A').bundles,snapshotRows);
+click('summary-owner-owner-B');same(keys(),visibleKeys);
+click('summary-owner-owner-A');same(keys(),visibleKeys.slice(1));
+selectCard('current');click('summary-card-add');same(keys(),visibleKeys);
+assert.strictEqual(DOC.activeElement,byId('summary-card-select'));
+assert(byId('summary-card-add').disabled);const allVisible=shim.localStorage.getItem(key);
+byId('summary-card-add').click();assert.equal(shim.localStorage.getItem(key),allVisible);
+for(const key of visibleKeys){selectCard(key);click('summary-card-delete');}
+same(keys(),[]);same(store().owners.find(o=>o.id==='owner-A').visibleCards,[]);
+P.renderSummaryCards(A);same(keys(),[]);
+click('summary-owner-owner-B');same(keys(),visibleKeys);
+click('summary-owner-owner-A');same(keys(),[]);
+for(const key of visibleKeys.slice(0,-1)){selectCard(key);click('summary-card-add');}
+same(keys(),visibleKeys.slice(0,-1));
+assert.equal(String(byId('summary-group-panel').style.getPropertyValue('--summary-card-count')),'4');
+same(store().owners.find(o=>o.id==='owner-A').bundles,snapshotRows);
 
 // Failed persistence preserves the previous selection, snapshots and visible content.
 edit('국내시가 기대수익',8.25);click('port-update-btn');
@@ -167,6 +222,8 @@ shim.localStorage.setItem=function(k,v){if(k===key)throw new Error('probe quota 
 click('summary-save-replace');assert.equal(shim.localStorage.getItem(key),durable);same(cardView(),savedView);
 assert(byId('summary-status').textContent.includes('저장'));
 click('summary-save-new');assert.equal(shim.localStorage.getItem(key),durable);same(cardView(),savedView);
+selectCard('sharpe');click('summary-card-add');assert.equal(shim.localStorage.getItem(key),durable);same(cardView(),savedView);
+selectCard('current');click('summary-card-delete');assert.equal(shim.localStorage.getItem(key),durable);same(cardView(),savedView);
 shim.localStorage.setItem=setItem;
 same(store().owners.find(o=>o.id==='owner-B').bundles[0],b1);
 
@@ -176,15 +233,26 @@ const reload=spawnSync(process.execPath,[path.join(ROOT,'tests/summary_groups_ui
   cwd:ROOT,encoding:'utf8',timeout:30000,env:{...process.env,IAW_SUMMARY_STORAGE:JSON.stringify(storage),IAW_SUMMARY_RELOAD:'1'}});
 assert.equal(reload.status,0,reload.stderr);const afterReload=JSON.parse(reload.stdout);
 same(afterReload.store,store());same(afterReload.view,savedView);assert(afterReload.ownerNames.includes('ALM 담당자'));
+same(afterReload.state.owners.find(o=>o.id==='owner-A').visibleCards,visibleKeys.slice(0,-1));
+
+// Explicit latest-result selection remains null on re-read and across a fresh context.
+selectBundle('');assert.equal(store().owners.find(o=>o.id==='owner-A').selectedBundle,null);
+assert.equal(read().owners.find(o=>o.id==='owner-A').selectedBundle,null);
+const latestView=cardView();P.renderSummaryCards(A);same(cardView(),latestView);
+const latestStorage=[key,P.PORT_LS_KEY,inspect('CMA_LS_KEY')].map(k=>[k,shim.localStorage.getItem(k)]).filter(([,v])=>v!=null);
+const latestReload=spawnSync(process.execPath,[path.join(ROOT,'tests/summary_groups_ui_probe.js')],{
+  cwd:ROOT,encoding:'utf8',timeout:30000,env:{...process.env,IAW_SUMMARY_STORAGE:JSON.stringify(latestStorage),IAW_SUMMARY_RELOAD:'1'}});
+assert.equal(latestReload.status,0,latestReload.stderr);
+assert.equal(JSON.parse(latestReload.stdout).state.owners.find(o=>o.id==='owner-A').selectedBundle,null);
 
 // A target-only error is saveable, but an entirely unavailable live bundle is not.
-click('summary-owner-live');
+click('summary-owner-'+cId);
 const low=copy(A);low.port.cma_input.mu_pct=Object.fromEntries(assets.map(a=>[a,2]));
 low.port.windows.forEach(w=>{w.mean_pct=assets.map(()=>2);});
 C.cmaStore().assets={};shim.localStorage.removeItem(P.PORT_LS_KEY);P.DATA.alloc=low;P.renderPortPanel(low);
 assert(card('target').querySelector('.summary-unavailable'));
-click('summary-owner-owner-C');assert(!byId('summary-save-new').disabled);click('summary-save-new');
-const c1=store().owners.find(o=>o.id==='owner-C').bundles[0];
+assert(!byId('summary-save-new').disabled);click('summary-save-new');
+const c1=store().owners.find(o=>o.id===cId).bundles[0];
 assert(c1.rows.find(r=>r.key==='target').error);assert(!c1.rows.find(r=>r.key==='current').error);
 const archivedView=cardView();
 P.renderSummaryCards({port:{active:false,reason:'자료 없음'}});
@@ -200,19 +268,19 @@ changedUniverse.port.defaults.groups=Object.fromEntries(Object.entries(low.port.
 P.renderSummaryCards(changedUniverse);same(cardView(),archivedView);
 same(Array.from(card('current').querySelectorAll('.summary-weight')).filter(n=>!n.classList.contains('summary-total'))
   .map(n=>n.querySelector('span').textContent),assets);
-same(store().owners.find(o=>o.id==='owner-C').bundles[0],c1);
+same(store().owners.find(o=>o.id===cId).bundles[0],c1);
 
 // Corrupt persisted content is never replaced with an empty/default owner state.
 // Both invalid JSON and a parseable snapshot with invalid row structure are guarded.
 const recoverableStorage=shim.localStorage.getItem(key),invalidSnapshot=JSON.parse(recoverableStorage);
-invalidSnapshot.owners.find(o=>o.id==='owner-C').bundles[0].rows[0].weights.pop();
+invalidSnapshot.owners.find(o=>o.id===cId).bundles[0].rows[0].weights.pop();
 for(const raw of ['{invalid JSON',JSON.stringify(invalidSnapshot)]){
   shim.localStorage.setItem(key,raw);P.renderSummaryCards(low);
   assert(byId('summary-status').textContent.includes('읽을 수 없습니다'));
   assert.equal(shim.localStorage.getItem(key),raw);
   // Failed owner selection cannot expose save or rename actions on a fallback state.
   click('summary-owner-owner-A');assert.equal(shim.localStorage.getItem(key),raw);
-  click('summary-owner-owner-C');assert.equal(shim.localStorage.getItem(key),raw);
+  click('summary-owner-owner-B');assert.equal(shim.localStorage.getItem(key),raw);
   for(const id of ['summary-save-new','summary-save-replace','summary-owner-rename']){
     const control=byId(id);assert(!control||control.disabled,id+' must be inaccessible on corrupt storage');
   }
@@ -225,14 +293,44 @@ same(cardView(),archivedView);same(store(),JSON.parse(recoverableStorage));
 assert.equal(byId('summary-status').textContent,'');
 assert(!byId('summary-save-new').disabled);assert(!byId('summary-save-replace').disabled);
 assert(byId('summary-owner-name')&&byId('summary-owner-rename'));
-console.log(JSON.stringify({pass:true,sixCardOrder:true,namedScenarioIdentity:true,independentMatrixMoments:true,
+// Legacy migration is an in-memory projection: never overwrite a snapshot on read.
+const legacy=copy(store());delete legacy.uiVersion;legacy.selectedOwner='live';
+legacy.owners.forEach((owner,i)=>{owner.id='owner-'+String.fromCharCode(65+i);owner.name=String.fromCharCode(65+i);delete owner.visibleCards;});
+const legacyRaw=JSON.stringify(legacy);shim.localStorage.setItem(key,legacyRaw);P.renderSummaryCards(low);
+assert.equal(shim.localStorage.getItem(key),legacyRaw);assert.equal(read().selectedOwner,'owner-A');
+same(read().owners.map(o=>o.name),['Group A','Group B','Group C']);
+same(read().owners.flatMap(o=>o.bundles.map(b=>b.rows)),legacy.owners.flatMap(o=>o.bundles.map(b=>b.rows)));
+assert(read().owners.every(o=>o.visibleCards.length===5));
+assert(!byId('summary-owner-live'));assert(byId('summary-owner-owner-C'),'saved legacy C survives');
+const emptyC=copy(legacy);emptyC.owners[2].bundles=[];emptyC.owners[2].selectedBundle=null;
+const emptyRaw=JSON.stringify(emptyC);shim.localStorage.setItem(key,emptyRaw);P.renderSummaryCards(low);
+assert.equal(shim.localStorage.getItem(key),emptyRaw);
+same(read().owners.map(o=>o.id),['owner-A','owner-B']);
+const customC=copy(emptyC);customC.owners[2].name='Credit';
+shim.localStorage.setItem(key,JSON.stringify(customC));P.renderSummaryCards(low);
+assert(read().owners.some(o=>o.id==='owner-C'&&o.name==='Credit'),'custom empty C survives');
+const collidingNames=copy(legacy);collidingNames.owners[1].name='Group A';
+const collisionRaw=JSON.stringify(collidingNames);
+shim.localStorage.setItem(key,collisionRaw);P.renderSummaryCards(low);
+const collisionMigrated=read();
+assert.equal(shim.localStorage.getItem(key),collisionRaw,'name collision migration does not write storage');
+assert.equal(collisionMigrated.owners.find(o=>o.id==='owner-A').name,'A');
+assert.equal(collisionMigrated.owners.find(o=>o.id==='owner-B').name,'Group A');
+assert.equal(new Set(collisionMigrated.owners.map(o=>o.name)).size,collisionMigrated.owners.length);
+same(collisionMigrated.owners.flatMap(o=>o.bundles.map(b=>b.rows)),
+  collidingNames.owners.flatMap(o=>o.bundles.map(b=>b.rows)));
+console.log(JSON.stringify({pass:true,fiveCardOrder:true,sixRawRowsPreserved:true,namedScenarioIdentity:true,independentMatrixMoments:true,
   perScenarioHedge:true,normalRanges:true,covarianceBoundaries:true,zeroRiskNoRidge:true,
   optimizerConstraintIsolation:true,draftIsolation:true,
-  threeDefaultOwners:true,ownerRename:true,ownerAdd:true,multipleSets:true,setSelection:true,
+  twoDefaultGroups:true,ownerRename:true,ownerAdd:true,multipleSets:true,setSelection:true,
   explicitReplacement:true,portfolioSnapshotIsolation:true,cmaSnapshotIsolation:true,ownerIsolation:true,
   atomicStorageFailure:true,freshContextReload:true,targetErrorSaveable:true,unavailableSaveDisabled:true,
   missingSourceArchive:true,changedAssetUniverseArchive:true,corruptJSONPreserved:true,
-  corruptSnapshotPreserved:true,corruptStorageWritesBlocked:true,validStorageRecovery:true}));
+  corruptSnapshotPreserved:true,corruptStorageWritesBlocked:true,validStorageRecovery:true,
+  contextDrivenTAA:true,cardVisibilityIsolation:true,deleteAllCards:true,duplicatePrevention:true,
+  persistedVisibility:true,visibilityFailureAtomic:true,latestSelectionSurvivesReload:true,
+  legacyMigrationReadOnly:true,legacySnapshotRowsIntact:true,savedLegacyGroupPreserved:true,
+  legacyRenameCollisionPreserved:true}));
 `;
 const filename=path.join(repo,'tests/summary_groups_ui_regression.js');
 const m=new Module(filename,module);m.filename=filename;m.paths=Module._nodeModulePaths(path.dirname(filename));
