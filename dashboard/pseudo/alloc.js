@@ -15,6 +15,27 @@ globalThis.PSEUDO_DOCS.alloc = {
   ],
   sections: [
     {
+      id: "target-return-ladder",
+      title: "Target Return · 5개 목표 비교",
+      formulas: [
+        { expression: "rⱼ = r중심 + 0.5j, j ∈ {−2, −1, 0, 1, 2}", legend: "연 기대수익률 % 단위, 카드 간격 0.5%p. 중심 기본값 4.0%." },
+        { expression: "min wᵀCw, μᵀw = rⱼ, Σw = 1, w ∈ 적용 SAA 제약", legend: "각 정확 목표에서 최소분산 비중. GMV보다 낮은 목표도 가능 범위 안이면 계산." }
+      ],
+      code: [
+        "inputs ← last_applied_TAA_CMA_hedge_and_SAA()",
+        "model ← exact_return_model(inputs)",
+        "on_center_apply: validate_number_and_commit_center()",
+        "for target in center_plus_offsets: solve_exact_return_minimum_variance(model, target)",
+        "if infeasible: show_unavailable_without_weights()",
+        "else: show_annual_moments_and_asset_weights()"
+      ].join("\n"),
+      note: "중심 입력 편집만으로 카드 결과는 바뀌지 않으며 적용 버튼 또는 Enter로 5개를 함께 갱신. 이 적용은 미적용 SAA/TAA 초안이나 실제 비중을 변경하지 않음. 자산배분 업데이트·CMA 적용 시 마지막 적용 중심으로 재계산. 중심값·초안은 같은 화면 세션 재렌더에 보존하며 새로고침·저장값 복원은 4.0%로 초기화. 비중 표시는 소수 두 자리로 합계가 반올림 때문에 100%와 다를 수 있으며 수익·위험은 원비중으로 계산.",
+      sources: [
+        { path: "dashboard/app.js", symbols: ["portTargetReturnResults", "renderPortPanel"] },
+        { path: "dashboard/port-constraints.js", symbols: ["portConstrainedModel"] }
+      ]
+    },
+    {
       id: "estimates",
       title: "표본·입력",
       formulas: [

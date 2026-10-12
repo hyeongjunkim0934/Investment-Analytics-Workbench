@@ -159,6 +159,16 @@ Conservative/Optimistic 평균 불확실성 가산·차감을 적용하지 않�
 
 ## 포트폴리오 입력 적용 (2026-09-30)
 
+2026-10-12: 결과 탭에 `Target Return`을 추가했다. `portTargetReturnResults`는
+중심(기본 4.0%) ±0.5/±1.0%p의 정확 목표 5개를 `portConstrainedModel.atReturn`으로
+풀어 최소분산 비중·연 μ/σ를 반환한다. 모델은 적용 μ·공분산·표본·SAA 제약별로
+캐시하며 GMV 좌측 목표도 계산한다. 불가능한 목표는 해당 카드만 결측 처리한다.
+`portPanelDraft.targetReturn`은 중심 적용값·입력 초안·오류를 따로 보관한다.
+중앙 카드의 적용/Enter는 목표만 확정하며 SAA/TAA 미적용 초안은 반영하지 않는다.
+일반 재렌더는 중심·초안을 보존하고 업데이트·CMA 적용은 같은 중심으로 재계산한다.
+새로고침·저장값 복원은 4%로 초기화한다. 카드 비중은 소수 두 자리 표시이며
+수익·위험은 원비중으로 계산한다. 브라우저 저장값·실제 비중을 덮어쓰지 않는다.
+
 `renderPortPanel`의 `portPanelDraft.st`는 편집 초안, `applied`는 마지막 업데이트 결과다.
 기간·비중1/2·μ/σ·상관·헤지·제약은 `#port-update-btn`에서 전체 검증 후 함께 저장한다.
 `portRiskAllocationEngine`, 경계선, 비교표, CSV/내보내기는 `applied`를 읽는다.
