@@ -256,6 +256,7 @@ body {
 
 /* ---------- layout ---------- */
 .page { max-width: 1280px; margin: 0 auto; padding: 18px 20px 60px; }
+.page:has(#alloc:not([hidden])) { padding-top: 4px; }
 .section { margin-top: 34px; scroll-margin-top: 70px; }
 #alloc, #risk, #pseudo { margin-top: 0; }
 .section h2 {
@@ -1097,16 +1098,16 @@ details.explain[open] > summary { color: var(--ink-2); }
 .sec-toc:empty { display: none; }
 
 /* Keep workspace navigation and portfolio results in separate sticky rows. */
-#alloc { --alloc-top: 64px; --alloc-tabs-height: 40px; }
+#alloc { --alloc-top: 64px; --alloc-tabs-height: 36px; }
 .alloc-workspace {
   position: sticky; top: var(--alloc-top); z-index: 20;
-  margin: 8px 0 10px; background: var(--page);
+  margin: 0 0 8px; background: var(--page);
   border-bottom: 1px solid var(--ink-3);
   box-shadow: 0 6px 0 var(--page);
 }
 .alloc-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); }
 .alloc-tabs button {
-  min-height: 38px; padding: 7px 14px; font: inherit; font-size: 13px;
+  min-height: 34px; padding: 5px 14px; font: inherit; font-size: 13px;
   color: var(--ink-2); background: transparent; cursor: pointer;
   border: 0; border-bottom: 2px solid transparent;
 }
@@ -1434,7 +1435,7 @@ a.kpi-link .kpi-label > span:first-child::after {
 .port-curve-key { display: inline-block; width: 14px; height: 2px; border-radius: 1px; }
 .port-sharpe-scale { display: flex; align-items: center; gap: 10px; margin-top: 14px;
   color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
-.port-sharpe-ramp { height: 7px; flex: 1; min-width: 40px; max-width: 280px; border-radius: 4px; }
+.port-sharpe-ramp { height: 9px; flex: 1; min-width: 40px; max-width: 280px; border-radius: 5px; }
 .port-frontier .port-portfolio-tooltip { position: absolute; z-index: 5; pointer-events: none;
   width: 322px; max-width: calc(100% - 12px); box-sizing: border-box; min-height: 0; margin: 0;
   padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px;

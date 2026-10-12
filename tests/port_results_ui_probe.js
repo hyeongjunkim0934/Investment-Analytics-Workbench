@@ -28,7 +28,7 @@ assert.equal(byId('port-correlation-panel').parentElement,panel);
 assert(!byId('port-improvement-panel'));
 assert.equal(tab('frontier').getAttribute('aria-selected'),'true');
 assert(!front().hidden&&benchmark().hidden);
-assert(chart().opts.height>300&&chart().opts.height<=420);
+assert(chart().opts.height>300&&chart().opts.height<=360);
 assert(!front().querySelector('.card-title'));
 assert(dock().querySelector('.port-results-header').contains(dock().querySelector('.card-actions')));
 const saved=shim.localStorage.getItem(P.PORT_LS_KEY), before=data(), beforeLinked=linked();
