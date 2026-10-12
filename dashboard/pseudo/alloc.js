@@ -116,7 +116,7 @@ globalThis.PSEUDO_DOCS.alloc = {
     },
     {
       id: "summary-cards",
-      title: "요약카드 · 입력 3안·최적화 3안·담당자 묶음",
+      title: "요약카드 · 5안·그룹별 카드 관리",
       formulas: [
         { expression: "Min volatility: min wᵀCw;  Target Return: min wᵀCw, μᵀw = 4.0", legend: "같은 적용 입력·환헤지·그룹 및 개별 제약 사용. μ 단위는 연 %. 4.0% 정확 목표가 불가능하면 해당 카드의 결과를 보류." },
         { expression: "Max Sharpe Ratio: max (μᵀw − r𝒇) / √(wᵀCw)", legend: "기존 자산배분 최대 샤프 해를 공유. r𝒇는 기존 엔진의 국내장부(구 원화유동성) 기대수익 입력으로 별도 무위험 수익률 추정치가 아님." },
@@ -128,15 +128,15 @@ globalThis.PSEUDO_DOCS.alloc = {
         "cards ← input_cards + [minimum_variance, minimum_variance_at_exact_return(4.0), maximum_sharpe]",
         "validate_feasibility_and_finite_moments(cards)",
         "display_weights ← integer_percent_by_largest_remainders(original_weights)",
-        "show_all_assets_and_total_100_without_changing_original_weights()",
-        "show_mu_sigma_from_original_weights_with_two_decimals()",
+        "show_all_assets_total_100_and_two_decimal_original_mu_sigma()",
         "ranges ← central_normal_return_ranges(mu, sigma, probabilities=[0.68, 0.90, 0.95, 0.99])",
-        "show_two_decimal_ranges_between_moments_and_weights()",
-        "if sigma_is_zero: label_degenerate_return_with_model_probability_100()",
+        "show_two_decimal_ranges_between_moments_and_weights_and_label_zero_sigma()",
         "on_explicit_save: freeze_six_cards_assets_original_weights_moments_ranges_and_context_into_owner_bundle()",
-        "on_owner_or_bundle_select: display_saved_snapshot_without_changing_portfolio_inputs()"
+        "display_cards ← [current, TAA_from_saved_context_or_taa1, minimum_variance, target_return, maximum_sharpe]",
+        "on_group_card_add_or_delete: update_visible_types_without_changing_saved_rows()",
+        "on_group_or_bundle_select: display_selected_snapshot_or_latest_results_without_changing_portfolio_inputs()"
       ].join("\n"),
-      note: "현재/TAA 1/TAA 2는 각 저장 슬롯의 비중1·기대수익·변동성·상관·헤지를 사용하고 최적화 3안은 마지막 적용 SAA/TAA를 사용. 기간·적용 CMA는 공통이며 미적용 초안은 제외. 입력 포트폴리오는 SAA 최적화 가능성과 별도로 평가하며 비중을 보정하지 않음. 현재 입력의 CMA 적용/해제는 즉시 반영하지만 담당자 A/B/C의 저장 묶음은 명시적 갱신 전까지 고정. 담당자 이름·선택·복수 묶음은 iaw-summary-groups-v1에 브라우저별 저장되며 계정 간 공유 기능은 아님. 저장 실패·손상은 기존 저장값 보존. 범위는 평균 추정의 신뢰구간이나 실증 검증된 달성확률이 아님. 정확한 중앙 68% 분위수를 쓰며 1σ(약68.27%)로 대체하지 않음. 음의 하단은 보존하고 불가능 목표·결측·음수 변동성은 범위를 표시하지 않음. σ=0이면 모든 범위가 μ로 수렴(모형상100%). 카드 클릭은 상세 열기이며 입력 비중을 변경하지 않음. 정수 표시는 표시용이라 원비중의 소수 제약 및 정확 목표를 그대로 재현하지 않을 수 있음.",
+      note: "현재/TAA 1/TAA 2는 각 저장 슬롯의 비중1·기대수익·변동성·상관·헤지를 사용하고 최적화 3안은 마지막 적용 SAA/TAA를 사용. 기간·적용 CMA는 공통이며 미적용 초안은 제외. 입력 포트폴리오는 SAA 최적화 가능성과 별도로 평가하며 비중을 보정하지 않음. 빈 그룹 또는 최신 결과 선택 시 CMA 적용/해제를 즉시 반영하지만 저장 묶음은 명시적 갱신 전까지 고정. 기본 Group A/B와 +Group을 제공하며 현재 입력 탭은 표시하지 않음. 화면은 현재·TAA·Min Volatility·Target Return 4.0%·Max Sharpe Ratio 5종이며 TAA는 묶음의 마지막 적용 슬롯(taa2이면 TAA 2, 그 외 TAA 1)을 표시. 그룹별 추가/삭제는 표시 목록만 바꾸고 원본 6행과 저장 묶음을 보존. 요청에 따라 수익률 범위의 제목·열 설명은 접힌 기본 화면에서 제거하고 수치와 상세 방법론은 유지. 그룹 이름·선택·복수 묶음·표시 목록은 iaw-summary-groups-v1에 브라우저별 저장되며 계정 간 공유 기능은 아님. 저장 실패·손상은 기존 저장값 보존. 범위는 평균 추정의 신뢰구간이나 실증 검증된 달성확률이 아님. 정확한 중앙 68% 분위수를 쓰며 1σ(약68.27%)로 대체하지 않음. 음의 하단은 보존하고 불가능 목표·결측·음수 변동성은 범위를 표시하지 않음. σ=0이면 모든 범위가 μ로 수렴(모형상100%). 카드 클릭은 상세 열기이며 입력 비중을 변경하지 않음. 정수 표시는 표시용이라 원비중의 소수 제약 및 정확 목표를 그대로 재현하지 않을 수 있음.",
       sources: [
         { path: "dashboard/app.js", symbols: ["portEngine", "portSummaryWeights", "portSummaryReturnRanges", "portSummaryResults", "portSummaryBundle", "summaryGroupsRead", "summaryGroupControls", "renderSummaryCards"] },
         { path: "dashboard/port-constraints.js", symbols: ["portConstrainedModel"] }

@@ -985,6 +985,8 @@ DYNAMIC_IDS = {
     "port-period-end": 'id: `${id}-${key}`',  # allocPeriodControl("port-period")의 dateInput("end")
     "alloc-workspace-info": 'id: "alloc-workspace-info"',  # renderAllocWorkspace()의 비활성·폴백 사유
     "summary-status": 'id: "summary-status"',  # renderSummaryCards() 담당자 저장·오류 상태
+    "summary-card-select": 'id: "summary-card-select"',  # summaryGroupControls() 카드 추가·삭제 종류 선택
+    "summary-group-settings": 'id: "summary-group-settings"',  # summaryGroupControls() 접힌 그룹 설정
     "port-axis-apply": 'id: "port-axis-apply"',  # portAxisControls() 재렌더 후 포커스 복원
     "port-axis-auto": 'id: "port-axis-auto"',
     "port-range-sigma": 'id: "port-range-sigma"',  # portSigmaControl() 생성·재렌더 후 포커스 복원

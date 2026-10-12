@@ -71,7 +71,7 @@
 
 * { box-sizing: border-box; }
 
-/* Each owner keeps a six-card comparison in one viewport-wide row. */
+/* Each group starts with five cards; remaining cards share the viewport width. */
 #summary-cards { min-width:0; }
 .summary-workspace { display:flex; align-items:center; flex-wrap:wrap; gap:10px 16px; margin-bottom:12px; }
 .summary-owner-tabs { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-width:0; }
@@ -84,10 +84,17 @@
 .summary-group-actions input, .summary-group-actions select { width:120px; min-width:0; max-width:100%; min-height:30px;
   padding:4px 7px; border:1px solid var(--border); border-radius:7px; background:var(--surface); color:var(--ink-1); font:inherit; font-size:12px; }
 .summary-group-actions .btn-ghost { padding:4px 9px; font-size:12px; }
+.summary-card-actions { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-left:auto; }
+.summary-card-actions select { max-width:190px; min-width:0; min-height:30px; padding:4px 7px;
+  border:1px solid var(--border); border-radius:7px; background:var(--surface); color:var(--ink-1); font:inherit; font-size:12px; }
+.summary-card-actions .btn-ghost { padding:4px 9px; font-size:12px; }
+.summary-group-settings { flex-basis:100%; min-width:0; color:var(--ink-3); font-size:12px; }
+.summary-group-settings > summary { width:fit-content; cursor:pointer; padding:4px 0; }
+.summary-group-settings[open] .summary-group-actions { margin-top:6px; }
+.summary-empty { color:var(--ink-3); font-size:12px; }
 .summary-status { flex-basis:100%; min-width:0; font-size:12px; color:var(--ink-3); overflow-wrap:anywhere; }
-.summary-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 12px; margin-bottom:12px; }
-.summary-context { min-width:0; color:var(--ink-3); font-size:12px; overflow-wrap:anywhere; }
-.summary-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:clamp(4px,0.8vw,12px); align-items:start; }
+.summary-heading { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px 12px; margin-bottom:12px; }
+.summary-grid { --summary-card-count:5; display:grid; grid-template-columns:repeat(var(--summary-card-count,5),minmax(0,1fr)); gap:clamp(4px,0.8vw,12px); align-items:start; }
 .summary-card { min-width:0; background:var(--surface); border:1px solid var(--baseline); border-radius:10px;
   overflow:hidden; container:summary-card / inline-size; }
 .summary-card[open] { border-color:var(--accent-ink); }
@@ -105,10 +112,9 @@
 .summary-label { color:var(--ink-3); font-size:12px; overflow-wrap:anywhere; }
 .summary-metric strong { color:var(--ink-1); font-size:24px; font-weight:600; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .summary-ranges { display:block; border-top:1px solid var(--border); padding:10px 0; font-size:11px; color:var(--ink-2); }
-.summary-range-title { display:block; min-height:3em; margin-bottom:8px; line-height:1.5; overflow-wrap:anywhere; }
-.summary-range-heading, .summary-range { display:flex; flex-wrap:wrap; justify-content:space-between; gap:2px 6px; padding:4px 0; }
-.summary-range-heading, .summary-range-note { color:var(--ink-3); font-size:11px; }
-.summary-range-heading > span, .summary-range > span, .summary-range b { min-width:0; overflow-wrap:anywhere; }
+.summary-range { display:flex; flex-wrap:wrap; justify-content:space-between; gap:2px 6px; padding:4px 0; }
+.summary-range-note { color:var(--ink-3); font-size:11px; }
+.summary-range > span, .summary-range b { min-width:0; overflow-wrap:anywhere; }
 .summary-range b { margin-left:auto; color:var(--ink-1); font-weight:500; font-variant-numeric:tabular-nums; text-align:right; }
 .summary-range-note { display:block; margin-top:6px; overflow-wrap:anywhere; }
 .summary-weights { display:block; border-top:1px solid var(--border); padding-top:10px; }
@@ -128,8 +134,7 @@
 @container summary-card (max-width:125px) {
   .summary-title { min-height:4.5em; font-size:11px; }
   .summary-metric strong { font-size:clamp(10px,16cqi,20px); }
-  .summary-label, .summary-ranges, .summary-range-heading, .summary-range-note, .summary-weight, .summary-detail, .summary-unavailable { font-size:10px; }
-  .summary-range-heading { flex-direction:column; }
+  .summary-label, .summary-ranges, .summary-range-note, .summary-weight, .summary-detail, .summary-unavailable { font-size:10px; }
   .summary-range b { flex-basis:100%; }
   .summary-weight { flex-direction:column; gap:2px; }
   .summary-weight b { align-self:flex-end; }
@@ -137,11 +142,12 @@
 @media (max-width:600px) {
   .summary-workspace { gap:8px; }
   .summary-group-actions { width:100%; margin-left:0; }
+  .summary-card-actions { width:100%; margin-left:0; }
   .summary-card > summary { padding:4px; }
   .summary-title { min-height:7.5em; font-size:10px; }
   .summary-number { font-size:9px; }
   .summary-toggle { font-size:14px; }
-  .summary-ranges, .summary-range-heading, .summary-range-note, .summary-weight, .summary-label, .summary-detail { font-size:9px; }
+  .summary-ranges, .summary-range-note, .summary-weight, .summary-label, .summary-detail { font-size:9px; }
 }
 
 /* Pseudo handoff: content follows each module; no market-data dependency. */
