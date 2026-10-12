@@ -12,6 +12,7 @@ const code = String.raw`
 const assert = require('node:assert/strict');
 const same = (a,b) => assert.equal(JSON.stringify(a),JSON.stringify(b));
 const near = (a,b,tol=1e-8) => assert(Math.abs(a-b)<tol, a+' != '+b);
+const displayed = value => value.toLocaleString('ko-KR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const inspect = expr => vm.runInContext(expr,sandbox);
 // The shared shim supports tag/class selectors; add the one attribute selector here.
 const proto=Object.getPrototypeOf(DOC.createElement('div')), queryAll=proto.querySelectorAll;
@@ -28,12 +29,14 @@ const input=label=>Array.from(panel().querySelectorAll('input')).find(n=>n.getAt
 const edit=(label,value)=>{const n=input(label);assert(n,label);n.value=String(value);n.dispatchEvent({type:'input'});};
 const update=()=>byId('port-update-btn').click();
 const engine=()=>P.portEngine(portfolio,inspect('portPanelDraft.applied'));
+const bundle=()=>inspect('portSummaryBundle')(portfolio,inspect('portPanelDraft.applied'),engine());
 const assertRows=()=>{
-  const E=engine(), rows=P.portSummaryResults(portfolio,E);
-  same(rows.map(row=>row.key),['min','target','sharpe']);
-  assert(rows.every(row=>!row.error),'all three fixture proposals feasible');
-  same(rows[0].point.w,E.minVar.w);same(rows[2].point.w,E.maxSharpe.w);
-  near(rows[1].metrics.mu,4);
+  const E=engine(), {rows}=bundle();
+  same(rows.map(row=>row.key),['current','taa1','taa2','min','target','sharpe']);
+  assert.equal(cards().length,6);
+  assert(rows.every(row=>!row.error),'all six fixture portfolios feasible');
+  same(rows[3].point.w,E.minVar.w);same(rows[5].point.w,E.maxSharpe.w);
+  near(rows[4].metrics.mu,4);
   cards().forEach((node,i)=>{
     assert.equal(node.tagName,'DETAILS');
     const summary=node.querySelector('summary');assert(summary);
@@ -46,7 +49,7 @@ const assertRows=()=>{
     assert.equal(weights.reduce((s,v)=>s+parseInt(v,10),0),100);
     same(weights.map(v=>parseInt(v,10)),Array.from(rows[i].weights));
     const metrics=Array.from(summary.querySelectorAll('strong')).map(n=>n.textContent);
-    same(metrics,[rows[i].metrics.mu.toFixed(2)+'%',rows[i].metrics.sig.toFixed(2)+'%']);
+    same(metrics,[displayed(rows[i].metrics.mu)+'%',displayed(rows[i].metrics.sig)+'%']);
     const rangeBox=summary.querySelector('.summary-ranges');assert(rangeBox);
     const children=Array.from(summary.children);
     assert(children.indexOf(summary.querySelector('.summary-metrics'))<children.indexOf(rangeBox));
@@ -55,7 +58,7 @@ const assertRows=()=>{
     const rangeRows=Array.from(rangeBox.querySelectorAll('.summary-range'));
     same(rangeRows.map(n=>n.querySelector('span').textContent),['68%','90%','95%','99%']);
     same(rangeRows.map(n=>n.querySelector('b').textContent),rows[i].ranges.map(r=>
-      r.lower.toFixed(2)+'% ~ '+r.upper.toFixed(2)+'%'));
+      displayed(r.lower)+'% ~ '+displayed(r.upper)+'%'));
     assert(node.querySelector('.summary-detail').querySelector('a').getAttribute('href')==='#alloc');
   });
   return rows;
@@ -69,7 +72,7 @@ assert(P.SECTION_IDS.includes('summary'));assert.equal(P.SECTION_LABELS.summary,
 assert.equal(P.RENDERERS.summary,P.renderSummaryCards);
 P.renderPortPanel(A);
 assertRows();
-same(cards().map(n=>n.querySelector('.summary-title').textContent),['Min volatility','Target Return 4.0%','Max Sharpe Ratio']);
+same(cards().map(n=>n.querySelector('.summary-title').textContent),['현재','TAA 1','TAA 2','Min volatility','Target Return 4.0%','Max Sharpe Ratio']);
 assert.equal(card('target').querySelector('strong').textContent,'4.00%');
 card('target').setAttribute('open','');
 const before=signature(), stored=shim.localStorage.getItem(P.PORT_LS_KEY);
@@ -128,7 +131,7 @@ assert(!card('target').querySelector('.summary-ranges'));
 assert(card('min').querySelector('.summary-weights'));assert(card('sharpe').querySelector('.summary-weights'));
 assert(Array.from(card('target').querySelectorAll('strong')).every(n=>n.textContent==='—'));
 P.renderSummaryCards({port:{active:false,reason:'자료 없음'}});
-assert.equal(cards().length,3);
+assert.equal(cards().length,6);
 assert(cards().every(n=>n.textContent.includes('자료 없음')&&!n.querySelector('.summary-weights')));
 assert(cards().every(n=>!n.querySelector('.summary-ranges')));
 const invalid=JSON.parse(JSON.stringify(narrow));invalid.port.windows.forEach(w=>{w.cov[0][0]=-1;});
