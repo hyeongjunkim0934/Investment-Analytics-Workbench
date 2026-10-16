@@ -1617,11 +1617,14 @@ a.kpi-link .kpi-label > span:first-child::after {
 .hedge-cip-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
 .hedge-cip-stat.card { min-width: 0; padding: 14px; margin: 0; }
 .hedge-cip-stat > .card-title { display: block; margin-bottom: 12px; }
+.hedge-cip-inputs { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+.hedge-cip-inputs .hedge-cip-value { font-size: 15px; }
 .hedge-cip-metric { display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
   margin-top: 7px; color: var(--ink-2); font-size: 11px; font-variant-numeric: tabular-nums; }
 .hedge-cip-value { color: #edbd63; font-size: 20px; font-weight: 600; line-height: 1.2; }
 :root[data-theme="light"] .hedge-cip-value { color: #8a5c00; }
 .hedge-cip-metric small { margin-left: 4px; color: var(--ink-3); font-size: 10px; }
+.hedge-cip-metric > span:last-child { white-space: nowrap; }
 .hedge-cip-sample { margin-top: 12px; color: var(--ink-3); font-size: 10px; font-variant-numeric: tabular-nums; }
 .hedge-cip-unavailable { margin: 8px 0 0; color: var(--ink-2); font-size: 10px; line-height: 1.5; }
 .hedge-cip-period { margin: 14px 0 8px; }
