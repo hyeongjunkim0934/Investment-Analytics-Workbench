@@ -10,6 +10,24 @@
 
 ## 0. 30초 요약
 
+### 2026-10-16 환헤지 모니터링 분포 히스토그램
+
+- `hj-only`: `hyeongjunkim0934/Investment-Analytics-Workbench`만 변경.
+  기본 브랜치 `claude/data-repo-dashboard-automation-cj8y59`, 작업 브랜치
+  `codex/hj-hedge-histograms-20261016`. Data 변경 없음.
+- 사용자 요청에 따라 UST·JPY·AUD·GER의 과거 헤지비용 분포를 실선에서
+  채운 히스토그램으로 바꾼다. 아래 2026-09-30 실선 표시 합의를 대체한다.
+- 막대 경계는 구간 low/high이며, ±5σ 절단으로 폭이 달라진 끝 구간과 단일
+  구간도 실제 폭으로 그린다. 호버는 가장 가까운 중점 대신 실제 구간으로 판정한다.
+- 전체 표본을 분모로 한 빈도·전체 표/CSV·평균 기준선·시계열·예상범위는 유지한다.
+  Pseudo와 변경 JS의 캐시 버전을 갱신했다.
+- 검증: 관련 파이프라인·Pseudo·계약·모델A·분포 UI pytest 132건 통과,
+  Data 체크아웃 전제 1건 skip. 분포 Node probe에서 네 시장의 사각형 경계·높이,
+  불균등 끝구간·단일구간·크기 변경·호버·표/CSV 보존을 확인했다.
+  별도 코드 검토와 JS 구문·diff 공백 검사도 통과했다.
+- 한계: 실제 브라우저 canvas/ResizeObserver 시각 검증과 배포 화면 확인은 미실행.
+  머지는 사용자 요청 시 수행한다.
+
 ### 2026-10-16 USD 환헤지모델A · CIP 기준 비교
 
 - `hj-only`: `hyeongjunkim0934/Investment-Analytics-Workbench`만 수정.
