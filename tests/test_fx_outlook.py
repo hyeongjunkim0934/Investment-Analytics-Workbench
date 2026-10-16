@@ -220,7 +220,7 @@ def test_build_fx_addition_uses_unpacked_history_and_preserves_legacy_ts():
         process.SERIES[key] = {"s": levels, "source": "synthetic", "category": "환율", "name": key}
     legacy = process.series_group(list(zip(keys, ["달러/원", "달러지수", "달러/엔", "유로/원", "원/100엔", "달러/위안"])))
     row = process.build_fx()
-    assert set(row) == {"ts", "outlook"}
+    assert set(row) == {"ts", "outlook", "markov"}
     assert row["ts"] == legacy
     assert len(row["ts"][0]["t"]) < len(levels)
     assert row["outlook"]["sample"]["n_levels"] == len(levels)

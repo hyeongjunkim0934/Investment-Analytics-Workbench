@@ -40,6 +40,7 @@
   --accent: #3987e5;
   --accent-ink: #3987e5;
   --accent-solid: #2a6fc4;
+  --markov-low: #66bda9; --markov-mid: #d4ad58; --markov-high: #d78080;
 }
 :root[data-theme="light"] {
   color-scheme: light;
@@ -67,6 +68,7 @@
   --accent: #2a78d6;
   --accent-ink: #1b5fb0;   /* 흰 글자 6.34:1 · 배경 경계 6.2:1 */
   --accent-solid: #1b5fb0;
+  --markov-low: #267561; --markov-mid: #8a5c00; --markov-high: #ae4040;
 }
 
 * { box-sizing: border-box; }
@@ -1696,4 +1698,32 @@ a.kpi-link .kpi-label > span:first-child::after {
 }
 @media (max-width: 520px) {
   .fx-forecast-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Markov FX outlook follows the consensus chart's scale and compact cards. */
+.fx-outlook-model.fx-markov-header { min-height: 0; margin-bottom: 14px; }
+.fx-markov-header .card-head { margin-bottom: 0; }
+.fx-markov-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.fx-markov-grid .card { min-width: 0; margin: 0; }
+.fx-markov-forecast { display: flex; flex-direction: column; gap: 6px; }
+.fx-markov-forecast-value { color: var(--markov-mid); font-size: 24px; font-weight: 600; line-height: 1.3; }
+.fx-markov-bounds { color: var(--ink-2); font-size: 13px; }
+.fx-markov-warning { color: var(--up-ink); font-size: 12px; line-height: 1.6; margin: 8px 0 0; }
+.fx-markov-source { margin: 8px 0 0; line-height: 1.6; }
+.fx-markov-range-note { margin: 10px 0 0; line-height: 1.6; }
+.fx-markov-regime { --regime-ink: var(--markov-low); border-top: 3px solid var(--regime-ink); }
+.fx-markov-regime[data-regime="1"] { --regime-ink: var(--markov-mid); }
+.fx-markov-regime[data-regime="2"] { --regime-ink: var(--markov-high); }
+.fx-markov-regime .card-head { display: flex; flex-wrap: wrap; gap: 8px; }
+.fx-markov-regime.is-current { border-color: var(--regime-ink); }
+.fx-markov-probability { display: block; color: var(--regime-ink); font-size: 25px; font-weight: 600; margin: 8px 0 12px; }
+.fx-markov-metrics { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 10px; margin: 0; font-size: 12px; }
+.fx-markov-metrics dt { color: var(--ink-2); }
+.fx-markov-metrics dd { margin: 0; color: var(--ink-1); text-align: right; }
+.fx-markov-forecast-value, .fx-markov-bounds, .fx-markov-probability, .fx-markov-metrics dd { font-variant-numeric: tabular-nums; }
+.fx-markov-method { margin-bottom: 14px; }
+.fx-markov-transition { margin-top: 10px; }
+@media (max-width: 640px) {
+  .fx-markov-grid { grid-template-columns: 1fr; gap: 10px; }
+  .fx-markov-forecast-value { font-size: 22px; }
 }
