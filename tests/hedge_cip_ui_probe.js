@@ -60,7 +60,7 @@ assert.equal(metric('PR','kr'),'5.00');assert.equal(metric('PR','us'),'4.00');
 assert.equal(metric('PR','spread'),'+1.00');assert.equal(metric('PR','premium'),'+1.00');
 assert.equal(metric('PR','zscore'),'-1.22');
 const cardLabels=Array.from(panel.querySelectorAll('.hedge-cip-stat')[0].querySelectorAll('.hedge-cip-metric')).map(e=>e.children[0].textContent);
-same(cardLabels,['한국 PR','미국 PR','금리차','헤지비용(평균)','상관계수','현재 괴리','Z Score','RMSE']);
+same(cardLabels,['한국 PR (%)','미국 PR (%)','금리차 (%p)','헤지비용(평균) (%)','상관계수','현재 괴리 (bp)','Z Score','RMSE (bp)']);
 assert.equal(metric('3Y','gap'),'+40.00');
 const input=key=>DOC.getElementById('hedge-cip-'+key);
 const apply=(a,b)=>{input('start').value=a;input('end').value=b;input('apply').click();};
