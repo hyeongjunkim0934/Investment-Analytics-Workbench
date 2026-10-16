@@ -2,11 +2,13 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.hedge = {
   id: 'hedge',
   title: '환헤지',
-  updated: '2026-10-04',
-  summary: '현재 비용 → 환 변동성 → 국채 메리트 → 과거 분포 → 1년 조건부 범위',
+  updated: '2026-10-16',
+  summary: '모니터링: 비용·환 변동성·국채 메리트 · 모델A: USD 금리차와 헤지 프리미엄',
   inputs: 'HP 3M·6M·12M, SMB USD 3M, 10년 국채금리: 연 % · 환율: 외화당 원(JPY는 100엔당 원)',
   outputs: '비용·금리·연 변동성: % · 메리트·변동성 감소: %p · 국채 1년 경로: 누적수익률 % · 환율전망: 원/달러',
   sources: [
+    { path: 'pipeline/hedge_cip.py', symbols: ['build'] },
+    { path: 'dashboard/hedge-cip.js', symbols: ['hedgeCipStats', 'hedgeCipSelection', 'renderHedgeCip'] },
     { path: 'pipeline/common.py', symbols: ['hp_curve'] },
     { path: 'pipeline/hedge.py', symbols: ['build', 'build_fx_volatility', 'despike', 'clean_merit_daily', 'build_bond_merit', 'build_bond_merits', 'build_cost_distribution', 'par_modified_duration', 'build_bond_outlook'] },
     { path: 'dashboard/app.js', symbols: ['hedgeCostSnapshot', 'renderHedgeDistribution', 'renderHedgeMeritChart'] },
@@ -14,6 +16,23 @@ globalThis.PSEUDO_DOCS.hedge = {
     { path: 'dashboard/fx-outlook.js', symbols: ['fxOutlookQuarters', 'fxOutlookSelection', 'renderFxOutlook'] }
   ],
   sections: [
+    {
+      id: 'usd-cip',
+      title: 'USD 모델A · 금리차와 헤지 프리미엄',
+      formulas: [
+        { expression: 'F / S = (1 + rKR × τ) / (1 + rUS × τ)', legend: '동일 만기·조달 조건의 단리 CIP · S/F: 현물/선물 원·달러 환율 · r: 소수 금리 · τ: 연 단위 만기' },
+        { expression: 'h = 100 × (F / S − 1) / τ ≈ 100 × (rKR − rUS)', legend: '연율 signed 프리미엄 % · 양수 수취, 음수 지불 · 금리차 일치는 1차 근사' },
+        { expression: 'Δₘ = 금리KR,ₘ − 금리US,ₘ; gₘ = h̄ − Δₘ', legend: 'm: PR·3M·1Y·2Y·3Y · 원금리 입력 연 % · h̄: 각 HP 3M·6M·12M의 과거 최대 5개 유효관측 중앙값을 소수 2자리 반올림한 뒤 단순평균 · g: %p' },
+        { expression: '현재 괴리 = 100 × g마지막; RMSE = 100 × √mean(g²); ρ = Corr(h̄, Δₘ)', legend: '괴리·RMSE: bp · 선택기간 같은 날짜 유효쌍 · Pearson 수준 상관 · 회귀잔차나 예측오차 RMSE가 아님' }
+      ],
+      code: `for date in observed_dates:
+  premium = mean(three_trailing_hp_medians_on_date)  # 세 원호가 모두 당일 관측
+for tenor in PR, 3M, 1Y, 2Y, 3Y:
+  pairs = inner_join_by_date(premium, korean_rate, us_rate)  # 보간·앞채움 없음
+  selected = pairs_in_selected_period(pairs)
+  publish(correlation, latest_gap_bp, identity_rmse_bp, sample, chart)`,
+      note: 'PR은 만기 조달금리가 아니며 국채금리와 평균 HP는 상품·만기가 다르다. 이 비교는 엄밀한 CIP 베이시스가 아니다. 만기별 가용 표본의 날짜·관측수를 표시한다. 수치 정밀도 범위 내 상수계열·표본 2개 미만은 상관을 비우며 괴리와 RMSE는 한 쌍부터 계산한다. HP가 없으면 금리차 프록시나 SMB로 대체하지 않는다. 과거 방향 중앙값으로 미래 관측을 쓰지 않는다.'
+    },
     {
       id: 'cost',
       title: '헤지비용 · 부호와 평균',
