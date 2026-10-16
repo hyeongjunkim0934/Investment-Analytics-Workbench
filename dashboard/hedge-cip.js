@@ -96,8 +96,6 @@ function renderHedgeCip(payload) {
   const controls = el("div", { class: "alloc-period hedge-cip-period" },
     el("label", { for: start.id }, "시작기간", start), el("label", { for: end.id }, "종료기간", end));
   panel.append(controls);
-  panel.append(el("p", { class: "hedge-cip-definition" },
-    "괴리 = 헤지 프리미엄 − (한국−미국 금리차) · 만기·상품이 다른 비교로, 엄밀한 CIP basis와 다릅니다."));
 
   const modules = el("div", { class: "hedge-cip-modules" });
   panel.append(modules);
@@ -109,8 +107,8 @@ function renderHedgeCip(payload) {
     const stat = el("div", { class: "card hedge-cip-stat", "data-tenor": tenor });
     const metric = (key, label, unit = "", group = stat) => {
       const value = el("b", { id: `hedge-cip-${tenor}-${key}`, class: "hedge-cip-value" });
-      group.append(el("div", { class: "hedge-cip-metric" }, el("span", {}, label),
-        el("span", {}, value, unit ? el("small", {}, unit) : null)));
+      group.append(el("div", { class: "hedge-cip-metric" },
+        el("span", {}, unit ? `${label} (${unit})` : label), value));
       return value;
     };
     stat.append(el("div", { class: "card-title" }, tenor));
