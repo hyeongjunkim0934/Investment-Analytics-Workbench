@@ -10,6 +10,23 @@
 
 ## 0. 30초 요약
 
+### 2026-10-16 환헤지 모니터링·모델 하위 탭
+
+- `hj-only`: `hyeongjunkim0934/Investment-Analytics-Workbench`만 변경.
+  기본 브랜치 `claude/data-repo-dashboard-automation-cj8y59`, 작업 브랜치
+  `codex/hj-hedge-workspace-tabs-20261016`. Data 변경 없음.
+- 환율전망과 같은 하위 탭 스타일로 `모니터링`·`환헤지모델A`·`환헤지모델B`를 표시한다.
+  기존 비용·환변동성 카드와 UST/JPY/AUD/GER 메리트·분포 차트는 모니터링에 둔다.
+  기본 모니터링, A/B는 모형 미연결 안내만 표시한다. 이름 편집·모형 계산은 추가하지 않았다.
+- 패널 표시만 전환해 차트 인스턴스·조회기간 입력·범례 선택을 보존한다.
+  방향키/Home/End, ARIA 탭 연결을 지원하며 데이터 누락 시에도 탭이 동작한다.
+  제목·마을 복귀 링크 대신 환율전망과 같은 탭 우선 배치다.
+- 검증: 기존 hedge_analytics/fx_workspace/fx_outlook Node probe 통과.
+  일회성 DOM 실행으로 30회 탭 전환, 키보드·접근성 상태, 차트/입력 동일성,
+  조회기간 초안·재렌더 선택 보존을 확인했다. 별도 코드 검토와 데이터 누락 경로도 통과.
+  관련 UI·계약·CSS pytest 103건 통과, Data 체크아웃 필요 문서 대조 1건 skip.
+  JS 구문·diff 공백 검사 통과. 실제 브라우저 시각·ResizeObserver 폭 복원은 미검증.
+  머지·배포는 별도 사용자 요청 시 수행한다.
 
 ### 2026-10-12 요약카드 5종·그룹별 추가/삭제
 

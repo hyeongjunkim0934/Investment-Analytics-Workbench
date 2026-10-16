@@ -2625,7 +2625,7 @@ function routeView() {
 }
 
 function ensureVillageBack(sec) {
-  if (sec === "alloc" || sec === "risk" || sec === "summary" || sec === "fxoutlook" || sec === "cma" || sec === "pseudo") return; // These workspaces use the top navigation.
+  if (sec === "alloc" || sec === "risk" || sec === "summary" || sec === "hedge" || sec === "fxoutlook" || sec === "cma" || sec === "pseudo") return; // These workspaces use the top navigation.
   const node = document.getElementById(sec);
   if (!node || node.querySelector(".village-back")) return;
   const p = el("p", { class: "village-back" }, el("a", { href: "#village" }, "‹ 마을로 돌아가기"));
@@ -4056,9 +4056,58 @@ function renderHedgeMeritChart(card, code, label, M, pal, analytics) {
     } }, "전체"), status);
 }
 
+const HEDGE_WORKSPACES = {
+  monitoring: { label: "모니터링", panel: "hedge-monitoring" },
+  modelA: { label: "환헤지모델A", panel: "hedge-model-a" },
+  modelB: { label: "환헤지모델B", panel: "hedge-model-b" },
+};
+let hedgeWorkspace = "monitoring";
+
+function selectHedgeWorkspace(key) {
+  if (!Object.hasOwn(HEDGE_WORKSPACES, key)) return;
+  hedgeWorkspace = key;
+  Object.entries(HEDGE_WORKSPACES).forEach(([id, spec]) => {
+    const active = id === key, button = document.getElementById(`hedge-tab-${id}`);
+    if (button) {
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", String(active));
+      button.setAttribute("tabindex", active ? "0" : "-1");
+    }
+    const panel = document.getElementById(spec.panel);
+    if (panel) panel.hidden = !active;
+  });
+  // Keep monitoring charts and controls mounted so periods and legend choices survive.
+}
+
+function renderHedgeWorkspace() {
+  const host = document.getElementById("hedge-workspace");
+  if (!host) return;
+  host.textContent = "";
+  const keys = Object.keys(HEDGE_WORKSPACES);
+  const tabs = el("div", { class: "alloc-tabs hedge-tabs", role: "tablist", "aria-label": "환헤지 분석" });
+  keys.forEach((key, index) => {
+    const spec = HEDGE_WORKSPACES[key];
+    const button = el("button", { type: "button", id: `hedge-tab-${key}`, role: "tab",
+      "aria-controls": spec.panel, onclick: () => selectHedgeWorkspace(key) }, spec.label);
+    button.addEventListener("keydown", (event) => {
+      if (event.isComposing) return;
+      const next = event.key === "ArrowRight" ? (index + 1) % keys.length
+        : event.key === "ArrowLeft" ? (index + keys.length - 1) % keys.length
+        : event.key === "Home" ? 0 : event.key === "End" ? keys.length - 1 : null;
+      if (next === null) return;
+      event.preventDefault(); selectHedgeWorkspace(keys[next]);
+      document.getElementById(`hedge-tab-${keys[next]}`)?.focus();
+    });
+    tabs.append(button);
+  });
+  host.append(tabs);
+  selectHedgeWorkspace(hedgeWorkspace);
+}
+
 function renderHedge() {
   const H2 = DATA.hedge;
   if (!$("#hedge")) return;
+  renderHedgeWorkspace();
   if (!H2) {
     ["hedge-cost-dashboard", "hedge-merit-card"].forEach((id) => {
       const host = $("#" + id);

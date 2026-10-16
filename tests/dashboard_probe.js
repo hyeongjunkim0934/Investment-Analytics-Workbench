@@ -103,8 +103,17 @@ secNodes.events.append(elem("details", "events-rules"));
 /* 환헤지 뼈대 — index.html 의 #hedge 안 구조를 그대로 흉내 낸다.
    renderHedge() 가 만지는 컨테이너가 하나라도 없으면 그 자리에서 죽으므로,
    이 목록 자체가 index.html 과의 계약이다. */
+secNodes.hedge.append(elem("div", "hedge-workspace", "hedge-workspace"));
+[["hedge-monitoring", "monitoring"], ["hedge-model-a", "modelA"], ["hedge-model-b", "modelB"]]
+  .forEach(([id, key]) => {
+    const panel = elem("div", id);
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", `hedge-tab-${key}`);
+    panel.hidden = key !== "monitoring";
+    secNodes.hedge.append(panel);
+  });
 ["hedge-cost-dashboard", "hedge-merit-card"]
-  .forEach((id) => secNodes.hedge.append(elem("div", id, "card")));
+  .forEach((id) => DOC.getElementById("hedge-monitoring").append(elem("div", id, "card")));
 secNodes.fxoutlook.append(elem("div", "fxoutlook-workspace", "fx-outlook-workspace"));
 [["fxoutlook-content", "consensus"], ["fxoutlook-model-a", "modelA"], ["fxoutlook-model-b", "modelB"]]
   .forEach(([id, key]) => {
