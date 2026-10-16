@@ -3892,7 +3892,7 @@ function renderHedgeDistribution(card, code, D, snapshot, pal) {
   const box = cardScaffold(host, { title: "과거 헤지비용 분포",
     sub: `${D.cost_source} 3M · ${D.start} ~ ${D.end} · ${D.n.toLocaleString()}일`,
     tableFn, csvName: `${code}-헤지비용-분포.csv` });
-  hedgeChartLegend(box, [["전체 이력 · 일별 빈도", colors[0]],
+  hedgeChartLegend(box, [["전체 이력 · 일별 빈도", colors[0], true],
     ...(Number.isFinite(mean) ? [["최근 3M·6M·12M 평균", colors[1]]] : [])]);
   box.append(el("div", { class: "hedge-distribution-summary" },
     `최저 ${fmtNum(D.min_pct, 2)}% · 최고 ${fmtNum(D.max_pct, 2)}% · ${COST_SIGN_KEY}` +
@@ -3909,8 +3909,18 @@ function renderHedgeDistribution(card, code, D, snapshot, pal) {
     scales: { x: { time: false, range: () => [xmin, xmax] }, y: { range: (u, lo, hi) => [0, Math.max(1, hi * 1.12)] } },
     axes: [{ ...baseAxes(pal, (v) => fmtNum(v, 2))[1], side: 2, scale: "x", label: "헤지비용 (연 %)", labelSize: 18 },
       { ...baseAxes(pal, (v) => `${fmtNum(v, 0)}%`)[1], label: "빈도", labelSize: 18 }],
-    series: [{ label: "헤지비용" }, { label: "빈도", stroke: colors[0], width: 1.8,
-      points: { show: bins.length === 1 } }],
+    series: [{ label: "헤지비용" }, { label: "빈도", stroke: colors[0], fill: hexA(colors[0], 0.55), width: 1,
+      points: { show: false },
+      paths: (u, seriesIdx, idx0, idx1) => {
+        const bars = new Path2D(), zero = u.valToPos(0, "y", true);
+        // Use each bin's actual edges: the ±5σ crop can shorten the end bins.
+        for (let i = idx0; i <= idx1; i++) {
+          const b = bins[i], left = u.valToPos(b.low, "x", true), right = u.valToPos(b.high, "x", true);
+          const top = u.valToPos(u.data[seriesIdx][i], "y", true);
+          bars.rect(left, top, right - left, zero - top);
+        }
+        return { stroke: bars, fill: bars };
+      } }],
     legend: { show: false, live: false }, cursor: { y: false, points: { show: false }, drag: { setScale: false } },
     hooks: {
       draw: [(u) => {
@@ -3920,8 +3930,10 @@ function renderHedgeDistribution(card, code, D, snapshot, pal) {
         ctx.beginPath(); ctx.moveTo(x, bbox.top); ctx.lineTo(x, bbox.top + bbox.height); ctx.stroke(); ctx.restore();
       }],
       setCursor: [(u) => {
-        const { idx, left, top } = u.cursor, b = bins[idx];
-        if (idx == null || left < 0 || top < 0 || !b) { tip.hidden = true; return; }
+        const { left, top } = u.cursor, value = u.posToVal(left, "x");
+        const b = bins.find((b, i) => value >= b.low &&
+          (value < b.high || i === bins.length - 1 && value <= b.high));
+        if (left < 0 || top < 0 || !b) { tip.hidden = true; return; }
         tip.textContent = "";
         tip.append(el("strong", {}, `${fmtNum(b.low, 2)} ~ ${fmtNum(b.high, 2)}%`),
           el("div", {}, `${b.count.toLocaleString()}일 · ${fmtNum(b.frequency_pct, 2)}%`));

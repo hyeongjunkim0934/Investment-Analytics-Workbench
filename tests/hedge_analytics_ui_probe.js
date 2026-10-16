@@ -10,6 +10,12 @@ const near = (a,b,tol=1e-9) => assert(Math.abs(a-b)<tol,a+' != '+b);
 const same = (a,b) => assert.equal(JSON.stringify(a),JSON.stringify(b));
 const stamp = date => Date.parse(date+'T00:00:00Z')/1000;
 const iso = t => new Date(t*1000).toISOString().slice(0,10);
+// Record the real custom path's rectangles; the DOM uPlot double does not draw.
+class HistogramPathRecorder {
+  constructor(){this.rectangles=[];}
+  rect(...values){this.rectangles.push(values);}
+}
+sandbox.Path2D=HistogramPathRecorder;
 const CODES=['UST','JPY','AUD','GER'];
 const currencies={UST:'USD',JPY:'JPY',AUD:'AUD',GER:'EUR'};
 const dates=['2020-01-02','2022-09-23','2023-09-25','2024-09-25','2025-09-25','2026-08-25','2026-09-25'];
@@ -63,6 +69,34 @@ const aligned=(u,anchor)=>{
   near((anchor-y.min)/(y.max-y.min),(0-r.min)/(r.max-r.min),1e-12);
   u.data.slice(4).flat().filter(Number.isFinite).forEach(v=>assert(v>=r.min&&v<=r.max));
 };
+// Decode rendered pixel bounds back to data coordinates. This checks each bar's
+// actual low/high bounds and zero baseline, including unequal end bins and resize.
+const histogramGeometry=(u,bins,xmin,xmax,width=500,height=120,start=0,end=bins.length-1)=>{
+  const prior=u.valToPos,oldBBox=u.bbox,oldScales=u.scales;
+  const left=17,top=11,ymax=125;
+  u.bbox={left,top,width,height};
+  u.scales={x:{min:xmin,max:xmax},y:{min:0,max:ymax}};
+  u.valToPos=(v,scale,canvas)=>{
+    assert.equal(canvas,true,'histogram path uses canvas coordinates');
+    return scale==='x'?left+(v-xmin)/(xmax-xmin)*width:top+(ymax-v)/ymax*height;
+  };
+  try{
+    const paths=u.opts.series[1].paths(u,1,start,end);
+    assert(paths.fill instanceof HistogramPathRecorder,'filled rectangular path');
+    assert(paths.stroke instanceof HistogramPathRecorder,'outlined rectangular path');
+    const rects=paths.fill.rectangles;
+    assert.equal(rects.length,end-start+1,'one rectangle per requested bin');
+    rects.forEach(([x,y,w,h],offset)=>{
+      const b=bins[start+offset];
+      near(xmin+(x-left)/width*(xmax-xmin),b.low);
+      near(xmin+(x+w-left)/width*(xmax-xmin),b.high);
+      near(ymax-(y-top)/height*ymax,b.frequency_pct);
+      near(ymax-(y+h-top)/height*ymax,0);
+      assert(w>0&&h>=0,'nonnegative bar geometry');
+    });
+    same(paths.stroke.rectangles,rects);
+  }finally{u.valToPos=prior;u.bbox=oldBBox;u.scales=oldScales;}
+};
 const tableRows=host=>Array.from(host.querySelectorAll('tbody tr')).map(row=>Array.from(row.querySelectorAll('td')).map(c=>c.textContent));
 const csvRows=()=>CSV_DOWNLOADS.at(-1).replace(/^\uFEFF/,'').split('\n').map(row=>row.split(','));
 CODES.forEach(code=>{
@@ -102,8 +136,12 @@ CODES.forEach(code=>{
   near(u.data[4].at(-1),o.hedged.mean_pct);near(u.data[7].at(-1),o.unhedged.mean_pct);
   const D=fixture.bond_analytics[code].distribution;
   same(h.data[1],D.bins.map(b=>b.frequency_pct));
-  assert.equal(h.opts.series[1].paths,undefined);assert(h.opts.series[1].width>0);
-  assert.equal(h.opts.series[1].fill,undefined);assert(!h.opts.series[1].dash?.length);
+  assert.equal(typeof h.opts.series[1].paths,'function');assert(h.opts.series[1].width>0);
+  assert(h.opts.series[1].fill);assert(!h.opts.series[1].dash?.length);
+  assert.equal(h.opts.series[1].points.show,false);
+  histogramGeometry(h,D.bins,-5,3);
+  histogramGeometry(h,D.bins,-5,3,320,190);
+  histogramGeometry(h,D.bins,-5,3,500,120,1,2);
   near(h.data[1].reduce((a,b)=>a+b,0),100);
   const distribution=c.querySelector('.hedge-distribution');
   assert(c.children.indexOf(distribution)>c.children.indexOf(timeBox.parentElement));
@@ -115,7 +153,7 @@ CODES.forEach(code=>{
   h.ctx=new Proxy({}, {get:(_,key)=>()=>{},set:()=>true});
   h.opts.hooks.draw.forEach(fn=>fn(h));
   assert.equal(marker.length,1);assert.equal(marker[0].scale,'x');near(marker[0].value,o.cost.mean_pct);
-  h.cursor={idx:2,left:50,top:40};h.opts.hooks.setCursor.forEach(fn=>fn(h));
+  h.cursor={idx:2,left:50,top:40};h.posToVal=()=>0;h.opts.hooks.setCursor.forEach(fn=>fn(h));
   const histTip=histBox.querySelector('.time-chart-tooltip');
   assert(!histTip.hidden&&histTip.textContent.includes('5일')&&histTip.textContent.includes('50.00%'));
 });
@@ -238,6 +276,19 @@ CODES.forEach(c=>{
   const u=clippedCharts.find(u=>card(c).contains(u.root)&&u.data.length===2);
   same(u.opts.scales.x.range(),[-4.5,.5]);same(u.data[1],[10,30,40]);
   assert(u.data[0].every(v=>v>=-4.5&&v<=.5));
+  histogramGeometry(u,clipped.bond_analytics[c].distribution.display_bins,-4.5,.5);
+  // The nearest midpoint would choose bin 0 at -2.95; the cursor is in bin 1.
+  // Physical bar bounds, not midpoint proximity or stale cursor.idx, own hover.
+  const tip=u.root.parentElement.parentElement.querySelector('.time-chart-tooltip');
+  u.cursor={idx:0,left:20,top:25};u.posToVal=()=>-2.95;
+  u.opts.hooks.setCursor.forEach(fn=>fn(u));
+  assert(!tip.hidden&&tip.textContent.includes('-3.00 ~ -1.00%')&&tip.textContent.includes('3일'));
+  u.posToVal=()=>-1;u.opts.hooks.setCursor.forEach(fn=>fn(u));
+  assert(!tip.hidden&&tip.textContent.includes('-1.00 ~ 0.50%'));
+  u.posToVal=()=>.5;u.opts.hooks.setCursor.forEach(fn=>fn(u));
+  assert(!tip.hidden&&tip.textContent.includes('-1.00 ~ 0.50%'),'last high edge is inclusive');
+  u.posToVal=()=>.51;u.opts.hooks.setCursor.forEach(fn=>fn(u));assert(tip.hidden);
+  u.posToVal=()=>-4.51;u.opts.hooks.setCursor.forEach(fn=>fn(u));assert(tip.hidden);
   const host=card(c).querySelector('.hedge-distribution');
   assert(host.textContent.includes('표시 ±5σ')&&host.textContent.includes('2일 생략'));
   button(host,'CSV').click();
@@ -248,6 +299,21 @@ CODES.forEach(c=>{
   assert.equal(markers.length,c==='GER'?0:1,'out-of-range mean must not expand axis');
 });
 vm.runInContext('Object.keys(HEDGE_MERIT_RANGES).forEach(k=>delete HEDGE_MERIT_RANGES[k])',sandbox);
+
+// Constant/singleton histories still draw a full-width histogram bar, not a point.
+const singleton=JSON.parse(JSON.stringify(fixture));
+CODES.forEach(c=>Object.assign(singleton.bond_analytics[c].distribution,{
+  n:1,min_pct:-2,max_pct:-2,mean_pct:-2,std_pct:0,
+  bins:[{low:-2.5,high:-1.5,count:1,frequency_pct:100}],
+  display_bins:[{low:-2.5,high:-1.5,count:1,frequency_pct:100}],
+  display_low_pct:-2.5,display_high_pct:-1.5,display_n:1}));
+const singletonCharts=render(singleton);
+CODES.forEach(c=>{
+  const u=singletonCharts.find(u=>card(c).contains(u.root)&&u.data.length===2);
+  assert.equal(u.data[0].length,1);assert.equal(u.opts.series[1].points.show,false);
+  histogramGeometry(u,singleton.bond_analytics[c].distribution.bins,-2.5,-1.5);
+  histogramGeometry(u,singleton.bond_analytics[c].distribution.bins,-2.5,-1.5,280,190);
+});
 
 // Existing published datasets and inactive statistics still render historical curves.
 for(const analytics of [undefined,null,Object.fromEntries(CODES.map(c=>[c,{outlook:{active:false,reason:'공통 표본 부족'},distribution:{active:false,reason:'분포 없음'}}]))]){
@@ -288,7 +354,8 @@ console.log(JSON.stringify({fourMarkets:true,topLegends:true,separateUnitsAndSca
   plotTableCsvAgreement:true,futureHover:true,fullHistoryDistribution:true,
   currentMeanMarker:true,naturalHedgeIncrease:true,legacyFallback:true,
   endpointAxisAlignment:true,marketSpecificDates:true,monthEndClamp:true,
-  solidFrequencyLine:true,fiveSigmaDisplayCrop:true,fullTailExports:true}));
+  histogramBinRectangles:true,unequalBinHover:true,singletonHistogram:true,
+  resizedHistogram:true,fiveSigmaDisplayCrop:true,fullTailExports:true}));
 `;
 const filename=path.join(repo,'tests/hedge_analytics_ui_runtime.js');
 const m=new Module(filename,module);m.filename=filename;m.paths=Module._nodeModulePaths(path.dirname(filename));
