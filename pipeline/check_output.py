@@ -54,7 +54,7 @@ META_FIELDS = ["built_at_utc", "last_observation", "series_count", "files", "war
 REQUIRED_KEYS = {
     "fx": ["ts", "outlook"],  # 원달러 전체 표본 분석. 결측이어도 비활성 블록은 필수.
     "hedge": ["asof", "default_tenor_m", "matrix", "curves", "backtest",
-              "cost_hist_curve", "cost_hist_usd", "cost_dashboard", "fx_volatility", "cost_stats", "mtm", "sim",
+              "cost_hist_curve", "cost_hist_usd", "cost_dashboard", "cip", "fx_volatility", "cost_stats", "mtm", "sim",
               # ust_merit = 미국채 투자 메리트 모니터(§7.7.14). 시리즈가 없어도
               # active:false 로 항상 게시된다(bm.cma 와 같은 체인 안전장치).
               "ust_merit", "jgb_merit", "agb_merit", "bond_merits",
@@ -83,6 +83,8 @@ REQUIRED_KEYS = {
 REQUIRED_ROW_KEYS = {
     ("hedge", "matrix"): ["c", "name", "vol_e", "mvh", "corr",
                           "cost_12m", "cost_curve", "src", "active", "sample"],
+    ("hedge", "cip.tenors"): ["tenor", "label", "active", "reason", "sources",
+                              "t", "spread", "premium", "gap", "sample", "stats"],
     # 헤지 레버의 자유도는 실질 1개(Xe)다 — 화면이 이 이름으로 집는다.
     # 예전의 hb_star/he_star 는 동점 중 임의의 한 점이라 되살리지 말 것.
     ("alloc", "boot.rows"): ["block_len", "n_reps", "anchor", "d1", "d2",
@@ -96,6 +98,7 @@ REQUIRED_NESTED_KEYS = {
                        "start", "end", "n_months"],
     ("hedge", "cost_read"): ["label", "window", "asof"],
     ("hedge", "cost_dashboard"): ["JPY", "AUD", "USD"],
+    ("hedge", "cip"): ["currency", "premium_method", "tenors"],
 }
 
 _errors: list[str] = []
@@ -113,6 +116,12 @@ def note(msg: str) -> None:
 def _walk_ts(obj, path, seen):
     """페이로드 어디에 있든 {"t": [...], "v": [...]} 를 찾아 길이를 대조한다."""
     if isinstance(obj, dict):
+        # CIP arrays use named series rather than v; preserve their common-date
+        # alignment just as strictly as the generic t/v contract below.
+        if "tenor" in obj and isinstance(obj.get("t"), list) and "spread" in obj:
+            for key in ("spread", "premium", "gap"):
+                if not isinstance(obj.get(key), list) or len(obj[key]) != len(obj["t"]):
+                    fail(f"{path}: t/{key} 배열 길이 불일치")
         if isinstance(obj.get("t"), list) and isinstance(obj.get("v"), list):
             seen[0] += 1
             if len(obj["t"]) != len(obj["v"]):

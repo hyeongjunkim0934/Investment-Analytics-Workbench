@@ -1612,6 +1612,37 @@ a.kpi-link .kpi-label > span:first-child::after {
   border: 1px solid var(--border); border-radius: 5px; }
 .fx-outlook-name-editor input[aria-invalid="true"] { border-color: var(--up-ink); }
 .hedge-model, .fx-outlook-model { min-height: 160px; }
+.hedge-cip-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin: 16px 0 12px; }
+.hedge-cip-definition { color: var(--ink-2); font-size: 11px; line-height: 1.6; }
+.hedge-cip-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.hedge-cip-stat.card { min-width: 0; padding: 14px; margin: 0; }
+.hedge-cip-stat > .card-title { display: block; margin-bottom: 12px; }
+.hedge-cip-metric { display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin-top: 7px; color: var(--ink-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+.hedge-cip-value { color: #edbd63; font-size: 20px; font-weight: 600; line-height: 1.2; }
+:root[data-theme="light"] .hedge-cip-value { color: #8a5c00; }
+.hedge-cip-metric small { margin-left: 4px; color: var(--ink-3); font-size: 10px; }
+.hedge-cip-sample { margin-top: 12px; color: var(--ink-3); font-size: 10px; font-variant-numeric: tabular-nums; }
+.hedge-cip-unavailable { margin: 8px 0 0; color: var(--ink-2); font-size: 10px; line-height: 1.5; }
+.hedge-cip-period { margin: 14px 0 8px; }
+.hedge-cip-modules { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
+.hedge-cip-chart.card { min-width: 0; margin: 0; }
+.hedge-cip-chart:last-child { grid-column: 1 / -1; }
+.hedge-cip-chart .card-head { flex-wrap: wrap; gap: 8px; }
+.hedge-cip-chart .uplot { display: flex; flex-direction: column; }
+.hedge-cip-chart .u-legend { order: -1; margin: 0 0 10px !important; }
+.hedge-cip-chart-sample { color: var(--ink-3); font-size: 10px; margin: 8px 0 0; font-variant-numeric: tabular-nums; }
+@media (max-width: 1050px) {
+  .hedge-cip-value { font-size: 17px; }
+  .hedge-cip-stat.card { padding: 11px; }
+}
+@media (max-width: 800px) {
+  .hedge-cip-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .hedge-cip-modules { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 480px) {
+  .hedge-cip-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .fx-outlook-model .card-head { flex-wrap: wrap; gap: 8px; }
 .fx-outlook-model .card-title { overflow-wrap: anywhere; min-width: 0; }
 .fx-outlook-model .btn-ghost { margin-left: auto; }

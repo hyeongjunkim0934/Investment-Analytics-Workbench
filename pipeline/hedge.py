@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 import common
+import hedge_cip
 # 재수출 — 정의는 common 에만 있다 (tests/test_formulas.py 가 동일성을 단정).
 from common import epoch_seconds
 
@@ -696,6 +697,7 @@ def build(series_store: dict, warn) -> dict:
                       "asof": None if hp_asof is None else hp_asof.strftime("%Y-%m-%d")},
         "matrix": matrix,
         "cost_dashboard": cost_dashboard,
+        "cip": hedge_cip.build(S),
         "fx_volatility": build_fx_volatility(S),
         "curves": curves,
         "backtest": backtest,

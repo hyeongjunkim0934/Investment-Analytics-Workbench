@@ -4108,6 +4108,7 @@ function renderHedge() {
   const H2 = DATA.hedge;
   if (!$("#hedge")) return;
   renderHedgeWorkspace();
+  renderHedgeCip(H2?.cip);
   if (!H2) {
     ["hedge-cost-dashboard", "hedge-merit-card"].forEach((id) => {
       const host = $("#" + id);

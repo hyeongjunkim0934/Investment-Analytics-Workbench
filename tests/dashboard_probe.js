@@ -206,6 +206,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "port-constraints.j
   { filename: "dashboard/port-constraints.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-outlook.js"), "utf8"), sandbox,
   { filename: "dashboard/fx-outlook.js" });
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-cip.js"), "utf8"), sandbox,
+  { filename: "dashboard/hedge-cip.js" });
 /* app.js 의 top-level `const`/`function` 은 스크립트 렉시컬 스코프에 산다 —
    밖에서 잡으려면 같은 스크립트 안에서 내보내야 한다. */
 const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "sectionHasRangedChart",
@@ -213,7 +215,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "bandInk", "relLum", "deltaText", "factorRow", "renderEvents", "renderMetaLine",
   "cardScaffold", "el", "registry", "DATA", "BANDS", "SECTION_IDS", "palette",
   "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY",
-  "hedgeCostSnapshot", "applyRange", "bindRangeButtons", "state",
+  "hedgeCostSnapshot", "hedgeCipStats", "hedgeCipSelection", "renderHedgeCip", "selectHedgeWorkspace", "applyRange", "bindRangeButtons", "state",
   "SCENE_CYCLE_MS", "sceneCycleAllowed", "restartSceneCycle", "stopSceneCycle",
   "renderVillage", "allocSaveState", "villageNotesInvalidate", "allocRefModel", "VILLAGE_NOTES", "VILLAGE_ZONES", "VILLAGE_BANNER",
   "currentScene", "currentTheme", "syncThemeButton",
@@ -652,7 +654,7 @@ safe("hedgeScreen", () => {
   const txt = (id) => (DOC.getElementById(id) || { textContent: "" }).textContent;
   return {
     signKey: P.COST_SIGN_KEY,
-    explanationCount: DOC.getElementById("hedge").querySelectorAll(".explain").length,
+    explanationCount: DOC.getElementById("hedge-monitoring").querySelectorAll(".explain").length,
     dashboard: readHedgeDashboard(), snapshot: P.hedgeCostSnapshot(HEDGE_FIXTURE),
     tsCardText: txt("hedge-ts-card"),
     removedChartsAbsent: !DOC.getElementById("hedge-curve-card") && !DOC.getElementById("hedge-ts-card"),
