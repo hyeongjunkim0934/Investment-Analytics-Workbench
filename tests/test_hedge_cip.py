@@ -39,10 +39,11 @@ def test_exact_signed_one_to_one_relation_has_zero_gap_and_rmse():
         assert row["gap"] == [0.] * 6
         assert row["stats"]["correlation"] == pytest.approx(1.)
         assert {key: value for key, value in row["stats"].items() if key != "correlation"} == {
-            "gap_bp": 0., "rmse_bp": 0., "asof": "2026-01-12"}
+            "gap_bp": 0., "gap_zscore": None, "rmse_bp": 0., "asof": "2026-01-12"}
         assert row["t"] == common.epoch_seconds(dates)
         assert row["sample"] == {"start": "2026-01-05", "end": "2026-01-12", "n": 6}
-        assert not {"kr", "us", "korea", "usa"}.intersection(row)
+        assert row["kr"] == [spread + 4. for spread in expected]
+        assert row["us"] == [4.] * 6
     json.dumps(output, allow_nan=False)
 
 
@@ -55,6 +56,7 @@ def test_gap_sign_is_premium_minus_korea_minus_us(premium, spread, gap_bp):
     assert row["stats"]["gap_bp"] == gap_bp
     assert row["stats"]["rmse_bp"] == abs(gap_bp)
     assert row["stats"]["correlation"] is None
+    assert row["stats"]["gap_zscore"] is None
 
 
 def test_negative_correlation_and_rmse_are_levels_and_one_to_one_distance():
@@ -66,6 +68,18 @@ def test_negative_correlation_and_rmse_are_levels_and_one_to_one_distance():
     assert row["stats"]["gap_bp"] == 150.
     # A fitted straight line would give zero residuals; the required 1:1 RMSE does not.
     assert row["stats"]["rmse_bp"] == pytest.approx(math.sqrt(13.5 / 4) * 100)
+    # Mean -0.75, squared deviations total 11.25, sample variance 11.25/3.
+    assert row["stats"]["gap_zscore"] == pytest.approx(2.25 / math.sqrt(11.25 / 3))
+
+
+@pytest.mark.parametrize("spread,expected", [([3., 2., 1.], 1.), ([1., 2., 3.], -1.),
+                                            ([3., 1., 2.], 0.)])
+def test_gap_zscore_is_centered_and_uses_sample_standard_deviation(spread, expected):
+    # With HP=0, these gap permutations have mean -2 and sample sd 1.
+    # This distinguishes centering, sign, and ddof=1 from population sd.
+    sources, _ = _fixture([0.] * 3, spread)
+    row = hedge_cip.build(sources)["tenors"][0]
+    assert row["stats"]["gap_zscore"] == pytest.approx(expected)
 
 
 @pytest.mark.parametrize("missing_tenor", ["3M", "6M", "12M"])
@@ -76,7 +90,7 @@ def test_missing_one_hp_tenor_never_becomes_partial_mean_or_proxy(missing_tenor)
     output = hedge_cip.build(sources)
     for row in output["tenors"]:
         assert not row["active"] and missing_key in row["reason"]
-        assert row["t"] == row["spread"] == row["premium"] == row["gap"] == []
+        assert row["t"] == row["kr"] == row["us"] == row["spread"] == row["premium"] == row["gap"] == []
         assert row["sample"] == {"start": None, "end": None, "n": 0}
         assert all(value is None for value in row["stats"].values())
     json.dumps(output, allow_nan=False)
@@ -100,11 +114,14 @@ def test_each_tenor_joins_actual_dates_without_forward_filling_or_borrowing_asof
     rows = hedge_cip.build(sources)["tenors"]
     pr = rows[0]
     assert pr["t"] == common.epoch_seconds(dates[[2, 4]])
+    assert pr["kr"] == [3.5, 4.]
+    assert pr["us"] == [4., 4.]
     assert pr["spread"] == [-0.5, 0.]
     assert pr["premium"] == [-2., -1.]
     assert pr["sample"]["n"] == 2
     assert pr["stats"]["asof"] == "2026-01-09"
     assert pr["stats"]["gap_bp"] == -100.
+    assert pr["stats"]["gap_zscore"] == pytest.approx(1 / math.sqrt(2))
     assert rows[1]["sample"]["n"] == 5
     assert rows[1]["stats"]["asof"] == "2026-01-09"
 
@@ -121,7 +138,8 @@ def test_single_observation_is_real_data_but_has_no_correlation():
     sources, _ = _fixture([-1.25], [-1.])
     row = hedge_cip.build(sources)["tenors"][0]
     assert row["active"] and row["sample"]["n"] == 1
-    assert row["stats"] == {"correlation": None, "gap_bp": -25., "rmse_bp": 25., "asof": "2026-01-05"}
+    assert row["stats"] == {"correlation": None, "gap_bp": -25., "gap_zscore": None,
+                            "rmse_bp": 25., "asof": "2026-01-05"}
 
 
 @pytest.mark.parametrize("constant_side", ["spread", "premium"])
@@ -159,6 +177,20 @@ def test_actual_tiny_rate_difference_changes_are_kept_in_correlation():
     np.testing.assert_allclose(row["spread"], spreads, atol=5e-16, rtol=0)
     assert row["stats"]["correlation"] == pytest.approx(1., abs=1e-12)
     assert row["spread"][-1] - row["spread"][0] > 2.9e-8
+
+
+def test_constant_decimal_gap_ignores_subtraction_noise_but_small_real_changes_survive():
+    sources, dates = _fixture([0.] * 4)
+    us = np.array([1., 2., 3., 4.])
+    sources["info:한국_기준금리"] = pd.Series(us + 0.1, index=dates)
+    sources["bb:미국_기준금리"] = pd.Series(us, index=dates)
+    constant = hedge_cip.build(sources)["tenors"][0]
+    assert len(set(constant["gap"])) > 1  # Roundoff must not generate a Z score.
+    assert constant["stats"]["gap_zscore"] is None
+    sources["info:한국_기준금리"] = pd.Series(us + [0.1, 0.10000001, 0.10000002, 0.10000003], index=dates)
+    varying = hedge_cip.build(sources)["tenors"][0]
+    # The 4 equally spaced gaps have last deviation -1.5e-8, sd sqrt(5/3)e-8.
+    assert varying["stats"]["gap_zscore"] == pytest.approx(-1.5 / math.sqrt(5 / 3), abs=1e-7)
 
 
 def test_past_only_medians_match_monitoring_on_every_clean_prefix_including_rounding():
@@ -225,15 +257,30 @@ def test_hedge_payload_wires_cip_without_mutating_monitoring(parsed):
     assert result["cost_dashboard"]["USD"]["curve"] == common.hp_curve(plain, "USD")["curve"]
 
 
-def test_deployment_gate_checks_cip_common_date_array_lengths():
+@pytest.mark.parametrize("field", ["kr", "us", "spread", "premium", "gap"])
+def test_deployment_gate_checks_cip_common_date_array_lengths(field):
     sources, _ = _fixture()
     result = hedge_cip.build(sources)
     check_output._errors.clear()
     try:
         check_output._walk_ts(result, "hedge.cip", [0])
         assert not check_output._errors
-        result["tenors"][0]["premium"].pop()
+        result["tenors"][0][field].pop()
         check_output._walk_ts(result, "hedge.cip", [0])
-        assert any("t/premium" in message for message in check_output._errors)
+        assert any(f"t/{field}" in message for message in check_output._errors)
+    finally:
+        check_output._errors.clear()
+
+
+@pytest.mark.parametrize("field", ["kr", "us", "gap_zscore"])
+def test_deployment_gate_rejects_missing_card_input_and_zscore_fields(field):
+    sources, _ = _fixture()
+    result = hedge_cip.build(sources)
+    row = result["tenors"][0]
+    del (row["stats"] if field == "gap_zscore" else row)[field]
+    check_output._errors.clear()
+    try:
+        check_output._walk_ts(result, "hedge.cip", [0])
+        assert any(field in message for message in check_output._errors)
     finally:
         check_output._errors.clear()

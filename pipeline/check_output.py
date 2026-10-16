@@ -84,7 +84,7 @@ REQUIRED_ROW_KEYS = {
     ("hedge", "matrix"): ["c", "name", "vol_e", "mvh", "corr",
                           "cost_12m", "cost_curve", "src", "active", "sample"],
     ("hedge", "cip.tenors"): ["tenor", "label", "active", "reason", "sources",
-                              "t", "spread", "premium", "gap", "sample", "stats"],
+                              "t", "kr", "us", "spread", "premium", "gap", "sample", "stats"],
     # 헤지 레버의 자유도는 실질 1개(Xe)다 — 화면이 이 이름으로 집는다.
     # 예전의 hb_star/he_star 는 동점 중 임의의 한 점이라 되살리지 말 것.
     ("alloc", "boot.rows"): ["block_len", "n_reps", "anchor", "d1", "d2",
@@ -119,9 +119,11 @@ def _walk_ts(obj, path, seen):
         # CIP arrays use named series rather than v; preserve their common-date
         # alignment just as strictly as the generic t/v contract below.
         if "tenor" in obj and isinstance(obj.get("t"), list) and "spread" in obj:
-            for key in ("spread", "premium", "gap"):
+            for key in ("kr", "us", "spread", "premium", "gap"):
                 if not isinstance(obj.get(key), list) or len(obj[key]) != len(obj["t"]):
                     fail(f"{path}: t/{key} 배열 길이 불일치")
+            if not isinstance(obj.get("stats"), dict) or "gap_zscore" not in obj["stats"]:
+                fail(f"{path}: stats 에 필수 키 없음 — gap_zscore")
         if isinstance(obj.get("t"), list) and isinstance(obj.get("v"), list):
             seen[0] += 1
             if len(obj["t"]) != len(obj["v"]):

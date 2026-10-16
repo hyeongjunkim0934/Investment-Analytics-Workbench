@@ -72,7 +72,8 @@ def _has_variation(values: pd.Series) -> bool:
 
     Equal decimal rate differences can differ by a few binary rounding bits
     after subtraction. The scale-relative tolerance only governs whether a
-    correlation is defined; published values, gaps and RMSE remain untouched.
+    correlation or gap Z score is defined; published values, gaps and RMSE
+    remain untouched.
     """
     scale = max(1., float(values.abs().max()))
     return float(values.max() - values.min()) > 1e-12 * scale
@@ -81,10 +82,13 @@ def _has_variation(values: pd.Series) -> bool:
 def build(series: dict) -> dict:
     """Return five stable modules, including explicit inactive missing-data rows.
 
-    Array units are annualized percentage points. Difference = Korea minus US;
-    gap = signed premium minus that difference. Current gap and RMSE are bp.
+    Rates and premium use annualized percent; spread and gap use percentage
+    points. Difference = Korea minus US; gap = signed premium minus that
+    difference. Current gap and RMSE are bp.
     Pearson correlation uses levels; RMSE measures distance from the 1:1 line,
     not regression residuals or out-of-sample forecasting performance.
+    The gap Z score compares the latest gap with the same full sample's mean
+    and sample standard deviation (ddof=1); it is not a predictive score.
     """
     premium = premium_history(series)
     window = max(1, common.HP_MEDIAN_N)
@@ -108,9 +112,10 @@ def build(series: dict) -> dict:
         row = {
             "tenor": tenor, "label": label, "active": False, "reason": None,
             "sources": {"kr": kr_key, "us": us_key, "premium": PREMIUM_SOURCES.copy()},
-            "t": [], "spread": [], "premium": [], "gap": [],
+            "t": [], "kr": [], "us": [], "spread": [], "premium": [], "gap": [],
             "sample": {"start": None, "end": None, "n": 0},
-            "stats": {"correlation": None, "gap_bp": None, "rmse_bp": None, "asof": None},
+            "stats": {"correlation": None, "gap_bp": None, "gap_zscore": None,
+                      "rmse_bp": None, "asof": None},
         }
         missing_rates = [key for key, values in ((kr_key, kr), (us_key, us)) if values.empty]
         missing = missing_rates + missing_hp
@@ -130,13 +135,20 @@ def build(series: dict) -> dict:
                     value = float(spread.corr(carry))
                     if math.isfinite(value):
                         correlation = max(-1., min(1., value))
+                gap_zscore = None
+                if len(joined) >= 2 and _has_variation(gap):
+                    value = float((gap.iloc[-1] - gap.mean()) / gap.std(ddof=1))
+                    if math.isfinite(value):
+                        gap_zscore = value
                 start, end = (joined.index[i].strftime("%Y-%m-%d") for i in (0, -1))
                 row.update({
                     "active": True,
                     "t": common.epoch_seconds(joined.index),
+                    "kr": joined["kr"].tolist(), "us": joined["us"].tolist(),
                     "spread": spread.tolist(), "premium": carry.tolist(), "gap": gap.tolist(),
                     "sample": {"start": start, "end": end, "n": int(len(joined))},
                     "stats": {"correlation": correlation, "gap_bp": float(gap.iloc[-1] * 100),
+                              "gap_zscore": gap_zscore,
                               "rmse_bp": float(np.sqrt(np.mean(np.square(gap))) * 100),
                               "asof": end},
                 })

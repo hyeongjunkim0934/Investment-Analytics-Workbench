@@ -13,18 +13,22 @@ function hedgeCipSelection(row, range = null) {
   if (row?.active !== false) (Array.isArray(row?.t) ? row.t : []).forEach((t, i) => {
     const spread = row.spread?.[i], premium = row.premium?.[i];
     if (Number.isFinite(t) && Number.isFinite(spread) && Number.isFinite(premium)
-        && t >= from && t < to) pairs.set(t, { spread, premium });
+        && t >= from && t < to) pairs.set(t, { spread, premium,
+          kr: Number.isFinite(row.kr?.[i]) ? row.kr[i] : null,
+          us: Number.isFinite(row.us?.[i]) ? row.us[i] : null });
   });
   const t = [...pairs.keys()].sort((a, b) => a - b);
   const spread = t.map((time) => pairs.get(time).spread);
   const premium = t.map((time) => pairs.get(time).premium);
-  return { t, spread, premium, gap: premium.map((p, i) => p - spread[i]) };
+  return { t, kr: t.map((time) => pairs.get(time).kr), us: t.map((time) => pairs.get(time).us),
+    spread, premium, gap: premium.map((p, i) => p - spread[i]) };
 }
 
 function hedgeCipStats(row, range = null) {
   const selected = hedgeCipSelection(row, range), n = selected.t.length;
   const date = (t) => new Date(t * 1000).toISOString().slice(0, 10);
-  if (!n) return { correlation: null, gap_bp: null, rmse_bp: null, asof: null,
+  if (!n) return { correlation: null, gap_bp: null, gap_zscore: null, rmse_bp: null, asof: null,
+    kr: null, us: null, spread: null, premium: null,
     n: 0, start: null, end: null };
   const mean = (xs) => xs.reduce((sum, v) => sum + v / n, 0);
   const mx = mean(selected.spread), my = mean(selected.premium);
@@ -42,7 +46,14 @@ function hedgeCipStats(row, range = null) {
   };
   const correlation = n >= 2 && variable(selected.spread) && variable(selected.premium) && xx > 0 && yy > 0
     ? Math.max(-1, Math.min(1, xy / Math.sqrt(xx * yy))) : null;
+  const gapMean = mean(selected.gap);
+  const gapStd = n >= 2 && variable(selected.gap)
+    ? Math.sqrt(selected.gap.reduce((sum, g) => sum + (g - gapMean) ** 2, 0) / (n - 1)) : 0;
+  const gapZ = gapStd > 0 ? (selected.gap.at(-1) - gapMean) / gapStd : null;
   return { correlation, gap_bp: selected.gap.at(-1) * 100,
+    gap_zscore: Number.isFinite(gapZ) ? gapZ : null,
+    kr: selected.kr.at(-1), us: selected.us.at(-1),
+    spread: selected.spread.at(-1), premium: selected.premium.at(-1),
     rmse_bp: Math.sqrt(mean(selected.gap.map((v) => v * v))) * 100,
     asof: date(selected.t.at(-1)), n, start: date(selected.t[0]), end: date(selected.t.at(-1)) };
 }
@@ -96,15 +107,22 @@ function renderHedgeCip(payload) {
   rows.forEach((row) => {
     const tenor = row.tenor, sourceData = hedgeCipSelection(row);
     const stat = el("div", { class: "card hedge-cip-stat", "data-tenor": tenor });
-    const metric = (key, label, unit = "") => {
+    const metric = (key, label, unit = "", group = stat) => {
       const value = el("b", { id: `hedge-cip-${tenor}-${key}`, class: "hedge-cip-value" });
-      stat.append(el("div", { class: "hedge-cip-metric" }, el("span", {}, label),
+      group.append(el("div", { class: "hedge-cip-metric" }, el("span", {}, label),
         el("span", {}, value, unit ? el("small", {}, unit) : null)));
       return value;
     };
     stat.append(el("div", { class: "card-title" }, tenor));
+    const inputs = el("div", { class: "hedge-cip-inputs", "aria-label": `${tenor} 최신 공통일 입력값` });
+    stat.append(inputs);
+    const kr = metric("kr", `한국 ${tenor}`, "%", inputs);
+    const us = metric("us", `미국 ${tenor}`, "%", inputs);
+    const spread = metric("spread", "금리차", "%p", inputs);
+    const premium = metric("premium", "헤지비용(평균)", "%", inputs);
     const correlation = metric("correlation", "상관계수");
     const gap = metric("gap", "현재 괴리", "bp");
+    const gapZ = metric("zscore", "Z Score");
     const rmse = metric("rmse", "RMSE", "bp");
     const sample = el("div", { class: "hedge-cip-sample", id: `hedge-cip-${tenor}-sample` });
     const unavailable = el("p", { class: "hedge-cip-unavailable", role: "status" });
@@ -115,8 +133,9 @@ function renderHedgeCip(payload) {
     modules.append(card);
     const tableFn = (cap, raw) => {
       const chosen = hedgeCipSelection(row, range);
-      return tsTableFn(["한국−미국 금리차 (%p)", "평균 헤지 프리미엄 (연 %)", "괴리 (bp)"],
-        [chosen.t, chosen.spread, chosen.premium, chosen.gap.map((v) => v * 100)], 2)(cap, raw);
+      return tsTableFn(["한국−미국 금리차 (%p)", "평균 헤지 프리미엄 (연 %)", "괴리 (bp)",
+        `한국 ${tenor} (%)`, `미국 ${tenor} (%)`],
+        [chosen.t, chosen.spread, chosen.premium, chosen.gap.map((v) => v * 100), chosen.kr, chosen.us], 2)(cap, raw);
     };
     const box = cardScaffold(card, { title: tenor === "PR" ? "PR · 기준금리" : tenor,
       sub: "금리차 %p · 프리미엄 연 %", csvName: `USD-CIP-${tenor}.csv`, tableFn });
@@ -136,13 +155,19 @@ function renderHedgeCip(payload) {
     }
     refreshers.push(() => {
       const s = hedgeCipStats(row, range);
+      kr.textContent = Number.isFinite(s.kr) ? fmtNum(s.kr, 2) : "—";
+      us.textContent = Number.isFinite(s.us) ? fmtNum(s.us, 2) : "—";
+      spread.textContent = signed(s.spread);
+      premium.textContent = signed(s.premium);
       correlation.textContent = s.correlation === null ? "—" : fmtNum(s.correlation, 2);
       gap.textContent = signed(s.gap_bp);
+      gapZ.textContent = signed(s.gap_zscore);
       rmse.textContent = s.rmse_bp === null ? "—" : fmtNum(s.rmse_bp, 2);
       sample.textContent = s.n ? `N ${s.n.toLocaleString("ko-KR")} · ${s.asof}` : "N 0";
       observation.textContent = s.n ? `${s.start} ~ ${s.end} · 공통 관측 ${s.n.toLocaleString("ko-KR")}개` : "공통 관측 0개";
       unavailable.textContent = !s.n ? row.reason || "선택기간 공통 관측 없음"
-        : s.correlation === null ? "상관계수: 표본 부족 또는 상수 계열" : "";
+        : [s.correlation === null ? "상관계수: 표본 부족 또는 상수 계열" : "",
+          s.gap_zscore === null ? "Z Score: 표본 부족 또는 일정한 괴리" : ""].filter(Boolean).join(" · ");
       unavailable.hidden = !unavailable.textContent;
       empty.hidden = s.n > 0;
       if (chartRange) applyRange(chartRange);
@@ -181,7 +206,8 @@ function renderHedgeCip(payload) {
   const method = payload?.premium_method;
   const methodLabel = typeof method === "string" ? method : typeof method?.label === "string" ? method.label : "";
   panel.append(explainBox("hedge-cip-method", { label: "CIP 비교 · 산식과 표본" },
-    el("p", {}, "금리차는 한국 금리 − 미국 금리입니다. 원/달러 환헤지 프리미엄은 음수일 때 비용, 양수일 때 수취입니다. " +
+    el("p", {}, "카드의 한국·미국 금리, 금리차, 헤지비용(평균)은 선택기간의 최신 공통일 값입니다. " +
+      "금리차는 한국 금리 − 미국 금리입니다. 헤지비용(평균)은 기존 헤지 프리미엄과 같은 부호로, 음수일 때 비용, 양수일 때 수취입니다. " +
       "동일 만기·동일 자금조달 조건의 선물환 프리미엄이 금리차와 연결되는 CIP를 비교 기준으로 사용합니다. " +
       "PR과 국채금리, 3M·6M·12M의 평균 프리미엄은 만기와 상품이 일치하지 않으므로 괴리를 차익거래 수익이나 순수 CIP basis로 해석할 수 없습니다."),
     el("p", {}, "평균 헤지 프리미엄은 각 USD HP 3M·6M·12M 시계열의 해당일 포함 과거 5개 관측 중앙값을 소수점 두 자리로 반올림한 뒤, " +
@@ -190,6 +216,9 @@ function renderHedgeCip(payload) {
     el("p", {}, "상관계수는 선택기간 금리차와 프리미엄 수준의 Pearson 상관입니다. 관측이 2개 미만이거나 어느 한 계열이 상수이면 계산하지 않습니다. " +
       "현재 괴리는 선택기간의 최신 공통일 프리미엄 − 금리차를 bp로 환산합니다. RMSE는 같은 기간 괴리 제곱의 평균에 제곱근을 취한 값으로 예측오차가 아닙니다. " +
       "1%p = 100bp이며, 만기별 공통 표본의 기간과 관측 수가 다를 수 있습니다. 상관관계는 인과관계를 뜻하지 않습니다."),
+    el("p", {}, "Z Score = (현재 괴리 − 선택기간 평균 괴리) / 선택기간 괴리의 표본 표준편차(분모 N−1). " +
+      "최신 관측을 포함한 선택기간에서 현재 괴리의 상대적 위치를 나타내는 무단위 값입니다. " +
+      "관측이 2개 미만이거나 괴리가 일정하면 계산하지 않습니다. 예측 신호나 통계적 유의확률을 뜻하지 않습니다."),
     methodLabel ? el("p", {}, `게시 방법: ${methodLabel}`) : null));
   refresh();
 }
