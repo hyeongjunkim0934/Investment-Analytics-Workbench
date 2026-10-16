@@ -100,7 +100,7 @@ if daily is empty: return inactive
 bins = histogram(daily, rule="fd")
 display_bins = clip_bin_edges_and_recount(daily, bins, abs_z_less_than=5)
 publish(bins, display_bins, full_sample_stats)
-plot_solid_line(bin_midpoints(display_bins), frequency_divided_by_full_n)
+plot_histogram(display_bins.low, display_bins.high, frequency_divided_by_full_n)
 overlay_current_mean_only_inside_display_bounds()`,
       note: '5σ 이상 꼬리는 화면에서만 생략하며 빈도를 재정규화하지 않는다. 전체 통계·표·CSV는 유지한다. 현재 평균선은 3개 만기, 과거 분포는 3M이다.'
     },
