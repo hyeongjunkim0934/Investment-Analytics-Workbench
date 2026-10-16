@@ -49,6 +49,7 @@ function selectFxOutlookWorkspace(key) {
     const panel = document.getElementById(spec.panel);
     if (panel) panel.hidden = !active;
   });
+  if (key === "modelA" && typeof fxMarkovResize === "function") fxMarkovResize();
 }
 
 function renderFxOutlookWorkspace() {
@@ -100,11 +101,15 @@ function renderFxOutlookWorkspace() {
       const panel = document.getElementById(spec.panel);
       if (panel) {
         panel.textContent = "";
-        panel.append(el("div", { class: "card fx-outlook-model" },
+        const modelHead = el("div", { class: `card fx-outlook-model${key === "modelA" ? " fx-markov-header" : ""}` },
           el("div", { class: "card-head" },
             el("span", { id: `fx-outlook-title-${key}`, class: "card-title" }, names[key]),
-            el("button", { type: "button", class: "btn-ghost", onclick: () => begin(key) }, "이름 수정")),
-          el("p", { class: "card-sub" }, "등록된 모형이 없습니다.")));
+            el("button", { type: "button", class: "btn-ghost", onclick: () => begin(key) }, "이름 수정")));
+        panel.append(modelHead);
+        if (key === "modelA" && typeof renderFxMarkov === "function") {
+          const content = el("div", { id: "fx-markov-content" }); panel.append(content);
+          renderFxMarkov(content);
+        } else modelHead.append(el("p", { class: "card-sub" }, "등록된 모형이 없습니다."));
       }
     }
     tabs.append(button);

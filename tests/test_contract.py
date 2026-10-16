@@ -1141,7 +1141,8 @@ def test_required_keys_are_keys_the_dashboard_actually_reads():
     반대로 목록이 낡으면 아무것도 못 지킨다. 원칙은 "app.js 가 이 이름을 실제로
     집는가"이고(주석 제거본에서), 예외는 위 목록에 **이유와 함께** 적는다.
     """
-    js = _app_js()
+    js = _app_js() + _strip_js_comments(
+        (ROOT / "dashboard" / "fx-markov.js").read_text(encoding="utf-8"))
     for payload, keys in check_output.REQUIRED_KEYS.items():
         for k in keys:
             if (payload, k) in PUBLISH_ONLY_KEYS:

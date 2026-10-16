@@ -13,9 +13,33 @@ globalThis.PSEUDO_DOCS.hedge = {
     { path: 'pipeline/hedge.py', symbols: ['build', 'build_fx_volatility', 'despike', 'clean_merit_daily', 'build_bond_merit', 'build_bond_merits', 'build_cost_distribution', 'par_modified_duration', 'build_bond_outlook'] },
     { path: 'dashboard/app.js', symbols: ['hedgeCostSnapshot', 'renderHedgeDistribution', 'renderHedgeMeritChart'] },
     { path: 'pipeline/fx_outlook.py', symbols: ['build'] },
+    { path: 'pipeline/fx_markov.py', symbols: ['build', 'fit_markov', 'hamilton_filter', 'forecast_moments'] },
+    { path: 'dashboard/fx-markov.js', symbols: ['renderFxMarkov'] },
     { path: 'dashboard/fx-outlook.js', symbols: ['fxOutlookQuarters', 'fxOutlookSelection', 'renderFxOutlook'] }
   ],
   sections: [
+    {
+      id: 'fx-markov',
+      title: '환율모형A · USDKRW 3국면 마코브 전환',
+      formulas: [
+        { expression: 'rₜ = ln(Sₜ / Sₜ₋₁) = μzₜ + σzₜ εₜ; εₜ ~ N(0,1)', legend: 'S: 원/달러 · z: 저/중/고변동 3국면 · Pᵢⱼ: 현재 i에서 다음 관측 j로의 전이확률, 행 합=1' },
+        { expression: 'p예측 = p현재 P; p필터,j ∝ p예측,j × N(rₜ; μj, σj²)', legend: '현재까지 관측한 수익률의 Hamilton 필터 · 모수는 최신 표본으로 추정, 과거 실시간 확률이나 OOS 성과로 해석하지 않음' },
+        { expression: 'p′=pP; a=mP; m′=a+p′⊙μ; q′=qP+2μ⊙a+p′⊙(μ²+σ²)', legend: 'm,q: 누적 로그수익률의 국면별 비조건부 1·2차 적률 · p₀=현재 filtered 확률, m₀=q₀=0 · 국면 지속성에 따른 수익률 간 공분산 포함' },
+        { expression: 'M=Σj mj; V=Σj qj−M²; 경로=S₀exp(M); 하단/상단=S₀exp(M∓√V)', legend: '로그평균의 지수인 기하 중심 · 혼합분포의 평균 환율·중앙값 아님 · 로그 ±1σ 프록시, 68% 커버리지 보장 아님' }
+      ],
+      code: `levels = canonical_bb_usdkrw_or_info_fallback_only_if_empty()
+returns = last_2520_valid_daily_log_returns(levels, max_calendar_gap=7)
+reset_filter_and_transition_counts_after_excluded_gaps()
+if count(returns) < 756 or latest_quote_has_no_valid_return: return inactive
+fits = gaussian_3state_EM(three_fixed_starts, uniform_block_initial_probability)
+fit = highest_final_likelihood_among_converged_nondegenerate_fits(fits)
+if fit is absent: return inactive_with_diagnostics
+sort_states_by_sigma_and_reorder_transition_and_filtered_probabilities()
+moments = exact_state_joint_log_moments_from_latest_filtered_probability(steps=252)
+publish_monthly_knots(moments[0,21,...,252], calendar_months=0..12)
+plot_full_history_and_geometric_center_with_log_sigma_band()`,
+      note: '추정창은 최근 최대 2,520 유효 일간수익률(최소 756개), 표시기간과 독립적이다. 급변값을 삭제하지 않는다. 월당 21개 모형 관측을 1달력개월로 대응한다. 모수·모형 불확실성, OOS 우월성 및 구간 커버리지는 미검증이다. 세 국면은 변동성 순서이며 원화 강세·중립·약세라는 인과 상태가 아니다. 허용 저장소에 KG 본체가 없어 기존 MSM 구현·검증 기록을 참고했다.'
+    },
     {
       id: 'usd-cip',
       title: 'USD 모델A · 금리차와 헤지 프리미엄',
