@@ -1,0 +1,9 @@
+# 환율모형B 오프라인 러너(fx_lstm_xgb_runner.py) 전용 — 파이프라인 고정 의존성 3개와 섞지 말 것.
+# CI 에서 설치하지 않는다. 로컬: python -m venv .venv-fx && .venv-fx/bin/pip install -r 이 파일
+# torch 는 CPU 휠이면 충분하다: pip install torch --index-url https://download.pytorch.org/whl/cpu
+pandas
+numpy
+scikit-learn
+statsmodels
+xgboost
+torch

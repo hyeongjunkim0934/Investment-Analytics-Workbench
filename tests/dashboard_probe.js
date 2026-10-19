@@ -206,6 +206,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "port-constraints.j
   { filename: "dashboard/port-constraints.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-markov.js"), "utf8"), sandbox,
   { filename: "dashboard/fx-markov.js" });
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-lstm-xgb.js"), "utf8"), sandbox,
+  { filename: "dashboard/fx-lstm-xgb.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-outlook.js"), "utf8"), sandbox,
   { filename: "dashboard/fx-outlook.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-cip.js"), "utf8"), sandbox,

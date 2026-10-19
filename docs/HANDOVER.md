@@ -10,6 +10,34 @@
 
 ## 0. 30초 요약
 
+### 2026-10-19 환율모형B · LSTM/XGBoost walk-forward 백테스트 (퀀트팀 모형 이식)
+
+- 요청: 환율전망 탭의 모형 슬롯에 퀀트팀 LSTM·XGBoost 환율 모형(`fx_predict.py`·`fx.ipynb`)을
+  싣고, 파라미터를 바꿔 보며 실제 환율과 비교·백테스트하고 실제−전망 차이를 점검할 수 있게.
+  사용자가 "추천안대로" 승인한 구조 = 오프라인 러너 → 결과 JSON 을 Data 에 커밋 → 파이프라인
+  게시 → 브라우저 평가. 파라미터 변경은 사전 계산 격자(lag 1/3/6 × window 24/36)에서 고르는
+  방식이며 브라우저 재학습은 없다(torch·xgboost 는 CI 고정 의존성 밖).
+- 판단: 프롬프트는 환율모형A 를 지목했으나 A 는 2026-10-16 마코브가 차지해 **빈 슬롯 B 에
+  연결**했다(A 를 덮어쓰지 않음 — 탭 이름은 화면에서 편집 가능). 사용자에게 보고했다.
+- 변경: Workbench — `pipeline/research/fx_lstm_xgb_runner.py`(+전용 requirements),
+  `pipeline/fx_lstm_xgb.py`, `process.py`·`check_output.py` 연결, `dashboard/fx-lstm-xgb.js`,
+  `fx-outlook.js` 의 modelB 렌더러 분기, CSS, Pseudo 절, `docs/FX_LSTM_XGB.md`. Data —
+  `models/fx_lstm_xgb/` 안내(CLAUDE.md·폴더 README), `notify-workbench.yml` 에 `**/fx_lstm_xgb.json`
+  경로, `.gitignore` 에 `models/**/*.xlsx`. JSON 15개 계약 불변(`fx.json` 안의 블록).
+- 원 코드 검토에서 찾은 것(러너 기본값에서 고치고 플래그로 복원 가능): 백테스트 학습 라벨의
+  look-ahead(행 t−1 까지의 타깃 = t+lag−1 시점 환율을 학습), 국제수지 공표 지연 미반영, NS 결측
+  양방향 보간, 행 위치 국제수지 조인, 시드 미고정. 전달받은 코드·발표자료 어디에도 표본 외 성과
+  수치가 없었다 — 실성과는 러너를 실제 CSV 로 돌린 뒤 화면 지표(RW 대비 Theil U 등)로 처음 나온다.
+- 검증: 러너·로더 단위검사 30건, UI 검사 3건(프로브 10항목·스크립트 순서·피처 유출 가드), 기존
+  FX·계약·Pseudo 검사 포함 147건 통과. 합성 CSV 러너 스모크 완주, NS 요인이 원 노트북 행과 일치.
+  전체 회귀검사 773건·36 subtests 통과. 실데이터 파이프라인 503계열·13경고·JSON 15개로 기본 브랜치와
+  같고(산출물 부재 → `lstm_xgb` 비활성 블록) 게이트 통과. 합성 산출물을 임시 데이터 디렉터리에 넣은
+  파이프라인도 게이트 통과, 실브라우저 Chromium 캡처로 패널(조작·타일·차트 둘·지표·국면 표) 확인.
+  실행 비용 실측: 100 epoch 스텝당 약 1.5초(4코어) → 실자료 6조합 약 40분.
+- **미결**: 퀀트팀 CSV 3개(`table.csv`·`국제수지_1.csv`·`국제수지_2.csv`)를 아직 받지 못했다 — Data
+  `models/fx_lstm_xgb/` 에 올리고 러너를 돌려 `fx_lstm_xgb.json` 을 커밋해야 화면이 켜진다. 그 전까지
+  B 패널은 사유를 적은 보류 상태다.
+
 ### 2026-10-16 환율모형A · USDKRW 3국면 마코브 전환
 
 - 요청: 환율모형A에서 USDKRW 3국면 Markov Switching 전망 경로와 모형 불확실성 범위를

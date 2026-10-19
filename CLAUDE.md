@@ -29,6 +29,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `pipeline/check_output.py` | **배포 게이트**. 산출물이 JSON 계약을 지키는지 보고 아니면 exit 1. 표준 라이브러리만 씀 |
 | `pipeline/research/wf_validation.py` | 가중치 방식 비교용 수동 연구 하네스. **CI에서 실행되지 않음**. 요인 정의는 `risk.factor_specs` 에서 import |
 | `pipeline/research/risk_validation.py` | 리스크 점수 정합성 백테스트 — 미래 실현변동성·낙폭·교차상관·국면 t-검정(순환순열 p)·위기 매핑 + 동적 λ vs 정적 60/40·MVO 경제 백테스트. CI 미실행, 결과는 docstring·HANDOVER §5.1(2026-09-08). `risk_lambda_alloc.py` 의 엔진 복제·로그 매핑을 import 한다 |
+| `pipeline/research/fx_lstm_xgb_runner.py` | 환율모형B 오프라인 러너(LSTM·XGBoost walk-forward, 퀀트팀 모형 이식). **CI 미실행**, 전용 `requirements-fx-lstm-xgb.txt`. 산출물 `fx_lstm_xgb.json` 을 비공개 Data 에 커밋하면 `pipeline/fx_lstm_xgb.py` 가 검증해 `fx.json.lstm_xgb` 로 게시하고 `dashboard/fx-lstm-xgb.js` 가 그린다 — 아래 「환율모형B」 절 |
 | `pipeline/research/alloc_prototype.py` `modellab_prototype.py` | 같은 성격의 수동 시안 하네스 둘(자산배분 실데이터 검토 · 모델 랩 백테스트). CI 미실행 — 셋 다 실데이터로 완주하는지는 수동으로만 확인한다(2026-08-17 실행 확인, 각 exit 0) |
 | `pipeline/requirements.txt` | 파이프라인이 직접 import 하는 3개를 `==` 로 고정 |
 | `tests/` | pytest 스위트 + 합성 엑셀 픽스처 생성기(`synth.py`). **비공개 데이터 불필요** |
@@ -120,10 +121,36 @@ A는 USD 금리차·평균 헤지 프리미엄 비교를 표시하며, B는 모�
 - Pseudo는 환헤지 문서의 별도 절에 유지한다. 상세 명세·근거 한계는 `docs/FX_MARKOV.md`.
   허용 저장소에 KG 본체는 없으며 기존 MSM 구현·검증 기록을 참고했다.
 
+## 환율모형B · LSTM/XGBoost walk-forward (2026-10-19)
+
+- 퀀트팀 모형(`fx_predict.py`·`fx.ipynb`)의 이식. 프롬프트는 모형A 를 지목했지만 A 는 마코브가 차지하고
+  있어 **빈 슬롯 B** 에 연결했다(탭 이름은 화면에서 편집 가능). 세 층: 오프라인 러너
+  `pipeline/research/fx_lstm_xgb_runner.py`(CI 미실행 — torch·xgboost 는
+  `pipeline/research/requirements-fx-lstm-xgb.txt`, 고정 의존성 3개와 섞지 말 것) → 비공개 Data
+  `models/fx_lstm_xgb/fx_lstm_xgb.json` 커밋 → 로더 `pipeline/fx_lstm_xgb.py` 가 `port_cma.json` 과 같은
+  재귀 탐색으로 찾아 **스키마 검증 후 알려진 키만** `fx.json.lstm_xgb` 로 게시 → `dashboard/fx-lstm-xgb.js`
+  가 환율전망 › 환율모형B 에 그린다. 모형은 브라우저·CI 어디서도 재추정하지 않는다.
+- **게시 경계**: 기준일·예측시점·기준 환율·실제 환율·모형 예측치·요약 지표·설정 메타뿐. 국제수지·금리
+  피처값은 러너가 싣지 않고 로더 화이트리스트(`MODEL_META_KEYS`·`RUNNER_KEYS`·`SUMMARY_KEYS`)가 모르는
+  키를 버린다. `tests/test_fx_lstm_xgb_ui.py` 가 화면 코드에 피처 필드명이 없음을 강제한다. 입력 CSV 3개는
+  Data 에만 둔다 — 워크벤치로 옮기지 말 것.
+- 파일이 없거나 깨지면 **사유와 함께 `active:false`** 를 항상 게시한다(게이트 `REQUIRED_KEYS["fx"]` 의
+  `lstm_xgb` + 중첩 키). 다른 모형으로 대체하지 않는다. 여러 개면 정렬 첫 번째 + 경고.
+- 러너 기본값은 원 코드와 **네 곳**이 다르고 전부 플래그로 복원된다: 학습 라벨을 기준일에 실현된 것만
+  쓴다(`--replicate-notebook` 이 원 노트북의 look-ahead 를 복원) · 국제수지 공표 지연 `--bop-lag 2` · NS
+  결측 앞채움 `--ns-fill` · 시드 고정 `--seed`. 국제수지는 행 위치가 아니라 월 키로 조인한다. 산식·
+  하이퍼파라미터는 그대로다. 그리드 lag 1/3/6 × window 24/36 을 한 JSON 에 싣는다 — 화면의 파라미터
+  변경은 이 격자에서 고르는 것이다.
+- 화면: lag·window·모형·기간·국면 경계(기본 1100/1300 — 노트북 고정값, 사용자 입력은 `iaw-fx-lstm-xgb-v1`)
+  조작, 랜덤워크(기준일 환율 유지) 대조, RMSE·MAE·편향·Theil U·방향 적중률, 기준일 수준별 국면 분해,
+  차트 둘·표·CSV. 전부 게시된 행에서 화면이 계산한다. 참고 표시 전용 — 등급·경보·자산배분 미연결.
+- 명세·스키마·한계는 `docs/FX_LSTM_XGB.md`, Pseudo 는 환헤지 문서의 별도 절. **실제 CSV 는 아직 없어
+  실성과 수치는 없다** — CSV 가 오면 러너를 돌려 JSON 을 커밋한다(Data `CLAUDE.md` 가 절차의 정본).
+
 ## 환율전망 (2026-10-07)
 
 - `컨센서스`·`환율모형A`·`환율모형B` 하위 탭. 기존 차트·분기 입력은 컨센서스에
-  유지한다. A는 3국면 마코브 환율 전망을 표시하고 B는 모형 미연결 상태를 유지한다.
+  유지한다. A는 3국면 마코브 환율 전망, B는 LSTM·XGBoost walk-forward 백테스트를 표시한다(각 절 참조).
   A/B 탭 더블클릭·F2 또는 패널의 `이름 수정`으로 1~30자 이름을 편집하고 저장·취소한다.
   이름은 `iaw-fx-outlook-workspaces-v1`에 컨센서스와 분리 저장한다. 저장 실패는 기존
   이름과 편집값을 보존하고 오류를 표시한다. 탭 이동은 기존 차트를 숨김/표시하여

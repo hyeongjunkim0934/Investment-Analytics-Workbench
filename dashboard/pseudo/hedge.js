@@ -2,8 +2,8 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.hedge = {
   id: 'hedge',
   title: '환헤지',
-  updated: '2026-10-16',
-  summary: '모니터링: 비용·환 변동성·국채 메리트 · 모델A: USD 금리차와 헤지 프리미엄',
+  updated: '2026-10-19',
+  summary: '모니터링: 비용·환 변동성·국채 메리트 · 모델A: USD 금리차와 헤지 프리미엄 · 환율전망: 컨센서스·3국면 마코브(A)·LSTM/XGBoost walk-forward(B)',
   inputs: 'HP 3M·6M·12M, SMB USD 3M, 10년 국채금리: 연 % · 환율: 외화당 원(JPY는 100엔당 원)',
   outputs: '비용·금리·연 변동성: % · 메리트·변동성 감소: %p · 국채 1년 경로: 누적수익률 % · 환율전망: 원/달러',
   sources: [
@@ -15,6 +15,9 @@ globalThis.PSEUDO_DOCS.hedge = {
     { path: 'pipeline/fx_outlook.py', symbols: ['build'] },
     { path: 'pipeline/fx_markov.py', symbols: ['build', 'fit_markov', 'hamilton_filter', 'forecast_moments'] },
     { path: 'dashboard/fx-markov.js', symbols: ['renderFxMarkov'] },
+    { path: 'pipeline/fx_lstm_xgb.py', symbols: ['load', 'validate', 'skeleton'] },
+    { path: 'pipeline/research/fx_lstm_xgb_runner.py', symbols: ['join_bop', 'ns_factors', 'arma_factors', 'walk_forward', 'summarize'] },
+    { path: 'dashboard/fx-lstm-xgb.js', symbols: ['renderFxLstmXgb', 'fxLxMetrics', 'fxLxValid'] },
     { path: 'dashboard/fx-outlook.js', symbols: ['fxOutlookQuarters', 'fxOutlookSelection', 'renderFxOutlook'] }
   ],
   sections: [
@@ -39,6 +42,24 @@ moments = exact_state_joint_log_moments_from_latest_filtered_probability(steps=2
 publish_monthly_knots(moments[0,21,...,252], calendar_months=0..12)
 plot_full_history_and_geometric_center_with_log_sigma_band()`,
       note: '추정창은 최근 최대 2,520 유효 일간수익률(최소 756개), 표시기간과 독립적이다. 급변값을 삭제하지 않는다. 월당 21개 모형 관측을 1달력개월로 대응한다. 모수·모형 불확실성, OOS 우월성 및 구간 커버리지는 미검증이다. 세 국면은 변동성 순서이며 원화 강세·중립·약세라는 인과 상태가 아니다. 허용 저장소에 KG 본체가 없어 기존 MSM 구현·검증 기록을 참고했다.'
+    },
+    {
+      id: 'fx-lstm-xgb',
+      title: '환율모형B · USDKRW LSTM/XGBoost walk-forward',
+      formulas: [
+        { expression: 'ŷₜ₊ₗ = ½[XGB(xₜ) + LSTM(xₜ₋₅ … xₜ)]; 학습표본 = {(xₛ, Sₛ₊ₗ) : t−w−l < s ≤ t−l}', legend: 'l: 예측 lag 개월(1/3/6) · w: 학습창 개월(24/36) · x: 피처 10개(표준화) · S: 원/달러 수준 · 기준일 t 에 실현된 라벨만 학습, 오프라인 러너가 매 기준일 재학습 · 브라우저 재추정 없음' },
+        { expression: 'sₘ(τ) = rUS,τ − rKR,τ = β₀ + β₁·(1−e^(−λτ))/(λτ) + β₂·[(1−e^(−λτ))/(λτ) − e^(−λτ)]', legend: 'Nelson–Siegel λ=0.7308 · τ = 0.25/1/3/10년 · 최소제곱 β = level/slope/curvature · 결측은 앞채움(원 코드는 양방향 보간) · 국제수지 피처는 공표 지연 2개월' },
+        { expression: 'eₜ = ŷₜ₊ₗ − Sₜ₊ₗ; eRW,ₜ = Sₜ − Sₜ₊ₗ', legend: '랜덤워크 = 기준일 환율 유지 · 실현된 행만 · 원/달러 · 기준일 수준 < 하한 / > 상한으로 저·중·고환율 국면 분해(기본 1100/1300, 노트북 고정값)' },
+        { expression: 'U = RMSE / RMSE_RW; 적중률 = #{sign(ŷₜ₊ₗ − Sₜ) = sign(Sₜ₊ₗ − Sₜ)} / N', legend: 'Theil U < 1 이면 랜덤워크보다 작은 RMSE · 방향은 기준 환율 대비 부호 · 랜덤워크는 방향이 없어 비움 · 선택 기간·조합·국면별로 화면이 재계산' }
+      ],
+      code: `artifact = first_sorted_fx_lstm_xgb_json_in_private_data_repo()  # 오프라인 러너 산출물
+if artifact is missing or schema_grid_lengths_order_or_pending_tail_invalid(artifact): return inactive_with_reason
+publish_known_keys_only(dates, base_spot, actual_spot, predictions, summary, model_meta)  # 피처값 미게시
+combo = select(lag, window) from published_grid; rows = rows_in_period(combo, model, period)
+rw = base_spot; errors = prediction - actual; errors_rw = rw - actual  # 실현 행만
+metrics = rmse_mae_bias_theil_u_hit_rate(rows); by_regime = split_by_base_level(rows, low, high)
+plot_actual_prediction_rw_and_errors(); table_csv_all_rows_including_pending()`,
+      note: '모형은 브라우저·CI 어디서도 재추정하지 않는다. 러너 기본값은 원 코드와 네 곳이 다르다(실현 라벨만 학습·국제수지 공표 지연 2개월·NS 앞채움·시드 고정) — 전부 플래그로 복원되며 어느 설정인지 JSON 과 화면에 적힌다. 학습창 24~36개월의 LSTM 은 표본이 매우 작아 결과가 시드에 민감할 수 있다. 국면 경계는 추정값이 아니다. 참고 표시 전용이고 등급·경보·자산배분·컨센서스에 연결되지 않는다. 실제 CSV 수령·러너 실행 전까지 사유를 적은 보류 상태다.'
     },
     {
       id: 'usd-cip',

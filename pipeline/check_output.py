@@ -52,7 +52,9 @@ META_FIELDS = ["built_at_utc", "last_observation", "series_count", "files", "war
 # 여기 적는 것은 **화면이 이름으로 집는 키**뿐이다. 값의 타당성(범위·부호)은
 # 게이트의 일이 아니다 — 그건 pytest 와 프로브가 본다.
 REQUIRED_KEYS = {
-    "fx": ["ts", "outlook", "markov"],  # 결측이어도 비활성 블록은 필수.
+    # lstm_xgb = 환율모형B(오프라인 러너 산출물). 파일이 없어도 active:false 블록이
+    # 게시돼야 한다 — 부재는 wiring 누락이다.
+    "fx": ["ts", "outlook", "markov", "lstm_xgb"],  # 결측이어도 비활성 블록은 필수.
     "hedge": ["asof", "default_tenor_m", "matrix", "curves", "backtest",
               "cost_hist_curve", "cost_hist_usd", "cost_dashboard", "cip", "fx_volatility", "cost_stats", "mtm", "sim",
               # ust_merit = 미국채 투자 메리트 모니터(§7.7.14). 시리즈가 없어도
@@ -94,6 +96,8 @@ REQUIRED_ROW_KEYS = {
 REQUIRED_NESTED_KEYS = {
     ("fx", "markov"): ["active", "source", "pair", "unit", "asof", "anchor",
                        "sample", "model", "diagnostics", "regimes", "current", "transition", "range"],
+    ("fx", "lstm_xgb"): ["active", "artifact", "path", "schema", "reason", "generated_at",
+                         "runner", "model", "data", "grid", "regime_defaults", "combos"],
     ("hedge", "cost_stats"): ["mean", "now", "min", "series", "start", "end",
                               "n_months", "years"],
     ("hedge", "mtm"): ["sigma_ds_3m", "worst_ds", "worst_date", "series",

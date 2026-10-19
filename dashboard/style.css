@@ -1704,6 +1704,18 @@ a.kpi-link .kpi-label > span:first-child::after {
 /* Markov FX outlook follows the consensus chart's scale and compact cards. */
 .fx-outlook-model.fx-markov-header { min-height: 0; margin-bottom: 14px; }
 .fx-markov-header .card-head { margin-bottom: 0; }
+
+/* 환율모형B — LSTM/XGBoost walk-forward (fx-lstm-xgb.js). 평가 손잡이·타일·지표표. */
+.fx-lx-controls { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin: 4px 0 10px; }
+.fx-lx-controls label { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; }
+.fx-lx-controls input[type="number"] { width: 92px; }
+.fx-lx-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.fx-lx-chart-card, .fx-lx-error-card, .fx-lx-metrics-card { margin-bottom: 12px; }
+.fx-lx-chart-note { margin: 6px 0 0; }
+.fx-lx-metrics tr.is-selected td, .fx-lx-metrics tr.is-selected th { font-weight: 700; color: var(--ink-1); }
+.fx-lx-regimes { margin-top: 6px; }
+.fx-lx-empty .card-sub { margin-top: 6px; }
+@media (max-width: 760px) { .fx-lx-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .fx-markov-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
 .fx-markov-grid .card { min-width: 0; margin: 0; }
 .fx-markov-forecast { display: flex; flex-direction: column; gap: 6px; }

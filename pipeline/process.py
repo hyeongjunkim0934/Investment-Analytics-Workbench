@@ -29,6 +29,7 @@ import pandas as pd
 import alloc
 import bm
 import breadth
+import fx_lstm_xgb
 import fx_markov
 import fx_outlook
 import hedge
@@ -976,6 +977,15 @@ def main() -> None:
         "macro.json": build_macro(),
         "catalog.json": build_catalog(),
     })
+    # 환율모형B — 오프라인 러너 산출물(Data 저장소 fx_lstm_xgb.json). 파일이 없거나 깨져도
+    # active:false 블록을 항상 게시한다(체인 안전장치 — 게이트 REQUIRED_KEYS["fx"] 의 lstm_xgb).
+    try:
+        payloads["fx.json"]["lstm_xgb"] = fx_lstm_xgb.load(args.data_dir, warn)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        warn("fx_lstm_xgb: 환율모형B 산출물 처리 실패 — 비활성으로 게시됩니다")
+        payloads["fx.json"]["lstm_xgb"] = fx_lstm_xgb.skeleton("처리 실패 — 빌드 로그 확인")
     payloads["meta.json"] = {
         "built_at_utc": now_utc.strftime("%Y-%m-%d %H:%M UTC"),
         "built_at_kst": kst.strftime("%Y-%m-%d %H:%M KST"),

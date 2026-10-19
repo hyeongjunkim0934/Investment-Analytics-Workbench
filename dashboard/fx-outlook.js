@@ -50,6 +50,7 @@ function selectFxOutlookWorkspace(key) {
     if (panel) panel.hidden = !active;
   });
   if (key === "modelA" && typeof fxMarkovResize === "function") fxMarkovResize();
+  if (key === "modelB" && typeof fxLstmXgbResize === "function") fxLstmXgbResize();
 }
 
 function renderFxOutlookWorkspace() {
@@ -101,14 +102,17 @@ function renderFxOutlookWorkspace() {
       const panel = document.getElementById(spec.panel);
       if (panel) {
         panel.textContent = "";
-        const modelHead = el("div", { class: `card fx-outlook-model${key === "modelA" ? " fx-markov-header" : ""}` },
+        const renderer = key === "modelA" ? (typeof renderFxMarkov === "function" ? renderFxMarkov : null)
+          : key === "modelB" ? (typeof renderFxLstmXgb === "function" ? renderFxLstmXgb : null) : null;
+        const modelHead = el("div", { class: `card fx-outlook-model${renderer ? " fx-markov-header" : ""}` },
           el("div", { class: "card-head" },
             el("span", { id: `fx-outlook-title-${key}`, class: "card-title" }, names[key]),
             el("button", { type: "button", class: "btn-ghost", onclick: () => begin(key) }, "이름 수정")));
         panel.append(modelHead);
-        if (key === "modelA" && typeof renderFxMarkov === "function") {
-          const content = el("div", { id: "fx-markov-content" }); panel.append(content);
-          renderFxMarkov(content);
+        if (renderer) {
+          const content = el("div", { id: key === "modelA" ? "fx-markov-content" : "fx-lstm-xgb-content" });
+          panel.append(content);
+          renderer(content);
         } else modelHead.append(el("p", { class: "card-sub" }, "등록된 모형이 없습니다."));
       }
     }
