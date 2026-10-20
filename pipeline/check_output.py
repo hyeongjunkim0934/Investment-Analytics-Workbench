@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -49,8 +50,8 @@ META_FIELDS = ["built_at_utc", "last_observation", "series_count", "files", "war
 # 전 통화 `—` 로 비었다. `alloc.json` 에는 이미 필수 키 검사가 있었는데
 # `hedge.json`·`risk.json` 에는 없었다.
 #
-# 여기 적는 것은 **화면이 이름으로 집는 키**뿐이다. 값의 타당성(범위·부호)은
-# 게이트의 일이 아니다 — 그건 pytest 와 프로브가 본다.
+# 여기 적는 것은 **화면이 이름으로 집는 키**다. FX 시뮬레이션은 아래 별도
+# 검사에서 배열 정렬·양수 환율·분위수 순서까지 확인해 불완전한 전망 배포를 막는다.
 REQUIRED_KEYS = {
     # lstm_xgb = 환율모형B(오프라인 러너 산출물). 파일이 없어도 active:false 블록이
     # 게시돼야 한다 — 부재는 wiring 누락이다.
@@ -95,7 +96,7 @@ REQUIRED_ROW_KEYS = {
 # 중첩 객체의 필수 키 — 화면 부제가 이 값들로 자기 표본을 밝힌다(하드코딩 금지).
 REQUIRED_NESTED_KEYS = {
     ("fx", "markov"): ["active", "source", "pair", "unit", "asof", "anchor",
-                       "sample", "model", "diagnostics", "regimes", "current", "transition", "range"],
+                       "sample", "model", "diagnostics", "regimes", "current", "transition", "range", "simulation"],
     ("fx", "lstm_xgb"): ["active", "artifact", "path", "schema", "reason", "generated_at",
                          "runner", "model", "data", "grid", "regime_defaults", "combos"],
     ("hedge", "cost_stats"): ["mean", "now", "min", "series", "start", "end",
@@ -117,6 +118,122 @@ def fail(msg: str) -> None:
 
 def note(msg: str) -> None:
     _notes.append(msg)
+
+
+def _check_fx_simulation(markov):
+    """Validate the version-1 displayed FX distribution without NumPy or refitting.
+
+The arithmetic mean need not lie inside central prediction intervals for skewed
+distributions. Only quantiles are ordered. State frequencies are Monte Carlo
+estimates, so the time-zero frequency need not equal the input filtered weights.
+"""
+    prefix = "fx.json: markov.simulation"
+
+    def invalid(message):
+        fail(f"{prefix}: {message}")
+
+    def finite(value):
+        try:
+            return type(value) in (int, float) and math.isfinite(value)
+        except OverflowError:
+            return False
+
+    def integer(value, minimum=0):
+        return type(value) is int and value >= minimum
+
+    if not isinstance(markov, dict) or type(markov.get("active")) is not bool:
+        invalid("active 불리언을 포함한 모형 객체 필요")
+        return
+    if "simulation" not in markov:
+        invalid("필수 키 없음")
+        return
+    simulation = markov["simulation"]
+    if not markov["active"]:
+        if simulation is not None:
+            invalid("비활성 모형의 시뮬레이션은 null이어야 함")
+        return
+    if not isinstance(simulation, dict):
+        invalid("활성 모형의 시뮬레이션 객체 없음")
+        return
+    fixed = {
+        "engine": "gaussian_markov_log_returns",
+        "rng": "PCG64",
+        "interval_type": "pointwise_equal_tail_conditional_prediction",
+        "nominal_coverages": [0.68, 0.95],
+        "quantile_method": "linear",
+        "sample_path_selection": "first_paths",
+        "mean_mc_se_definition": "sample_level_sd/sqrt(path_count)",
+        "calendar_mapping": "21_model_steps_per_calendar_month_interpolated",
+    }
+    if type(simulation.get("schema_version")) is not int or simulation["schema_version"] != 1:
+        invalid("지원하지 않는 schema_version")
+    for key, value in fixed.items():
+        if simulation.get(key) != value:
+            invalid(f"메타데이터 불일치 — {key}")
+    for key in ("calibrated_prediction_interval", "parameter_uncertainty_included",
+                "median_is_realizable_path", "dates_are_trading_calendar"):
+        if simulation.get(key) is not False:
+            invalid(f"메타데이터 불일치 — {key}")
+    if not isinstance(simulation.get("numpy_version"), str) or not simulation["numpy_version"]:
+        invalid("numpy_version 없음")
+    if not integer(simulation.get("seed")) or not integer(simulation.get("path_count"), 2):
+        invalid("유효한 seed/path_count 필요")
+
+    n = 253
+    if (not isinstance(simulation.get("steps"), list)
+            or len(simulation["steps"]) != n
+            or any(type(step) is not int or step != i for i, step in enumerate(simulation["steps"]))):
+        invalid("steps는 0부터 252까지의 정수여야 함")
+    anchor = markov.get("anchor")
+    if (not isinstance(anchor, dict) or not finite(anchor.get("t"))
+            or not finite(anchor.get("v")) or anchor["v"] <= 0):
+        invalid("유효한 최신 관측 필요")
+        return
+    times = simulation.get("t")
+    if (not isinstance(times, list) or len(times) != n
+            or not all(finite(t) for t in times)
+            or times[0] != anchor["t"]
+            or any(a >= b for a, b in zip(times, times[1:]))):
+        invalid("t 길이·순서·최신 관측 불일치")
+    else:
+        legacy = markov.get("range")
+        if (not isinstance(legacy, dict) or not isinstance(legacy.get("t"), list)
+                or times[::21] != legacy["t"]):
+            invalid("월별 기준일과 모형 관측일 불일치")
+
+    levels = ("mean", "median", "lower68", "upper68", "lower95", "upper95")
+    arrays_valid = True
+    for key in levels:
+        values = simulation.get(key)
+        if (not isinstance(values, list) or len(values) != n
+                or not all(finite(v) and v > 0 for v in values)):
+            invalid(f"{key} 길이 또는 유한 양수 환율 위반")
+            arrays_valid = False
+        elif values[0] != anchor["v"]:
+            invalid(f"{key} 최신 관측 불일치")
+    if arrays_valid:
+        order = ("lower95", "lower68", "median", "upper68", "upper95")
+        if any(any(a > b for a, b in zip(row, row[1:]))
+               for row in zip(*(simulation[key] for key in order))):
+            invalid("중첩 분위수 순서 위반")
+    se = simulation.get("mean_mc_se")
+    if (not isinstance(se, list) or len(se) != n
+            or not all(finite(v) and v >= 0 for v in se) or se[0] != 0):
+        invalid("mean_mc_se 길이·부호·최신점 위반")
+    frequencies = simulation.get("state_probabilities")
+    if (not isinstance(frequencies, list) or len(frequencies) != n
+            or any(not isinstance(row, list) or len(row) != 3
+                   or not all(finite(p) and 0 <= p <= 1 for p in row)
+                   or abs(sum(row) - 1) > 1e-8 for row in frequencies)):
+        invalid("국면확률 길이·범위·합 위반")
+    paths = simulation.get("sample_paths")
+    count = simulation.get("sample_path_count")
+    if (not integer(count) or not isinstance(paths, list) or count != len(paths)
+            or not integer(simulation.get("path_count"), 2) or count > simulation["path_count"]
+            or any(not isinstance(row, list) or len(row) != n
+                   or not all(finite(v) and v > 0 for v in row)
+                   or row[0] != anchor["v"] for row in paths)):
+        invalid("표본 경로 길이·개수·최신점 위반")
 
 
 def _walk_ts(obj, path, seen):
@@ -227,6 +344,10 @@ def check(out: Path, max_warnings: int, min_series: int, dashboard: Path | None)
                  f"(화면 부제가 이 값으로 자기 표본을 밝힙니다)")
     if checked:
         note(f"계산 페이로드 필수 키 {checked}/{len(REQUIRED_KEYS)}개 확인")
+
+    fx = payloads.get("fx")
+    if isinstance(fx, dict):
+        _check_fx_simulation(fx.get("markov"))
 
     seen = [0]
     for name, obj in payloads.items():

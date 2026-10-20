@@ -9,7 +9,7 @@
 | 리스크 | `dashboard/pseudo/risk.js` | `pipeline/risk.py` |
 | 자산배분·CMA | `dashboard/pseudo/alloc.js` | `pipeline/port.py`, `dashboard/cma.js`, `dashboard/app.js` |
 | 환헤지 | `dashboard/pseudo/hedge.js` | `pipeline/hedge.py`, `dashboard/app.js` |
-| 환율전망·3국면 모형A(환헤지 문서 내 별도 절) | `dashboard/pseudo/hedge.js` | `pipeline/fx_outlook.py`, `pipeline/fx_markov.py`, `dashboard/fx-outlook.js`, `dashboard/fx-markov.js` |
+| 환율전망·3국면 모형A(환헤지 문서 내 별도 절) | `dashboard/pseudo/hedge.js` | `pipeline/fx_outlook.py`, `pipeline/fx_markov.py`, `pipeline/fx_simulation.py`, `dashboard/fx-outlook.js`, `dashboard/fx-markov.js` |
 | 환율모형B · LSTM/XGBoost walk-forward(환헤지 문서 내 별도 절) | `dashboard/pseudo/hedge.js` | `pipeline/fx_lstm_xgb.py`, `pipeline/research/fx_lstm_xgb_runner.py`(오프라인), `dashboard/fx-lstm-xgb.js` |
 
 각 문서는 `id`, `title`, `updated`, `summary`, `inputs`, `outputs`, `sources`, `sections`를 갖는다.

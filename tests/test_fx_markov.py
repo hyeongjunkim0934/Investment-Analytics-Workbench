@@ -185,11 +185,36 @@ def test_monthly_range_starts_at_observed_anchor_and_uses_252_steps(monkeypatch)
     assert np.log(np.array(band["center"]) / np.array(band["lower"])) == pytest.approx(band["log_sd"])
     assert result["model"]["horizon_steps"] == 252
     assert result["model"]["steps_per_month"] == 21
-    assert result["model"]["center"] == "geometric_mean"
+    assert result["model"]["center"] == "monte_carlo_mean_and_median"
     assert not result["model"]["calibrated_prediction_interval"]
     assert not result["model"]["parameter_uncertainty_included"]
     assert not result["model"]["out_of_sample_validated"]
     assert [row["label"] for row in result["regimes"]] == ["저변동", "중변동", "고변동"]
+    json.dumps(result, allow_nan=False)
+
+
+def test_daily_simulation_uses_same_anchor_and_exact_month_boundaries(monkeypatch):
+    monkeypatch.setattr(fx_markov, "fit_markov", _fixed_fit)
+    levels = _levels()
+    result = fx_markov.build({"bb:달러원": levels})
+    simulation, legacy = result["simulation"], result["range"]
+    assert result["active"] and legacy["role"] == "legacy_analytic_diagnostic"
+    assert simulation["steps"] == list(range(253))
+    assert len(simulation["t"]) == 253
+    assert simulation["t"][::21] == legacy["t"]
+    assert all(left < right for left, right in zip(simulation["t"], simulation["t"][1:]))
+    for key in ("mean", "median", "lower68", "upper68", "lower95", "upper95"):
+        assert len(simulation[key]) == 253
+        assert simulation[key][0] == result["anchor"]["v"]
+    assert simulation["mean_mc_se"][0] == 0
+    assert all(path[0] == result["anchor"]["v"] for path in simulation["sample_paths"])
+    assert simulation["calendar_mapping"] == "21_model_steps_per_calendar_month_interpolated"
+    assert not simulation["dates_are_trading_calendar"]
+    assert not simulation["parameter_uncertainty_included"]
+    # Legacy expectation is an independent analytic benchmark for the mean.
+    for month in (1, 3, 6, 12):
+        step = 21 * month
+        assert abs(simulation["mean"][step] - legacy["expected_level"][month]) < 5 * simulation["mean_mc_se"][step]
     json.dumps(result, allow_nan=False)
 
 
@@ -201,3 +226,19 @@ def test_failed_fit_does_not_silently_use_a_random_walk(monkeypatch):
     assert result["reason"] == "synthetic fit failure"
     assert result["range"] is None
     assert result["diagnostics"]["n_valid"] == 0
+
+
+def test_failed_simulation_never_publishes_an_analytic_fallback(monkeypatch):
+    monkeypatch.setattr(fx_markov, "fit_markov", _fixed_fit)
+
+    def failed_forecast(*args):
+        raise ValueError("synthetic simulation overflow")
+
+    monkeypatch.setattr(fx_markov.fx_simulation, "forecast", failed_forecast)
+    warnings = []
+    result = fx_markov.build({"bb:달러원": _levels()}, warnings.append)
+    assert not result["active"]
+    assert result["simulation"] is None and result["range"] is None
+    assert result["current"] is None and result["regimes"] == []
+    assert "synthetic simulation overflow" in result["reason"]
+    assert warnings

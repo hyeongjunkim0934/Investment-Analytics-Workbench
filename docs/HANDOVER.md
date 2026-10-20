@@ -10,6 +10,44 @@
 
 ## 0. 30초 요약
 
+
+### 2026-10-20 환율모형A · 몬테카를로 평균/중앙값 경로
+
+- 범위: `hyeongjunkim0934/Investment-Analytics-Workbench`만 수정. Data는 기본 브랜치와
+  파일 목록 조회만 수행했다. 두 저장소 기본 브랜치는 모두
+  `claude/data-repo-dashboard-automation-cj8y59`다. 작업 브랜치는
+  `codex/hj-only-fx-markov-monte-carlo-20261020`, 기준 커밋 `5934fa9`.
+  머지는 별도 사용자 요청 시 수행한다.
+- 요청: 기존 로그평균 직선형 전망을 MC 환율 평균·중앙값과 분포 범위로 개선하고
+  추후 고도화를 염두에 두어 설계. 허용 저장소에는 KG 본체가 없어 원문 참조는 미완료이며
+  다른 프로젝트에는 접근하지 않았다. 기존 MSM 코드·검증 기록만 근거로 사용했다.
+- `pipeline/fx_simulation.py`의 경로 생성/수준 집계를 분리했다. 20,000개·252단계,
+  PCG64 시드 20261020. 경로별 상태 지속·전이를 보존한다. `simulation` v1에 253개 시점의
+  평균·중앙값·68/95% 분위수·MC SE·국면 빈도와 처음 12개 표본 경로를 게시한다.
+  기존 해석적 로그/지수 적률·월별 `range`는 수학 진단용으로 보존했다.
+- UI는 평균·중앙값 두 선, 68/95% 선택, 표본 경로 토글, 3/6/12개월 두 중심값을 제공한다.
+  표·CSV·호버는 같은 분포를 읽고 기간·탭 전환은 재추정하지 않는다. 문장 설명은
+  접힘 상세/Pseudo에 배치했다. 평균·중앙값의 모양을 인위적으로 굽히지 않는다.
+- 달력: 21모형 관측/월, 기존 월별 날짜 사이 등간격 보간. 실제 영업일 예측 달력 아님.
+  3/6/12개월 인덱스 63/126/252. 시점별 조건부 구간이며 모수 불확실성은 제외한다.
+- 검증: 엔진·독립 상태경로 완전열거/CDF·UI·게이트·기존 계약/FX/Pseudo 집중 검사
+  195개 통과, 1개 skip(로컬 Data 체크아웃 없음). 첫 실행은 Pseudo 코드가 13행으로
+  문서 계약 상한 12행을 초과하여 1개 실패했고, 12행으로 정리 후 해당 검사를 통과했다.
+  독립 감사에서 소수점 시작값의 반복평균 반올림 문제를 발견해 상수열 평균/SE를 정확히
+  보존하도록 고쳤고 무충격 경계조건·기존 검사를 다시 통과했다.
+- 게시 사이트의 허용 USDKRW 이력 6,462개를 재사용한 통합 재계산: 11.68초,
+  20,000×252, 최신 관측 2026-09-08 유지. 월별 MC 평균과 해석적 평균 차이의 최대값은
+  MC SE의 1.044배다. 실제 새 JSON→JS 렌더·95% 전환·CSV 원정밀도·표본 토글 검사 통과.
+  이것은 게시 원천의 재계산이며 비공개 XLSX 독립 대조·전체 실데이터 재빌드는 아니다.
+- 로컬 런타임은 저장소 고정 NumPy/Pandas 버전을 설치해 검증했다. 생성 JSON과 실제
+  데이터 파생값은 `_site/`에만 두고 커밋하지 않았다. Chromium/Headless Shell 다운로드가
+  손상된 ZIP을 반환하여 실브라우저 시각 검증은 미완료다.
+- 다음 연구는 `docs/FX_MARKOV.md`의 확장 지점 참고: 고정 walk-forward/RW 대조·
+  시계별 커버리지·꼬리 모형·외부 모수 재표본 루프. OOS 우월성은 주장하지 않는다.
+- 재현: `python -m pytest -q tests/test_fx_markov.py tests/test_fx_markov_audit.py
+  tests/test_fx_simulation.py tests/test_fx_simulation_audit.py tests/test_fx_simulation_contract.py
+  tests/test_fx_markov_ui.py tests/test_fx_outlook.py tests/test_contract.py tests/test_pseudo.py`.
+
 ### 2026-10-19 환율모형B · LSTM/XGBoost walk-forward 백테스트 (퀀트팀 모형 이식)
 
 - 요청: 환율전망 탭의 모형 슬롯에 퀀트팀 LSTM·XGBoost 환율 모형(`fx_predict.py`·`fx.ipynb`)을
