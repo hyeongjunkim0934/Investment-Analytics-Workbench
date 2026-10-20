@@ -2,7 +2,7 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.hedge = {
   id: 'hedge',
   title: '환헤지',
-  updated: '2026-10-19',
+  updated: '2026-10-20',
   summary: '모니터링: 비용·환 변동성·국채 메리트 · 모델A: USD 금리차와 헤지 프리미엄 · 환율전망: 컨센서스·3국면 마코브(A)·LSTM/XGBoost walk-forward(B)',
   inputs: 'HP 3M·6M·12M, SMB USD 3M, 10년 국채금리: 연 % · 환율: 외화당 원(JPY는 100엔당 원)',
   outputs: '비용·금리·연 변동성: % · 메리트·변동성 감소: %p · 국채 1년 경로: 누적수익률 % · 환율전망: 원/달러',
@@ -14,6 +14,7 @@ globalThis.PSEUDO_DOCS.hedge = {
     { path: 'dashboard/app.js', symbols: ['hedgeCostSnapshot', 'renderHedgeDistribution', 'renderHedgeMeritChart'] },
     { path: 'pipeline/fx_outlook.py', symbols: ['build'] },
     { path: 'pipeline/fx_markov.py', symbols: ['build', 'fit_markov', 'hamilton_filter', 'forecast_moments'] },
+    { path: 'pipeline/fx_simulation.py', symbols: ['simulate_markov_paths', 'summarize_paths', 'forecast'] },
     { path: 'dashboard/fx-markov.js', symbols: ['renderFxMarkov'] },
     { path: 'pipeline/fx_lstm_xgb.py', symbols: ['load', 'validate', 'skeleton'] },
     { path: 'pipeline/research/fx_lstm_xgb_runner.py', symbols: ['join_bop', 'ns_factors', 'arma_factors', 'walk_forward', 'summarize'] },
@@ -27,21 +28,23 @@ globalThis.PSEUDO_DOCS.hedge = {
       formulas: [
         { expression: 'rₜ = ln(Sₜ / Sₜ₋₁) = μzₜ + σzₜ εₜ; εₜ ~ N(0,1)', legend: 'S: 원/달러 · z: 저/중/고변동 3국면 · Pᵢⱼ: 현재 i에서 다음 관측 j로의 전이확률, 행 합=1' },
         { expression: 'p예측 = p현재 P; p필터,j ∝ p예측,j × N(rₜ; μj, σj²)', legend: '현재까지 관측한 수익률의 Hamilton 필터 · 모수는 최신 표본으로 추정, 과거 실시간 확률이나 OOS 성과로 해석하지 않음' },
-        { expression: 'p′=pP; a=mP; m′=a+p′⊙μ; q′=qP+2μ⊙a+p′⊙(μ²+σ²)', legend: 'm,q: 누적 로그수익률의 국면별 비조건부 1·2차 적률 · p₀=현재 filtered 확률, m₀=q₀=0 · 국면 지속성에 따른 수익률 간 공분산 포함' },
-        { expression: 'M=Σj mj; V=Σj qj−M²; 경로=S₀exp(M); 하단/상단=S₀exp(M∓√V)', legend: '로그평균의 지수인 기하 중심 · 혼합분포의 평균 환율·중앙값 아님 · 로그 ±1σ 프록시, 68% 커버리지 보장 아님' }
+        { expression: 'z₀⁽ᵇ⁾ ~ Cat(p필터); zₕ⁽ᵇ⁾ ~ Cat(P[zₕ₋₁⁽ᵇ⁾,:]); Sₕ⁽ᵇ⁾ = S₀ exp(Σᵤ₌₁ʰ[μzᵤ + σzᵤ εᵤ⁽ᵇ⁾])', legend: '경로별 현재 국면을 유지하며 전이 후 다음 수익률 추출 · 로그수익률 평균에 추가 −σ²/2 보정 없음' },
+        { expression: '평균ₕ = Σᵦ Sₕ⁽ᵇ⁾ / B; 중앙값ₕ = Qₕ(0.5); I68 = [Qₕ(0.16), Qₕ(0.84)]; I95 = [Qₕ(0.025), Qₕ(0.975)]', legend: 'B=20,000개 경로의 시점별 환율 수준 통계 · 모수 조건부 중앙 구간 · exp(로그평균)과 구별' },
+        { expression: 'g₀=p필터; gₕ=(gₕ₋₁P)⊙exp(μ+σ²/2); E[Sₕ]=S₀Σⱼgₕ,ⱼ; MC SEₕ=s(Sₕ)/√B', legend: '정확한 산술 기대값으로 MC 평균 검증 · MC 표준오차는 수치오차이며 예측분포 폭 아님' }
       ],
       code: `levels = canonical_bb_usdkrw_or_info_fallback_only_if_empty()
 returns = last_2520_valid_daily_log_returns(levels, max_calendar_gap=7)
 reset_filter_and_transition_counts_after_excluded_gaps()
 if count(returns) < 756 or latest_quote_has_no_valid_return: return inactive
 fits = gaussian_3state_EM(three_fixed_starts, uniform_block_initial_probability)
-fit = highest_final_likelihood_among_converged_nondegenerate_fits(fits)
-if fit is absent: return inactive_with_diagnostics
+fit = highest_final_likelihood_among_converged_nondegenerate_fits(fits); if absent: return inactive_with_diagnostics
 sort_states_by_sigma_and_reorder_transition_and_filtered_probabilities()
-moments = exact_state_joint_log_moments_from_latest_filtered_probability(steps=252)
-publish_monthly_knots(moments[0,21,...,252], calendar_months=0..12)
-plot_full_history_and_geometric_center_with_log_sigma_band()`,
-      note: '추정창은 최근 최대 2,520 유효 일간수익률(최소 756개), 표시기간과 독립적이다. 급변값을 삭제하지 않는다. 월당 21개 모형 관측을 1달력개월로 대응한다. 모수·모형 불확실성, OOS 우월성 및 구간 커버리지는 미검증이다. 세 국면은 변동성 순서이며 원화 강세·중립·약세라는 인과 상태가 아니다. 허용 저장소에 KG 본체가 없어 기존 MSM 구현·검증 기록을 참고했다.'
+paths = simulate_markov_paths(fit, steps=252, path_count=20000, seed=20261020)
+simulation = summarize_levels(paths, quantiles=[.025,.16,.5,.84,.975])
+retain_exact_log_and_exponential_moments_as_diagnostic_benchmark()
+map_21_model_steps_to_each_calendar_month(); publish_v1(simulation, first_12_paths)
+plot_history_mean_median_selected_interval_and_optional_sample_paths()`,
+      note: '추정창은 최근 최대 2,520 유효 일간수익률(최소 756개), 표시기간과 독립적이다. 급변값을 삭제하지 않는다. 월당 21개 모형 관측을 1달력개월로 대응한다. 시점별 68/95% 모형 구간은 경로 전체 커버리지를 보장하지 않는다. 모수·모형 불확실성은 제외하며 OOS 우월성·실현 커버리지는 미검증이다. 평균·중앙값에 임의의 굴곡을 넣지 않는다. 세 국면은 변동성 순서이며 원화 강세·중립·약세라는 인과 상태가 아니다. 허용 저장소에 KG 본체가 없어 기존 MSM 구현·검증 기록을 참고했다.'
     },
     {
       id: 'fx-lstm-xgb',

@@ -1723,7 +1723,12 @@ a.kpi-link .kpi-label > span:first-child::after {
 .fx-markov-bounds { color: var(--ink-2); font-size: 13px; }
 .fx-markov-warning { color: var(--up-ink); font-size: 12px; line-height: 1.6; margin: 8px 0 0; }
 .fx-markov-source { margin: 8px 0 0; line-height: 1.6; }
-.fx-markov-range-note { margin: 10px 0 0; line-height: 1.6; }
+.fx-markov-controls { flex-wrap: wrap; gap: 8px 14px; }
+.fx-markov-controls label { display: inline-flex; align-items: center; gap: 5px; }
+.fx-markov-center-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.fx-markov-center-row > span { color: var(--ink-2); font-size: 13px; }
+.fx-markov-median-value { color: var(--markov-low); }
+.fx-markov-mc-diagnostics { margin-top: 10px; }
 .fx-markov-regime { --regime-ink: var(--markov-low); border-top: 3px solid var(--regime-ink); }
 .fx-markov-regime[data-regime="1"] { --regime-ink: var(--markov-mid); }
 .fx-markov-regime[data-regime="2"] { --regime-ink: var(--markov-high); }
