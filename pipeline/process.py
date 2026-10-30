@@ -31,6 +31,7 @@ import bm
 import breadth
 import fx_lstm_xgb
 import fx_markov
+import fx_model_c
 import fx_outlook
 import hedge
 import panel
@@ -724,8 +725,13 @@ def build_fx() -> dict:
     # 새 이중 진실이 되고, `renderHedge` 가 `DATA.fx` 를 읽으면 fx.json 하나가
     # 깨질 때 #hedge 까지 함께 빈다. #fx 는 순수 시세 화면이다.
     raw = {key: entry["s"] for key, entry in SERIES.items()}
+    try:
+        model_c = fx_model_c.build(raw, warn=warn)
+    except Exception:
+        warn("fx_model_c: 환율모형C 계산 실패 — 비활성으로 게시됩니다")
+        model_c = fx_model_c.skeleton("계산 실패 — 빌드 로그 확인")
     return {"ts": ts, "outlook": fx_outlook.build(raw),
-            "markov": fx_markov.build(raw, warn=warn)}
+            "markov": fx_markov.build(raw, warn=warn), "model_c": model_c}
 
 
 def build_inflation() -> dict:

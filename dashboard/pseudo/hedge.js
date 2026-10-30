@@ -3,10 +3,12 @@ globalThis.PSEUDO_DOCS.hedge = {
   id: 'hedge',
   title: '환헤지',
   updated: '2026-10-30',
-  summary: '모니터링: 비용·환 변동성·국채 메리트 · 모델A: USD 금리차와 헤지 프리미엄 · 모델B: 단일시장 헤지비율별 비용·위험 비교 · 환율전망: 컨센서스·3국면 마코브(A)·LSTM/XGBoost walk-forward(B)',
+  summary: '모니터링: 비용·환 변동성·국채 메리트 · 모델A: USD 금리차와 헤지 프리미엄 · 모델B: 단일시장 헤지비율별 비용·위험 비교 · 환율전망: 컨센서스·3국면 마코브(A)·LSTM/XGBoost(B)·금리차·모멘텀 축소추정(C)',
   inputs: 'HP 3M·6M·12M, SMB USD 3M, 10년 국채금리: 연 % · 환율: 외화당 원(JPY는 100엔당 원)',
   outputs: '비용·금리·연 변동성: % · 메리트·변동성 감소: %p · 국채 1년 경로: 누적수익률 % · 환율전망: 원/달러',
   sources: [
+    { path: 'pipeline/fx_model_c.py', symbols: ['build', '_ridge_fit', '_horizon'] },
+    { path: 'dashboard/fx-model-c.js', symbols: ['renderFxModelC'] },
     { path: 'dashboard/hedge-optimizer.js', symbols: ['hedgeModelBCompute', 'hedgeModelBValidateOptions'] },
     { path: 'dashboard/hedge-model-b.js', symbols: ['renderHedgeModelB'] },
     { path: 'pipeline/hedge_cip.py', symbols: ['build'] },
@@ -24,6 +26,30 @@ globalThis.PSEUDO_DOCS.hedge = {
     { path: 'dashboard/fx-outlook.js', symbols: ['fxOutlookQuarters', 'fxOutlookSelection', 'renderFxOutlook'] }
   ],
   sections: [
+    {
+      id: 'fx-model-c',
+      title: '환율모형C · 금리차·모멘텀 축소추정',
+      formulas: [
+        { expression: 'yₜ,ₕ = ln(Sₜ₊ₕ/Sₜ); xₜ = [금리KR,1Y − 금리US,1Y, ln(Sₜ/Sₜ₋₁), ln(Sₜ/Sₜ₋₃)]', legend: 'S: 원/달러 · 금리차: %p · h=1/3/6/12달력개월 · 당월 실제 공통일의 최종값 · 월 누락을 행 번호로 압축하지 않음' },
+        { expression: '(â, b̂) = argmin {mean[(y−a−z′b)²] + λb′b}; z = (x−mean학습)/std학습', legend: 'λ=1 고정 · 절편 벌점 제외 · 학습표본 안에서만 표준화 · 예측일에 실현된 라벨 최소60/최대120개 · 상수 열 0' },
+        { expression: 'ŷC = 0.5(â+z′b̂); ŜC = Sₜ exp(ŷC); ŜRW = Sₜ', legend: '축소50% 고정 · 축소 전 Ridge와 RW도 같은 평가 행 사용 · 로그 중심이며 수준 기대값·조건부 중앙값 보장 없음 · 기여도 합은 100ŷC' },
+        { expression: 'eₜ,ₕ = ln(Sₜ₊ₕ/Sₜ)−ŷC; I68 = Sₜ exp(ŷC + [Q.16(e),Q.84(e)])', legend: '예측일까지 실현된 동일 지평 OOS 오차24개 이상 · 95%는 .025/.975 · 당시 생성 가능한 구간만 적중률 평가 · 커버리지 보장 없음' },
+        { expression: 'RMSE = √mean[(Ŝ−S실제)²]; U = RMSE_C / RMSE_RW', legend: 'RMSE·MAE: 원/달러 · U: 무단위 · RW RMSE=0이면 U 결측 · 겹치는 다개월 오차는 독립 표본이 아님' }
+      ],
+      code: `join_canonical_FX_and_KR_US_1Y_rates_on_actual_common_dates_without_fill()
+retain_only_actual_common_quotes_on_the_exact_last_weekday_of_each_month()
+require_quote_asof_equal_to_last_weekday_decision_date()
+create_1m_3m_momentum_and_h_month_targets_using_calendar_month_keys()
+for horizon in [1,3,6,12]:
+  for origin in monthly_decision_dates:
+    train = last_120_labels_realized_by_origin; require_at_least_60(train)
+    fit_standardization_and_fixed_lambda_1_ridge_on_train_only()
+    predict_C_fixed_half_ridge_and_RW_from_same_base_quote()
+    calibrate_bounds_only_from_at_least_24_errors_matured_by_origin()
+  evaluate_C_Ridge_RW_on_identical_realized_rows_and_prequential_intervals()
+publish_forecasts_metrics_latest_contributions_and_table_CSV()`,
+      note: '의사 표본 외 평가이며 당시 데이터 빈티지·공표 시각은 복원하지 않았다. 월말 마지막 평일에 세 입력의 실제 공통 관측이 있어야 하며, 휴일·결측 월은 제외한다. 근접일 대체·휴일 달력 보정은 없다. λ·축소비율은 고정 설계 가정이며 평가 결과로 재선택하지 않는다. 경험적 구간의 실제 포함률은 화면에 별도 표시한다. 기여도는 인과효과·구조적 위험프리미엄이 아니다. 금리차는 UIP나 CIP가 환율을 결정한다는 제약이 아닌 예측변수다. 허용된 두 저장소에는 KG 정독 본문이 없어 직접 논문 반영·재현은 미완료다. 자세한 정의는 docs/FX_MODEL_C.md.'
+    },
     {
       id: 'hedge-model-b',
       title: '환헤지모델B · 비용·위험과 헤지비율',

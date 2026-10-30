@@ -98,6 +98,8 @@ def write_payloads(directory, markov):
     payloads["meta"] = {"built_at_utc": "2026-10-20", "last_observation": "2026-10-19",
                         "series_count": 100, "files": [], "warnings": []}
     payloads["fx"]["markov"] = markov
+    import fx_model_c
+    payloads["fx"]["model_c"] = fx_model_c.skeleton("synthetic: no Model C inputs")
     for name, value in payloads.items():
         (directory / f"{name}.json").write_text(json.dumps(value), encoding="utf-8")
 

@@ -1143,7 +1143,7 @@ def test_required_keys_are_keys_the_dashboard_actually_reads():
     """
     js = _app_js() + "".join(_strip_js_comments(
         (ROOT / "dashboard" / name).read_text(encoding="utf-8"))
-        for name in ("fx-markov.js", "fx-lstm-xgb.js"))
+        for name in ("fx-markov.js", "fx-lstm-xgb.js", "fx-model-c.js"))
     for payload, keys in check_output.REQUIRED_KEYS.items():
         for k in keys:
             if (payload, k) in PUBLISH_ONLY_KEYS:

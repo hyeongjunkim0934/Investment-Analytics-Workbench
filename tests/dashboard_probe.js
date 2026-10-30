@@ -115,7 +115,7 @@ secNodes.hedge.append(elem("div", "hedge-workspace", "hedge-workspace"));
 ["hedge-cost-dashboard", "hedge-merit-card"]
   .forEach((id) => DOC.getElementById("hedge-monitoring").append(elem("div", id, "card")));
 secNodes.fxoutlook.append(elem("div", "fxoutlook-workspace", "fx-outlook-workspace"));
-[["fxoutlook-content", "consensus"], ["fxoutlook-model-a", "modelA"], ["fxoutlook-model-b", "modelB"]]
+[["fxoutlook-content", "consensus"], ["fxoutlook-model-a", "modelA"], ["fxoutlook-model-b", "modelB"], ["fxoutlook-model-c", "modelC"]]
   .forEach(([id, key]) => {
     const panel = elem("div", id);
     panel.setAttribute("role", "tabpanel");
@@ -208,6 +208,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-markov.js"), "u
   { filename: "dashboard/fx-markov.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-lstm-xgb.js"), "utf8"), sandbox,
   { filename: "dashboard/fx-lstm-xgb.js" });
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-model-c.js"), "utf8"), sandbox,
+  { filename: "dashboard/fx-model-c.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-outlook.js"), "utf8"), sandbox,
   { filename: "dashboard/fx-outlook.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-cip.js"), "utf8"), sandbox,
