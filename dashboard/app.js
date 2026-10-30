@@ -4089,6 +4089,7 @@ function selectHedgeWorkspace(key) {
     if (panel) panel.hidden = !active;
   });
   // Keep monitoring charts and controls mounted so periods and legend choices survive.
+  if (key === "modelB" && typeof hedgeModelBResize === "function") hedgeModelBResize();
 }
 
 function renderHedgeWorkspace() {
@@ -4121,6 +4122,7 @@ function renderHedge() {
   if (!$("#hedge")) return;
   renderHedgeWorkspace();
   renderHedgeCip(H2?.cip);
+  renderHedgeModelB(H2);
   if (!H2) {
     ["hedge-cost-dashboard", "hedge-merit-card"].forEach((id) => {
       const host = $("#" + id);
