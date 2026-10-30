@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="vendor/uplot.min.css">
 <link rel="stylesheet" href="style.css?v=20261020-fx-mc-1">
 <link rel="stylesheet" href="cma.css?v=20260930-cma-cards-1">
+<link rel="stylesheet" href="hedge-model-b.css?v=20261030-hedge-model-b-1">
 </head>
 <body>
 
@@ -147,12 +148,7 @@
       <div id="hedge-merit-card"></div>
     </div>
     <div id="hedge-model-a" role="tabpanel" aria-labelledby="hedge-tab-modelA" hidden></div>
-    <div id="hedge-model-b" role="tabpanel" aria-labelledby="hedge-tab-modelB" hidden>
-      <div class="card hedge-model">
-        <div class="card-head"><span class="card-title">환헤지모델B</span></div>
-        <p class="card-sub">등록된 모형이 없습니다.</p>
-      </div>
-    </div>
+    <div id="hedge-model-b" role="tabpanel" aria-labelledby="hedge-tab-modelB" hidden></div>
   </section>
 
   <section id="fxoutlook" class="section" aria-label="환율전망">
@@ -292,12 +288,14 @@
 <script src="cma.js?v=20261011-cma-precision-1"></script>
 <script src="pseudo/risk.js?v=20260930-pseudo-1"></script>
 <script src="pseudo/alloc.js?v=20261012-summary-five-cards-2"></script>
-<script src="pseudo/hedge.js?v=20261020-fx-mc-1"></script>
+<script src="pseudo/hedge.js?v=20261030-hedge-model-b-1"></script>
 <script src="pseudo.js?v=20260930-pseudo-1"></script>
 <script src="fx-markov.js?v=20261020-fx-mc-1"></script>
 <script src="fx-lstm-xgb.js?v=20261019-lstm-xgb-1"></script>
 <script src="fx-outlook.js?v=20261019-lstm-xgb-1"></script>
 <script src="hedge-cip.js?v=20261016-cip-card-alignment-1"></script>
-<script src="app.js?v=20261016-hedge-histograms-1"></script>
+<script src="hedge-optimizer.js?v=20261030-hedge-model-b-1"></script>
+<script src="hedge-model-b.js?v=20261030-hedge-model-b-1"></script>
+<script src="app.js?v=20261030-hedge-model-b-1"></script>
 </body>
 </html>

@@ -2,11 +2,13 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.hedge = {
   id: 'hedge',
   title: '환헤지',
-  updated: '2026-10-20',
-  summary: '모니터링: 비용·환 변동성·국채 메리트 · 모델A: USD 금리차와 헤지 프리미엄 · 환율전망: 컨센서스·3국면 마코브(A)·LSTM/XGBoost walk-forward(B)',
+  updated: '2026-10-30',
+  summary: '모니터링: 비용·환 변동성·국채 메리트 · 모델A: USD 금리차와 헤지 프리미엄 · 모델B: 단일시장 헤지비율별 비용·위험 비교 · 환율전망: 컨센서스·3국면 마코브(A)·LSTM/XGBoost walk-forward(B)',
   inputs: 'HP 3M·6M·12M, SMB USD 3M, 10년 국채금리: 연 % · 환율: 외화당 원(JPY는 100엔당 원)',
   outputs: '비용·금리·연 변동성: % · 메리트·변동성 감소: %p · 국채 1년 경로: 누적수익률 % · 환율전망: 원/달러',
   sources: [
+    { path: 'dashboard/hedge-optimizer.js', symbols: ['hedgeModelBCompute', 'hedgeModelBValidateOptions'] },
+    { path: 'dashboard/hedge-model-b.js', symbols: ['renderHedgeModelB'] },
     { path: 'pipeline/hedge_cip.py', symbols: ['build'] },
     { path: 'dashboard/hedge-cip.js', symbols: ['hedgeCipStats', 'hedgeCipSelection', 'renderHedgeCip'] },
     { path: 'pipeline/common.py', symbols: ['hp_curve'] },
@@ -22,6 +24,29 @@ globalThis.PSEUDO_DOCS.hedge = {
     { path: 'dashboard/fx-outlook.js', symbols: ['fxOutlookQuarters', 'fxOutlookSelection', 'renderFxOutlook'] }
   ],
   sections: [
+    {
+      id: 'hedge-model-b',
+      title: '환헤지모델B · 비용·위험과 헤지비율',
+      formulas: [
+        { expression: 'R(h) ≈ b + (1−h)f + hc; μ(h) = y + (1−h)μFX + hc', legend: 'h: 헤지비율 · b: 현지 채권수익 · f: 원화 표시 외화수익 · y: 현재 국채금리 · c: signed HP 평균(양수 수취·음수 지불) · μFX: 사용자 환율변화 가정 · 모든 계산은 연 소수수익률' },
+        { expression: 'V(h) = Σbb + 2(1−h)Σbf + (1−h)²Σff; σ(h) = √V(h)', legend: '동일 관측일의 월간 금리·FX 충격 표본 공분산 × 12 · 현재 듀레이션 고정 · 자연헤지에 따라 전액헤지가 총위험을 높일 수 있음' },
+        { expression: 'hMV = clip(1 + Σbf/Σff, hmin, hmax)', legend: 'Σff > 0일 때의 최소분산 해 · 고정 헤지비용은 최소분산 해에 영향 없음' },
+        { expression: 'CE(h) = μ(h) − λV(h)/2; hCE = clip(1 + Σbf/Σff + (c−μFX)/(λΣff), hmin, hmax)', legend: 'λ > 0: 사용자 위험회피도(기본 5는 가정) · 입력 연 %는 100으로 나눈 뒤 계산 · CE 출력 %는 100배 · 비용 반영 비율은 이 목적함수 아래의 조건부 해' },
+        { expression: '위험감소(h) = 100[σ(0)−σ(h)]; 헤지 캐리(h) = 100hc', legend: '위험감소 %p · 캐리 연 % · 감소값은 음수 허용 · 최소분산·비용 반영·0/50/100%·현재 비율 모두 같은 표본 사용' }
+      ],
+      code: `outlook = published_bond_analytics[selected_market].outlook
+if inactive_or_missing_required_inputs(outlook): return unavailable_with_reason
+validate_options_and_covariance_units_symmetry_PSD()
+convert_percent_yield_carry_fx_to_decimal_returns()
+if fx_variance_is_zero: mark_flat_risk_and_choose_return_boundary_or_tie
+else: compute_closed_form_minimum_variance_and_CE_solutions()
+clip_solutions_to_user_minimum_and_maximum_hedge_bounds()
+evaluate_current_zero_half_full_minimum_variance_and_cost_adjusted()
+evaluate_0_to_100_percent_grid_and_fx_scenarios_minus2_to_plus2_pp()
+render_cards_charts_table_and_raw_precision_CSV_from_same_results()
+save_only_valid_user_assumptions_locally_on_apply()`,
+      note: 'UST·JPY·AUD·GER 각각의 단일시장 조건부 비교이며 시장 간 공분산을 이용한 통합 포트폴리오 최적화가 아니다. 현재 HP 3개 만기 평균을 1년 고정하고 채권금리 변화 기대는 0으로 둔다. FX변화 기본 0은 예측치가 아니다. 실제 총수익률·볼록성·롤다운·거래비용·선물 MTM·표본외 성과를 포함하지 않는다. FX분산이 0이면 최소분산 해는 동률이며 하한은 계산상 대표값이다. 현재비율과 0/50/100% 비교값은 사용자 제약 밖이어도 참고용으로 남긴다. 허용 저장소에 KG 본체·최근 정독 기록이 없어 논문 재현이나 최근 KG 정독 반영을 주장하지 않는다.'
+    },
     {
       id: 'fx-markov',
       title: '환율모형A · USDKRW 3국면 마코브 전환',

@@ -212,6 +212,10 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-outlook.js"), "
   { filename: "dashboard/fx-outlook.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-cip.js"), "utf8"), sandbox,
   { filename: "dashboard/hedge-cip.js" });
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-optimizer.js"), "utf8"), sandbox,
+  { filename: "dashboard/hedge-optimizer.js" });
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-model-b.js"), "utf8"), sandbox,
+  { filename: "dashboard/hedge-model-b.js" });
 /* app.js 의 top-level `const`/`function` 은 스크립트 렉시컬 스코프에 산다 —
    밖에서 잡으려면 같은 스크립트 안에서 내보내야 한다. */
 const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "sectionHasRangedChart",
@@ -220,6 +224,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "cardScaffold", "el", "registry", "DATA", "BANDS", "SECTION_IDS", "palette",
   "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY",
   "hedgeCostSnapshot", "hedgeCipStats", "hedgeCipSelection", "renderHedgeCip", "selectHedgeWorkspace", "applyRange", "bindRangeButtons", "state",
+  "hedgeModelBCompute", "hedgeModelBDefaults", "renderHedgeModelB", "hedgeModelBResize", "hedgeModelBDispose",
   "SCENE_CYCLE_MS", "sceneCycleAllowed", "restartSceneCycle", "stopSceneCycle",
   "renderVillage", "allocSaveState", "villageNotesInvalidate", "allocRefModel", "VILLAGE_NOTES", "VILLAGE_ZONES", "VILLAGE_BANNER",
   "currentScene", "currentTheme", "syncThemeButton",
@@ -697,6 +702,7 @@ safe("hedgeDashboardCases", () => {
     P.renderHedge();
     r.noData = readHedgeDashboard();
     r.noData.sectionText = DOC.getElementById("hedge").textContent;
+    r.noData.monitoringText = DOC.getElementById("hedge-monitoring").textContent;
     return r;
   } finally {
     P.DATA.hedge = HEDGE_FIXTURE;
