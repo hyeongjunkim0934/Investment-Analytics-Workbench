@@ -22,7 +22,7 @@ const submit=()=>emit(editor(),'submit');
 const cancel=()=>editor().querySelectorAll('button').find(n=>n.textContent==='취소').click();
 const edit=key=>emit(tab(key),'dblclick');
 const selected=key=>{
-  const panels={consensus:'fxoutlook-content',modelA:'fxoutlook-model-a',modelB:'fxoutlook-model-b'};
+  const panels={consensus:'fxoutlook-content',modelA:'fxoutlook-model-a',modelB:'fxoutlook-model-b',modelC:'fxoutlook-model-c'};
   Object.entries(panels).forEach(([id,panel])=>{
     assert.equal(tab(id).getAttribute('role'),'tab');
     assert.equal(tab(id).getAttribute('aria-controls'),panel);
@@ -126,9 +126,10 @@ tab('consensus').click();
 assert(emit(tab('consensus'),'keydown',{key:'ArrowRight'}).defaultPrevented);
 selected('modelA');assert.strictEqual(DOC.activeElement,tab('modelA'));
 emit(tab('modelA'),'keydown',{key:'ArrowLeft'});selected('consensus');
-emit(tab('consensus'),'keydown',{key:'ArrowLeft'});selected('modelB');
-emit(tab('modelB'),'keydown',{key:'Home'});selected('consensus');
-emit(tab('consensus'),'keydown',{key:'End'});selected('modelB');
+emit(tab('consensus'),'keydown',{key:'ArrowLeft'});selected('modelC');
+emit(tab('modelC'),'keydown',{key:'Home'});selected('consensus');
+emit(tab('consensus'),'keydown',{key:'End'});selected('modelC');
+emit(tab('modelC'),'keydown',{key:'ArrowLeft'});selected('modelB');
 emit(tab('modelB'),'keydown',{key:'F2',isComposing:true});assert(editor().hidden);
 emit(tab('modelB'),'keydown',{key:'F2'});assert(!editor().hidden);
 typeName('한글 조합');
@@ -148,7 +149,7 @@ shim.localStorage.setItem(namesKey,'{invalid json');clearSession();workspace();
 assert.equal(tab('modelA').textContent,'환율모형A');assert.equal(tab('modelB').textContent,'환율모형B');
 assert.equal(FETCH_CALLS.length,fetchCount);assert.equal(shim.localStorage.getItem(forecastsKey),forecastSaved);
 assert.equal(shim.UPlotStub.made.length,chartCount);
-console.log(JSON.stringify({threeSubtabsAndAria:true,inactiveDoubleClickStableDom:true,
+console.log(JSON.stringify({fourSubtabsAndAria:true,inactiveDoubleClickStableDom:true,
   consensusChartAndDraftPreserved:true,namesIndependentPersistRerenderReload:true,
   invalidNamesRejected:true,cancelEscapeAndDraftRerender:true,storageFailureRecovery:true,
   namesRenderedAsText:true,keyboardTabsAndIme:true,malformedStorageFallback:true}));

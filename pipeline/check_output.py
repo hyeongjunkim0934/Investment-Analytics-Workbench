@@ -55,7 +55,7 @@ META_FIELDS = ["built_at_utc", "last_observation", "series_count", "files", "war
 REQUIRED_KEYS = {
     # lstm_xgb = 환율모형B(오프라인 러너 산출물). 파일이 없어도 active:false 블록이
     # 게시돼야 한다 — 부재는 wiring 누락이다.
-    "fx": ["ts", "outlook", "markov", "lstm_xgb"],  # 결측이어도 비활성 블록은 필수.
+    "fx": ["ts", "outlook", "markov", "lstm_xgb", "model_c"],  # 결측이어도 비활성 블록은 필수.
     "hedge": ["asof", "default_tenor_m", "matrix", "curves", "backtest",
               "cost_hist_curve", "cost_hist_usd", "cost_dashboard", "cip", "fx_volatility", "cost_stats", "mtm", "sim",
               # ust_merit = 미국채 투자 메리트 모니터(§7.7.14). 시리즈가 없어도
@@ -95,6 +95,8 @@ REQUIRED_ROW_KEYS = {
 }
 # 중첩 객체의 필수 키 — 화면 부제가 이 값들로 자기 표본을 밝힌다(하드코딩 금지).
 REQUIRED_NESTED_KEYS = {
+    ("fx", "model_c"): ["active", "reason", "schema", "asof", "model_date", "pair", "unit",
+                         "source", "anchor", "sample", "model", "horizons"],
     ("fx", "markov"): ["active", "source", "pair", "unit", "asof", "anchor",
                        "sample", "model", "diagnostics", "regimes", "current", "transition", "range", "simulation"],
     ("fx", "lstm_xgb"): ["active", "artifact", "path", "schema", "reason", "generated_at",
@@ -118,6 +120,143 @@ def fail(msg: str) -> None:
 
 def note(msg: str) -> None:
     _notes.append(msg)
+
+
+def _check_fx_model_c(model):
+    """Validate displayed forecasts and their same-sample evaluation contract."""
+    def invalid(message):
+        fail(f"fx.json: model_c: {message}")
+
+    def finite(value):
+        try:
+            return type(value) in (int, float) and math.isfinite(value)
+        except OverflowError:
+            return False
+
+    def count(value):
+        return type(value) is int and value >= 0
+
+    def positive(value):
+        return finite(value) and value > 0
+
+    def interval(row):
+        values = [row.get(key) for key in ("lower95", "lower68", "upper68", "upper95")]
+        n = row.get("n_calibration")
+        if not count(n):
+            invalid("구간 교정 표본수가 잘못되었습니다")
+        elif n < 24:
+            if any(value is not None for value in values):
+                invalid("교정 오차 24개 미만에 구간이 있습니다")
+        elif not all(positive(value) for value in values) or values != sorted(values):
+            invalid("과거오차 구간의 값 또는 순서가 잘못되었습니다")
+
+    if not isinstance(model, dict) or type(model.get("active")) is not bool:
+        invalid("active 불리언을 포함한 객체 필요")
+        return
+    if model.get("schema") != "fx_model_c_v1" or model.get("pair") != "USDKRW" or model.get("unit") != "KRW/USD":
+        invalid("스키마·통화·단위 불일치")
+    horizons = model.get("horizons")
+    if not isinstance(horizons, list):
+        invalid("horizons 배열 필요")
+        return
+    if not model["active"] and not model.get("reason"):
+        invalid("비활성 사유 없음")
+    if not horizons:
+        if model["active"]:
+            invalid("활성 모형의 전망 없음")
+        return
+    if [row.get("horizon_months") if isinstance(row, dict) else None for row in horizons] != [1, 3, 6, 12]:
+        invalid("1·3·6·12개월 전망 배열 필요")
+        return
+    anchor = model.get("anchor") or {}
+    if not positive(anchor.get("v")) or not finite(anchor.get("t")) or not finite(anchor.get("quote_t")):
+        invalid("기준 환율·시점 누락")
+        return
+    if anchor["quote_t"] != anchor["t"]:
+        invalid("공통 호가일과 의사결정일 불일치")
+    spec = model.get("model") or {}
+    if spec.get("ridge_lambda") != 1 or spec.get("shrinkage") != 0.5:
+        invalid("고정 λ·축소비율 불일치")
+    if model["active"] != any(row.get("active") is True for row in horizons):
+        invalid("전체·지평별 활성 상태 불일치")
+    for row in horizons:
+        if type(row.get("active")) is not bool:
+            invalid("지평별 active 불리언 필요")
+            continue
+        if not finite(row.get("target_t")) or row["target_t"] <= anchor["t"]:
+            invalid("전망일이 기준일 이후가 아닙니다")
+        if not row["active"]:
+            if not row.get("reason") or any(row.get(k) is not None for k in ("point", "ridge_point", "change_pct", "lower68", "upper68", "lower95", "upper95")):
+                invalid("비활성 전망의 사유·결측 계약 위반")
+            continue
+        if not all(positive(row.get(k)) for k in ("point", "ridge_point", "rw")) or not finite(row.get("change_pct")):
+            invalid("유효하지 않은 환율 전망")
+            continue
+        if row["rw"] != anchor["v"] or not math.isclose(row["point"] / row["rw"] - 1, row["change_pct"] / 100, abs_tol=1e-10):
+            invalid("RW 기준점·변화율 불일치")
+        if not math.isclose(math.log(row["point"] / row["rw"]),
+                            0.5 * math.log(row["ridge_point"] / row["rw"]), abs_tol=1e-10):
+            invalid("C·Ridge 고정 축소 관계 불일치")
+        if not count(row.get("n_train")) or not 60 <= row["n_train"] <= 120:
+            invalid("학습 표본수 범위 위반")
+        contributions = row.get("contributions")
+        if not isinstance(contributions, list) or len(contributions) != 4 or not all(isinstance(c, dict) and finite(c.get("log_pct")) for c in contributions):
+            invalid("예측 기여도 누락")
+        elif not math.isclose(math.fsum(c["log_pct"] for c in contributions) / 100,
+                              math.log(row["point"] / row["rw"]), abs_tol=1e-10):
+            invalid("기여도 합과 로그 전망 불일치")
+        interval(row)
+        backtest = row.get("backtest")
+        metrics = row.get("metrics")
+        if not isinstance(backtest, list) or not isinstance(metrics, dict):
+            invalid("평가 행·지표 누락")
+            continue
+        if metrics.get("n") != len(backtest):
+            invalid("평가 표본수 불일치")
+        if row.get("n_calibration") != len(backtest):
+            invalid("최신 구간 교정 표본수 불일치")
+        previous = -math.inf
+        valid_rows = []
+        for bt in backtest:
+            if not isinstance(bt, dict) or not all(finite(bt.get(k)) for k in ("origin_t", "target_t")) or not all(positive(bt.get(k)) for k in ("base", "actual", "model_c", "ridge", "rw")):
+                invalid("평가 행 값 누락")
+                continue
+            if not previous < bt["origin_t"] < bt["target_t"] <= anchor["t"] or bt["base"] != bt["rw"]:
+                invalid("평가 시점·RW 기준점 불일치")
+            previous = bt["origin_t"]
+            interval(bt)
+            valid_rows.append(bt)
+        if backtest and len(valid_rows) == len(backtest):
+            n = len(backtest)
+            for bt in backtest:
+                matured = sum(old["target_t"] <= bt["origin_t"] for old in backtest)
+                if bt.get("n_calibration") != matured:
+                    invalid("미실현 예측오차의 교정 사용 또는 교정 표본 누락")
+            for key, column in (("rmse", "model_c"), ("rw_rmse", "rw"), ("ridge_rmse", "ridge")):
+                expected = math.hypot(*(bt[column] - bt["actual"] for bt in backtest)) / math.sqrt(n)
+                if not finite(metrics.get(key)) or not math.isclose(metrics[key], expected, rel_tol=1e-10, abs_tol=1e-8):
+                    invalid(f"{key}와 동일 평가 행 불일치")
+            expected_mae = math.fsum(abs(bt["model_c"] - bt["actual"]) / n for bt in backtest)
+            if not finite(metrics.get("mae")) or not math.isclose(metrics["mae"], expected_mae, rel_tol=1e-10, abs_tol=1e-8):
+                invalid("MAE와 동일 평가 행 불일치")
+            c_rmse = math.hypot(*(bt["model_c"] - bt["actual"] for bt in backtest)) / math.sqrt(n)
+            rw_rmse = math.hypot(*(bt["rw"] - bt["actual"] for bt in backtest)) / math.sqrt(n)
+            expected_u = c_rmse / rw_rmse if rw_rmse > 0 else None
+            if (expected_u is None and metrics.get("theil_u") is not None) or (expected_u is not None and
+                    (not finite(metrics.get("theil_u")) or not math.isclose(metrics["theil_u"], expected_u, rel_tol=1e-10, abs_tol=1e-10))):
+                invalid("Theil U와 동일 평가 행 불일치")
+            calibrated = [bt for bt in backtest if bt.get("lower68") is not None]
+            if metrics.get("n_interval") != len(calibrated):
+                invalid("구간 평가 표본수 불일치")
+            for level in (68, 95):
+                expected = sum(bt[f"lower{level}"] <= bt["actual"] <= bt[f"upper{level}"]
+                               for bt in calibrated) / len(calibrated) if calibrated else None
+                if metrics.get(f"coverage{level}") != expected:
+                    invalid("구간 포함률과 당시 평가 구간 불일치")
+        for key in ("coverage68", "coverage95"):
+            value = metrics.get(key)
+            if value is not None and (not finite(value) or not 0 <= value <= 1):
+                invalid("구간 적중률 범위 위반")
 
 
 def _check_fx_simulation(markov):
@@ -348,6 +487,7 @@ def check(out: Path, max_warnings: int, min_series: int, dashboard: Path | None)
     fx = payloads.get("fx")
     if isinstance(fx, dict):
         _check_fx_simulation(fx.get("markov"))
+        _check_fx_model_c(fx.get("model_c"))
 
     seen = [0]
     for name, obj in payloads.items():

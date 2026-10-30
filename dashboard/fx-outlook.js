@@ -13,6 +13,7 @@ const FX_WORKSPACES = {
   consensus: { label: "컨센서스", panel: "fxoutlook-content" },
   modelA: { label: "환율모형A", panel: "fxoutlook-model-a" },
   modelB: { label: "환율모형B", panel: "fxoutlook-model-b" },
+  modelC: { label: "환율모형C", panel: "fxoutlook-model-c" },
 };
 let fxOutlookWorkspace = "consensus";
 let fxOutlookModelNames = null;
@@ -20,7 +21,8 @@ let fxOutlookNameDraft = null;
 
 function fxOutlookNames() {
   if (fxOutlookModelNames) return fxOutlookModelNames;
-  fxOutlookModelNames = { modelA: FX_WORKSPACES.modelA.label, modelB: FX_WORKSPACES.modelB.label };
+  fxOutlookModelNames = Object.fromEntries(Object.entries(FX_WORKSPACES)
+    .filter(([key]) => key !== "consensus").map(([key, value]) => [key, value.label]));
   try {
     const saved = JSON.parse(localStorage.getItem(FX_WORKSPACE_STORAGE) || "{}");
     Object.keys(fxOutlookModelNames).forEach((key) => {
@@ -51,6 +53,7 @@ function selectFxOutlookWorkspace(key) {
   });
   if (key === "modelA" && typeof fxMarkovResize === "function") fxMarkovResize();
   if (key === "modelB" && typeof fxLstmXgbResize === "function") fxLstmXgbResize();
+  if (key === "modelC" && typeof fxModelCResize === "function") fxModelCResize();
 }
 
 function renderFxOutlookWorkspace() {
@@ -103,14 +106,15 @@ function renderFxOutlookWorkspace() {
       if (panel) {
         panel.textContent = "";
         const renderer = key === "modelA" ? (typeof renderFxMarkov === "function" ? renderFxMarkov : null)
-          : key === "modelB" ? (typeof renderFxLstmXgb === "function" ? renderFxLstmXgb : null) : null;
+          : key === "modelB" ? (typeof renderFxLstmXgb === "function" ? renderFxLstmXgb : null)
+          : key === "modelC" ? (typeof renderFxModelC === "function" ? renderFxModelC : null) : null;
         const modelHead = el("div", { class: `card fx-outlook-model${renderer ? " fx-markov-header" : ""}` },
           el("div", { class: "card-head" },
             el("span", { id: `fx-outlook-title-${key}`, class: "card-title" }, names[key]),
             el("button", { type: "button", class: "btn-ghost", onclick: () => begin(key) }, "이름 수정")));
         panel.append(modelHead);
         if (renderer) {
-          const content = el("div", { id: key === "modelA" ? "fx-markov-content" : "fx-lstm-xgb-content" });
+          const content = el("div", { id: key === "modelA" ? "fx-markov-content" : key === "modelB" ? "fx-lstm-xgb-content" : "fx-model-c-content" });
           panel.append(content);
           renderer(content);
         } else modelHead.append(el("p", { class: "card-sub" }, "등록된 모형이 없습니다."));

@@ -21,7 +21,7 @@ def test_fx_workspace_subtabs_model_name_editing_and_storage():
     measured = json.loads(result.stdout)
     assert measured and all(measured.values())
     assert {
-        "threeSubtabsAndAria", "inactiveDoubleClickStableDom",
+        "fourSubtabsAndAria", "inactiveDoubleClickStableDom",
         "consensusChartAndDraftPreserved", "namesIndependentPersistRerenderReload",
         "invalidNamesRejected", "cancelEscapeAndDraftRerender",
         "storageFailureRecovery", "namesRenderedAsText", "keyboardTabsAndIme",
@@ -94,6 +94,7 @@ def test_fx_outlook_navigation_and_script_host_contract():
         ("fxoutlook-content", "consensus"),
         ("fxoutlook-model-a", "modelA"),
         ("fxoutlook-model-b", "modelB"),
+        ("fxoutlook-model-c", "modelC"),
     ]:
         section, attrs = index.fx_hosts[panel_id]
         assert section == "fxoutlook"
