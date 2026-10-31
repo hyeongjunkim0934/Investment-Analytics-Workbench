@@ -22,7 +22,7 @@ CI 미실행. torch·xgboost·statsmodels·scikit-learn 이 필요하다
   · 학습 라벨 정렬: 기준일 t 에서 **실현된** 타깃(행 ≤ t−lag)만 학습한다. 원 노트북의 백테스트는
     행 t−1 까지의 타깃(= t+lag−1 시점 환율)을 학습해 look-ahead 가 있었다. --replicate-notebook 로 복원.
   · 시드 고정: --seed 기본 20261019 (torch 스텝별 manual_seed(seed+t), XGBRegressor(random_state, n_jobs=1)).
-  · 그리드: --lags 1,3,6 × --windows 24,36 을 전부 walk-forward 로 돌려 한 JSON 에 싣는다.
+  · 그리드: --lags 1,3,6,9,12 × --windows 24,36 을 전부 walk-forward 로 돌려 한 JSON 에 싣는다.
 그 밖의 산식은 원 코드 그대로다: NS λ=0.7308·만기 0.25/1/3/10년, ARIMA(1,1,1) 36개월 롤링 계수,
 피처 10개(spot·경상수지·증권투자(자산)·직접투자비율(수익)·증권투자비율(수익)·NS 3·AR(1)·MA(1)),
 StandardScaler, XGBRegressor 기본값, LSTM hidden 32·1층·seq 6·100 epoch·Adam 1e-3·전체배치,
@@ -396,7 +396,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="환율모형B — LSTM·XGBoost walk-forward 러너")
     parser.add_argument("--data-dir", required=True, help="table.csv·국제수지_1.csv·국제수지_2.csv 가 있는 폴더")
     parser.add_argument("--out", default=None, help=f"산출 JSON 경로 (기본: <data-dir>/{ARTIFACT})")
-    parser.add_argument("--lags", default="1,3,6", help="예측 지평(개월) 목록")
+    parser.add_argument("--lags", default="1,3,6,9,12", help="예측 지평(개월) 목록")
     parser.add_argument("--windows", default="24,36", help="학습창(개월) 목록")
     parser.add_argument("--seq-len", type=int, default=6)
     parser.add_argument("--hidden-size", type=int, default=32)

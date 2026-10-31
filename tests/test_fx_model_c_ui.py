@@ -39,6 +39,7 @@ def test_actual_model_c_engine_payload_renders_in_browser_layer(tmp_path):
         "info:UST1y": pd.Series(1 + .3 * np.sin(k / 9), index=dates),
     })
     assert payload["active"]
+    assert [row["horizon_months"] for row in payload["horizons"]] == [1, 3, 6, 9, 12]
     artifact = tmp_path / "model_c.json"
     artifact.write_text(json.dumps(payload, allow_nan=False))
     env = dict(os.environ, FX_MODEL_C_FIXTURE=str(artifact))

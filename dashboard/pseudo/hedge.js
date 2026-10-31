@@ -2,11 +2,13 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.hedge = {
   id: 'hedge',
   title: '환헤지',
-  updated: '2026-10-30',
+  updated: '2026-10-31',
   summary: '모니터링: 비용·환 변동성·국채 메리트 · 모델A: USD 금리차와 헤지 프리미엄 · 모델B: 단일시장 헤지비율별 비용·위험 비교 · 환율전망: 컨센서스·3국면 마코브(A)·LSTM/XGBoost(B)·금리차·모멘텀 축소추정(C)',
   inputs: 'HP 3M·6M·12M, SMB USD 3M, 10년 국채금리: 연 % · 환율: 외화당 원(JPY는 100엔당 원)',
   outputs: '비용·금리·연 변동성: % · 메리트·변동성 감소: %p · 국채 1년 경로: 누적수익률 % · 환율전망: 원/달러',
   sources: [
+    { path: 'dashboard/summary-fx.js', symbols: ['summaryFxModels', 'summaryFxVaR975', 'summaryFxQuantile'] },
+    { path: 'dashboard/summary-hedge.js', symbols: ['summaryHedgeModels'] },
     { path: 'pipeline/fx_model_c.py', symbols: ['build', '_ridge_fit', '_horizon'] },
     { path: 'dashboard/fx-model-c.js', symbols: ['renderFxModelC'] },
     { path: 'dashboard/hedge-optimizer.js', symbols: ['hedgeModelBCompute', 'hedgeModelBValidateOptions'] },
@@ -27,10 +29,32 @@ globalThis.PSEUDO_DOCS.hedge = {
   ],
   sections: [
     {
+      id: 'quarterly-summary',
+      title: '요약카드 · 분기 전망과 VaR',
+      formulas: [
+        { expression: 'VaR97.5%,FX = max(0, 100 × (1 − Q.025(Sₕ)/S₀))', legend: '기준일 달러 보유자의 원화 환손실률 · 중앙95% 구간의 하단은 단측97.5% VaR에 대응 · 최대손실 아님' },
+        { expression: 'μₕ = μ연 × h/12; σₕ = σ연 × √(h/12); I95 = μₕ ± 1.95996398454 σₕ', legend: '환헤지 적용 후 누적 채권·FX 수익률 % · h=3/6/9/12개월 · 입력·헤지비율 고정, 자기상관 미반영 정규근사' },
+        { expression: 'VaR97.5%,hedge = max(0, −하단95%)', legend: '초기 원화 투자금 대비 누적손실률 · 구간은 헤지비율 신뢰구간이 아님' }
+      ],
+      code: `read_published_FX_A_B_C_and_saved_consensus_without_refitting()
+for h in [3,6,9,12]:
+  A = MC_summary_at_step(h * 21)
+  B = exact_horizon_and_selected_window_model_at_latest_common_origin()
+  B_interval = prediction * exp(quantiles(matured_log_actual_over_prediction_errors)) if N >= 24
+  C = direct_horizon_output(h)
+  show_actual_anchor_target_dates_and_USD_long_VaR_97_5()
+consensus = next_four_calendar_quarter_response_mean_plus_minus_population_sigma()
+consensus_VaR = unavailable  # 응답 분산은 환율 예측오차 분포가 아님
+hedge_A = full_hedge_reference; hedge_B = existing_CE_optimum; hedge_C = minimum_variance_baseline
+scale_fixed_annual_return_moments_to_3_6_9_12_months()
+preserve_missing_inputs_and_nonidentified_optima_as_unavailable()`,
+      note: '환헤지 A는 기존 CIP 화면의 미래 예측이 아닌 100% 헤지 참고안이며, C는 신규 최소분산 비교 기준이다. 환헤지 B의 적용된 통화별 가정을 재사용한다. 예측 중심·예측구간·응답 분산을 구분하고 다른 모형으로 결측을 대체하지 않는다. 컨센서스는 달력 분기말이고 모형은 각 기준일 이후 지평이므로 목표일이 다를 수 있다. 상세 계약과 검증은 docs/SUMMARY_FORECASTS.md.'
+    },
+    {
       id: 'fx-model-c',
       title: '환율모형C · 금리차·모멘텀 축소추정',
       formulas: [
-        { expression: 'yₜ,ₕ = ln(Sₜ₊ₕ/Sₜ); xₜ = [금리KR,1Y − 금리US,1Y, ln(Sₜ/Sₜ₋₁), ln(Sₜ/Sₜ₋₃)]', legend: 'S: 원/달러 · 금리차: %p · h=1/3/6/12달력개월 · 당월 실제 공통일의 최종값 · 월 누락을 행 번호로 압축하지 않음' },
+        { expression: 'yₜ,ₕ = ln(Sₜ₊ₕ/Sₜ); xₜ = [금리KR,1Y − 금리US,1Y, ln(Sₜ/Sₜ₋₁), ln(Sₜ/Sₜ₋₃)]', legend: 'S: 원/달러 · 금리차: %p · h=1/3/6/9/12달력개월 · 당월 실제 공통일의 최종값 · 월 누락을 행 번호로 압축하지 않음' },
         { expression: '(â, b̂) = argmin {mean[(y−a−z′b)²] + λb′b}; z = (x−mean학습)/std학습', legend: 'λ=1 고정 · 절편 벌점 제외 · 학습표본 안에서만 표준화 · 예측일에 실현된 라벨 최소60/최대120개 · 상수 열 0' },
         { expression: 'ŷC = 0.5(â+z′b̂); ŜC = Sₜ exp(ŷC); ŜRW = Sₜ', legend: '축소50% 고정 · 축소 전 Ridge와 RW도 같은 평가 행 사용 · 로그 중심이며 수준 기대값·조건부 중앙값 보장 없음 · 기여도 합은 100ŷC' },
         { expression: 'eₜ,ₕ = ln(Sₜ₊ₕ/Sₜ)−ŷC; I68 = Sₜ exp(ŷC + [Q.16(e),Q.84(e)])', legend: '예측일까지 실현된 동일 지평 OOS 오차24개 이상 · 95%는 .025/.975 · 당시 생성 가능한 구간만 적중률 평가 · 커버리지 보장 없음' },
@@ -40,7 +64,7 @@ globalThis.PSEUDO_DOCS.hedge = {
 retain_only_actual_common_quotes_on_the_exact_last_weekday_of_each_month()
 require_quote_asof_equal_to_last_weekday_decision_date()
 create_1m_3m_momentum_and_h_month_targets_using_calendar_month_keys()
-for horizon in [1,3,6,12]:
+for horizon in [1,3,6,9,12]:
   for origin in monthly_decision_dates:
     train = last_120_labels_realized_by_origin; require_at_least_60(train)
     fit_standardization_and_fixed_lambda_1_ridge_on_train_only()
@@ -101,7 +125,7 @@ plot_history_mean_median_selected_interval_and_optional_sample_paths()`,
       id: 'fx-lstm-xgb',
       title: '환율모형B · USDKRW LSTM/XGBoost walk-forward',
       formulas: [
-        { expression: 'ŷₜ₊ₗ = ½[XGB(xₜ) + LSTM(xₜ₋₅ … xₜ)]; 학습표본 = {(xₛ, Sₛ₊ₗ) : t−w−l < s ≤ t−l}', legend: 'l: 예측 lag 개월(1/3/6) · w: 학습창 개월(24/36) · x: 피처 10개(표준화) · S: 원/달러 수준 · 기준일 t 에 실현된 라벨만 학습, 오프라인 러너가 매 기준일 재학습 · 브라우저 재추정 없음' },
+        { expression: 'ŷₜ₊ₗ = ½[XGB(xₜ) + LSTM(xₜ₋₅ … xₜ)]; 학습표본 = {(xₛ, Sₛ₊ₗ) : t−w−l < s ≤ t−l}', legend: 'l: 예측 lag 개월(1/3/6/9/12) · w: 학습창 개월(24/36) · x: 피처 10개(표준화) · S: 원/달러 수준 · 기준일 t 에 실현된 라벨만 학습, 오프라인 러너가 매 기준일 재학습 · 브라우저 재추정 없음' },
         { expression: 'sₘ(τ) = rUS,τ − rKR,τ = β₀ + β₁·(1−e^(−λτ))/(λτ) + β₂·[(1−e^(−λτ))/(λτ) − e^(−λτ)]', legend: 'Nelson–Siegel λ=0.7308 · τ = 0.25/1/3/10년 · 최소제곱 β = level/slope/curvature · 결측은 앞채움(원 코드는 양방향 보간) · 국제수지 피처는 공표 지연 2개월' },
         { expression: 'eₜ = ŷₜ₊ₗ − Sₜ₊ₗ; eRW,ₜ = Sₜ − Sₜ₊ₗ', legend: '랜덤워크 = 기준일 환율 유지 · 실현된 행만 · 원/달러 · 기준일 수준 < 하한 / > 상한으로 저·중·고환율 국면 분해(기본 1100/1300, 노트북 고정값)' },
         { expression: 'U = RMSE / RMSE_RW; 적중률 = #{sign(ŷₜ₊ₗ − Sₜ) = sign(Sₜ₊ₗ − Sₜ)} / N', legend: 'Theil U < 1 이면 랜덤워크보다 작은 RMSE · 방향은 기준 환율 대비 부호 · 랜덤워크는 방향이 없어 비움 · 선택 기간·조합·국면별로 화면이 재계산' }

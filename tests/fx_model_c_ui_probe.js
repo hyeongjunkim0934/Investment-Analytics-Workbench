@@ -15,7 +15,7 @@ const fixture={active:true,schema:'fx_model_c_v1',pair:'USDKRW',unit:'KRW/USD',s
   anchor:{t:stamp('2025-12-31'),quote_t:stamp('2025-12-31'),v:1375.125},
   sample:{start:'2010-01-29',end:'2025-12-31',n_months:192,latest_common_date:'2026-01-08'},
   model:{ridge_lambda:1,shrinkage:.5,min_train:60,max_train:120,min_calibration:24},horizons:[]};
-for(const h of [1,3,6,12]){
+for(const h of [1,3,6,9,12]){
   const log=.003*h, point=fixture.anchor.v*Math.exp(log), target=end(2025,11+h);
   const backtest=Array.from({length:30},(_,i)=>{
     const origin=end(2020+Math.floor(i/12),i%12), target=end(2020+Math.floor((i+h)/12),(i+h)%12), base=1200+i*.53125;
@@ -49,7 +49,8 @@ const live=()=>vm.runInContext('uplots.length',sandbox);
 const copy=()=>JSON.parse(JSON.stringify(fixture));
 let {made,forecast,errors}=render();assert.equal(made.length,3);assert.equal(live(),3);assert(forecast&&errors);
 assert.equal(tab('modelC').textContent,'환율모형C');
-assert.equal(host().querySelectorAll('.fx-c-forecast').length,4);
+assert.equal(host().querySelectorAll('.fx-c-forecast').length,5);
+assert(host().querySelectorAll('.fx-c-forecast')[3].textContent.includes('9개월'));
 assert(host().querySelector('.fx-c-meta').textContent.includes('모형 기준일 2025-12-31'));
 assert(host().querySelector('.fx-c-meta').textContent.includes('호가 2025-12-31'));
 assert(!host().querySelector('.fx-c-method').open);
@@ -71,17 +72,17 @@ fixture.horizons.forEach(r=>near(forecast.data[4][forecast.data[0].indexOf(r.tar
 assert(host().querySelectorAll('.fx-c-bounds').every(n=>n.textContent.includes('95%')));assert.equal(shim.UPlotStub.made.length,before);
 action('.fx-c-forecast-chart','표').click();action('.fx-c-forecast-chart','CSV').click();
 let csv=CSV_DOWNLOADS.at(-1).replace(/^\uFEFF/,'').trim().split('\n').map(r=>r.split(','));
-assert.equal(csv.length,5);assert.equal(csv[1][0],fixture.model_date);assert.equal(csv[1][1],fixture.asof);near(Number(csv[1][4]),fixture.horizons[0].point);
-assert.equal(host().querySelector('.fx-c-forecast-chart').querySelector('.chart-table').querySelectorAll('tbody tr').length,4);
+assert.equal(csv.length,6);assert.equal(csv[1][0],fixture.model_date);assert.equal(csv[1][1],fixture.asof);near(Number(csv[1][4]),fixture.horizons[0].point);
+assert.equal(host().querySelector('.fx-c-forecast-chart').querySelector('.chart-table').querySelectorAll('tbody tr').length,5);
 const selected=fixture.horizons[1];same(errors.data[0],selected.backtest.map(r=>r.target_t));same(errors.data[1],selected.backtest.map(r=>r.model_c-r.actual));
 action('.fx-c-errors','표').click();action('.fx-c-errors','CSV').click();
 csv=CSV_DOWNLOADS.at(-1).replace(/^\uFEFF/,'').trim().split('\n').map(r=>r.split(','));assert.equal(csv.length,31);assert.equal(csv[1][0],selected.backtest.at(-1).origin_date);assert.equal(csv[1][1],selected.backtest.at(-1).target_date);near(Number(csv[1][6]),selected.backtest.at(-1).model_c);
-byId('fx-c-horizon').value='12';emit(byId('fx-c-horizon'),'change');same(errors.data[1],fixture.horizons[3].backtest.map(r=>r.model_c-r.actual));
+byId('fx-c-horizon').value='12';emit(byId('fx-c-horizon'),'change');same(errors.data[1],fixture.horizons[4].backtest.map(r=>r.model_c-r.actual));
 assert(host().querySelector('.fx-c-contributions').textContent.includes('3.60'));
 assert.equal(host().querySelector('.fx-c-errors').querySelector('.chart-table').querySelectorAll('tbody tr').length,30);
 assert.equal(JSON.stringify(fixture),original);
-const metricsRows=host().querySelector('.fx-c-metrics').querySelectorAll('tbody tr');assert.equal(metricsRows.length,4);assert(metricsRows[0].textContent.includes('15.12'));
-forecast.cursor={idx:forecast.data[0].indexOf(fixture.horizons[3].target_t),left:80,top:30};forecast.opts.hooks.setCursor.forEach(fn=>fn(forecast));
+const metricsRows=host().querySelector('.fx-c-metrics').querySelectorAll('tbody tr');assert.equal(metricsRows.length,5);assert(metricsRows[0].textContent.includes('15.12'));
+forecast.cursor={idx:forecast.data[0].indexOf(fixture.horizons[4].target_t),left:80,top:30};forecast.opts.hooks.setCursor.forEach(fn=>fn(forecast));
 assert(host().querySelector('.fx-c-forecast-chart').querySelector('.time-chart-tooltip').textContent.includes('95% 하단'));
 const oldForecast=forecast,oldErrors=errors,oldObs=observers.slice();({forecast,errors}=render());assert.equal(oldForecast.destroyCalls,1);assert.equal(oldErrors.destroyCalls,1);assert(oldObs.every(o=>o.disconnectCalls===1));assert.equal(live(),3);
 assert.equal(byId('fx-c-horizon').value,'12');assert.equal(byId('fx-c-interval').value,'95');assert.equal(tab('modelC').textContent,'금리차·모멘텀');
@@ -97,11 +98,13 @@ for(const mutate of [p=>p.anchor.t=p.anchor.quote_t=1e15,p=>p.horizons[0].target
 }
 render({active:false,reason:'같은 날짜 금리자료가 부족합니다.'});assert(host().textContent.includes('같은 날짜 금리자료가 부족합니다.'));assert(!host().querySelector('.fx-c-value'));
 const noBounds=copy();noBounds.horizons.forEach(r=>{r.n_calibration=23;for(const k of ['lower68','upper68','lower95','upper95'])r[k]=null;});assert(render(noBounds).forecast);assert(host().querySelectorAll('.fx-c-bounds').every(n=>n.textContent.includes('표본 부족')));
-const oneInactive=copy();Object.assign(oneInactive.horizons[3],{active:false,reason:'학습 표본 부족'});assert(render(oneInactive).forecast);assert.equal(byId('fx-c-horizon').value,'1');assert(host().querySelectorAll('.fx-c-forecast')[3].textContent.includes('학습 표본 부족'));
-action('.fx-c-forecast-chart','CSV').click();const inactiveCsv=CSV_DOWNLOADS.at(-1).replace(/^\uFEFF/,'').trim().split('\n').map(r=>r.split(','));assert(inactiveCsv[4].slice(4,12).every(v=>v===''));
-assert(!host().querySelector('.fx-c-metrics').querySelectorAll('tbody tr')[3].textContent.includes('181.48'));
+const oneInactive=copy();Object.assign(oneInactive.horizons[4],{active:false,reason:'학습 표본 부족'});assert(render(oneInactive).forecast);assert.equal(byId('fx-c-horizon').value,'1');assert(host().querySelectorAll('.fx-c-forecast')[4].textContent.includes('학습 표본 부족'));
+action('.fx-c-forecast-chart','CSV').click();const inactiveCsv=CSV_DOWNLOADS.at(-1).replace(/^\uFEFF/,'').trim().split('\n').map(r=>r.split(','));assert(inactiveCsv[5].slice(4,12).every(v=>v===''));
+assert(!host().querySelector('.fx-c-metrics').querySelectorAll('tbody tr')[4].textContent.includes('181.48'));
 const noErrors=copy();noErrors.horizons.forEach(r=>{r.backtest=[];r.metrics={n:0,rmse:null,mae:null,rw_rmse:null,ridge_rmse:null,theil_u:null,coverage68:null,coverage95:null,n_interval:0};});assert(render(noErrors).forecast);assert(!host().querySelector('.fx-c-no-evaluation').hidden);
 const offCenter=copy();offCenter.horizons.forEach(r=>{r.lower95=r.point+1;r.lower68=r.point+2;r.upper68=r.point+3;r.upper95=r.point+4;});assert(render(offCenter).forecast,'empirical error interval need not contain point');
+const legacy=copy();legacy.horizons=legacy.horizons.filter(r=>r.horizon_months!==9);assert(render(legacy).forecast,'previous four-horizon payload remains usable');assert.equal(host().querySelectorAll('.fx-c-forecast').length,4);
+const missingQuarter=copy();missingQuarter.horizons[3].horizon_months=8;assert(!render(missingQuarter).forecast,'wrong quarterly horizon is rejected');
 if(process.env.FX_MODEL_C_FIXTURE){
   const enginePayload=JSON.parse(fs.readFileSync(process.env.FX_MODEL_C_FIXTURE,'utf8'));
   const result=render(enginePayload);assert(result.forecast&&result.errors,'real engine payload must render');
@@ -109,7 +112,7 @@ if(process.env.FX_MODEL_C_FIXTURE){
 }
 console.log(JSON.stringify({fourTabsAndNamePersistence:true,commonMonthEndDateContract:true,chartIntervalsAndNoMarkers:true,
   sameSampleMetricsAndContributions:true,forecastAndBacktestCsvPrecision:true,controlsAndConsensusPreserved:true,
-  chartLifecycle:true,malformedInactiveAndMissingIntervals:true}));
+  chartLifecycle:true,malformedInactiveAndMissingIntervals:true,fiveHorizonsAndLegacyCompatibility:true}));
 `;
 const filename=path.join(repo,'tests/fx_model_c_ui_runtime.js');
 const runtime=new Module(filename,module);runtime.filename=filename;runtime.paths=Module._nodeModulePaths(path.dirname(filename));runtime._compile(bootstrap+'\n'+code,filename);

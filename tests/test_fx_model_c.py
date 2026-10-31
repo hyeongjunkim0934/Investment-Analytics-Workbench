@@ -39,6 +39,8 @@ def test_fixed_contract_levels_contributions_and_identical_oos_comparison():
     assert result["model"]["ridge_lambda"] == 1 and result["model"]["shrinkage"] == .5
     assert result["model"]["parameter_selection"] == "fixed_before_evaluation"
     assert result["sample"]["n_months"] == 180
+    assert result["model"]["horizons_months"] == [1, 3, 6, 9, 12]
+    assert [row["horizon_months"] for row in result["horizons"]] == [1, 3, 6, 9, 12]
     anchor = result["anchor"]["v"]
     for row in result["horizons"]:
         assert row["active"]
@@ -56,6 +58,19 @@ def test_fixed_contract_levels_contributions_and_identical_oos_comparison():
         assert row["metrics"]["ridge_rmse"] == pytest.approx(math.sqrt(sum(
             (r["ridge"] - r["actual"]) ** 2 for r in bt) / len(bt)))
     json.dumps(result, allow_nan=False)
+
+
+def test_nine_month_direct_forecast_preserves_existing_horizons(monkeypatch):
+    inputs = raw()
+    extended = model.build(inputs)
+    nine = horizon(extended, 9)
+    assert nine["active"] and nine["n_calibration"] >= 24
+    assert pd.Period(nine["target_date"], "M") == pd.Period(extended["model_date"], "M") + 9
+    assert all(pd.Period(row["target_date"], "M") == pd.Period(row["origin_date"], "M") + 9
+               for row in nine["backtest"])
+    monkeypatch.setattr(model, "HORIZONS", (1, 3, 6, 12))
+    legacy = model.build(inputs)
+    assert [row for row in extended["horizons"] if row["horizon_months"] != 9] == legacy["horizons"]
 
 
 def test_constant_fx_preserves_exact_anchor_and_no_false_theil_u():
