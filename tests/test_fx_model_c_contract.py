@@ -29,6 +29,8 @@ def test_valid_active_inactive_and_short_history_contracts(payload):
 @pytest.mark.parametrize("mutate", [
     lambda p: p.pop("schema"),
     lambda p: p.update(horizons=[]),
+    lambda p: p.update(horizons=[row for row in p["horizons"] if row["horizon_months"] != 9]),
+    lambda p: p["horizons"][3].update(horizon_months=8),
     lambda p: p["anchor"].update(v=None),
     lambda p: p["anchor"].update(quote_t=p["anchor"]["t"] - 86400),
     lambda p: p["model"].update(shrinkage=.8),

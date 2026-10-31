@@ -18,7 +18,7 @@ import common
 import hedge
 
 SCHEMA = "fx_model_c_v1"
-HORIZONS = (1, 3, 6, 12)
+HORIZONS = (1, 3, 6, 9, 12)
 PRIMARY_SOURCE = "bb:달러원"
 FALLBACK_SOURCE = "info:USDKRW"
 KR_SOURCE = "info:한국_1y"

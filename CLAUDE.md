@@ -224,6 +224,14 @@ Conservative/Optimistic 평균 불확실성 경계선과 별개이며 공통 거
 
 ## 요약카드 (2026-10-03)
 
+2026-10-31: 자산배분 카드 아래 `#summary-forecasts`에 환율 A/B/C/컨센서스 및
+환헤지 A/B/C의 네 분기 전망을 추가했다. `summary-fx.js`, `summary-hedge.js`가
+게시 산출물/적용값을 읽고 `summary-forecasts.js`가 렌더·시장 선택·CSV를 담당한다.
+FX C는 직접 9개월 지평도 추정한다. VaR는 단측97.5%, 컨센서스는 응답분산이므로 미산출이다.
+헤지 A는100% 참고안, B는 기존CE, C는 신규 최소분산 기준이다. 구간은 헤지비율이 아닌
+누적 채권·FX 수익률의 조건부 정규근사다. 모형 기준일과 실제 목표일을 표시한다.
+상세 계약·결측/만료·검증은 `docs/SUMMARY_FORECASTS.md`를 참조한다.
+
 `#summary`는 리스크 탭 왼쪽의 다섯 가지 기본 카드다. `renderSummaryCards`는 자산배분의
 마지막 `applied` 상태를 `portEngine`에 전달하고 Min volatility·Max Sharpe Ratio는
 기존 엔진 결과를 공유한다. Target Return 4.0%는 `portConstrainedModel.atReturn(4)`로

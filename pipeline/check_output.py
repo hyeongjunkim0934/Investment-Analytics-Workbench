@@ -165,8 +165,8 @@ def _check_fx_model_c(model):
         if model["active"]:
             invalid("활성 모형의 전망 없음")
         return
-    if [row.get("horizon_months") if isinstance(row, dict) else None for row in horizons] != [1, 3, 6, 12]:
-        invalid("1·3·6·12개월 전망 배열 필요")
+    if [row.get("horizon_months") if isinstance(row, dict) else None for row in horizons] != [1, 3, 6, 9, 12]:
+        invalid("1·3·6·9·12개월 전망 배열 필요")
         return
     anchor = model.get("anchor") or {}
     if not positive(anchor.get("v")) or not finite(anchor.get("t")) or not finite(anchor.get("quote_t")):

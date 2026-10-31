@@ -18,9 +18,11 @@ function fxModelCValid(p) {
       || !fxModelCTimestamp(p.anchor?.t) || !fxModelCTimestamp(p.anchor?.quote_t)
       || p.anchor.quote_t !== p.anchor.t || !fxModelCPositive(p.anchor.v)
       || p.asof !== tsToDate(p.anchor.quote_t) || p.model_date !== tsToDate(p.anchor.t)
-      || !Array.isArray(p.horizons) || p.horizons.length !== 4
+      || !Array.isArray(p.horizons) || ![4, 5].includes(p.horizons.length)
       || p.model?.shrinkage !== .5 || p.model?.ridge_lambda !== 1) return false;
-  return [1, 3, 6, 12].every((h, i) => {
+  // Retain the previous four-horizon payload while refreshed pipeline data arrives.
+  const horizons = p.horizons.length === 4 ? [1, 3, 6, 12] : [1, 3, 6, 9, 12];
+  return horizons.every((h, i) => {
     const row = p.horizons[i];
     if (!row || row.horizon_months !== h || typeof row.active !== "boolean") return false;
     if (!fxModelCTimestamp(row.target_t) || row.target_t <= p.anchor.t
@@ -192,7 +194,7 @@ function renderFxModelC(host) {
     `${marketSourceLabel(payload.source)} · 한국/미국 1년 금리 · 월별 표본 ${payload.sample?.start || "–"} ~ ${payload.sample?.end || "–"} · ${payload.sample?.n_months ?? 0}개월 · 최신 공통 호가 ${payload.sample?.latest_common_date || "–"}`),
     el("p", {}, "공통 관측일의 금리차와 1·3개월 환율 모멘텀으로 지평별 로그 변화를 추정합니다. 학습 표준화와 Ridge λ=1, 최근 최대 120개·최소 60개 실현 라벨을 사용하고, 예측 로그 변화를 50%로 축소합니다. 나머지 50%는 환율 불변 랜덤워크입니다. 성과에 따라 가중치나 λ를 선택하지 않습니다."),
     el("p", {}, "로그 중심은 조건부 로그 예측을 지수변환한 값이며 환율 수준의 산술평균이나 보장된 중앙값이 아닙니다. 기여도는 통계적 예측의 분해이며 금리차의 인과효과나 식별된 위험프리미엄이 아닙니다. 월말 마지막 평일에 환율과 한미 금리가 모두 관측된 달만 사용하며 결측 달·미완료 월은 제외합니다. 휴일 달력은 따로 보정하지 않습니다."),
-    el("p", {}, "과거오차 구간은 해당 예측 시점까지 실현된 C의 로그 오차가 24개 이상일 때만 구성합니다. 68%·95%는 경험 분위수의 명목 비율이며 미래 포함률 보장이 아닙니다. 구간의 비대칭 때문에 로그 중심이 구간 안에 있을 필요는 없습니다. 연결선과 음영은 1·3·6·12개월 전망점 사이의 표시용 보간입니다."),
+    el("p", {}, "과거오차 구간은 해당 예측 시점까지 실현된 C의 로그 오차가 24개 이상일 때만 구성합니다. 68%·95%는 경험 분위수의 명목 비율이며 미래 포함률 보장이 아닙니다. 구간의 비대칭 때문에 로그 중심이 구간 안에 있을 필요는 없습니다. 연결선과 음영은 게시된 지평별 전망점 사이의 표시용 보간입니다."),
     el("p", {}, "의사 표본 외 평가는 현재 보유한 역사자료를 과거 순서로 재추정한 결과이며 당시 데이터 빈티지를 복원한 실시간 검증은 아닙니다. 서로 겹치는 지평의 오차는 독립 표본이 아닙니다. Theil U는 C의 RMSE를 같은 표본의 RW RMSE로 나눈 값이며 1 미만이어도 통계적 우월성을 뜻하지 않습니다. 미래 예측력·거래비용 반영 성과·구조모형 재현은 미검증입니다."));
   host.append(method);
   const refreshTable = (card, tableFn) => { const table = card.querySelector(".chart-table");

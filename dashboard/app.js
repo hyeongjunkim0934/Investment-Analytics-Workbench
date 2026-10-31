@@ -7797,6 +7797,7 @@ function renderSummaryCards(A = DATA.alloc, engine = null) {
     grid.append(card);
   });
   box.append(workspace, status, head, grid);
+  if (typeof renderSummaryForecasts === "function") renderSummaryForecasts();
 }
 
 function portCorrelationControl(P, W, st, onApply, draft) {
