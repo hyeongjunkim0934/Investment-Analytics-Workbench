@@ -8,7 +8,7 @@ const end = (year, month) => Date.UTC(year, month + 1, 0) / 1000;
 const near = (a, b, tol = 1e-9) => assert(Math.abs(a - b) < tol, `${a} != ${b}`);
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const context = vm.createContext({ Date, Intl, console, tsToDate: iso });
-for (const file of ["fx-outlook.js", "fx-markov.js", "fx-lstm-xgb.js", "fx-model-c.js", "summary-fx.js"])
+for (const file of ["fx-outlook.js", "fx-markov.js", "fx-lstm-xgb.js", "fx-model-c.js", "fx-model-d.js", "summary-fx.js"])
   vm.runInContext(fs.readFileSync(path.join(root, "dashboard", file), "utf8"), context, { filename: file });
 const run = vm.runInContext("summaryFxModels", context);
 const now = new Date("2026-10-01T00:00:00Z"), anchor = { t: stamp("2026-09-30"), v: 1350 };
@@ -58,7 +58,7 @@ const fixture = () => ({ outlook: { history: { t: [anchor.t], v: [anchor.v] } },
 const view = { window: 24, model: "ensemble" };
 const get = (fx = fixture(), state = {}, selection = view, date = now) => run(fx, state, selection, date);
 const values = get();
-assert.deepEqual(Array.from(values, (m) => m.key), ["modelA", "modelB", "modelC", "consensus"]);
+assert.deepEqual(Array.from(values, (m) => m.key), ["modelA", "modelB", "modelC", "modelD", "consensus"]);
 values.forEach((m) => assert.deepEqual(Array.from(m.rows, (r) => r.horizonMonths), [3, 6, 9, 12]));
 assert.equal(values[0].anchorDate, "2026-09-30");
 values[0].rows.forEach((r, i) => {
@@ -127,14 +127,29 @@ const noCInterval = fixture(); noCInterval.model_c.horizons.forEach((r) => {
 });
 assert(get(noCInterval)[2].rows.every((r) => r.point !== null && r.lower95 === null && r.var975Pct === null));
 
+assert(values[3].rows.every((r) => r.point === null && r.reason));
+if (process.env.FX_MODEL_D_FIXTURE) {
+  const payload = JSON.parse(fs.readFileSync(process.env.FX_MODEL_D_FIXTURE, "utf8"));
+  const complete = fixture(); complete.model_d = payload;
+  const result = get(complete, {}, view, new Date(payload.asof + "T00:00:00Z"))[3];
+  result.rows.forEach((r) => {
+    const source = payload.horizons.find((h) => h.horizon_months === r.horizonMonths);
+    near(r.point, source.median); near(r.lower95, source.lower95);
+    near(r.var975Pct, Math.max(0, 100 * (1 - source.lower95 / payload.anchor.v)));
+  });
+  const expiredD = get(complete, {}, view, new Date("2099-01-01T00:00:00Z"))[3];
+  assert(expiredD.rows.every((r) => r.point === null && r.reason.includes("경과")));
+  complete.model_d.forecast.lower95[21] = -1;
+  assert(get(complete)[3].rows.every((r) => r.point === null));
+}
 const state = { consensus: { "2026-Q4": [null, -1], "2027-Q1": [1400], "2027-Q2": [1300, 1500], "2027-Q3": [1450, 1450] } };
-const con = get(fixture(), state)[3];
+const con = get(fixture(), state)[4];
 assert.deepEqual(Array.from(con.rows, (r) => r.quarterKey), ["2026-Q4", "2027-Q1", "2027-Q2", "2027-Q3"]);
 assert.equal(con.rows[0].point, null); assert.equal(con.rows[1].point, 1400); assert.equal(con.rows[1].lower, null);
 near(con.rows[2].point, 1400); near(con.rows[2].lower, 1300); near(con.rows[2].upper, 1500);
 near(con.rows[3].lower, 1450); near(con.rows[3].upper, 1450);
 assert(con.rows.every((r) => r.var975Pct === null && r.lower95 === null && r.varReason.includes("응답 분산")));
-const rollover = get(fixture(), state, view, new Date("2026-12-31T16:00:00Z"))[3];
+const rollover = get(fixture(), state, view, new Date("2026-12-31T16:00:00Z"))[4];
 assert.equal(rollover.rows[0].quarterKey, "2027-Q1");
 const before = JSON.stringify(fixture()), stable = fixture(), stableState = clone(state), stableView = { ...view };
 get(stable, stableState, stableView);

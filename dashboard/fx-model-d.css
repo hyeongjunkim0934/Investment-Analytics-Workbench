@@ -1,0 +1,36 @@
+#fxoutlook-model-d { --fx-d-gold:#edbd63; min-width:0; }
+:root[data-theme="light"] #fxoutlook-model-d { --fx-d-gold:#8a5c00; }
+.fx-d-meta { display:flex; align-items:center; flex-wrap:wrap; gap:8px 20px; margin:14px 0 8px; font-size:12px; color:var(--ink-3); }
+.fx-d-meta > b { color:var(--ink-1); font-size:14px; }
+.fx-d-status { color:var(--ink-2); font-size:12px; line-height:1.5; margin:0 0 14px; }
+.fx-d-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin-bottom:12px; }
+.fx-d-forecast { min-width:0; display:flex; flex-direction:column; gap:9px; padding:14px; margin:0; }
+.fx-d-value-label, .fx-d-bounds, .fx-d-risk { color:var(--ink-2); font-size:12px; line-height:1.5; }
+.fx-d-value { color:var(--fx-d-gold); font-size:26px; font-weight:600; font-variant-numeric:tabular-nums; }
+.fx-d-bounds, .fx-d-risk b { font-variant-numeric:tabular-nums; }
+.fx-d-risk { display:flex; flex-direction:column; gap:3px; }
+.fx-d-expired { color:var(--ink-1); font-size:12px; border-left:2px solid var(--fx-d-gold); padding-left:6px; }
+.fx-d-risk b { color:var(--ink-1); font-size:15px; font-weight:500; }
+.fx-d-forecast-chart, .fx-d-comparison, .fx-d-backtest-chart { min-width:0; margin-bottom:12px; }
+.fx-d-control { display:inline-flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:12px; color:var(--ink-2); }
+.fx-d-control select, .fx-d-control input { background:var(--page); color:var(--ink-1); border:1px solid var(--baseline); border-radius:5px; font:inherit; padding:6px 8px; }
+.fx-d-control input { width:100px; }
+.fx-d-control select:focus-visible, .fx-d-control input:focus-visible { outline:2px solid var(--fx-d-gold); outline-offset:3px; }
+.fx-d-comparison, .fx-d-exposure { padding:14px; }
+.fx-d-comparison .card-head, .fx-d-exposure .card-head { display:flex; flex-wrap:wrap; gap:8px 15px; margin-bottom:12px; }
+.fx-d-detail-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(300px,1fr); gap:12px; margin-bottom:12px; }
+.fx-d-vol-chart, .fx-d-exposure { min-width:0; margin:0; }
+.fx-d-exposure-status { display:block; color:var(--ink-3); font-size:12px; margin:8px 0; }
+.fx-d-exposure-table { margin-bottom:10px; }
+.fx-d-chart { min-width:0; }
+.fx-d-method { margin-bottom:14px; }
+.fx-d-method p, .fx-d-exposure .explain p { color:var(--ink-2); font-size:12px; line-height:1.7; }
+.fx-d-empty { padding:18px; }
+@media (max-width:1000px) {
+  .fx-d-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .fx-d-detail-grid { grid-template-columns:minmax(0,1fr); }
+}
+@media (max-width:480px) {
+  .fx-d-grid { grid-template-columns:minmax(0,1fr); }
+  .fx-d-meta { gap:6px 12px; }
+}
