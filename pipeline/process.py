@@ -32,6 +32,7 @@ import breadth
 import fx_lstm_xgb
 import fx_markov
 import fx_model_c
+import fx_model_d
 import fx_outlook
 import hedge
 import panel
@@ -730,8 +731,14 @@ def build_fx() -> dict:
     except Exception:
         warn("fx_model_c: 환율모형C 계산 실패 — 비활성으로 게시됩니다")
         model_c = fx_model_c.skeleton("계산 실패 — 빌드 로그 확인")
+    try:
+        model_d = fx_model_d.build(raw, warn=warn)
+    except Exception:
+        warn("fx_model_d: 환율모형D 계산 실패 — 비활성으로 게시됩니다")
+        model_d = fx_model_d.skeleton("계산 실패 — 빌드 로그 확인")
     return {"ts": ts, "outlook": fx_outlook.build(raw),
-            "markov": fx_markov.build(raw, warn=warn), "model_c": model_c}
+            "markov": fx_markov.build(raw, warn=warn), "model_c": model_c,
+            "model_d": model_d}
 
 
 def build_inflation() -> dict:

@@ -29,7 +29,8 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date
+import calendar
+from datetime import date, datetime, timezone
 import json
 import math
 import re
@@ -56,7 +57,7 @@ META_FIELDS = ["built_at_utc", "last_observation", "series_count", "files", "war
 REQUIRED_KEYS = {
     # lstm_xgb = 환율모형B(오프라인 러너 산출물). 파일이 없어도 active:false 블록이
     # 게시돼야 한다 — 부재는 wiring 누락이다.
-    "fx": ["ts", "outlook", "markov", "lstm_xgb", "model_c"],  # 결측이어도 비활성 블록은 필수.
+    "fx": ["ts", "outlook", "markov", "lstm_xgb", "model_c", "model_d"],  # 결측이어도 비활성 블록은 필수.
     "hedge": ["asof", "default_tenor_m", "matrix", "curves", "backtest",
               "cost_hist_curve", "cost_hist_usd", "cost_dashboard", "cip", "fx_volatility", "cost_stats", "mtm", "sim",
               # ust_merit = 미국채 투자 메리트 모니터(§7.7.14). 시리즈가 없어도
@@ -96,6 +97,8 @@ REQUIRED_ROW_KEYS = {
 }
 # 중첩 객체의 필수 키 — 화면 부제가 이 값들로 자기 표본을 밝힌다(하드코딩 금지).
 REQUIRED_NESTED_KEYS = {
+    ("fx", "model_d"): ["active", "reason", "schema", "asof", "pair", "unit", "source",
+                         "anchor", "sample", "model", "fit", "forecast", "horizons", "backtest"],
     ("fx", "model_c"): ["active", "reason", "schema", "asof", "model_date", "pair", "unit",
                          "source", "anchor", "sample", "model", "horizons"],
     ("fx", "markov"): ["active", "source", "pair", "unit", "asof", "anchor",
@@ -376,6 +379,233 @@ def _check_fx_model_c(model):
                 invalid("구간 적중률 범위 위반")
 
 
+def _check_fx_model_d(model):
+    """Validate volatility, loss signs, dates and common-sample scores without NumPy."""
+    def invalid(message):
+        fail(f"fx.json: model_d: {message}")
+
+    def finite(value):
+        try:
+            return type(value) in (int, float) and math.isfinite(value)
+        except OverflowError:
+            return False
+
+    def positive(value):
+        return finite(value) and value > 0
+
+    def nonnegative(value):
+        return finite(value) and value >= 0
+
+    def stamp(value):
+        if type(value) is not int:
+            return None
+        try:
+            return datetime.fromtimestamp(value, timezone.utc).date().isoformat()
+        except (ValueError, OverflowError, OSError):
+            return None
+
+    def close(actual, expected, abs_tol=1e-12):
+        return finite(actual) and math.isclose(actual, expected, rel_tol=1e-9, abs_tol=abs_tol)
+
+    if not isinstance(model, dict) or type(model.get("active")) is not bool:
+        invalid("active 불리언을 포함한 객체 필요")
+        return
+    if (model.get("schema") != "fx_model_d_v1" or model.get("pair") != "USDKRW"
+            or model.get("unit") != "KRW/USD"):
+        invalid("스키마·통화·단위 불일치")
+    if not model["active"]:
+        if not isinstance(model.get("reason"), str) or not model["reason"]:
+            invalid("비활성 사유 없음")
+        if model.get("forecast") is not None or model.get("horizons") != []:
+            invalid("비활성 모형에 전망이 있습니다")
+        return
+    anchor = model.get("anchor")
+    if (not isinstance(anchor, dict) or not positive(anchor.get("v"))
+            or stamp(anchor.get("t")) is None):
+        invalid("기준 환율·시점 누락")
+        return
+    if model.get("asof") != stamp(anchor["t"]):
+        invalid("기준일과 기준 시점 불일치")
+    if model.get("source") not in ("bb:달러원", "info:USDKRW"):
+        invalid("허용 원달러 원천 불일치")
+    spec = model.get("model")
+    if not isinstance(spec, dict):
+        invalid("모형 정의 누락")
+        return
+    fixed = {"mean_log_return": 0, "direction_forecast": False,
+             "annualization": 252, "steps_per_month": 21,
+             "orthogonality_verified": False, "spliced": False,
+             "parameter_uncertainty_included": False, "coverage_guaranteed": False,
+             "risk_loss": "100*(1-S_future/S_anchor), unhedged_long_USD_in_KRW",
+             "innovation": "symmetrized_rms_normalized_historical_residual",
+             "backtest_qlike": "log(forecast_variance)+realized_variance/forecast_variance"}
+    if any(spec.get(k) != v for k, v in fixed.items()):
+        invalid("방향 중립·단위·불확실성·손실 정의 불일치")
+    if spec.get("fallback_used") is not (model.get("source") == "info:USDKRW"):
+        invalid("명시 폴백 원천 불일치")
+    sample = model.get("sample")
+    if (not isinstance(sample, dict) or any(type(sample.get(k)) is not int or sample[k] < 0
+            for k in ("n_levels", "n_returns", "n_train", "excluded_long_gaps"))):
+        invalid("학습 표본수 누락")
+        return
+    if (sample["n_returns"] != sample["n_levels"] - 1
+            or sample["n_train"] != min(sample["n_returns"], 2520)
+            or not 504 <= sample["n_train"] <= 2520
+            or sample.get("end") != model["asof"]):
+        invalid("연속 구간·학습창 표본수·종료일 불일치")
+    try:
+        sample_dates = [date.fromisoformat(sample[key]) for key in ("start", "train_start", "end")]
+        if sample_dates != sorted(sample_dates):
+            invalid("학습 구간 시점 순서 위반")
+    except (KeyError, TypeError, ValueError):
+        invalid("학습 구간 날짜 누락")
+    fit = model.get("fit")
+    if (not isinstance(fit, dict)
+            or not all(nonnegative(fit.get(k)) for k in
+                       ("omega", "alpha", "beta", "persistence", "long_run_var", "next_var"))
+            or not finite(fit.get("objective"))):
+        invalid("유효한 조건부분산 추정치 필요")
+        return
+    if (fit["persistence"] >= 1 or not close(fit["persistence"], fit["alpha"] + fit["beta"])
+            or not close(fit["omega"], (1 - fit["persistence"]) * fit["long_run_var"], abs_tol=1e-20)):
+        invalid("정상성·장기분산 타기팅 항등식 위반")
+        return
+    if (not positive(fit["omega"]) or not positive(fit["long_run_var"])
+            or not positive(fit["next_var"]) or fit.get("n_train") != sample["n_train"]):
+        invalid("양수 분산·학습 표본 불일치")
+        return
+    forecast = model.get("forecast")
+    if not isinstance(forecast, dict):
+        invalid("전망 분포 객체 없음")
+        return
+    n = 253
+    if forecast.get("steps") != list(range(n)) or any(type(v) is not int for v in forecast.get("steps", [])):
+        invalid("0~252 모형 관측일 배열 필요")
+    times = forecast.get("t")
+    valid_times = (isinstance(times, list) and len(times) == n
+                   and all(stamp(t) is not None for t in times)
+                   and times[0] == anchor["t"]
+                   and all(a < b for a, b in zip(times, times[1:])))
+    if not valid_times:
+        invalid("전망 시점 배열·기준일·순서 불일치")
+    elif valid_times:
+        start = datetime.fromtimestamp(anchor["t"], timezone.utc)
+        knots = []
+        try:
+            for month in range(13):
+                year, m0 = divmod(start.year * 12 + start.month - 1 + month, 12)
+                target = start.replace(year=year, month=m0 + 1,
+                                       day=min(start.day, calendar.monthrange(year, m0 + 1)[1]))
+                knots.append(int(target.timestamp()))
+        except (ValueError, OverflowError, OSError):
+            invalid("전망 달력 범위 초과")
+            return
+        expected_times = [knots[month] if not offset else
+                          round(knots[month] + (knots[month + 1] - knots[month]) * offset / 21)
+                          for month, offset in (divmod(step, 21) for step in range(n))]
+        if times != expected_times:
+            invalid("21 관측일·달력 월 표시 매핑 불일치")
+    if (type(forecast.get("path_count")) is not int or forecast["path_count"] < 2
+            or type(forecast.get("seed")) is not int or forecast["seed"] < 0
+            or not isinstance(forecast.get("engine"), str)):
+        invalid("시뮬레이션 경로수·시드·엔진 누락")
+    level_keys = ("mean", "median", "lower68", "upper68", "lower95", "upper95")
+    valid_arrays = True
+    for key in (*level_keys, "vol_pct"):
+        values = forecast.get(key)
+        check_value = nonnegative if key == "vol_pct" else positive
+        if not isinstance(values, list) or len(values) != n or not all(check_value(v) for v in values):
+            invalid(f"{key} 배열 길이·값 위반")
+            valid_arrays = False
+        elif key in level_keys and values[0] != anchor["v"]:
+            invalid(f"{key} 시작점과 실제 환율 불일치")
+    if valid_arrays:
+        order = ("lower95", "lower68", "median", "upper68", "upper95")
+        if any(any(a > b for a, b in zip(row, row[1:]))
+               for row in zip(*(forecast[key] for key in order))):
+            invalid("중첩 분위수 순서 위반")
+        integrated = 0.0
+        for step in range(n):
+            if step:
+                integrated += fit["long_run_var"] + (fit["next_var"] - fit["long_run_var"]) * fit["persistence"] ** (step - 1)
+            expected_vol = math.sqrt((integrated / step if step else fit["next_var"]) * 252) * 100
+            if not close(forecast["vol_pct"][step], expected_vol):
+                invalid("예상 평균분산과 연환산 변동성 불일치")
+                break
+    horizons = model.get("horizons")
+    if (not isinstance(horizons, list) or len(horizons) != 5
+            or any(not isinstance(row, dict) for row in horizons)
+            or [row.get("horizon_months") for row in horizons] != [1, 3, 6, 9, 12]):
+        invalid("1·3·6·9·12개월 전망 필요")
+        return
+    for row in horizons:
+        step = row["horizon_months"] * 21
+        if type(row.get("steps")) is not int or row["steps"] != step:
+            invalid("전망 지평과 모형 관측수 불일치")
+        if (stamp(row.get("target_t")) is None or row.get("target_date") != stamp(row["target_t"])
+                or row["target_t"] <= anchor["t"]
+                or (valid_times and row["target_t"] != times[step])):
+            invalid("전망 목표일 불일치")
+        if valid_arrays and any(not close(row.get(key), forecast[key][step])
+                                for key in (*level_keys, "vol_pct")):
+            invalid("전망 카드와 경로 분포 불일치")
+        var, es = row.get("var95_pct"), row.get("es95_pct")
+        if not finite(var) or not finite(es) or es < var or es > 100 or var > 100:
+            invalid("달러 보유 환손실 VaR95·ES95 값/순서 위반")
+        # Loss=1-S/S0 reverses the quantile order: a 95% loss quantile lies
+        # between losses implied by the 2.5% and 16% FX quantiles.
+        elif valid_arrays:
+            lower = (1 - forecast["lower68"][step] / anchor["v"]) * 100
+            upper = (1 - forecast["lower95"][step] / anchor["v"]) * 100
+            if not lower - 1e-8 <= var <= upper + 1e-8:
+                invalid("VaR95 부호·분위수와 환율 분포 불일치")
+    backtest = model.get("backtest")
+    if (not isinstance(backtest, dict) or backtest.get("horizon_steps") != 21
+            or not isinstance(backtest.get("rows"), list)
+            or not isinstance(backtest.get("metrics"), dict)):
+        invalid("21일 공통 표본 평가 필요")
+        return
+    rows, metrics = backtest["rows"], backtest["metrics"]
+    if type(metrics.get("n")) is not int or metrics["n"] != len(rows):
+        invalid("평가 표본수 불일치")
+    valid_rows, previous_target = [], None
+    for row in rows:
+        if (not isinstance(row, dict) or stamp(row.get("origin_t")) is None
+                or stamp(row.get("target_t")) is None
+                or not all(positive(row.get(k)) for k in ("base", "actual", "lower95", "upper95"))
+                or not nonnegative(row.get("realized_variance"))
+                or not all(positive(row.get(k)) for k in
+                           ("model_variance", "constant_variance", "ewma_variance"))):
+            invalid("유효한 평가 행 필요")
+            continue
+        if (not row["origin_t"] < row["target_t"] <= anchor["t"]
+                or (previous_target is not None and row["origin_t"] < previous_target)
+                or row["lower95"] > row["upper95"]):
+            invalid("평가 미래시점·중첩·구간 순서 위반")
+        previous_target = row["target_t"]
+        valid_rows.append(row)
+    metric_keys = ("qlike_d", "qlike_constant", "qlike_ewma", "mse_d", "mse_constant", "mse_ewma", "coverage95")
+    if not rows:
+        if any(metrics.get(k) is not None for k in metric_keys):
+            invalid("평가 표본 없는 성과 수치")
+    elif len(valid_rows) == len(rows):
+        count = len(rows)
+        for name, column in (("d", "model_variance"), ("constant", "constant_variance"), ("ewma", "ewma_variance")):
+            estimates = [row[column] for row in rows]
+            try:
+                qlike = math.fsum(math.log(pred) + row["realized_variance"] / pred
+                                  for row, pred in zip(rows, estimates)) / count
+                mse = math.fsum((row[column] - row["realized_variance"]) ** 2 for row in rows) / count
+            except (ValueError, OverflowError, ZeroDivisionError):
+                invalid("평가 손실함수 수치 범위 초과")
+                continue
+            if not close(metrics.get(f"qlike_{name}"), qlike) or not close(metrics.get(f"mse_{name}"), mse, abs_tol=1e-20):
+                invalid(f"{name} 손실함수와 동일 평가 행 불일치")
+        coverage = sum(row["lower95"] <= row["actual"] <= row["upper95"] for row in rows) / count
+        if not close(metrics.get("coverage95"), coverage):
+            invalid("구간 포함률과 당시 평가 행 불일치")
+
+
 def _check_fx_simulation(markov):
     """Validate the version-1 displayed FX distribution without NumPy or refitting.
 
@@ -605,6 +835,7 @@ def check(out: Path, max_warnings: int, min_series: int, dashboard: Path | None)
     if isinstance(fx, dict):
         _check_fx_simulation(fx.get("markov"))
         _check_fx_model_c(fx.get("model_c"))
+        _check_fx_model_d(fx.get("model_d"))
     _check_hedge_tail(payloads.get("hedge"))
 
     seen = [0]

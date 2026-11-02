@@ -10,6 +10,35 @@
 
 ## 0. 30초 요약
 
+### 2026-11-03 환율모형D · 방향 중립 조건부 변동성
+
+- 범위: `hyeongjunkim0934/Investment-Analytics-Workbench`만 변경. 실제 기본 브랜치
+  `claude/data-repo-dashboard-automation-cj8y59`, 기준 커밋 `ef88f088`, 작업 브랜치
+  `codex/hj-fx-model-d-volatility`. Data 기본 브랜치와 tree `a2f5c546` 읽기 확인, 수정 없음.
+- GARCH(1,1) 유한격자 준최대우도·분산목표·평균0·대칭화 잔차 FHS. 분산·위험을 예측하고
+  A/C 방향예측을 입력하지 않는다. 같은 FX를 공유하므로 통계적 직교성은 미검증이다.
+  원문·가정·부호·단위·시간축은 `docs/FX_MODEL_D.md`; 재사용 함수/유사코드는 Pseudo 참조.
+- 상세 D 탭에 1/3/6/9/12개월 변동성·환율68/95%·VaR95/ES95·목표변동성별 환노출,
+  21관측 동일표본 D/상수/EWMA 평가. 요약카드에는 D 중앙값·95%·공통VaR97.5 추가.
+  경과 목표일의 환노출 참고치는 비우며 사용자 목표값은 자동 권장하지 않는다.
+- 독립 계산 경로: 유한지연 분산합·scalar likelihood·작은 충격경로 완전열거·EWMA 폐형합.
+  동일 입력/가정의 구현 감사이며 원자료 독립 검증은 아니다. 미래자료 교란 불변성·손실부호·
+  분수 ES·비중첩 실현만기·렌더/CSV/키보드/차트정리·게이트 변조 거부도 검증했다.
+- 현재 게시된 `fx.json.outlook.history` 6462개 일별 관측으로 실행 확인(기준일2026-09-08).
+  원본 XLSX를 재다운로드해 비교한 검증이 아니며 독립 벤더 검증도 아니다. 자료가 오래된 점을
+  감추지 않고 화면에 기준일·지난 목표일을 표시한다. 자료 갱신은 Data 파이프라인 입력에 달려 있다.
+- 실자료 120개 비중첩 평가의 QLIKE D -9.48851 / 상수 -9.37058 / EWMA -9.47236,
+  D95% 포함률92.5%. 이 결과로 격자·창·가중치를 재선택하지 않았다. 장기지평 포함률,
+  A/C 공동 OOS 상관·비용차감 전략 우월성·실시간 빈티지 검증은 후속 과제다.
+- 로컬은 고정 requirements와 같은 Python3.12 환경으로 실행했다. Chromium은 OS의
+  socket 생성 제한으로 실행되지 않아 실제 브라우저 시각검증은 미완료다. Node DOM 검사와
+  실화면 검증을 구분한다. 전체 테스트·합성 빌드/게이트 최종 결과는 PR 본문 참조.
+- 재현: `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python -m pytest -q` 및
+  `python pipeline/process.py --data-dir <합성 또는 허용 Data 경로> --out _site/data`,
+  `python pipeline/check_output.py --out _site/data --dashboard dashboard/app.js`.
+  합성 자료의 의도적 경고는 테스트용 한도를 별도로 설정한다. 원자료·생성JSON은 커밋하지 않는다.
+  머지·배포는 사용자의 머지 요청 시 수행한다.
+
 ### 2026-11-02 환헤지모델C · 경험적 ES95와 조정비용
 
 - 범위: `hyeongjunkim0934/Investment-Analytics-Workbench`만 변경. 실제 기본 브랜치
