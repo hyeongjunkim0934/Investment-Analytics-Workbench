@@ -23,6 +23,9 @@ const analytics=Object.fromEntries(['UST','JPY','AUD','GER'].map(code=>[code,{ou
 const payload={matrix:[],bond_analytics:analytics};
 const panel=DOC.getElementById('hedge-model-c');
 const input=k=>DOC.getElementById('hedge-c-'+k);
+const summary=market=>DOC.getElementById('hedge-summary-c-'+market).querySelectorAll('td').map(node=>node.textContent);
+const summaryMatches=expected=>assert.equal(JSON.stringify(summary('UST')),JSON.stringify(expected));
+const optimalValues=()=>DOC.getElementById('hedge-c-scenario-1').querySelectorAll('.hedge-c-metric b').map(node=>node.textContent);
 const stored=()=>JSON.parse(shim.localStorage.getItem('iaw-hedge-model-c-v1'));
 const apply=values=>{Object.entries(values).forEach(([k,v])=>{input(k).value=v;});input('apply').click();};
 const destroyed=new Set(), sizes=new Map();
@@ -36,6 +39,7 @@ assert.equal(panel.querySelectorAll('.hedge-c-scenario').length,6);
 assert.equal(live().length,1);
 assert(panel.textContent.includes('통계적 직교성 미검증'));
 Object.entries(P.hedgeModelCDefaults).forEach(([k,v])=>near(Number(input(k).value),v));
+summaryMatches([optimalValues()[0],optimalValues()[3]]);
 P.selectHedgeWorkspace('modelC');assert.equal(panel.hidden,false);
 assert.equal(DOC.getElementById('hedge-tab-modelC').getAttribute('aria-selected'),'true');
 const initial=live()[0];input('tradeCostBps').value='35';
@@ -52,11 +56,15 @@ const afterB=shim.localStorage.getItem('iaw-hedge-model-b-v1');
 const settings={currentHedgePct:40,minHedgePct:20,maxHedgePct:90,maxTurnoverPp:30,tradeCostBps:12.5,carryStressPp:.7};
 apply(settings);
 assert.equal(JSON.stringify(stored().markets.UST),JSON.stringify(settings));
+P.selectHedgeWorkspace('monitoring');
+const appliedSummary=[optimalValues()[0],optimalValues()[3]];
+summaryMatches(appliedSummary);P.selectHedgeWorkspace('modelC');
 const preserved=panel.textContent, prior=live()[0], priorStorage=shim.localStorage.getItem('iaw-hedge-model-c-v1');
 for(const invalid of [{...settings,currentHedgePct:40.5},{...settings,tradeCostBps:''},
  {...settings,minHedgePct:80,maxTurnoverPp:10},{...settings,carryStressPp:-1}]){
  apply(invalid);assert.equal(input('status').hidden,false);assert.equal(live()[0],prior);
  assert.equal(shim.localStorage.getItem('iaw-hedge-model-c-v1'),priorStorage);
+ P.selectHedgeWorkspace('monitoring');summaryMatches(appliedSummary);P.selectHedgeWorkspace('modelC');
 }
 apply(settings);assert.equal(input('status').hidden,true);
 // Settings are independent of B and independent by market.
@@ -84,17 +92,25 @@ for(let i=0;i<=100;i++){const v=evaluated(i);near(chart.data[1][i],v.full);near(
 for(let i=0;i<3;i++){const old=live()[0];P.renderHedgeModelC(payload);assert(destroyed.has(old));assert.equal(live().length,1);}
 input('reset').click();assert.equal(stored().markets.UST.currentHedgePct,50);assert.equal(stored().markets.JPY.currentHedgePct,77);
 const missing=clone(payload);delete missing.bond_analytics.UST.outlook.tail_risk;
+P.DATA.hedge=missing;
 P.renderHedgeModelC(missing);assert.equal(live().length,0);assert.equal(panel.querySelectorAll('.hedge-c-scenario').length,0);
 assert(panel.textContent.includes('꼬리위험 산출물'));
+P.selectHedgeWorkspace('monitoring');summaryMatches(['—','—']);
+assert(DOC.getElementById('hedge-summary-c-UST').textContent.includes('꼬리위험 산출물'));
+P.selectHedgeWorkspace('modelC');
 const flat=clone(payload);flat.bond_analytics.UST.outlook.tail_risk.grid.forEach(r=>{
  r.full_es_pct=1;r.recent_es_pct=1;r.robust_es_pct=1;});
+P.DATA.hedge=flat;
 P.renderHedgeModelC(flat);apply({...P.hedgeModelCDefaults,tradeCostBps:0,currentHedgePct:37});
 assert(DOC.getElementById('hedge-c-scenario-1').textContent.includes('동률'));
 assert.equal(DOC.getElementById('hedge-c-scenario-1').querySelector('b').textContent,'37.00');
+P.selectHedgeWorkspace('monitoring');summaryMatches(['37.00','1.00']);
+assert(DOC.getElementById('hedge-summary-c-UST').getAttribute('title').includes('동률'));
 P.DATA.hedge=null;P.renderHedge();assert.equal(live().length,0);
+['UST','JPY','AUD','GER'].forEach(market=>assert.equal(JSON.stringify(summary(market)),JSON.stringify(['—','—'])));
 assert.equal(panel.querySelectorAll('.hedge-c-market').length,4);assert.equal(FETCH_CALLS.length,networkBefore);
 console.log(JSON.stringify({actualRender:true,applyAndValidation:true,marketAndBIsolation:true,
- tabPreservation:true,bComparisonRefresh:true,chartLifecycle:true,csvChartAgreement:true,missingAndTies:true,noNetwork:true}));
+ tabPreservation:true,bComparisonRefresh:true,chartLifecycle:true,csvChartAgreement:true,missingAndTies:true,noNetwork:true,monitoringSummary:true}));
 `;
 const filename=path.join(repo,'tests/hedge_model_c_ui_runtime.js');
 const m=new Module(filename,module);m.filename=filename;m.paths=Module._nodeModulePaths(path.dirname(filename));

@@ -44,6 +44,7 @@ const input=key=>DOC.getElementById('hedge-b-'+key);
 const metric=key=>DOC.getElementById('hedge-b-current-'+key).textContent;
 const card=index=>DOC.getElementById('hedge-b-scenario-'+index);
 const vals=index=>card(index).querySelectorAll('.hedge-b-metric b').map(node=>node.textContent);
+const summary=market=>DOC.getElementById('hedge-summary-b-'+market).querySelectorAll('td').map(node=>node.textContent);
 const storage=()=>JSON.parse(shim.localStorage.getItem('iaw-hedge-model-b-v1'));
 const apply=settings=>{
   Object.entries(settings).forEach(([key,value])=>{input(key).value=value;});
@@ -71,6 +72,7 @@ assert.equal(metric('ratio'),'50.00');
 near(Number(metric('return')),Number(scalar(outlook,P.hedgeModelBDefaults,.5).meanPct.toFixed(2)));
 assert.equal(vals(3)[0],'85.00');
 near(Number(vals(4)[0]),Number((85+outlook.cost.mean_pct/(5*.01)).toFixed(2)));
+same(summary('UST'),[vals(4)[0],vals(4)[2]]);
 // Current input is a draft until Apply, and a valid fractional input keeps raw precision.
 input('currentHedgePct').value='37.125';
 assert.equal(metric('ratio'),'50.00');
@@ -84,6 +86,9 @@ assert.equal(vals(3)[0],'80.00');
 assert(card(3).textContent.includes('제약 경계'));
 assert(card(0).textContent.includes('제약 밖'));assert(card(2).textContent.includes('제약 밖'));
 same(storage().markets.UST,settings);
+P.selectHedgeWorkspace('monitoring');
+const appliedSummary=[vals(4)[0],vals(4)[2]];
+same(summary('UST'),appliedSummary);P.selectHedgeWorkspace('modelB');
 // Invalid edits preserve the prior applied cards, storage and live chart instances.
 const preserved=panel.querySelector('.hedge-b-current').textContent;
 const appliedCharts=liveCharts().slice(), appliedStorage=shim.localStorage.getItem('iaw-hedge-model-b-v1');
@@ -95,6 +100,8 @@ for(const invalid of [
   assert.equal(panel.querySelector('.hedge-b-current').textContent,preserved);
   assert.equal(shim.localStorage.getItem('iaw-hedge-model-b-v1'),appliedStorage);
   assert(liveCharts().every((u,i)=>u===appliedCharts[i]));
+  P.selectHedgeWorkspace('monitoring');same(summary('UST'),appliedSummary);
+  P.selectHedgeWorkspace('modelB');
 }
 apply(settings);
 assert.equal(input('status').hidden,true);
@@ -102,6 +109,9 @@ assert.equal(input('status').hidden,true);
 select('JPY');assert.equal(input('fxPct').value,'0');
 const jpySettings={riskAversion:3.5,fxPct:-.75,currentHedgePct:63.5,minHedgePct:10,maxHedgePct:90};
 apply(jpySettings);same(storage().markets.JPY,jpySettings);
+const jpySummary=[vals(4)[0],vals(4)[2]];
+P.selectHedgeWorkspace('monitoring');same(summary('JPY'),jpySummary);same(summary('UST'),appliedSummary);
+P.selectHedgeWorkspace('modelB');
 select('UST');Object.entries(settings).forEach(([k,v])=>near(Number(input(k).value),v));
 same(storage().markets.JPY,jpySettings);
 // Simulate a new renderer session to verify persisted selection and settings are read.
@@ -150,6 +160,7 @@ P.selectHedgeWorkspace('modelB');assert.equal(panel.hidden,false);
 assert.equal(DOC.getElementById('hedge-tab-modelB').getAttribute('aria-selected'),'true');
 const beforeTabs=liveCharts().slice();input('fxPct').value='2.75';
 P.selectHedgeWorkspace('monitoring');assert.equal(panel.hidden,true);
+same(summary('UST'),appliedSummary);
 P.selectHedgeWorkspace('modelB');assert.equal(panel.hidden,false);
 assert.equal(input('fxPct').value,'2.75');
 assert(liveCharts().every((u,i)=>u===beforeTabs[i]));
@@ -163,11 +174,14 @@ assert.equal(input('fxPct').value,String(settings.fxPct));
 
 // Equal bounds are a unique constraint, even when the FX variance is zero.
 const flat=clone(payload);flat.bond_analytics.UST.outlook.risk.cov_annual=[[.0025,0],[0,0]];
+P.DATA.hedge=flat;
 P.renderHedgeModelB(flat);
 apply({...settings,fxPct:outlook.cost.mean_pct,minHedgePct:25,maxHedgePct:75});
 assert(card(3).textContent.includes('동률'));
 assert(card(4).textContent.includes('동률'));
 assert(DOC.getElementById('hedge-b-market-UST').textContent.includes('동률'));
+P.selectHedgeWorkspace('monitoring');same(summary('UST'),['동률','5.00']);
+P.selectHedgeWorkspace('modelB');
 const tiedCsv=readCsv(DOC.getElementById('hedge-b-comparison'));
 const identifiedColumn=tiedCsv[0].indexOf('해 구분');assert(identifiedColumn>=0);
 assert.equal(tiedCsv[5][identifiedColumn],'동률 대표값');
@@ -192,20 +206,25 @@ P.renderHedgeModelB(cushion);
 assert.equal(vals(3)[0],'10.00');assert(Number(vals(2)[4])<0);
 // Inactive or absent data cannot leave prior numbers/charts visible.
 const inactive=clone(payload);inactive.bond_analytics.UST.outlook={active:false,reason:'시험용 공통 관측 부족'};
+P.DATA.hedge=inactive;
 const beforeMissing=liveCharts().slice();P.renderHedgeModelB(inactive);
 assert.equal(liveCharts().length,0);beforeMissing.forEach(u=>assert(destroyed.has(u)));
 assert(panel.textContent.includes('시험용 공통 관측 부족'));
 assert.equal(panel.querySelectorAll('.hedge-b-scenario').length,0);
+P.selectHedgeWorkspace('monitoring');same(summary('UST'),['—','—']);
+assert(DOC.getElementById('hedge-summary-b-UST').textContent.includes('시험용 공통 관측 부족'));
+P.selectHedgeWorkspace('modelB');
 P.renderHedgeModelB(payload);assert.equal(liveCharts().length,2);
 P.DATA.hedge=null;P.renderHedge();
 assert.equal(liveCharts().length,0);assert.equal(panel.querySelectorAll('.hedge-b-scenario').length,0);
 assert.equal(panel.querySelectorAll('.hedge-b-market').length,4);
+['UST','JPY','AUD','GER'].forEach(market=>same(summary(market),['—','—']));
 assert.equal(DOC.getElementById('hedge-tab-modelB').getAttribute('aria-selected'),'true');
 assert.equal(FETCH_CALLS.length,networkBefore);
 console.log(JSON.stringify({initialRender:true,applyAndInvalidPreservation:true,
   perMarketStorage:true,tableChartCsvAgreement:true,tabPreservation:true,
   chartLifecycle:true,missingPayload:true,boundsAndTies:true,naturalHedgeCounterexample:true,
-  rawPrecision:true,sensitivityAgreement:true,noNetworkForPrivateInputs:true}));
+  rawPrecision:true,sensitivityAgreement:true,noNetworkForPrivateInputs:true,monitoringSummary:true}));
 `;
 const filename=path.join(repo,'tests/hedge_model_b_ui_runtime.js');
 const m=new Module(filename,module);m.filename=filename;m.paths=Module._nodeModulePaths(path.dirname(filename));

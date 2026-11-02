@@ -112,7 +112,7 @@ secNodes.hedge.append(elem("div", "hedge-workspace", "hedge-workspace"));
     panel.hidden = key !== "monitoring";
     secNodes.hedge.append(panel);
   });
-["hedge-cost-dashboard", "hedge-merit-card"]
+["hedge-cost-dashboard", "hedge-model-summary", "hedge-merit-card"]
   .forEach((id) => DOC.getElementById("hedge-monitoring").append(elem("div", id, "card")));
 secNodes.fxoutlook.append(elem("div", "fxoutlook-workspace", "fx-outlook-workspace"));
 [["fxoutlook-content", "consensus"], ["fxoutlook-model-a", "modelA"], ["fxoutlook-model-b", "modelB"], ["fxoutlook-model-c", "modelC"], ["fxoutlook-model-d", "modelD"]]
@@ -712,6 +712,8 @@ safe("hedgeDashboardCases", () => {
     r.noData = readHedgeDashboard();
     r.noData.sectionText = DOC.getElementById("hedge").textContent;
     r.noData.monitoringText = DOC.getElementById("hedge-monitoring").textContent;
+    r.noData.meritText = DOC.getElementById("hedge-merit-card").textContent;
+    r.noData.summaryValues = DOC.getElementById("hedge-model-summary").querySelectorAll("td").map(n => n.textContent);
     return r;
   } finally {
     P.DATA.hedge = HEDGE_FIXTURE;

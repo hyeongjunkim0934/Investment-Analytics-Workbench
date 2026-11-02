@@ -846,9 +846,10 @@ def test_hedge_dashboard_missing_usd_or_payload_is_explicit(probe):
         assert not re.search(r"undefined|NaN|Infinity", c[name]["text"])
     assert not c["noData"]["tiles"]
     assert "데이터" in c["noData"]["text"]
-    # Model B retains named, inactive market selectors when data is absent;
-    # monitoring must still clear its previous merit charts and quote values.
-    assert not re.search(r"UST|JPY|AUD|GER", c["noData"]["monitoringText"]), "데이터 부재 시 이전 값이 남았다"
+    # Summary cards retain their model/market labels, but never stale numbers;
+    # previous merit charts and quote values must still be cleared.
+    assert c["noData"]["meritText"] == ""
+    assert c["noData"]["summaryValues"] == ["—"] * 26
     assert "실측(HP)" in c["sourceFallback"]["text"]
 
 

@@ -4090,6 +4090,7 @@ function selectHedgeWorkspace(key) {
     if (panel) panel.hidden = !active;
   });
   // Keep monitoring charts and controls mounted so periods and legend choices survive.
+  if (key === "monitoring") renderHedgeModelSummary(DATA.hedge);
   if (key === "modelB" && typeof hedgeModelBResize === "function") hedgeModelBResize();
   if (key === "modelC" && typeof hedgeModelCRefreshBComparison === "function") hedgeModelCRefreshBComparison();
   if (key === "modelC" && typeof hedgeModelCResize === "function") hedgeModelCResize();
@@ -4120,6 +4121,69 @@ function renderHedgeWorkspace() {
   selectHedgeWorkspace(hedgeWorkspace);
 }
 
+function renderHedgeModelSummary(payload) {
+  const host = document.getElementById("hedge-model-summary");
+  if (!host) return;
+  host.textContent = "";
+  const number = (value, signed = false) => Number.isFinite(value)
+    ? `${signed && value > 0 ? "+" : ""}${fmtNum(value, 2)}` : "—";
+  const card = (key, caption, columns) => {
+    const node = el("div", { class: "card hedge-model-summary-card", "data-model": key });
+    node.append(el("div", { class: "card-head" },
+      el("span", { class: "card-title" }, HEDGE_WORKSPACES[key].label),
+      el("button", { type: "button", class: "btn-ghost", id: `hedge-summary-open-${key}`,
+        "aria-label": `${HEDGE_WORKSPACES[key].label} 상세 보기`,
+        "aria-controls": HEDGE_WORKSPACES[key].panel, onclick: () => {
+          selectHedgeWorkspace(key);
+          document.getElementById(`hedge-tab-${key}`)?.focus();
+        } }, "상세 →")),
+      el("div", { class: "card-sub hedge-model-summary-caption" }, caption));
+    const table = el("table", { class: "hedge-model-summary-table" },
+      el("tr", {}, ...columns.map((label) => el("th", { scope: "col" }, label))));
+    node.append(table); host.append(node);
+    return table;
+  };
+  const row = (table, id, label, date, values, reason = "", note = "") => {
+    table.append(el("tr", { id, ...(note ? { title: note } : {}) },
+      el("th", { scope: "row" }, label,
+        el("small", {}, reason || date || "기준일 없음")),
+      ...values.map((value) => el("td", {}, value))));
+  };
+  // A is the actual CIP comparison, not the separate 100%-hedged scenario.
+  const a = card("modelA", "USD · 금리차 대비 프리미엄", ["만기", "괴리 (bp)", "Z Score"]);
+  const tenors = Array.isArray(payload?.cip?.tenors) ? payload.cip.tenors : [];
+  HEDGE_CIP_TENORS.forEach((tenor) => {
+    const source = tenors.find((item) => item.tenor === tenor);
+    const stats = hedgeCipStats(source, hedgeCipRange);
+    row(a, `hedge-summary-a-${tenor}`, tenor, stats.asof,
+      [number(stats.gap_bp, true), number(stats.gap_zscore, true)],
+      stats.n ? "" : source?.reason || "공통 관측 없음",
+      `모델A 적용기간 · N ${stats.n} · 괴리 = 평균 프리미엄 − 한국·미국 금리차. ` +
+        (stats.gap_zscore === null ? "Z Score: 표본 부족 또는 일정한 괴리." : "Z Score는 기술통계입니다."));
+  });
+  const b = card("modelB", "비용·위험 · 연 기준", ["시장", "헤지비율 (%)", "변동성 (%)"]);
+  const bState = hedgeModelBLoadState();
+  HEDGE_B_MARKETS.forEach(({ code }) => {
+    const outlook = payload?.bond_analytics?.[code]?.outlook;
+    const result = hedgeModelBCompute(outlook, bState.markets[code]);
+    row(b, `hedge-summary-b-${code}`, code, outlook?.asof,
+      [result.active && !result.meta.optimalIdentified ? "동률" : number(result.active ? result.optimal.hedgePct : null),
+        number(result.active ? result.optimal.volPct : null)], result.active ? "" : result.reason || "공통 관측 없음",
+      "모델B 적용값 · 비용반영 최적 헤지비율과 원화 기준 채권·FX 수익률의 연환산 변동성");
+  });
+  const c = card("modelC", "꼬리손실·조정비용 · 1개월", ["시장", "헤지비율 (%)", "손실기준 (%)"]);
+  const cState = hedgeModelCLoadState();
+  HEDGE_C_MARKETS.forEach(({ code }) => {
+    const outlook = payload?.bond_analytics?.[code]?.outlook;
+    const result = hedgeModelCCompute(outlook, cState.markets[code]);
+    row(c, `hedge-summary-c-${code}`, code, outlook?.asof,
+      [number(result.active ? result.optimal.hedgePct : null), number(result.active ? result.optimal.objectivePct : null)],
+      result.active ? "" : result.reason || "공통 관측 없음",
+      "모델C 적용값 · 캐리 악화를 반영한 월간 강건 ES95 + 일회성 조정비용. " +
+        (result.active && !result.identified ? "동률: 현재 비율에 가까운 값, 이후 낮은 비율을 선택합니다." : ""));
+  });
+}
+
 function renderHedge() {
   const H2 = DATA.hedge;
   if (!$("#hedge")) return;
@@ -4127,6 +4191,7 @@ function renderHedge() {
   renderHedgeCip(H2?.cip);
   renderHedgeModelB(H2);
   renderHedgeModelC(H2);
+  renderHedgeModelSummary(H2);
   if (!H2) {
     ["hedge-cost-dashboard", "hedge-merit-card"].forEach((id) => {
       const host = $("#" + id);
