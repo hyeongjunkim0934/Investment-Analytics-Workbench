@@ -2,8 +2,8 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.hedge = {
   id: 'hedge',
   title: '환헤지',
-  updated: '2026-10-31',
-  summary: '모니터링: 비용·환 변동성·국채 메리트 · 모델A: USD 금리차와 헤지 프리미엄 · 모델B: 단일시장 헤지비율별 비용·위험 비교 · 환율전망: 컨센서스·3국면 마코브(A)·LSTM/XGBoost(B)·금리차·모멘텀 축소추정(C)',
+  updated: '2026-11-02',
+  summary: '모니터링: 비용·환 변동성·국채 메리트 · 모델A: USD 금리차와 헤지 프리미엄 · 모델B: 단일시장 비용·위험 비교 · 모델C: 역사적 ES95·캐리 스트레스·재조정 비용 · 환율전망: 컨센서스·3국면 마코브(A)·LSTM/XGBoost(B)·금리차·모멘텀 축소추정(C)',
   inputs: 'HP 3M·6M·12M, SMB USD 3M, 10년 국채금리: 연 % · 환율: 외화당 원(JPY는 100엔당 원)',
   outputs: '비용·금리·연 변동성: % · 메리트·변동성 감소: %p · 국채 1년 경로: 누적수익률 % · 환율전망: 원/달러',
   sources: [
@@ -13,6 +13,8 @@ globalThis.PSEUDO_DOCS.hedge = {
     { path: 'dashboard/fx-model-c.js', symbols: ['renderFxModelC'] },
     { path: 'dashboard/hedge-optimizer.js', symbols: ['hedgeModelBCompute', 'hedgeModelBValidateOptions'] },
     { path: 'dashboard/hedge-model-b.js', symbols: ['renderHedgeModelB'] },
+    { path: 'pipeline/hedge_tail.py', symbols: ['build_tail_risk', 'expected_shortfall'] },
+    { path: 'dashboard/hedge-tail-optimizer.js', symbols: ['hedgeModelCCompute', 'hedgeModelCValidateOptions'] },
     { path: 'pipeline/hedge_cip.py', symbols: ['build'] },
     { path: 'dashboard/hedge-cip.js', symbols: ['hedgeCipStats', 'hedgeCipSelection', 'renderHedgeCip'] },
     { path: 'pipeline/common.py', symbols: ['hp_curve'] },
@@ -45,10 +47,10 @@ for h in [3,6,9,12]:
   show_actual_anchor_target_dates_and_USD_long_VaR_97_5()
 consensus = next_four_calendar_quarter_response_mean_plus_minus_population_sigma()
 consensus_VaR = unavailable  # 응답 분산은 환율 예측오차 분포가 아님
-hedge_A = full_hedge_reference; hedge_B = existing_CE_optimum; hedge_C = minimum_variance_baseline
-scale_fixed_annual_return_moments_to_3_6_9_12_months()
+hedge_A = full_hedge_reference; hedge_B = existing_CE_optimum; hedge_C = independent_ES_policy
+scale_moments_to_3_6_9_12_months_with_C_zero_FX_stressed_carry_and_one_off_cost()
 preserve_missing_inputs_and_nonidentified_optima_as_unavailable()`,
-      note: '환헤지 A는 기존 CIP 화면의 미래 예측이 아닌 100% 헤지 참고안이며, C는 신규 최소분산 비교 기준이다. 환헤지 B의 적용된 통화별 가정을 재사용한다. 예측 중심·예측구간·응답 분산을 구분하고 다른 모형으로 결측을 대체하지 않는다. 컨센서스는 달력 분기말이고 모형은 각 기준일 이후 지평이므로 목표일이 다를 수 있다. 상세 계약과 검증은 docs/SUMMARY_FORECASTS.md.'
+      note: '환헤지 A는 기존 CIP 화면의 미래 예측이 아닌 100% 헤지 참고안이다. B는 B 설정, C는 별도 ES 정책의 선택 비율·FX변화 0·스트레스 반영 캐리를 사용하고 이번 조정비용을 각 누적 지평에 한 번만 차감한다. C 요약 구간은 공분산 기반 정규근사이며 월간 ES 전망이나 헤지비율 신뢰구간이 아니다. 예측 중심·예측구간·응답 분산을 구분하고 다른 모형으로 결측을 대체하지 않는다. 컨센서스는 달력 분기말이고 모형은 기준일 이후 지평이므로 목표일이 다를 수 있다. 상세 계약은 docs/SUMMARY_FORECASTS.md 및 docs/HEDGE_MODEL_C.md.'
     },
     {
       id: 'fx-model-c',
@@ -73,6 +75,29 @@ for horizon in [1,3,6,9,12]:
   evaluate_C_Ridge_RW_on_identical_realized_rows_and_prequential_intervals()
 publish_forecasts_metrics_latest_contributions_and_table_CSV()`,
       note: '의사 표본 외 평가이며 당시 데이터 빈티지·공표 시각은 복원하지 않았다. 월말 마지막 평일에 세 입력의 실제 공통 관측이 있어야 하며, 휴일·결측 월은 제외한다. 근접일 대체·휴일 달력 보정은 없다. λ·축소비율은 고정 설계 가정이며 평가 결과로 재선택하지 않는다. 경험적 구간의 실제 포함률은 화면에 별도 표시한다. 기여도는 인과효과·구조적 위험프리미엄이 아니다. 금리차는 UIP나 CIP가 환율을 결정한다는 제약이 아닌 예측변수다. 허용된 두 저장소에는 KG 정독 본문이 없어 직접 논문 반영·재현은 미완료다. 자세한 정의는 docs/FX_MODEL_C.md.'
+    },
+    {
+      id: 'hedge-model-c',
+      title: '환헤지모델C · 역사적 꼬리손실과 재조정',
+      formulas: [
+        { expression: 'bᵢ = −D현재 Δyᵢ; fᵢ = 100 ln(Sᵢ/Sᵢ₋₁); b̃ᵢ,w = bᵢ−meanw(b); f̃ᵢ,w = fᵢ−meanw(f)', legend: '동일일 월간 채권·FX 충격을 전체·최근120개 유효 관측 창별로 중심화 · b·f와 금리변화는 % 단위 · 현재 듀레이션 고정' },
+        { expression: 'Rᵢ,w(h) = y/12 + b̃ᵢ,w + (1−h)f̃ᵢ,w + hc/12; Lᵢ,w = −Rᵢ,w', legend: 'h: 0~1 헤지비율 · y·c: 연 % · c는 양수 수취 · 1개월 선형 수익률 근사 · 역사적 평균을 환율 예측으로 사용하지 않음' },
+        { expression: 'ES95,w(h) = minη {η + Σᵢ max(Lᵢ,w(h)−η,0)/(0.05nw)}', legend: '정확히 최악 5%의 경험적 확률질량 평균 · 경계 관측은 부분 가중 · ES 음수 허용 · 정규근사·최대손실 아님' },
+        { expression: 'J(h) = max(ES95,전체(h), ES95,최근120(h)) + hs/12 + (k/100)|h−h₀|', legend: 's: signed 캐리 악화 연 %p · k: 재조정 명목금액 대비 bp · 조정비용은 한 번만 적용 · 두 창의 최댓값은 설계 가정' },
+        { expression: 'hC = argmin격자 J(h); hmin ≤ h ≤ hmax; 100|h−h₀| ≤ 최대조정폭(%p)', legend: '1%p 격자 · 동률은 현재비율에 가까운 후보, 이후 낮은 비율 · 설정은 B와 별도 · 미식별 동률을 통계적 확신으로 해석하지 않음' }
+      ],
+      code: `reuse_exact_joint_monthly_shocks_and_current_yield_HP_anchor()
+require_120_valid_months_and_existing_input_freshness_gates()
+for window in [full_sample, last_120_valid_observations]:
+  center_bond_and_FX_shocks_within_window()
+  compute_ES95_for_hedge_grid_0_to_100_with_fractional_tail_mass()
+publish_only_aggregate_tail_curves_and_sample_metadata()
+validate_independent_C_options_and_nonempty_feasible_grid()
+add_carry_stress_and_one_off_turnover_cost_to_worst_window_ES()
+select_lowest_objective_then_nearest_current_then_lower_ratio()
+keep_C_unavailable_if_tail_payload_is_missing_or_invalid()
+project_selected_ratio_separately_with_Gaussian_moments_for_quarterly_summary()`,
+      note: 'Rockafellar–Uryasev (2000, 2002)의 경험적 CVaR 정의를 사용하며, Lettau–Maggiori–Weber (2014)는 하방 위험을 별도로 보는 근거다. 전체·최근 창, 캐리 스트레스와 비용·조정 제약은 자체 설계다. Randl et al. (2025)의 회귀 직교화나 SDF를 재현하지 않는다. A는 투자비율 정책이 아니며 B·C는 원자료·정제·현재 듀레이션을 공유한다. 통계적 직교성·OOS 우월성 미검증. Jansen et al. (2026)의 담보·유동성 위험은 MTM 자료가 없어 제외한다. 허용 저장소에 KG 본체가 없어 직접 노드 대조 미완료. 출처·단위·가정은 docs/HEDGE_MODEL_C.md.'
     },
     {
       id: 'hedge-model-b',

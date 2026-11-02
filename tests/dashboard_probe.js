@@ -104,7 +104,7 @@ secNodes.events.append(elem("details", "events-rules"));
    renderHedge() 가 만지는 컨테이너가 하나라도 없으면 그 자리에서 죽으므로,
    이 목록 자체가 index.html 과의 계약이다. */
 secNodes.hedge.append(elem("div", "hedge-workspace", "hedge-workspace"));
-[["hedge-monitoring", "monitoring"], ["hedge-model-a", "modelA"], ["hedge-model-b", "modelB"]]
+[["hedge-monitoring", "monitoring"], ["hedge-model-a", "modelA"], ["hedge-model-b", "modelB"], ["hedge-model-c", "modelC"]]
   .forEach(([id, key]) => {
     const panel = elem("div", id);
     panel.setAttribute("role", "tabpanel");
@@ -218,6 +218,10 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-optimizer.js
   { filename: "dashboard/hedge-optimizer.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-model-b.js"), "utf8"), sandbox,
   { filename: "dashboard/hedge-model-b.js" });
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-tail-optimizer.js"), "utf8"), sandbox,
+  { filename: "dashboard/hedge-tail-optimizer.js" });
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-model-c.js"), "utf8"), sandbox,
+  { filename: "dashboard/hedge-model-c.js" });
 /* app.js 의 top-level `const`/`function` 은 스크립트 렉시컬 스코프에 산다 —
    밖에서 잡으려면 같은 스크립트 안에서 내보내야 한다. */
 const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "sectionHasRangedChart",
@@ -227,6 +231,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY",
   "hedgeCostSnapshot", "hedgeCipStats", "hedgeCipSelection", "renderHedgeCip", "selectHedgeWorkspace", "applyRange", "bindRangeButtons", "state",
   "hedgeModelBCompute", "hedgeModelBDefaults", "renderHedgeModelB", "hedgeModelBResize", "hedgeModelBDispose",
+  "hedgeModelCCompute", "hedgeModelCDefaults", "renderHedgeModelC", "hedgeModelCResize", "hedgeModelCDispose", "hedgeModelCLoadState",
   "SCENE_CYCLE_MS", "sceneCycleAllowed", "restartSceneCycle", "stopSceneCycle",
   "renderVillage", "allocSaveState", "villageNotesInvalidate", "allocRefModel", "VILLAGE_NOTES", "VILLAGE_ZONES", "VILLAGE_BANNER",
   "currentScene", "currentTheme", "syncThemeButton",
