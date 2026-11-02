@@ -21,6 +21,12 @@ const host = elem('div', 'summary-forecasts'); secNodes.summary.append(host);
 const outlook = {active:true,asof:'2026-09-30',yield_pct:4.25,
   cost:{mean_pct:-1.2,source:'HP',sign:'positive_received',unit:'pct_pa'},
   sample:{n_months:120},risk:{labels:['bond','fx'],cov_unit:'decimal_return_squared',cov_annual:[[.0025,-.0015],[-.0015,.01]]}};
+outlook.tail_risk={active:true,version:1,asof:'2026-09-30',horizon_months:1,confidence:.95,
+  unit:'monthly_loss_pct',grid_step_pct:1,method:'centered_historical_joint_shocks',
+  full:{n_months:120,tail_mass:6,start:'2016-08-31',end:'2026-08-31'},
+  recent:{n_months:120,tail_mass:6,start:'2016-08-31',end:'2026-08-31'},
+  grid:Array.from({length:101},(_,h)=>({hedge_pct:h,full_es_pct:2+Math.abs(h-70)*.05,
+    recent_es_pct:1+Math.abs(h-70)*.05,robust_es_pct:2+Math.abs(h-70)*.05}))};
 P.DATA.fx = fx;
 P.DATA.hedge = {bond_analytics:{UST:{outlook},JPY:{outlook:{...outlook,yield_pct:1.6}},
   AUD:{outlook},GER:{outlook}}};
@@ -52,7 +58,8 @@ const hedgeQuarter=cards('hedge')[0].querySelector('.summary-forecast-quarter');
 assert.equal(metric(hedgeQuarter,'헤지비율 (%)'),'100.00%');
 assert.equal(metric(hedgeQuarter,'기대수익률 (%)'),'0.76%');
 assert(hedgeQuarter.textContent.includes('정규근사 95%'));
-assert(cards('hedge')[2].textContent.includes('최소분산'));
+assert(cards('hedge')[2].textContent.includes('꼬리손실·조정비용'));
+assert.equal(metric(cards('hedge')[2].querySelector('.summary-forecast-quarter'),'헤지비율 (%)'),'70.00%');
 assert(cards('hedge')[2].textContent.includes('신뢰구간이 아닙니다'));
 
 // CSV uses the same unrounded model values and does not call calendar quarters exact 3-month horizons.
@@ -74,6 +81,11 @@ assert.equal(metric(cards('hedge')[0].querySelector('.summary-forecast-quarter')
 assert(cards('hedge')[2].querySelector('details').hasAttribute('open'));
 inspect('hedgeModelBLoadState().markets.JPY.maxHedgePct = 50'); render();
 assert(cards('hedge')[0].textContent.includes('제약 밖'));
+assert.equal(metric(cards('hedge')[1].querySelector('.summary-forecast-quarter'),'헤지비율 (%)'),'50.00%');
+assert.equal(metric(cards('hedge')[2].querySelector('.summary-forecast-quarter'),'헤지비율 (%)'),'70.00%',
+  'B constraints must not alter C policy');
+inspect('hedgeModelCLoadState().markets.JPY.maxHedgePct = 40');render();
+assert.equal(metric(cards('hedge')[2].querySelector('.summary-forecast-quarter'),'헤지비율 (%)'),'40.00%');
 assert.equal(metric(cards('hedge')[1].querySelector('.summary-forecast-quarter'),'헤지비율 (%)'),'50.00%');
 inspect('fxForecastState.consensus["2026-Q4"]=[1400,1500]');render();
 assert.equal(metric(cards('fx')[3].querySelector('.summary-forecast-quarter'),'응답 평균'),'1,450');

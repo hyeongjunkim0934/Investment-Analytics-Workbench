@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date
 import json
 import math
 import re
@@ -120,6 +121,122 @@ def fail(msg: str) -> None:
 
 def note(msg: str) -> None:
     _notes.append(msg)
+
+
+def _check_hedge_tail(payload):
+    """Validate optional bond analytics without requiring them in legacy fixtures.
+
+    Once an active bond outlook is published, its Model C availability must be
+    explicit. This validates the aggregate schema, not the ES estimator itself.
+    """
+    if not isinstance(payload, dict) or "bond_analytics" not in payload:
+        return
+    analytics = payload["bond_analytics"]
+    if not isinstance(analytics, dict):
+        fail("hedge.json: bond_analytics: 시장별 객체 필요")
+        return
+
+    def finite(value):
+        try:
+            return type(value) in (int, float) and math.isfinite(value)
+        except OverflowError:
+            return False
+
+    def day(value):
+        if not isinstance(value, str):
+            return False
+        try:
+            return date.fromisoformat(value).isoformat() == value
+        except ValueError:
+            return False
+
+    forbidden = {"bond", "fx", "returns", "raw_returns", "levels", "losses",
+                 "shocks", "observations", "t", "v", "values"}
+
+    def raw_fields(obj):
+        if isinstance(obj, dict):
+            return bool(forbidden.intersection(obj)) or any(raw_fields(value) for value in obj.values())
+        return isinstance(obj, list) and any(raw_fields(value) for value in obj)
+
+    for market, entry in analytics.items():
+        prefix = f"hedge.json: bond_analytics.{market}.outlook.tail_risk"
+
+        def invalid(message):
+            fail(f"{prefix}: {message}")
+
+        outlook = entry.get("outlook") if isinstance(entry, dict) else None
+        if not isinstance(outlook, dict) or type(outlook.get("active")) is not bool:
+            invalid("상위 outlook의 active 불리언 필요")
+            continue
+        tail = outlook.get("tail_risk")
+        if not outlook["active"] and tail is None:
+            continue
+        if not isinstance(tail, dict) or type(tail.get("active")) is not bool:
+            invalid("active 불리언을 포함한 객체 필요")
+            continue
+        if raw_fields(tail):
+            invalid("원본 충격·수익률 배열 게시 금지")
+        if not tail["active"]:
+            if not isinstance(tail.get("reason"), str) or not tail["reason"].strip() or tail.get("grid") != []:
+                invalid("비활성 사유와 빈 grid 필요")
+            continue
+        if not outlook["active"]:
+            invalid("비활성 outlook의 꼬리위험은 활성화할 수 없음")
+        fixed = {"version": 1, "horizon_months": 1, "confidence": .95,
+                 "unit": "monthly_loss_pct", "grid_step_pct": 1,
+                 "method": "centered_historical_joint_shocks"}
+        for key, value in fixed.items():
+            if tail.get(key) != value or (type(value) is int and type(tail.get(key)) is not int):
+                invalid(f"메타데이터 불일치 — {key}")
+        anchor = tail.get("asof")
+        if not day(anchor) or anchor != outlook.get("asof"):
+            invalid("기준일 형식 또는 상위 outlook 기준일 불일치")
+        for key in ("oos_validated", "calibrated_prediction_interval"):
+            if tail.get(key) is not False:
+                invalid(f"검증되지 않은 성과·구간 주장 — {key}")
+
+        full, recent = tail.get("full"), tail.get("recent")
+        valid_windows = True
+        for name, window in (("full", full), ("recent", recent)):
+            if not isinstance(window, dict):
+                invalid(f"{name} 표본 메타 필요")
+                valid_windows = False
+                continue
+            n = window.get("n_months")
+            if type(n) is not int or n < 120 or (name == "recent" and n != 120):
+                invalid(f"{name} 표본수 최소120·최근120 계약 위반")
+            elif not finite(window.get("tail_mass")) or not math.isclose(
+                    window["tail_mass"], n * .05, rel_tol=1e-12, abs_tol=1e-12):
+                invalid(f"{name} 꼬리질량 불일치")
+            start, end = window.get("start"), window.get("end")
+            if (not day(start) or not day(end) or start > end
+                    or (day(anchor) and end[:7] >= anchor[:7])):
+                invalid(f"{name} 표본일·완료월 계약 위반")
+                valid_windows = False
+            span, omitted = window.get("calendar_span_months"), window.get("excluded_months")
+            if (type(span) is not int or type(omitted) is not int or type(n) is not int
+                    or span < n or omitted != span - n):
+                invalid(f"{name} 관측수·달력기간·누락월 불일치")
+        sample = outlook.get("sample")
+        if valid_windows and isinstance(full, dict) and isinstance(recent, dict):
+            if recent["end"] != full["end"] or recent["start"] < full["start"]:
+                invalid("전체·최근 표본 종료일 또는 시작일 정렬 불일치")
+            if (not isinstance(sample, dict) or full.get("n_months") != sample.get("n_months")
+                    or full["start"] != sample.get("start") or full["end"] != sample.get("end")):
+                invalid("상위 outlook과 전체 표본 불일치")
+        grid = tail.get("grid")
+        if not isinstance(grid, list) or len(grid) != 101:
+            invalid("0~100%의 101개 헤지비율 grid 필요")
+            continue
+        for index, row in enumerate(grid):
+            if (not isinstance(row, dict) or type(row.get("hedge_pct")) is not int
+                    or row["hedge_pct"] != index or not all(finite(row.get(key)) for key in
+                        ("full_es_pct", "recent_es_pct", "robust_es_pct"))):
+                invalid(f"grid[{index}] 비율·유한 ES 값 불일치")
+                continue
+            if not math.isclose(row["robust_es_pct"], max(row["full_es_pct"], row["recent_es_pct"]),
+                                rel_tol=1e-12, abs_tol=1e-12):
+                invalid(f"grid[{index}] 보수적 ES와 두 표본 최대값 불일치")
 
 
 def _check_fx_model_c(model):
@@ -488,6 +605,7 @@ def check(out: Path, max_warnings: int, min_series: int, dashboard: Path | None)
     if isinstance(fx, dict):
         _check_fx_simulation(fx.get("markov"))
         _check_fx_model_c(fx.get("model_c"))
+    _check_hedge_tail(payloads.get("hedge"))
 
     seen = [0]
     for name, obj in payloads.items():

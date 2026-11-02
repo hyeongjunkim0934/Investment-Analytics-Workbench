@@ -4072,6 +4072,7 @@ const HEDGE_WORKSPACES = {
   monitoring: { label: "모니터링", panel: "hedge-monitoring" },
   modelA: { label: "환헤지모델A", panel: "hedge-model-a" },
   modelB: { label: "환헤지모델B", panel: "hedge-model-b" },
+  modelC: { label: "환헤지모델C", panel: "hedge-model-c" },
 };
 let hedgeWorkspace = "monitoring";
 
@@ -4090,6 +4091,8 @@ function selectHedgeWorkspace(key) {
   });
   // Keep monitoring charts and controls mounted so periods and legend choices survive.
   if (key === "modelB" && typeof hedgeModelBResize === "function") hedgeModelBResize();
+  if (key === "modelC" && typeof hedgeModelCRefreshBComparison === "function") hedgeModelCRefreshBComparison();
+  if (key === "modelC" && typeof hedgeModelCResize === "function") hedgeModelCResize();
 }
 
 function renderHedgeWorkspace() {
@@ -4123,6 +4126,7 @@ function renderHedge() {
   renderHedgeWorkspace();
   renderHedgeCip(H2?.cip);
   renderHedgeModelB(H2);
+  renderHedgeModelC(H2);
   if (!H2) {
     ["hedge-cost-dashboard", "hedge-merit-card"].forEach((id) => {
       const host = $("#" + id);

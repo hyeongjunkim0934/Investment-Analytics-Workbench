@@ -90,7 +90,8 @@ function renderSummaryForecasts() {
   const stored = hedgeModelBLoadState();
   const markets = typeof HEDGE_B_MARKETS !== "undefined" ? HEDGE_B_MARKETS : [];
   if (!markets.some((market) => market.code === summaryForecastMarket)) summaryForecastMarket = stored.market || "UST";
-  const hedge = summaryHedgeModels(DATA.hedge, stored.markets, summaryForecastMarket);
+  const cStored = typeof hedgeModelCLoadState === "function" ? hedgeModelCLoadState() : null;
+  const hedge = summaryHedgeModels(DATA.hedge, stored.markets, summaryForecastMarket, new Date(), cStored?.markets || {});
   const section = (id, title, subtitle, models, kind, controls) => {
     const area = el("section", { class: "summary-forecast-section", "aria-labelledby": id });
     const csv = el("button", { type: "button", class: "btn-ghost", "aria-label": `${title} CSV 다운로드`, onclick: () => {

@@ -1,0 +1,42 @@
+/* Hedge model C shares the dashboard theme and numeric alignment. */
+#hedge-model-c { --hedge-c-gold:#edbd63; min-width:0; }
+:root[data-theme="light"] #hedge-model-c { --hedge-c-gold:#8a5c00; }
+.hedge-c-heading, .hedge-c-sample { display:flex; align-items:center; justify-content:space-between; gap:8px 16px; flex-wrap:wrap; margin:12px 0; }
+.hedge-c-caption, .hedge-c-meta, .hedge-c-sample { color:var(--ink-3); font-size:12px; }
+.hedge-c-markets { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+.hedge-c-market { display:block; width:100%; min-width:0; margin:0; padding:14px; text-align:left; color:var(--ink-1); font:inherit; cursor:pointer; }
+.hedge-c-market[aria-pressed="true"] { border-color:var(--hedge-c-gold); box-shadow:inset 0 2px 0 var(--hedge-c-gold); }
+.hedge-c-market-title { display:block; color:var(--ink-1); font-size:14px; font-weight:600; margin-bottom:8px; }
+.hedge-c-meta { display:block; line-height:1.5; margin-top:8px; overflow-wrap:anywhere; }
+.hedge-c-metric { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:baseline; gap:6px; padding:5px 0; }
+.hedge-c-metric > span { color:var(--ink-2); font-size:12px; line-height:1.45; }
+.hedge-c-metric > b { color:var(--ink-1); font-size:18px; font-weight:600; font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap; }
+.hedge-c-controls { display:flex; align-items:end; flex-wrap:wrap; gap:12px; margin:14px 0 10px; padding:14px; }
+.hedge-c-controls > label { display:grid; gap:6px; flex:1 1 120px; min-width:110px; color:var(--ink-2); font-size:12px; }
+.hedge-c-controls input { width:100%; min-width:0; padding:7px 9px; border:1px solid var(--baseline); border-radius:6px; background:var(--page); color:var(--ink-1); font:inherit; font-size:14px; text-align:right; font-variant-numeric:tabular-nums; }
+.hedge-c-actions { display:flex; gap:6px; align-items:center; min-height:34px; }
+.hedge-c-status { width:100%; flex-basis:100%; color:var(--up-ink); font-size:12px; line-height:1.5; }
+.hedge-c-empty { padding:20px; color:var(--ink-2); font-size:14px; }
+.hedge-c-scenarios { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.hedge-c-scenario { min-width:0; padding:13px; margin:0; }
+.hedge-c-scenario .card-head { margin-bottom:6px; flex-wrap:wrap; gap:5px; }
+.hedge-c-optimal { border-color:var(--hedge-c-gold); }
+.hedge-c-optimal .card-title { color:var(--hedge-c-gold); }
+.hedge-c-warning { color:var(--up-ink); font-size:11px; }
+.hedge-c-comparison { margin-top:12px; padding:12px 14px; }
+.hedge-c-chart { min-width:0; margin:12px 0 0; overflow:hidden; }
+.hedge-c-chart .uplot { display:flex; flex-direction:column; }
+.hedge-c-chart .u-legend { order:-1; margin:0 0 10px!important; }
+.hedge-c-chart .chart-box { min-width:0; }
+.hedge-c-market:focus-visible, .hedge-c-controls input:focus-visible { outline:2px solid var(--hedge-c-gold); outline-offset:3px; }
+@media (max-width:850px) {
+  .hedge-c-markets { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .hedge-c-scenarios { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media (max-width:480px) {
+  .hedge-c-market, .hedge-c-scenario { padding:10px; }
+  .hedge-c-controls > label { flex-basis:calc(50% - 12px); }
+  .hedge-c-scenarios { grid-template-columns:minmax(0,1fr); }
+}
+
+.hedge-c-comparison .chart-box { overflow-x:auto; }

@@ -22,6 +22,7 @@ import pandas as pd
 
 import common
 import hedge_cip
+import hedge_tail
 # 재수출 — 정의는 common 에만 있다 (tests/test_formulas.py 가 동일성을 단정).
 from common import epoch_seconds
 
@@ -310,7 +311,12 @@ def build_bond_outlook(series: dict, code: str) -> dict:
                 "lower": (center - width).tolist(), "upper": (center + width).tolist()}
 
     horizon_dates = pd.DatetimeIndex([anchor + pd.DateOffset(months=int(m)) for m in months])
+    tail_risk = hedge_tail.build_tail_risk(
+        shocks, yield_pct=current["yield_pct"], carry_pct=cost["mean_pct"],
+        asof=current["asof"], interval_starts=monthly["observed"].shift(1),
+        interval_ends=monthly["observed"])
     return {**meta, **current, "active": True, "risk": risk, "months": months.tolist(),
+            "tail_risk": tail_risk,
             "t": epoch_seconds(horizon_dates),
             "hedged": paths(current["yield_pct"] + cost["mean_pct"], hedged_vol),
             "unhedged": paths(current["yield_pct"], unhedged_vol)}
