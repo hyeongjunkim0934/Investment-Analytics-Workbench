@@ -55,6 +55,9 @@ assert.equal(panel.querySelectorAll('.explain').length,1);
 const charts=()=>P.registry.filter(e=>panel.contains(e.u.root));
 assert.equal(charts().length,5);
 const metric=(tenor,key)=>DOC.getElementById('hedge-cip-'+tenor+'-'+key).textContent;
+const summary=tenor=>DOC.getElementById('hedge-summary-a-'+tenor).querySelectorAll('td').map(n=>n.textContent);
+same(summary('PR'),['0.00','-1.22']);
+same(summary('3Y'),['+40.00','-1.22']);
 assert.equal(metric('PR','correlation'),'0.80');assert.equal(metric('PR','gap'),'0.00');
 assert.equal(metric('PR','kr'),'5.00');assert.equal(metric('PR','us'),'4.00');
 assert.equal(metric('PR','spread'),'+1.00');assert.equal(metric('PR','premium'),'+1.00');
@@ -68,14 +71,22 @@ apply(dates[1],dates[2]);
 assert.equal(metric('PR','gap'),'+200.00');assert.equal(metric('PR','correlation'),'1.00');
 assert.equal(metric('PR','kr'),'4.00');assert.equal(metric('PR','spread'),'0.00');
 assert.equal(metric('PR','premium'),'+2.00');assert.equal(metric('PR','zscore'),'+0.71');
+P.selectHedgeWorkspace('monitoring');
+same(summary('PR'),['+200.00','+0.71']);
+assert(DOC.getElementById('hedge-summary-a-PR').textContent.includes(dates[2]));
+P.selectHedgeWorkspace('modelA');
 charts().forEach(e=>{same(e.u.data[0],base.t.slice(1,3));assert.equal(e.range.end,dates[2]);});
 // A reversed date interval must preserve the prior applied values and chart data.
 apply(dates[3],dates[0]);
 assert.equal(input('status').hidden,false);assert.equal(metric('PR','gap'),'+200.00');
+P.selectHedgeWorkspace('monitoring');same(summary('PR'),['+200.00','+0.71']);
+P.selectHedgeWorkspace('modelA');
 apply('2025-01-01','2025-01-02');
 assert.equal(metric('PR','gap'),'—');assert.equal(metric('PR','rmse'),'—');
 ['kr','us','spread','premium','zscore'].forEach(key=>assert.equal(metric('PR',key),'—'));
 charts().forEach(e=>assert.equal(e.u.data[0].length,0));
+P.selectHedgeWorkspace('monitoring');same(summary('PR'),['—','—']);
+P.selectHedgeWorkspace('modelA');
 input('all').click();
 assert.equal(metric('PR','correlation'),'0.80');charts().forEach(e=>same(e.u.data[0],base.t));
 // The selected period also governs the visible table and raw CSV.
@@ -107,11 +118,12 @@ P.renderHedgeCip({tenors:[{tenor:'PR',active:false,reason:'금리 없음'}]});
 assert.equal(charts().length,0);assert.equal(metric('PR','gap'),'—');assert(input('apply').disabled);
 assert(panel.textContent.includes('금리 없음'));assert.equal(panel.querySelectorAll('.hedge-cip-stat').length,5);
 P.DATA.hedge=null;P.renderHedge();assert.equal(charts().length,0);
+tenors.forEach(tenor=>same(summary(tenor),['—','—']));
 assert.equal(DOC.getElementById('hedge-tab-modelA').getAttribute('aria-selected'),'true');
 console.log(JSON.stringify({manualStatistics:true,signAndUnits:true,constantAndMissing:true,
  sourceInputs:true,zScoreAndInvariance:true,cardOrder:true,legacyMissingRates:true,
  fiveModules:true,periodSynchronization:true,invalidAndEmptyPeriod:true,
- tableCsvAgreement:true,tabState:true,chartCleanup:true,missingPayload:true}));
+ tableCsvAgreement:true,tabState:true,chartCleanup:true,missingPayload:true,monitoringSummary:true}));
 `;
 const filename=path.join(repo,'tests/hedge_cip_ui_runtime.js');
 const m=new Module(filename,module);m.filename=filename;m.paths=Module._nodeModulePaths(path.dirname(filename));

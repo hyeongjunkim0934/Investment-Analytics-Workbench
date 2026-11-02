@@ -1144,6 +1144,18 @@ details.explain[open] > summary { color: var(--ink-2); }
 .hedge-cost-date { color: var(--ink-3); font-size: 11px; }
 .hedge-cost-tile .card-sub, .hedge-fx-volatility .card-sub { display: block; margin-top: 3px; font-size: 11px; }
 .hedge-merit { margin-top: 14px; }
+.hedge-model-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.hedge-model-summary-card { min-width: 0; padding: 14px; }
+.hedge-model-summary-card .card-head { margin-bottom: 4px; }
+.hedge-model-summary-card .btn-ghost { margin-left: auto; white-space: nowrap; }
+.hedge-model-summary-caption { margin-bottom: 10px; }
+.hedge-model-summary-table { width: 100%; table-layout: fixed; }
+.hedge-model-summary-table > tr > th, .hedge-model-summary-table > tr > td { padding: 7px 4px; }
+.hedge-model-summary-table > tr > th { text-align: left; font-size: 11px; }
+.hedge-model-summary-table > tr > th:not(:first-child), .hedge-model-summary-table > tr > td { text-align: right; }
+.hedge-model-summary-table > tr > td { color: var(--ink-1); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hedge-model-summary-table small { display: block; margin-top: 3px; color: var(--ink-3); font-size: 10px; font-weight: 400; overflow-wrap: anywhere; }
+@media (max-width: 1000px) { .hedge-model-summary { grid-template-columns: 1fr; } }
 .hedge-merit-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 8px 0; }
 .hedge-merit-tile { min-width: 0; padding: 10px 14px; }
 .hedge-merit-tile .card-title, .hedge-merit-tile .card-sub { font-size: 11px; }

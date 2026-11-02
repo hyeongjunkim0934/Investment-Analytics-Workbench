@@ -10,6 +10,21 @@
 
 ## 0. 30초 요약
 
+### 2026-11-03 환헤지 모니터링 · A/B/C 결과 카드
+
+- 범위: `hyeongjunkim0934/Investment-Analytics-Workbench`만 변경. 기준 `ef88f088`,
+  기본 브랜치 `claude/data-repo-dashboard-automation-cj8y59`, 작업 브랜치
+  `codex/hj-only-hedge-monitoring-cards-20261103`. Data 수정 없음.
+- 환헤지비용 바로 아래 세 카드: A USD 만기별 괴리(bp)·Z Score, B 네 시장 비용반영
+  헤지비율·연 변동성, C 네 시장 선택 헤지비율·1개월 손실기준 합계. 기존 엔진/적용값 사용.
+  기준일·결측 사유·동률 처리, 상세 탭 이동, 재진입 갱신 및 좁은 화면 세로 배치를 지원한다.
+- 게시된 hedge.json으로 분리된 카드 미리보기를 실브라우저에서 확인했다. 전체 화면의
+  인증 후 통합 시각검증과 실제 모바일 뷰포트 검증은 미실행. 모형 추정/원자료 변경 없음.
+- 기존 DOM 회귀에 적용/초안·기간·결측·동률 요약 검사를 추가했다. 기존 결측 테스트의
+  '시장명 없음' 기대는 유지되는 요약 라벨과 충돌하여, 메리트 제거와 수치 결측 검사로 수정했다.
+- 재현: `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python -m pytest -q`.
+  최종 테스트/CI 결과는 PR 참조. 머지는 요청 시 수행한다.
+
 ### 2026-11-02 환헤지모델C · 경험적 ES95와 조정비용
 
 - 범위: `hyeongjunkim0934/Investment-Analytics-Workbench`만 변경. 실제 기본 브랜치
