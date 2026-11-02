@@ -132,6 +132,28 @@ function summaryFxModelC(fx, today) {
   }) };
 }
 
+function summaryFxModelD(fx, today) {
+  const p = fx?.model_d;
+  const model = { key: "modelD", label: "환율모형 D", pointLabel: "중앙값", unit: "원/달러",
+    anchorDate: summaryFxDate(p?.anchor?.t), anchorValue: p?.anchor?.v ?? null,
+    basis: "조건부 변동성 · GARCH · 잔차 재추출", intervalLabel: "예측 95%", details: [
+      "방향을 추정하지 않는 로그수익률 평균 0 모형입니다. A의 국면별 분산과 입력이 겹치므로 통계적 직교성을 보장하지 않습니다.",
+      "3·6·9·12개월은 63·126·189·252 모형 관측일입니다. 구간은 변동성 재귀와 대칭화한 과거 잔차로 생성한 시점별 분포입니다.",
+      "이 요약의 VaR 97.5%는 다른 카드와 같은 하단 2.5% 환율 분위수를 사용합니다. D 상세 탭의 단측 VaR·ES 95%와 신뢰수준이 다릅니다.",
+      "모수 불확실성·미관측 충격·거래비용은 포함하지 않습니다. 평균 상승은 지수변환 효과를 포함하며 달러 강세 신호가 아닙니다.",
+    ] };
+  if (typeof fxModelDValid !== "function" || !fxModelDValid(p)) {
+    const reason = p?.active ? "모형 데이터·시점 확인 필요" : p?.reason || "모형 산출물 없음";
+    return { ...model, rows: SUMMARY_FX_HORIZONS.map((h) => summaryFxEmptyRow(h, reason)) };
+  }
+  return { ...model, rows: SUMMARY_FX_HORIZONS.map((h) => {
+    const r = p.horizons.find((row) => row.horizon_months === h);
+    if (!r) return summaryFxEmptyRow(h, `${h}개월 산출물 없음`);
+    return summaryFxPointRow(h, p.anchor, r.target_t, r.median, r.lower95, r.upper95, today,
+      { sampleCount: p.forecast.path_count, mean: r.mean, volPct: r.vol_pct });
+  }) };
+}
+
 function summaryFxConsensus(fx, state, today) {
   const history = typeof fxOutlookHistory === "function" ? fxOutlookHistory(fx?.outlook) : { t: [], v: [] };
   const anchor = { t: history.t.at(-1), v: history.v.at(-1) };
@@ -165,7 +187,8 @@ function summaryFxModels(fxPayload, consensusState, viewB, nowDate = new Date())
   const today = typeof fxOutlookToday === "function" ? fxOutlookToday(nowDate)
     : Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate()) / 1000;
   return [summaryFxModelA(fxPayload, today), summaryFxModelB(fxPayload, viewB, today),
-    summaryFxModelC(fxPayload, today), summaryFxConsensus(fxPayload, consensusState, today)];
+    summaryFxModelC(fxPayload, today), summaryFxModelD(fxPayload, today),
+    summaryFxConsensus(fxPayload, consensusState, today)];
 }
 
 if (typeof module !== "undefined" && module.exports)

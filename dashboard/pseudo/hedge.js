@@ -2,11 +2,13 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.hedge = {
   id: 'hedge',
   title: '환헤지',
-  updated: '2026-11-02',
-  summary: '모니터링: 비용·환 변동성·국채 메리트 · 모델A: USD 금리차와 헤지 프리미엄 · 모델B: 단일시장 비용·위험 비교 · 모델C: 역사적 ES95·캐리 스트레스·재조정 비용 · 환율전망: 컨센서스·3국면 마코브(A)·LSTM/XGBoost(B)·금리차·모멘텀 축소추정(C)',
+  updated: '2026-11-03',
+  summary: '모니터링: 비용·환 변동성·국채 메리트 · 모델A: USD 금리차와 헤지 프리미엄 · 모델B: 단일시장 비용·위험 비교 · 모델C: 역사적 ES95·캐리 스트레스·재조정 비용 · 환율전망: 컨센서스·3국면 마코브(A)·LSTM/XGBoost(B)·금리차·모멘텀 축소추정(C)·조건부 변동성(D)',
   inputs: 'HP 3M·6M·12M, SMB USD 3M, 10년 국채금리: 연 % · 환율: 외화당 원(JPY는 100엔당 원)',
   outputs: '비용·금리·연 변동성: % · 메리트·변동성 감소: %p · 국채 1년 경로: 누적수익률 % · 환율전망: 원/달러',
   sources: [
+    { path: 'pipeline/fx_model_d.py', symbols: ['build', 'fit_garch', 'expected_variances', 'simulate_paths', 'tail_risk', 'backtest'] },
+    { path: 'dashboard/fx-model-d.js', symbols: ['renderFxModelD', 'fxModelDValid'] },
     { path: 'dashboard/summary-fx.js', symbols: ['summaryFxModels', 'summaryFxVaR975', 'summaryFxQuantile'] },
     { path: 'dashboard/summary-hedge.js', symbols: ['summaryHedgeModels'] },
     { path: 'pipeline/fx_model_c.py', symbols: ['build', '_ridge_fit', '_horizon'] },
@@ -31,6 +33,27 @@ globalThis.PSEUDO_DOCS.hedge = {
   ],
   sections: [
     {
+      id: 'fx-model-d',
+      title: '환율모형D · 방향 중립 조건부 변동성',
+      formulas: [
+        { expression: 'rₜ = log(Sₜ/Sₜ₋₁); Eₜ[rₜ₊₁] = 0; hₜ₊₁ = (1−α−β)v̄ + αrₜ² + βhₜ', legend: '고정 격자 GARCH · v̄=학습창 평균 r² · α+β<1 · 상수분산 후보 포함 · 최신 연속구간 최소504/최대2520 관측' },
+        { expression: 'Eₜ[hₜ₊ₖ] = v̄ + (α+β)ᵏ⁻¹(hₜ₊₁−v̄); σ연,H = 100√(252 Σₖ Eₜ[hₜ₊ₖ]/H)', legend: '지평 평균 일간분산의 연율 환산 · 누적 수익률 표준편차와 구분' },
+        { expression: 'z* = ±|r/√h| / RMS(r/√h); S*ₕ = S₀ exp(Σₖ √h*ₖ z*ₖ)', legend: '과거 표준화 잔차 크기 재추출 · 독립 대칭 부호 · 각 경로 분산 재귀 · 로그평균0과 수준평균을 구분' },
+        { expression: 'L = 100(1−S*ₕ/S₀); VaR95 = Q.95(L); ES95 = 최악5% 확률질량 평균', legend: '달러 보유자의 원화가치 손실률 · 원화강세가 손실 · 실현 포함률 보장 없음 · 요약카드 VaR97.5와 신뢰수준이 다름' },
+        { expression: '환노출(%) = 100 min(1, 목표σ / 예측σ)', legend: '사용자 입력 목표 · 비레버리지 FX 위험예산 참고값 · 비용·캐리·기초자산 공분산을 반영한 최적헤지 아님' }
+      ],
+      code: `select_canonical_FX_or_explicit_fallback_without_splicing()
+reset_after_gaps_over_7_calendar_days_and_require_504_returns()
+fit_fixed_grid_GARCH_by_training_only_Gaussian_quasi_likelihood()
+normalize_residual_magnitudes_and_draw_independent_symmetric_signs()
+recurse_10000_paths_for_252_model_observations_with_fixed_seed()
+publish_1_3_6_9_12_month_volatility_intervals_VaR_and_ES()
+refit_at_past_origins_and_compare_next_21_squared_returns_on_same_rows()
+report_D_constant_EWMA_QLIKE_MSE_and_prequential_interval_coverage()
+compute_exposure_only_when_user_enters_a_valid_target_volatility()`,
+      note: 'A도 변동성을 추정하므로 변동성 집중 자체가 통계적 직교성의 증거는 아니다. D는 평균0·연속 조건부분산·꼬리분포로 목적을 구분한다. A/C와 공동 OOS 오차상관·결합 예측력은 미검증이다. 잔차 대칭화는 별도 설계 가정이며 원자료 빈티지·모수 불확실성·미관측 꼬리위험·거래비용은 미반영이다. 상세 정의와 원문 출처는 docs/FX_MODEL_D.md.'
+    },
+    {
       id: 'quarterly-summary',
       title: '요약카드 · 분기 전망과 VaR',
       formulas: [
@@ -38,12 +61,12 @@ globalThis.PSEUDO_DOCS.hedge = {
         { expression: 'μₕ = μ연 × h/12; σₕ = σ연 × √(h/12); I95 = μₕ ± 1.95996398454 σₕ', legend: '환헤지 적용 후 누적 채권·FX 수익률 % · h=3/6/9/12개월 · 입력·헤지비율 고정, 자기상관 미반영 정규근사' },
         { expression: 'VaR97.5%,hedge = max(0, −하단95%)', legend: '초기 원화 투자금 대비 누적손실률 · 구간은 헤지비율 신뢰구간이 아님' }
       ],
-      code: `read_published_FX_A_B_C_and_saved_consensus_without_refitting()
+      code: `read_published_FX_A_B_C_D_and_saved_consensus_without_refitting()
 for h in [3,6,9,12]:
   A = MC_summary_at_step(h * 21)
   B = exact_horizon_and_selected_window_model_at_latest_common_origin()
   B_interval = prediction * exp(quantiles(matured_log_actual_over_prediction_errors)) if N >= 24
-  C = direct_horizon_output(h)
+  C = direct_horizon_output(h); D = volatility_only_MC_median_at_step(h * 21)
   show_actual_anchor_target_dates_and_USD_long_VaR_97_5()
 consensus = next_four_calendar_quarter_response_mean_plus_minus_population_sigma()
 consensus_VaR = unavailable  # 응답 분산은 환율 예측오차 분포가 아님
