@@ -15,7 +15,7 @@
 - 범위: `hyeongjunkim0934/Investment-Analytics-Workbench`만 변경. 두 허용 저장소의
   실제 기본 브랜치 `claude/data-repo-dashboard-automation-cj8y59` 확인. 기준 `fe98a61`,
   작업 브랜치 `codex/hj-only-data-upload-20261106`. Data 코드·원본 변경 없음.
-  통합 시 최신 기본 브랜치 `86c2115`의 λ 통계 변경도 보존했다.
+  통합 시 기본 브랜치 `86c2115`의 λ 통계 및 `4fa2260`의 CMA 업로드 변경도 보존했다.
 - `Pseudo` 옆 Upload에서 두 XLSX를 기존 Data 경로에 하나의 커밋으로 교체한다.
   외부 자동 갱신·BM/지수 파일을 유지하며 기본 브랜치/HEAD 충돌 시 재연결한다.
   토큰은 메모리에서만 사용한다. 연결 시와 업로드 종료·페이지 이탈 시 입력을 비운다.
@@ -27,6 +27,21 @@
 - 검증: client API mock + 실제 UI DOM 이벤트 + 합성 파이프라인/계약 회귀.
   최종 건수·CI는 PR 참조. 실제 운영 토큰 업로드·외부 Drive 동기화는 미실행.
   공유 preview 슬롯 사용 중으로 브라우저 시각검증 미완료. 머지는 사용자 요청 시 수행한다.
+
+### 2026-11-06 CMA 입력 정밀도 · Excel Upload · 자산별 반영
+
+- 범위: `hyeongjunkim0934/Investment-Analytics-Workbench`만 변경. 기준 `fe98a610`,
+  실제 기본 브랜치 `claude/data-repo-dashboard-automation-cj8y59`, 작업 브랜치
+  `codex/hj-only-cma-upload-precision-20261106`. Data는 기본 브랜치 확인만 했고 수정 없음.
+- μ·σ 입력/표시를 소수 두 자리로 통일. 기존 고정밀 저장값은 편집 전까지 유지하며,
+  직접입력/업로드 반올림 경계 규칙은 공통 함수 사용. 음수 σ는 반올림 전에 거부한다.
+- CMA 전용 Upload는 브라우저 안에서 XLSX/XLS의 자산명·μ·σ를 읽는다. 일반 숫자와 Excel %
+  서식을 구분하고 모든 행·확률을 검증한 후 시나리오 μ·σ를 채운다. 적용값/다른 자산은 유지한다.
+- 접힌 자산카드 우측 `자산배분 모듈에 반영` 버튼으로 해당 자산만 적용. 요청한 하단/초안 문구 제거.
+- 검증: DOM 입력→업로드→적용→저장→재로드, 단위/결측/음수/중복/오류 무변경,
+  기존 SAA/TAA 초안·공분산/환헤지/리스크 연계 보존. 독립 openpyxl 파일도 실제 파서로 확인.
+- 브라우저 시각 QA는 다른 작업의 preview lock 때문에 미실행. 기존 preview를 중단하지 않았다.
+  전체 pytest 및 GitHub CI 최종 결과는 PR 참조. 머지는 사용자 요청 시 수행한다.
 
 ### 2026-11-06 리스크 연계 · λ 기초통계
 

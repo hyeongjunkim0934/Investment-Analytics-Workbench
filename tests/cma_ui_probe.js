@@ -46,6 +46,8 @@ sandbox.localStorage = {
   setItem: (key, value) => { writes.push([key, String(value)]); saved.set(key, String(value)); },
   removeItem: key => { writes.push([key, null]); saved.delete(key); }
 };
+sandbox.XLSX = require(path.join(ROOT, "dashboard/vendor/xlsx.full.min.js"));
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard/cma-upload.js"), "utf8"), sandbox, {filename: "cma-upload.js"});
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard/cma.js"), "utf8"), sandbox, {filename: "cma.js"});
 const noBoot = APP.replace(/\\nboot\\(\\);\\s*$/, "\\n");
 if (noBoot === APP) throw new Error("app boot boundary");
@@ -91,6 +93,8 @@ if (process.argv.includes("--reload")) {
     source: model.src[assetIndex], active: !!C.cmaAssetAssumption(asset),
     sigmaInputs: ["낙관", "중립", "비관"].map(scenario =>
       input(cmaBox(), `${asset} ${scenario} 변동성 %`).value),
+    meanInputs: ["낙관", "중립", "비관"].map(scenario =>
+      input(cmaBox(), `${asset} ${scenario} 기대수익 %`).value),
     noRenderError: !DOC.getElementById("cma").querySelector(".render-error"),
     warning: cmaBox().textContent.includes("저장된 CMA를 읽지 못했습니다"), writes: writes.length,
     cmaAssets: C.cmaStore().assets}));
@@ -246,8 +250,13 @@ result.collapsedCards = {
   summaryAndEditorContained: allCards.every(node=>{
     const details=node.querySelector(".cma-details");
     return details.children[0].tagName==="SUMMARY"
-      && details.querySelector(".cma-summary") && details.querySelector(".cma-editor .cma-table")
-      && details.querySelector(".cma-editor .cma-apply");
+      && details.querySelector(".cma-summary") && details.querySelector(".cma-editor .cma-table");
+  }),
+  applyVisibleWhileCollapsed: allCards.every(node=>{
+    const button=node.querySelector(".cma-apply");
+    return button && button.parentElement===node && !button.hidden
+      && button.textContent==="자산배분 모듈에 반영"
+      && !node.querySelector(".cma-details").contains(button);
   }),
   fourMetricsEach: allCards.every(node=>node.querySelector(".cma-summary").querySelectorAll(".cma-metric-value").length===4),
   noControlsInSummary: allCards.every(node=>!node.querySelector(".cma-summary").querySelector("input, button, a")),
@@ -258,6 +267,7 @@ result.collapsedCards = {
     && !cmaBox().textContent.includes("1년 가정 · 연간 기대수익률·변동성"),
   removedAllocationLink: ![...cmaBox().querySelectorAll("a")].some(node=>node.getAttribute("href")==="#alloc"),
   residualReadOnly: cmaInput("비관","확률").hasAttribute("readonly"),
+  removedDraftAndFallbackText: !/미적용 초안|자산배분 입력값 사용/.test(cmaBox().textContent),
 };
 assert(Object.values(result.collapsedCards).every(Boolean),JSON.stringify(result.collapsedCards));
 const labels = ["낙관","중립","비관"];
@@ -266,11 +276,18 @@ rows.forEach((row,i)=>[["확률",row.p],["기대수익",row.mu],["변동성",row
 result.summary = {
   liveDraftMean: Number.parseFloat(metric("mu"))===4,
   liveDraftSigma: Math.abs(Number.parseFloat(metric("sig"))-Math.sqrt(82.5))<.0051,
-  draftLabel: summaryState()==="미적용 초안",
+  noDraftLabel: !summaryState().includes("미적용 초안"),
   residualUpdates: Number(cmaInput("비관","확률").value)===25,
 };
 const draftModel = P.portModelInputs(portfolio, P.portState(portfolio));
 const dataBefore = JSON.stringify(P.DATA.alloc);
+// Applying one card must not apply another edited card or expand the disclosure.
+const untouchedAsset = "국내주식";
+const untouchedEntry = C.cmaEnsureAsset(untouchedAsset);
+const untouchedApplied = JSON.stringify(untouchedEntry.applied);
+const untouchedModel = draftModel.baseMu[portfolio.assets.indexOf(untouchedAsset)];
+input(cmaBox(), `${untouchedAsset} 낙관 기대수익 %`).value="8.43";
+fire(input(cmaBox(), `${untouchedAsset} 낙관 기대수익 %`),"input");
 apply();
 const liveState = () => inspect("portPanelDraft.st");
 const activeModel = P.portModelInputs(portfolio, liveState());
@@ -290,6 +307,12 @@ result.application = {
   sevenCmaCards: cmaBox().querySelectorAll("article").length === 7,
   newBookAssetEditable: !!input(cmaBox(), "해외장부 낙관 기대수익 %"),
   marketPayloadUnchanged: JSON.stringify(P.DATA.alloc) === dataBefore,
+  targetOnlyApplied: JSON.stringify(untouchedEntry.applied)===untouchedApplied
+    && !C.cmaAssetAssumption(untouchedAsset)
+    && activeModel.baseMu[portfolio.assets.indexOf(untouchedAsset)]===untouchedModel,
+  otherPendingInputPreserved: Number(untouchedEntry.draft[0].mu)===8.43,
+  applyKeepsCardCollapsed: !card().querySelector(".cma-details").open,
+  applyLabelStable: card().querySelector(".cma-apply").textContent==="자산배분 모듈에 반영",
 };
 assert(Object.values(result.application).every(Boolean), JSON.stringify(result.application));
 const enabledReload = reload();
@@ -338,6 +361,7 @@ assert(Object.values(result.residualUI).every(Boolean),JSON.stringify(result.res
 assert(Object.values(result.summary).every(Boolean),JSON.stringify(result.summary));
 
 // Hover reports applied scenarios, with focus/keyboard access and Escape dismissal.
+set("낙관","기대수익","10.01");
 const assetTrigger = () => [...portBox().querySelectorAll("button")].find(node=>node.getAttribute("aria-label") === `${asset} 시나리오 보기`);
 let trigger = assetTrigger(); fire(trigger,"mouseenter");
 // Real browser focus() emits focus synchronously; otherwise an Escape re-open
@@ -349,6 +373,7 @@ let popup = DOC.querySelector(".cma-popup"); assert(popup);
 const values = [...popup.querySelectorAll("tbody tr")].map(row=>[...row.querySelectorAll("td")].map(cell=>Number(cell.textContent)));
 same(values,[[25,10,8],[50,4,5],[25,-2,12]]);
 const hoverOpened = trigger.getAttribute("aria-expanded") === "true";
+const hoverHasNoDraftLabel = !popup.textContent.includes("미적용 초안");
 for (const handler of DOC.listeners.keydown || []) handler({key:"Escape",preventDefault(){}});
 const escapeClosed = !DOC.querySelector(".cma-popup") && DOC.activeElement === trigger;
 fire(trigger,"focus"); popup=DOC.querySelector(".cma-popup");
@@ -363,9 +388,11 @@ DOC.querySelector(".cma-popup-close").click();
 const closeButtonStaysClosed=!DOC.querySelector(".cma-popup") && DOC.activeElement===trigger;
 fire(trigger,"mouseenter");
 result.hover = {hoverOpened, allThreeExact: values.length === 3,
+  noDraftLabel: hoverHasNoDraftLabel,
   unhedgedBasis: popup.textContent.includes("추가 환헤지 전"), escapeClosed, focusedOpen,
   keyboardEditLink: down.defaultPrevented && editLinkFocused && link.getAttribute("href") === "#cma",
   keyboardEscapeStaysClosed,closeButtonStaysClosed};
+set("낙관","기대수익",10);
 
 // Published correlation and its manually edited alternative survive CMA sigma scaling.
 const noHedge = P.portModelInputs(portfolio,liveState());
@@ -424,6 +451,11 @@ result.navigation={ordered:hashes[hashes.indexOf("#hedge")+1]==="#fxoutlook"
 // The two-place input display must not quantize previously saved calculations.
 P.renderSection("cma");
 const sigmaInputs = labels.map(label=>cmaInput(label,"변동성"));
+const meanInputs = labels.map(label=>cmaInput(label,"기대수익"));
+result.returnPrecision = {
+  hundredthStep: meanInputs.every(node=>node.getAttribute("step")==="0.01"),
+  twoPlaceDisplay: meanInputs.every(node=>/^-?\d+\.\d{2}$/.test(node.value)),
+};
 result.volatilityPrecision = {
   hundredthStep: sigmaInputs.every(node=>node.getAttribute("step")==="0.01"),
   twoPlaceDisplay: sigmaInputs.every(node=>/^\d+\.\d{2}$/.test(node.value)),
@@ -458,6 +490,57 @@ result.volatilityPrecision.legacyPrecisionPreserved=Math.abs(precisionReload.sig
 result.volatilityPrecision.legacyFormattedWithoutWrite=precisionReload.sigmaInputs.every(value=>value==="1.23")
   && precisionReload.writes===0;
 assert(Object.values(result.volatilityPrecision).every(Boolean),JSON.stringify(result.volatilityPrecision));
+// The same precision contract applies to returns, including negative values.
+labels.forEach(label=>set(label,"기대수익","-2.37"));
+apply();
+const returnModel=P.portModelInputs(portfolio,P.portState(portfolio)), returnReload=reload();
+result.returnPrecision.negativeHundredthsApplied=returnModel.baseMu[assetIndex]===-2.37
+  && C.cmaStore().assets[asset].applied.every(row=>row.mu===-2.37);
+result.returnPrecision.negativeHundredthsReload=returnReload.mu===-2.37
+  && returnReload.meanInputs.every(value=>value==="-2.37");
+const returnPrecisionState=copy([...saved]);
+const returnPrecisionRecord=returnPrecisionState.find(([key])=>key===C.CMA_LS_KEY);
+const returnPrecisionStore=JSON.parse(returnPrecisionRecord[1]);
+returnPrecisionStore.assets[asset].draft.forEach(row=>{row.mu="-2.374567";});
+returnPrecisionStore.assets[asset].applied.forEach(row=>{row.mu=-2.374567;});
+returnPrecisionRecord[1]=JSON.stringify(returnPrecisionStore);
+const returnPrecisionReload=reload(returnPrecisionState);
+result.returnPrecision.legacyPrecisionPreserved=returnPrecisionReload.mu===-2.374567
+  && returnPrecisionReload.cmaAssets[asset].draft.every(row=>row.mu==="-2.374567")
+  && returnPrecisionReload.cmaAssets[asset].applied.every(row=>row.mu===-2.374567);
+result.returnPrecision.legacyFormattedWithoutWrite=returnPrecisionReload.meanInputs.every(value=>value==="-2.37")
+  && returnPrecisionReload.writes===0;
+for(const value of [1.005,-1.005]) {
+  labels.forEach(label=>set(label,"기대수익",value));
+  const imported=inspect(`cmaUploadNumber({v:${value},t:"n"},"기대수익률")`);
+  result.returnPrecision[value>0?"positiveTieMatchesUpload":"negativeTieMatchesUpload"]=
+    imported===(value>0?1.01:-1.01)
+    && C.cmaStore().assets[asset].draft.every(row=>Number(row.mu)===imported);
+}
+labels.forEach(label=>{set(label,"기대수익","3.456");set(label,"변동성","1.234");});
+result.returnPrecision.editedHundredthsStored=C.cmaStore().assets[asset].draft.every(row=>Number(row.mu)===3.46);
+result.volatilityPrecision.editedHundredthsStored=C.cmaStore().assets[asset].draft.every(row=>Number(row.sig)===1.23);
+result.returnPrecision.typingRetainedUntilBlur=cmaInput("낙관","기대수익").value==="3.456";
+for(const label of labels) for(const field of ["기대수익","변동성"]) fire(cmaInput(label,field),"blur");
+result.returnPrecision.blurFormatsHundredths=labels.every(label=>cmaInput(label,"기대수익").value==="3.46");
+result.volatilityPrecision.blurFormatsHundredths=labels.every(label=>cmaInput(label,"변동성").value==="1.23");
+apply();
+result.returnPrecision.roundedValuesApplied=C.cmaAssetAssumption(asset).mu===3.46
+  && Math.abs(C.cmaAssetAssumption(asset).sig-1.23)<1e-12;
+const lastValidApplication=JSON.stringify(C.cmaStore().assets[asset].applied);
+set("낙관","변동성","-0.001");
+result.volatilityPrecision.smallNegativeRejected=card().querySelector(".cma-apply").disabled
+  && cmaInput("낙관","변동성").getAttribute("aria-invalid")==="true"
+  && Number(C.cmaStore().assets[asset].draft[0].sig)<0
+  && JSON.stringify(C.cmaStore().assets[asset].applied)===lastValidApplication;
+set("낙관","변동성","1.23");
+set("낙관","기대수익","");
+result.returnPrecision.blankIsNotZero=card().querySelector(".cma-apply").disabled
+  && cmaInput("낙관","기대수익").getAttribute("aria-invalid")==="true"
+  && JSON.stringify(C.cmaStore().assets[asset].applied)===lastValidApplication;
+set("낙관","기대수익","3.46");
+assert(Object.values(result.returnPrecision).every(Boolean),JSON.stringify(result.returnPrecision));
+assert(Object.values(result.volatilityPrecision).every(Boolean),JSON.stringify(result.volatilityPrecision));
 P.DATA.alloc=null;P.renderSection("cma");
 const missingMessage=cmaBox().textContent;
 P.DATA.alloc=allocation;
@@ -479,4 +562,70 @@ result.storageSafety={badJsonIgnored:!badJson.active && badJson.mu===-1.2 && bad
   readDoesNotOverwriteCorruption:badJson.writes===0 && badApplied.writes===0,
   missingMarketIsExplicit:missingMessage.includes("포트폴리오 데이터가 없습니다")};
 result.noNetwork=FETCH_CALLS.length===0;
-console.log(JSON.stringify(result));
+// Exercise the real asynchronous file-picker handler, parser, draft storage,
+// rerender and per-asset application together. These numbers are percent points.
+(async () => {
+  P.renderSection("cma");
+  const workbook = sandbox.XLSX.utils.book_new();
+  const sheet = sandbox.XLSX.utils.aoa_to_sheet([
+    ["자산군", "기대수익률 (%)", "변동성 (%)"],
+    [asset, .0412, 8.76],
+    [untouchedAsset, 5.55, 12.34],
+  ]);
+  sheet.B2.z="0.00%";
+  sandbox.XLSX.utils.book_append_sheet(workbook,sheet,"CMA");
+  const bytes=sandbox.XLSX.write(workbook,{type:"buffer",bookType:"xlsx"});
+  const file={name:"CMA-test.xlsx",size:bytes.length,
+    arrayBuffer:async()=>bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)};
+  const uploadInput=()=>input(cmaBox(),"CMA 엑셀 파일");
+  const priorApplication=JSON.stringify(C.cmaStore().assets[asset].applied);
+  const priorUnselected=JSON.stringify(C.cmaStore().assets["국내장부"]);
+  const picker=uploadInput();
+  let pickerClicked=false;
+  picker.addEventListener("click",()=>{pickerClicked=true;});
+  cmaBox().querySelector(".cma-upload").click();
+  picker.files=[file];
+  const operation=picker.listeners.change[0]();
+  result.uploadUI={
+    opensFilePicker:pickerClicked,
+    busyDisablesButton:cmaBox().querySelector(".cma-upload").disabled,
+    acceptsExcel:picker.getAttribute("accept")===".xlsx,.xls",
+  };
+  await operation;
+  result.uploadUI.loadedExactValues=labels.every(label=>
+    cmaInput(label,"기대수익").value==="4.12" && cmaInput(label,"변동성").value==="8.76");
+  result.uploadUI.noAutomaticApplication=JSON.stringify(C.cmaStore().assets[asset].applied)===priorApplication
+    && C.cmaAssetAssumption(asset).mu===3.46
+    && !C.cmaAssetAssumption(untouchedAsset);
+  result.uploadUI.untouchedAssetPreserved=JSON.stringify(C.cmaStore().assets["국내장부"])===priorUnselected;
+  result.uploadUI.successMessage=cmaBox().textContent.includes("2개 자산을 불러왔습니다")
+    && !cmaBox().querySelector(".cma-upload").disabled;
+  result.uploadUI.pickerReset=picker.value==="";
+  apply();
+  const uploadedModel=P.portModelInputs(portfolio,P.portState(portfolio));
+  result.uploadUI.targetAppliedOnly=uploadedModel.baseMu[assetIndex]===4.12
+    && Math.abs(uploadedModel.risk.sig[assetIndex]-8.76)<1e-12
+    && !C.cmaAssetAssumption(untouchedAsset);
+  const afterUpload=JSON.stringify(C.cmaStore());
+  const badPicker=uploadInput();
+  badPicker.files=[{name:"invalid.xlsx",size:4,arrayBuffer:async()=>new Uint8Array([1,2,3,4]).buffer}];
+  await badPicker.listeners.change[0]();
+  result.uploadUI.invalidFilePreservesState=JSON.stringify(C.cmaStore())===afterUpload;
+  result.uploadUI.invalidFileReportsError=cmaBox().textContent.includes("CMA Upload 실패")
+    && !cmaBox().querySelector(".cma-upload").disabled;
+  // A market refresh while the file is being read must not import into stale cards.
+  let releaseFile;
+  const pendingFile={...file,arrayBuffer:()=>new Promise(resolve=>{releaseFile=resolve;})};
+  const stalePicker=uploadInput();stalePicker.files=[pendingFile];
+  const staleOperation=stalePicker.listeners.change[0]();
+  const originalPort=P.DATA.alloc.port;
+  P.DATA.alloc.port={...originalPort};
+  releaseFile(await file.arrayBuffer());
+  await staleOperation;
+  result.uploadUI.staleMarketRejected=JSON.stringify(C.cmaStore())===afterUpload
+    && cmaBox().textContent.includes("자산배분 데이터가 변경되었습니다");
+  P.DATA.alloc.port=originalPort;
+  result.noNetwork=FETCH_CALLS.length===0;
+  assert(Object.values(result.uploadUI).every(Boolean),JSON.stringify(result.uploadUI));
+  console.log(JSON.stringify(result));
+})().catch(error=>{console.error(error);process.exitCode=1;});
