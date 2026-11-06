@@ -46,8 +46,8 @@ const render=(model=fixture)=>{
 const action=(cls,label)=>Array.from(host().querySelector(cls).querySelectorAll('button')).find(n=>n.textContent===label);
 let {made,forecast,vol,backtest}=render();assert.equal(made.length,4);assert.equal(live(),4);assert(forecast&&vol&&backtest);
 assert.equal(tab('modelD').textContent,'환율모형D');assert.equal(host().querySelectorAll('.fx-d-forecast').length,5);
-assert(host().querySelector('.fx-d-meta').textContent.includes('기준일 2028-12-31'));assert(host().querySelector('.fx-d-meta').textContent.includes('Bloomberg'));
-assert(host().querySelector('.fx-d-status').textContent.includes('직교성 미검증'));
+assert(host().querySelector('.fx-d-meta').textContent.includes('기준일 2028-12-31'));assert(!host().querySelector('.fx-d-meta').textContent.includes('Bloomberg'));
+assert(!host().querySelector('.fx-d-status'));
 assert(!host().querySelector('.fx-d-method').hasAttribute('open'));
 host().querySelector('.fx-d-method').querySelector('summary').click();assert(host().querySelector('.fx-d-method').hasAttribute('open'));
 assert(host().querySelector('.fx-d-method').textContent.includes('95% 중앙 예측구간 하단(2.5%)'));
@@ -104,7 +104,7 @@ if(process.env.FX_MODEL_D_FIXTURE){
  assert.equal(host().querySelectorAll('.fx-d-expired').length,expired.length);
  if(expired.length) assert(host().querySelector('.fx-d-exposure-table').textContent.includes('목표일 경과'));
 }
-console.log(JSON.stringify({fiveTabsAndNamePersistence:true,conditionalIntervalsAndRiskCards:true,noDirectionalSignalClaim:true,
+console.log(JSON.stringify({fiveTabsAndNamePersistence:true,conditionalIntervalsAndRiskCards:true,compactMetadata:true,
  exposureBoundariesAndNoDefaultTarget:true,sameSampleVolatilityComparison:true,rawCsvPrecision:true,malformedAndInactiveRejected:true,
  chartLifecycleAndKeyboard:true,collapsedMethodState:true}));
 `;

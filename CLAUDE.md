@@ -278,9 +278,8 @@ FX분산 0은 최소분산 비식별로 표시하고, 자연헤지의 음의 위
 ## Pseudo 인수인계 문서
 
 2026-09-30 사용자 요청으로 `#pseudo` 탭을 추가했다. 현재 상단 순서는 환헤지 → 환율전망 → CMA → Pseudo다.
-2026-11-06 하위 탭은 Overview → 리스크 → 자산배분 → 환헤지 → 환율전망으로 구성했다.
-내용은 `dashboard/pseudo/{overview,risk,alloc,hedge,fx}.js`, UI는 `dashboard/pseudo.js`에 분리한다.
-Overview에 데이터→계산→JSON 게이트→브라우저 지도와 실제 모듈 연결을 둔다.
+2026-11-07 하위 탭은 리스크 → 자산배분 → 환헤지 → 환율전망이며 기본 선택은 리스크다.
+내용은 `dashboard/pseudo/{risk,alloc,hedge,fx}.js`, UI는 `dashboard/pseudo.js`에 분리한다.
 LaTeX는 로컬 KaTeX로 렌더하고, 복사본에도 LaTeX 원문을 유지한다. 각 절은 목적·수식·
 처리 순서·판단 경계·인수 검증·구현 위치로 읽는다. 긴 본문은 한 열과 별도 목차를 사용한다.
 계산·입력·단위·부호·결측·제약 의미가 바뀌면 같은 PR에서 관련 문서와 검토일을 갱신한다.

@@ -31,47 +31,30 @@ def test_pseudo_navigation_is_next_to_hedge_and_routes(pseudo):
     assert navigation["noBackLink"]
     html = (ROOT / "dashboard/index.html").read_text()
     scripts = re.findall(r'<script\b[^>]*\bsrc="([^"?]+)', html)
-    expected = ["vendor/katex/katex.min.js", "pseudo/overview.js", "pseudo/risk.js",
+    expected = ["vendor/katex/katex.min.js", "pseudo/risk.js",
                 "pseudo/alloc.js", "pseudo/hedge.js", "pseudo/fx.js", "pseudo.js", "app.js"]
     assert [script for script in scripts if script in expected] == expected
+    assert "pseudo/overview.js" not in scripts
     assert 'href="vendor/katex/katex.min.css' in html
     assert re.search(r'<section\b[^>]*\bid="pseudo"', html)
     assert 'id="pseudo-content"' in html
 
 
-def test_overview_then_four_accessible_module_tabs(pseudo):
+def test_four_accessible_module_tabs_start_with_risk(pseudo):
     initial = pseudo["initial"]
-    assert [tab["text"] for tab in initial["tabs"]] == ["Overview", "리스크", "자산배분", "환헤지", "환율전망"]
-    assert [tab["selected"] for tab in initial["tabs"]] == ["true", "false", "false", "false", "false"]
-    assert [tab["tabIndex"] for tab in initial["tabs"]] == ["0", "-1", "-1", "-1", "-1"]
+    assert [tab["text"] for tab in initial["tabs"]] == ["리스크", "자산배분", "환헤지", "환율전망"]
+    assert [tab["selected"] for tab in initial["tabs"]] == ["true", "false", "false", "false"]
+    assert [tab["tabIndex"] for tab in initial["tabs"]] == ["0", "-1", "-1", "-1"]
     assert all(tab["controls"] == "pseudo-panel" for tab in initial["tabs"])
     assert initial["panelRole"] == "tabpanel"
-    assert initial["panelLabel"] == "pseudo-tab-overview"
+    assert initial["panelLabel"] == "pseudo-tab-risk"
 
 
 def test_keyboard_arrows_wrap_and_home_end_move_focus(pseudo):
-    expected_ids = ["risk", "alloc", "hedge", "fx", "overview", "fx", "overview", "fx"]
+    expected_ids = ["alloc", "hedge", "fx", "risk", "fx", "risk", "fx"]
     for actual, expected in zip(pseudo["keyboard"], expected_ids, strict=True):
         tab = f"pseudo-tab-{expected}"
         assert actual == {"selected": [tab], "focus": tab, "prevented": True}
-
-
-def test_overview_map_connects_to_modules_and_copies_full_context(pseudo):
-    actual = pseudo["overview"]
-    assert actual["accessible"] and actual["allNodesVisible"] and actual["allRelationsVisible"]
-    assert set(actual["targets"]) == {"risk", "alloc", "hedge", "fx"}
-    for route in actual["routes"]:
-        tab = f"pseudo-tab-{route['target']}"
-        assert route["selected"] == [tab]
-        assert route["focus"] == tab
-    diagram = pseudo["docs"]["overview"]["diagram"]
-    for layer in diagram["layers"]:
-        assert layer["title"] in actual["copy"]
-        for node in layer["nodes"]:
-            assert node["title"] in actual["copy"]
-            assert node["detail"] in actual["copy"]
-    for relation in diagram["relations"]:
-        assert relation in actual["copy"]
 
 
 def test_copy_success_and_denied_clipboard_fallback(pseudo):
@@ -117,7 +100,7 @@ def test_pseudo_and_hash_routing_work_when_all_market_requests_fail(pseudo):
 
 
 def test_document_schema_and_formula_code_separation(pseudo):
-    assert set(pseudo["docs"]) == {"overview", "risk", "alloc", "hedge", "fx"}
+    assert set(pseudo["docs"]) == {"risk", "alloc", "hedge", "fx"}
     for key, doc in pseudo["docs"].items():
         assert doc["id"] == key
         assert date.fromisoformat(doc["updated"])

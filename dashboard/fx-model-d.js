@@ -90,12 +90,11 @@ function renderFxModelD(host) {
   const pal = palette(), gold = currentTheme() === "light" ? "#8a5c00" : "#edbd63";
   const blue = currentTheme() === "light" ? "#233c66" : "#73a4df", teal = currentTheme() === "light" ? "#16776d" : "#64c5bb";
   host.append(el("div", { class: "fx-d-meta" }, el("b", {}, "USDKRW · 조건부 변동성"),
-    el("span", {}, `기준일 ${p.asof} · ${fxModelDNumber(p.anchor.v, 0)} 원/달러`),
-    el("span", {}, marketSourceLabel(p.source))));
-  const notice = el("p", { class: "fx-d-status", role: "status" }, "방향 신호 없음 · A/C와 통계적 직교성 미검증");
-  if (p.model.fallback_used) notice.textContent += " · Bloomberg 유효 호가 부재로 Infomax 대체";
-  if (p.horizons.some(expired)) notice.textContent += " · 경과 목표일은 당시 전망으로 표시";
-  host.append(notice);
+    el("span", {}, `기준일 ${p.asof} · ${fxModelDNumber(p.anchor.v, 0)} 원/달러`)));
+  const notices = [];
+  if (p.model.fallback_used) notices.push("유효 호가 부재로 Infomax 대체");
+  if (p.fit.grid_boundary) notices.push("분산 추정 격자 경계 선택");
+  if (notices.length) host.append(el("p", { class: "fx-d-status", role: "status" }, notices.join(" · ")));
   const grid = el("div", { class: "fx-d-grid" }); host.append(grid);
   const cardBounds = [];
   p.horizons.forEach((r) => {
@@ -198,7 +197,6 @@ function renderFxModelD(host) {
     el("p", {}, "A도 국면별 변동성을 추정합니다. D의 차이는 방향모형을 사용하지 않는 연속 분산 갱신과 변동성 목표입니다. 동일 USDKRW 자료를 공유하므로 A/C와 통계적 직교성·예측오차 독립성은 미검증입니다. 실제 방향 전망과 기계적으로 합산하지 않습니다."),
     el("p", {}, "평가는 당시 기준일까지의 자료로 재추정한 비중첩 21관측일 의사 표본 외 결과입니다. QLIKE·분산 MSE는 작을수록 좋으며 D·고정분산·EWMA에 동일 실현구간을 사용합니다. 일별 제곱수익률 평균은 잠재 분산의 잡음 많은 대용치입니다. 당시 데이터 빈티지·거래비용 반영 성과·별도 미사용 최종 표본의 우월성은 미검증입니다."));
   method.classList.add("fx-d-method"); host.append(method);
-  if (p.fit.grid_boundary) notice.textContent += " · 분산 추정 격자 경계 선택";
   const updateInterval = () => {
     forecastLabels[3] = `${fxModelDInterval}% 하단`; forecastLabels[4] = `${fxModelDInterval}% 상단`;
     if (forecastPlot.series) forecastLabels.forEach((label, i) => { forecastPlot.series[i + 1].label = label; });
