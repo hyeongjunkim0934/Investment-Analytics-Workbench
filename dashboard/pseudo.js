@@ -1,10 +1,10 @@
 /* Maintained handoff notes, separate from pricing/optimization. See docs/PSEUDO.md. */
 "use strict";
 
-const PSEUDO_ORDER = ["overview", "risk", "alloc", "hedge", "fx"];
+const PSEUDO_ORDER = ["risk", "alloc", "hedge", "fx"];
 const PSEUDO_REPO = "https://github.com/hyeongjunkim0934/Investment-Analytics-Workbench";
 const PSEUDO_BASE = `${PSEUDO_REPO}/blob/claude/data-repo-dashboard-automation-cj8y59/`;
-let pseudoSelected = "overview";
+let pseudoSelected = "risk";
 
 function pseudoText(doc) {
   const lines = [`# ${doc.title} · Pseudo`, `검토일: ${doc.updated}`, "", doc.summary,
@@ -167,7 +167,7 @@ function renderPseudoDocs() {
   };
   PSEUDO_ORDER.forEach((id, index) => {
     const button = el("button", { type: "button", role: "tab", id: `pseudo-tab-${id}`,
-      "aria-controls": "pseudo-panel" }, docs[id]?.title || ({overview: "Overview", risk: "리스크", alloc: "자산배분", hedge: "환헤지", fx: "환율전망"}[id]));
+      "aria-controls": "pseudo-panel" }, docs[id]?.title || ({risk: "리스크", alloc: "자산배분", hedge: "환헤지", fx: "환율전망"}[id]));
     button.addEventListener("click", () => select(id));
     button.addEventListener("keydown", (event) => {
       let next;
@@ -180,5 +180,5 @@ function renderPseudoDocs() {
     tabs.append(button);
   });
   host.append(tabs, body);
-  select(PSEUDO_ORDER.includes(pseudoSelected) ? pseudoSelected : "overview");
+  select(PSEUDO_ORDER.includes(pseudoSelected) ? pseudoSelected : "risk");
 }

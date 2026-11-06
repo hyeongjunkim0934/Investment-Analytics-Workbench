@@ -17,7 +17,7 @@ sandbox.localStorage = {
   setItem: (key, value) => { writes.push([key, String(value)]); saved.set(key, String(value)); },
   removeItem: (key) => { writes.push([key, null]); saved.delete(key); }
 };
-for (const name of ["pseudo/overview.js", "pseudo/risk.js", "pseudo/alloc.js", "pseudo/hedge.js", "pseudo/fx.js", "pseudo.js"])
+for (const name of ["pseudo/risk.js", "pseudo/alloc.js", "pseudo/hedge.js", "pseudo/fx.js", "pseudo.js"])
   vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", name), "utf8"), sandbox, {filename: name});
 const noBoot = APP.replace(/\\nboot\\(\\);\\s*$/, "\\n");
 if (noBoot === APP) throw new Error("app boot boundary");
@@ -36,7 +36,7 @@ for (const match of navHTML[1].matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([^<]+)<\/
   const anchor = elem("a"); anchor.setAttribute("href", match[1]); anchor.textContent = match[2]; nav.append(anchor);
 }
 const docs = sandbox.PSEUDO_DOCS;
-const moduleIds = ["overview", "risk", "alloc", "hedge", "fx"];
+const moduleIds = ["risk", "alloc", "hedge", "fx"];
 const result = { docs: JSON.parse(JSON.stringify(docs)) };
 const selected = () => [...byId("pseudo-content").querySelectorAll("button")]
   .filter((node) => node.getAttribute("role") === "tab" && node.getAttribute("aria-selected") === "true")
@@ -73,26 +73,9 @@ const nextTick = () => new Promise((resolve) => setImmediate(resolve));
     panelRole: byId("pseudo-panel").getAttribute("role"),
     panelLabel: byId("pseudo-panel").getAttribute("aria-labelledby")
   };
-  const overview = docs.overview;
-  const diagram = byId("pseudo-panel").querySelector(".pseudo-diagram");
-  const diagramNodes = overview.diagram.layers.flatMap((layer) => layer.nodes);
-  result.overview = {
-    accessible: diagram.getAttribute("aria-label") === overview.diagram.title,
-    allNodesVisible: diagramNodes.every((node) => diagram.textContent.includes(node.title) && diagram.textContent.includes(node.detail)),
-    allRelationsVisible: overview.diagram.relations.every((text) => diagram.textContent.includes(text)),
-    targets: diagramNodes.filter((node) => node.target).map((node) => node.target),
-    routes: []
-  };
-  result.overview.targets.forEach((target, index) => {
-    byId("pseudo-tab-overview").click();
-    const buttons = byId("pseudo-panel").querySelectorAll(".pseudo-map-link");
-    buttons[index].click();
-    result.overview.routes.push({target, selected: selected(), focus: DOC.activeElement.id});
-  });
-  byId("pseudo-tab-overview").click();
-  result.keyboard = [keyboard("overview", "ArrowRight"), keyboard("risk", "ArrowRight"),
+  result.keyboard = [keyboard("risk", "ArrowRight"),
     keyboard("alloc", "ArrowRight"), keyboard("hedge", "ArrowRight"), keyboard("fx", "ArrowRight"),
-    keyboard("overview", "ArrowLeft"), keyboard("fx", "Home"), keyboard("overview", "End")];
+    keyboard("risk", "ArrowLeft"), keyboard("fx", "Home"), keyboard("risk", "End")];
   result.rendered = {};
   for (const id of moduleIds) {
     byId(`pseudo-tab-${id}`).click();
@@ -113,10 +96,6 @@ const nextTick = () => new Promise((resolve) => setImmediate(resolve));
   }
   let copied = null;
   sandbox.navigator.clipboard = {writeText: async (text) => { copied = text; }};
-  byId("pseudo-tab-overview").click();
-  byId("pseudo-panel").querySelector(".pseudo-copy").click();
-  await nextTick();
-  result.overview.copy = copied;
   byId("pseudo-tab-fx").click();
   byId("pseudo-panel").querySelector(".pseudo-copy").click();
   await nextTick();
