@@ -232,6 +232,7 @@ const broken = (change) => {
   const data = JSON.parse(JSON.stringify(risk)); change(data.layers.stress.hist_alloc, data); reset(data);
   assert(/보류/.test(card.textContent), "invalid history silently rendered");
   assert.equal(panel().querySelectorAll("svg").length, 0, "stale current chart survives invalid history");
+  assert.equal(panel().querySelector(".rp-stats"), null, "stale statistics survive invalid history");
   assert(panel("vuln").querySelector("svg"), "valid potential history was hidden by current history error");
   assert.equal(+table("vuln")[0][1], 62.35);
 };
@@ -308,4 +309,41 @@ assert.equal(E.V.C[2][2], 64);
 assert(Math.abs(E.V.C[1][2] - .2 * 8 * .85) < 1e-12);
 assert(byId("alloc-workspace-info").hidden, "retired infeasible bounds block valid portfolio inputs");
 result.visiblePortfolioInputsDriveRisk = true;
+
+// Both tables use chart-selected raw lambda observations, including the partial final week.
+const statsRows = (layer = "stress") => Object.fromEntries(
+  [...panel(layer).querySelectorAll(".rp-stats-table tbody tr")].map((row) =>
+    [row.getAttribute("data-stat"), [...row.querySelectorAll("td")].map((cell) => cell.textContent)]));
+const statsRisk = JSON.parse(JSON.stringify(risk));
+for (const [layer, scores] of [["stress", [90, 10, 14, 8, 16]], ["vuln", [80, 5, 7, 4, 8]]]) {
+  statsRisk.layers[layer].hist_alloc.t = ["2024-01-05", "2026-08-21", "2026-08-28", "2026-09-04", asof].map(second);
+  statsRisk.layers[layer].hist_alloc.v = scores;
+  statsRisk.layers[layer].score = scores.at(-1);
+}
+reset(statsRisk, {rp_range: "1"});
+const expectedStats = {
+  count: ["4", "3"], latest: ["16.00", "+8.00"], mean: ["12.00", "+2.00"],
+  median: ["12.00", "+4.00"], std: ["3.65", "7.21"], min: ["8.00", "-6.00"], max: ["16.00", "+8.00"],
+};
+assert.deepEqual(statsRows(), expectedStats);
+assert.deepEqual(statsRows("vuln").mean, ["6.00", "+1.00"]);
+for (const layer of ["stress", "vuln"]) {
+  const children = [...panel(layer).children];
+  assert(children.indexOf(panel(layer).querySelector(".rp-stats")) > children.indexOf(panel(layer).querySelector(".rp-legend")));
+  assert(panel(layer).querySelector(".rp-stats-head").textContent.includes("2026-08-21 ~ 2026-09-08"));
+}
+click("×0.1");
+assert.deepEqual(statsRows().latest, ["1.60", "+0.80"]);
+assert.deepEqual(statsRows().std, ["0.37", "0.72"]);
+assert.deepEqual(statsRows("vuln").mean, ["0.60", "+0.10"]);
+click("×1");
+click("3Y");
+assert.deepEqual(statsRows().count, ["5", "4"]);
+assert.deepEqual(statsRows().mean, ["27.60", "-18.50"]);
+click("1Y");
+assert.deepEqual(statsRows(), expectedStats, "range restore changes sample or leaks preceding observation");
+reset(sparse, {rp_range: "all"});
+assert.deepEqual(statsRows().count, ["2", "1"]);
+assert.equal(statsRows().std[1], "–", "one change has no sample standard deviation");
+result.lambdaStatistics = true;
 console.log(JSON.stringify(result));
