@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -870,10 +871,18 @@ def build_catalog() -> dict:
 # main
 # --------------------------------------------------------------------------
 
+def source_sha(value: str) -> str:
+    """Public provenance accepts a commit ID only, never a path or credential."""
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", value):
+        raise argparse.ArgumentTypeError("source SHA must be a 40-character Git commit ID")
+    return value.lower()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
+    ap.add_argument("--source-sha", type=source_sha, default=None)
     args = ap.parse_args()
 
     files_report = load_data_dir(args.data_dir)
@@ -1011,6 +1020,7 @@ def main() -> None:
         "built_at_utc": now_utc.strftime("%Y-%m-%d %H:%M UTC"),
         "built_at_kst": kst.strftime("%Y-%m-%d %H:%M KST"),
         "last_observation": last_obs.strftime("%Y-%m-%d"),
+        "data_source_sha": args.source_sha,
         "series_count": total,
         "files": files_report,
         "warnings": WARNINGS,

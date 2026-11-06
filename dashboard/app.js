@@ -525,7 +525,7 @@ function deltaSpan(label, v, kind, big = false) {
    계약 테스트가 둘을 대조한다(어긋나면 버튼 이름과 도착 화면 제목이 달라진다). */
 const SECTION_LABELS = {
   overview: "시장 개요", summary: "요약카드", risk: "리스크", alloc: "자산배분",
-  hedge: "환헤지", fxoutlook: "환율전망", cma: "CMA", pseudo: "Pseudo", events: "이벤트", panel: "관계분석", rates: "금리",
+  hedge: "환헤지", fxoutlook: "환율전망", cma: "CMA", pseudo: "Pseudo", upload: "Upload", events: "이벤트", panel: "관계분석", rates: "금리",
   irs: "IRS 포워드", credit: "크레딧", fx: "FX · 환율", inflation: "기대인플레이션",
   acwi: "MSCI ACWI", macro: "매크로", catalog: "시리즈 카탈로그",
 };
@@ -1935,7 +1935,7 @@ const VILLAGE_ZONES = [
   { key: "workshop", x: 10.8, y: 48.9, name: "공방", sub: "모델 랩 — 준비 중", soon: true },
 ];
 
-const SECTION_IDS = ["overview", "summary", "risk", "alloc", "hedge", "fxoutlook", "cma", "pseudo", "events", "panel",
+const SECTION_IDS = ["overview", "summary", "risk", "alloc", "hedge", "fxoutlook", "cma", "pseudo", "upload", "events", "panel",
                      "rates", "irs", "credit", "fx", "inflation", "acwi", "macro", "catalog"];
 
 /* 오버레이 해시는 그 아래에 어느 섹션이 깔려 있어야 하는지를 정한다 */
@@ -2585,7 +2585,7 @@ function routeView() {
   const hash = location.hash.replace(/^#/, "");
   const sec = underlyingSection(hash);
   const showVillage = !sec;
-  if (sec === "cma" || sec === "summary") renderSection(sec);
+  if (sec === "cma" || sec === "summary" || sec === "upload") renderSection(sec);
   /* 브리핑 음성은 화면 전환과 함께 끝낸다 — 이벤트 화면을 떠났는데 목소리만 남아
      따라오는 상태를 만들지 않는다(멱등이라 어느 전환에서 불려도 무해). */
   stopBrief();
@@ -2625,7 +2625,7 @@ function routeView() {
 }
 
 function ensureVillageBack(sec) {
-  if (sec === "alloc" || sec === "risk" || sec === "summary" || sec === "hedge" || sec === "fxoutlook" || sec === "cma" || sec === "pseudo") return; // These workspaces use the top navigation.
+  if (sec === "alloc" || sec === "risk" || sec === "summary" || sec === "hedge" || sec === "fxoutlook" || sec === "cma" || sec === "pseudo" || sec === "upload") return; // These workspaces use the top navigation.
   const node = document.getElementById(sec);
   if (!node || node.querySelector(".village-back")) return;
   const p = el("p", { class: "village-back" }, el("a", { href: "#village" }, "‹ 마을로 돌아가기"));
@@ -10301,6 +10301,10 @@ function renderPseudo() {
   if (typeof renderPseudoDocs === "function") renderPseudoDocs();
 }
 
+function renderUpload() {
+  if (typeof window.renderDataUpload === "function") window.renderDataUpload();
+}
+
 function renderFxOutlookSection() {
   if (typeof renderFxOutlook === "function") renderFxOutlook();
   else {
@@ -10313,7 +10317,7 @@ function renderFxOutlookSection() {
    순서는 화면 순서(마을 구역 순)와 같게 둔다 — 읽는 사람이 대조하기 쉽게. */
 const RENDERERS = {
   overview: renderOverview, summary: renderSummaryCards, risk: renderRisk, events: renderEvents,
-  panel: renderPanel, hedge: renderHedge, fxoutlook: renderFxOutlookSection, alloc: renderAlloc, cma: renderCmaSection, pseudo: renderPseudo,
+  panel: renderPanel, hedge: renderHedge, fxoutlook: renderFxOutlookSection, alloc: renderAlloc, cma: renderCmaSection, pseudo: renderPseudo, upload: renderUpload,
   rates: renderRates, irs: renderIRS, credit: renderCredit,
   fx: renderFX, inflation: renderInflation, acwi: renderACWI,
   macro: renderMacro, catalog: renderCatalog,
@@ -10484,11 +10488,13 @@ async function boot() {
   bindRangeButtons();
   bindSkipLink();
   renderSection("pseudo"); // Static handoff notes also work without market JSON.
+  renderSection("upload"); // Source uploads remain reachable when market JSON is unavailable.
   renderSection("fxoutlook"); // Manual quarter inputs remain usable before/without market JSON.
   window.addEventListener("hashchange", handleHash);
   handleHash();
+  const dataVersion = Date.now(); // Reload after deployment must refresh every market payload.
   const results = await Promise.allSettled(
-    FILES.map((f) => fetch(`data/${f}.json`).then((r) => {
+    FILES.map((f) => fetch(`data/${f}.json?v=${dataVersion}`, {cache: "no-store"}).then((r) => {
       if (!r.ok) throw new Error(`${f}.json ${r.status}`);
       return r.json();
     })),

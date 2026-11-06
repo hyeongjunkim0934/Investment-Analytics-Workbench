@@ -52,7 +52,7 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `dashboard/port-opportunities.js` | `app.js`보다 먼저 로드하는 순수 계산 함수. `portOpportunityHints`는 일반 경계선의 실제 비중에서 개선여지 기준점과 동일 비중의 상관 완화 가정점을 최대 3개씩 선택한다. `portImprovementConditions`는 가상 신규 자산의 기대수익 유지·위험 감소 충분조건과 자산별 상관벡터를 계산하고 확대 공분산 PSD를 검증한다. 난수 점군과 무관하며 기존 금융 입력을 바꾸지 않는다. `portDrawHints`는 화면 겹침·4px 미만 위험 이동을 숨긴다. 탐색은 `iaw-port-hints`, 신규 자산 가정은 `iaw-port-improvement`에 별도 저장한다. |
 | `dashboard/cma.js` | 환헤지와 Pseudo 사이 `#cma` 탭. 현재 `P.assets`에 맞춰 낙관·중립·비관의 확률·연 μ·σ를 입력한다. `cmaMoments`는 확률가중 평균·총분산을 계산하며 `cmaAssetAssumption`은 적용값만 반환한다. `iaw-cma-scenarios-v1`에 초안/적용값을 분리 보관한다. 활성 CMA는 기존 수기 μ·σ보다 우선하고 해제 시 복귀한다. 기존 상관계수를 유지해 공분산을 다시 구성한 뒤 기존 환헤지를 적용한다. `renderCma`는 편집 화면, `cmaAssetLabel`은 자산배분 자산명 호버·포커스 표시를 담당한다. Data 게시 CMA와 별개인 브라우저 입력층이다. |
 | `dashboard/assets/` | 마을 지도 이미지(`village-day.webp`·`village-night.webp`)를 두는 자리. 넣는 법·금지 사항은 같은 폴더 `README.md` |
-| `dashboard/vendor/uplot.min.{js,css}` | 벤더링된 유일한 프런트 의존성 (외부 네트워크 요청 없음) |
+| `dashboard/vendor/` | uPlot·CMA Upload용 SheetJS 0.20.3·Pseudo용 KaTeX 0.19.1(JS·CSS·폰트·라이선스). 모두 로컬 제공, 외부 네트워크 요청 없음 |
 | `.github/workflows/build-dashboard.yml` | dispatch/수동/push 트리거 → **test → build(+배포 게이트) → deploy**. build 잡은 게이트 뒤에 `Build summary` 단계로 시리즈 수·최종 관측일·JSON 수·경고를 `$GITHUB_STEP_SUMMARY` 에 표로 붙인다(`if: always()` — 게이트가 막아 실패한 실행에서도 남는다) |
 | `.github/workflows/tests.yml` | PR·push 에서 pytest 만 (비공개 데이터·Pages 권한 없음) |
 | `.github/dependabot.yml` | `pipeline/`·`tests/` pip + Actions 주간 업그레이드 PR |
@@ -174,7 +174,7 @@ FX분산 0은 최소분산 비식별로 표시하고, 자연헤지의 음의 위
   3/6/12개월 카드 인덱스는 63/126/252다. 최신 실제 값에서 폭 0으로 시작한다.
 - 구간은 추정 모수 조건부 시점별 분위수다. 모수·모형 불확실성·OOS 우월성·실현 커버리지
   미검증. 표시기간은 재추정하지 않는다. 설명은 접힘 상세/Pseudo에 둔다.
-- Pseudo는 환헤지 문서의 별도 절. 설계·계약·고도화 연결 지점은 `docs/FX_MARKOV.md`.
+- Pseudo는 독립 환율전망 문서의 별도 절. 설계·계약·고도화 연결 지점은 `docs/FX_MARKOV.md`.
   허용 저장소에 KG 본체가 없어 기존 MSM 구현·검증 기록만 참고했다.
 
 ## 환율모형B · LSTM/XGBoost walk-forward (2026-10-19)
@@ -200,7 +200,7 @@ FX분산 0은 최소분산 비식별로 표시하고, 자연헤지의 음의 위
 - 화면: lag·window·모형·기간·국면 경계(기본 1100/1300 — 노트북 고정값, 사용자 입력은 `iaw-fx-lstm-xgb-v1`)
   조작, 랜덤워크(기준일 환율 유지) 대조, RMSE·MAE·편향·Theil U·방향 적중률, 기준일 수준별 국면 분해,
   차트 둘·표·CSV. 전부 게시된 행에서 화면이 계산한다. 참고 표시 전용 — 등급·경보·자산배분 미연결.
-- 명세·스키마·한계는 `docs/FX_LSTM_XGB.md`, Pseudo 는 환헤지 문서의 별도 절. **실제 CSV 는 아직 없어
+- 명세·스키마·한계는 `docs/FX_LSTM_XGB.md`, Pseudo는 독립 환율전망 문서의 별도 절. **실제 CSV 는 아직 없어
   실성과 수치는 없다** — CSV 가 오면 러너를 돌려 JSON 을 커밋한다(Data `CLAUDE.md` 가 절차의 정본).
 
 ## 환율전망 (2026-10-07)
@@ -236,7 +236,7 @@ FX분산 0은 최소분산 비식별로 표시하고, 자연헤지의 음의 위
 - 표시기간은 3년 기본·전체 선택 가능하며 σ 추정은 전체 표본 그대로다. 차트는 선택 분기의
   가장 먼 유효점까지 확장되지만 파란 통계 범위는 1년에서 멈춘다. 시장 자료가 없어도
   분기 입력은 작동하며 유효점이 생길 때 차트를 생성한다. 환율의 차트·호버·표·최신값은
-  정수로 표시하되 계산·입력 저장·raw CSV의 정밀도는 유지한다. Pseudo는 환헤지 문서 내 별도 절.
+  정수로 표시하되 계산·입력 저장·raw CSV의 정밀도는 유지한다. Pseudo는 독립 환율전망 문서 내 별도 절.
 
 ## 환율모형D · 조건부 변동성 (2026-11-03)
 
@@ -266,10 +266,23 @@ FX분산 0은 최소분산 비식별로 표시하고, 자연헤지의 음의 위
 - 명세는 `docs/FX_MODEL_C.md`, 화면 방법론은 접힘 상세와 Pseudo의 `fx-model-c`다.
   허용 저장소에 KG 정독 본문이 없어 KG 직접 반영·논문 재현은 미완료다.
 
+## 홈페이지 Upload (2026-11-06)
+
+상단 `Pseudo` 다음의 `#upload`는 `data-upload.js`가 한 번만 마운트한다.
+`data-upload-client.js`는 고정된 비공개 `hyeongjunkim0934/Data`에만 두 XLSX를 단일
+커밋으로 저장한다. 기본 브랜치/HEAD 재확인, 기존 경로 교체, 비강제 ref 갱신,
+응답 유실 재조회, 토큰 비저장을 지킨다. 기존 자동 수신과 전체 Python 빌드를 유지한다.
+실제 checkout SHA를 `--source-sha`로 `meta.json.data_source_sha`에 기록하고 UI는
+정확한 SHA 일치만 반영 완료로 표시한다. 수식·모형 변경 없음. [세부 계약](docs/UPLOAD.md).
+
 ## Pseudo 인수인계 문서
 
-2026-09-30 사용자 요청으로 `#pseudo` 탭을 추가했다. 현재 상단 순서는 환헤지 → CMA → Pseudo다.
-내용은 `dashboard/pseudo/{risk,alloc,hedge}.js`, UI는 `dashboard/pseudo.js`에 분리한다.
+2026-09-30 사용자 요청으로 `#pseudo` 탭을 추가했다. 현재 상단 순서는 환헤지 → 환율전망 → CMA → Pseudo다.
+2026-11-06 하위 탭은 Overview → 리스크 → 자산배분 → 환헤지 → 환율전망으로 구성했다.
+내용은 `dashboard/pseudo/{overview,risk,alloc,hedge,fx}.js`, UI는 `dashboard/pseudo.js`에 분리한다.
+Overview에 데이터→계산→JSON 게이트→브라우저 지도와 실제 모듈 연결을 둔다.
+LaTeX는 로컬 KaTeX로 렌더하고, 복사본에도 LaTeX 원문을 유지한다. 각 절은 목적·수식·
+처리 순서·판단 경계·인수 검증·구현 위치로 읽는다. 긴 본문은 한 열과 별도 목차를 사용한다.
 계산·입력·단위·부호·결측·제약 의미가 바뀌면 같은 PR에서 관련 문서와 검토일을 갱신한다.
 순수 배치 변경은 문서 변경이 불필요할 수 있다. 자세한 규칙은 `docs/PSEUDO.md`를 따른다.
 문서는 정적 설명이며 금융 엔진·시장 JSON 계약·사용자 입력 저장에는 관여하지 않는다.
