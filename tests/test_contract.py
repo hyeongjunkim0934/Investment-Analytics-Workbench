@@ -72,7 +72,7 @@ def built(synth_dir, tmp_path_factory):
     out = tmp_path_factory.mktemp("built") / "data"
     r = subprocess.run(
         [sys.executable, str(ROOT / "pipeline" / "process.py"),
-         "--data-dir", str(synth_dir), "--out", str(out)],
+         "--data-dir", str(synth_dir), "--out", str(out), "--source-sha", "a" * 40],
         capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-4000:]
     return out, r
@@ -83,6 +83,21 @@ def test_pipeline_writes_exactly_fifteen(built):
     written = sorted(p.stem for p in out.glob("*.json"))
     assert written == sorted(check_output.EXPECTED), r.stdout[-2000:]
     assert r.stdout.count("wrote ") == 15
+
+
+def test_uploaded_data_provenance_is_actual_build_input(built):
+    out, _ = built
+    assert json.loads((out / "meta.json").read_text())["data_source_sha"] == "a" * 40
+    workflow = (ROOT / ".github/workflows/build-dashboard.yml").read_text()
+    assert "data_source_sha=$(git -C source-data rev-parse HEAD)" in workflow
+    assert '--source-sha "$data_source_sha"' in workflow
+
+
+@pytest.mark.parametrize("value", ["main", "abc", "ghp_not_a_commit", "g" * 40, "a" * 41])
+def test_provenance_rejects_non_commit_values(value):
+    import argparse
+    with pytest.raises(argparse.ArgumentTypeError):
+        process.source_sha(value)
 
 
 def test_risk_and_hedge_actually_ran(built):
@@ -712,9 +727,9 @@ def _village_targets() -> set[str]:
 def test_village_zones_cover_every_section():
     """시장 섹션은 마을에서, 요약카드·환율전망·CMA·Pseudo는 상단 탭에서 도달한다."""
     ids = set(re.findall(r'<section id="([a-z]+)" class="section"[^>]*>', _index_html()))
-    assert len(ids) == 18, f"섹션 수가 18이 아닙니다: {sorted(ids)}"
-    assert {"summary", "fxoutlook", "cma", "pseudo"} <= set(_nav_hrefs())
-    missing = ids - {"summary", "fxoutlook", "cma", "pseudo"} - _village_targets()
+    assert len(ids) == 19, f"섹션 수가 19가 아닙니다: {sorted(ids)}"
+    assert {"summary", "fxoutlook", "cma", "pseudo", "upload"} <= set(_nav_hrefs())
+    missing = ids - {"summary", "fxoutlook", "cma", "pseudo", "upload"} - _village_targets()
     assert not missing, f"마을에서 도달할 수 없는 섹션: {sorted(missing)}"
 
 
@@ -1182,7 +1197,7 @@ def _renderer_map() -> dict[str, str]:
 
 
 def test_every_section_has_a_renderer():
-    """SECTION_IDS 의 18개가 전부 RENDERERS 에 있어야 한다.
+    """SECTION_IDS 의 19개가 전부 RENDERERS 에 있어야 한다.
 
     빠뜨리면 그 섹션은 **아무 오류 없이 영영 비어 있다** — 클릭해서 들어가야만
     보이는 구조라 눈으로 알아채기까지 오래 걸린다.
@@ -1192,7 +1207,7 @@ def test_every_section_has_a_renderer():
     r = _renderer_map()
     assert set(ids) - set(r) == set(), f"렌더러가 없는 섹션: {sorted(set(ids) - set(r))}"
     assert set(r) - set(ids) == set(), f"섹션에 없는 렌더러: {sorted(set(r) - set(ids))}"
-    assert len(ids) == 18
+    assert len(ids) == 19
 
 
 def test_renderers_named_in_the_map_actually_exist():
@@ -1499,7 +1514,7 @@ def test_built_brief_covers_its_own_events(built):
 # 정보구조 (§7.9, 2026-09-30) — 상단 탭 7개, 나머지는 부모 화면 안의 입구로
 # --------------------------------------------------------------------------
 
-EXPECTED_TABS = ["village", "overview", "events", "summary", "risk", "alloc", "hedge", "fxoutlook", "cma", "pseudo"]
+EXPECTED_TABS = ["village", "overview", "events", "summary", "risk", "alloc", "hedge", "fxoutlook", "cma", "pseudo", "upload"]
 
 
 def _nav_hrefs() -> list[str]:

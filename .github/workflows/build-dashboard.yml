@@ -132,7 +132,8 @@ jobs:
         run: |
           mkdir -p _site
           cp -r dashboard/. _site/
-          python pipeline/process.py --data-dir source-data --out _site/data
+          data_source_sha=$(git -C source-data rev-parse HEAD)
+          python pipeline/process.py --data-dir source-data --out _site/data --source-sha "$data_source_sha"
 
       # ── 배포 게이트 ────────────────────────────────────────────────────────
       # 여기서 실패하면 artifact 를 올리지도, deploy 잡을 시작하지도 않는다.
