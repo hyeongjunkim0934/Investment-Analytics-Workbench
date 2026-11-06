@@ -46,8 +46,13 @@ def test_collapsed_asset_cards_show_current_and_historical_moments(cma):
     assert all(cma["summary"].values()), cma["summary"]
 
 
-def test_volatility_hundredths_persist_without_quantizing_existing_values(cma):
+def test_return_and_volatility_hundredths_preserve_existing_values(cma):
     assert all(cma["volatilityPrecision"].values()), cma["volatilityPrecision"]
+    assert all(cma["returnPrecision"].values()), cma["returnPrecision"]
+
+
+def test_excel_file_picker_loads_values_without_implicit_application(cma):
+    assert all(cma["uploadUI"].values()), cma["uploadUI"]
 
 
 def test_residual_probability_rejects_invalid_drafts_and_preserves_applied_state(cma):

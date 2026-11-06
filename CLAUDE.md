@@ -59,6 +59,17 @@ GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 �
 | `docs/SETUP.md` | 토큰·시크릿·Pages 초기 설정 (GitHub 웹에서만 하는 작업) |
 | `docs/HANDOVER.md` | 설계 합의·거부된 시도·미해결 데이터 요청·다음 작업 (세션 인수인계) |
 
+## CMA 엑셀 입력 · 자산별 반영 (2026-11-06)
+
+`dashboard/cma-upload.js`는 로컬 SheetJS 0.20.3으로 XLSX/XLS를 읽는다. 자산군·연 기대수익률(%)·
+변동성(%) 열을 검증하고 Excel 백분율 서식은 ×100으로 변환한다. 파일 전체 오류·중복 자산·음수 σ·
+수식 셀을 거부한 뒤, 자산별 세 시나리오에 같은 μ·σ를 넣는다. 기존 확률과 적용값은 유지하며,
+`cmaImportRows`는 유효하지 않은 기존 확률도 전체 가져오기 전에 거부한다. 원본 파일 전송은 없다.
+`cmaRoundHundredth`를 직접입력과 업로드가 공유한다. 기존 저장값은 화면을 열기만 해서는 반올림하지 않는다.
+각 카드의 `details` 바깥 우측 버튼으로 해당 자산만 반영하고, 불필요한 입력 상태 문구를 제거했다.
+검증은 `tests/test_cma.py`의 실제 DOM 이벤트/연계 경로와 `tests/test_cma_upload.py`의
+독립 openpyxl 워크북·SheetJS XLS/XLSX 입력·단위/오류/원자적 반영 검사를 사용한다.
+
 ## 관문 UI
 
 2026-09-30: `#gate-emblem` 버튼만 먼저 표시한다. `bindGate()`에서 엽서 클릭 시

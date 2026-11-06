@@ -7,13 +7,16 @@
 .cma-unit, .cma-applied, .cma-status, .cma-popup-state { color: var(--ink-2); font-size: 12px; }
 .cma-unit { margin: 0 0 14px; }
 .cma-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
-.cma-card { min-width: 0; padding: 0; }
+.cma-card { position: relative; min-width: 0; padding: 0; }
+.cma-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 12px; }
+.cma-upload-hint, .cma-upload-status { color: var(--ink-2); font-size: 12px; }
+.cma-upload-status { margin: 0 0 12px; overflow-wrap: anywhere; }
 .cma-details { border-radius: inherit; }
 .cma-summary { display: block; padding: 14px 16px; border-radius: inherit; cursor: pointer; list-style: none; }
 .cma-summary::-webkit-details-marker { display: none; }
 .cma-summary:hover { background: var(--border); }
 .cma-summary:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: -2px; }
-.cma-card-head { margin-bottom: 12px; }
+.cma-card-head { min-height: 32px; padding-right: 180px; margin-bottom: 10px; flex-wrap: wrap; gap: 4px 10px; }
 .cma-asset-name { font-size: 15px; font-weight: 600; }
 .cma-summary-tail { display: inline-flex; align-items: center; gap: 10px; }
 .cma-summary-state { color: var(--ink-3); font-size: 11px; }
@@ -51,9 +54,11 @@
 .cma-totals strong { margin-left: 3px; color: var(--ink-1); font-weight: 600; font-variant-numeric: tabular-nums; }
 .cma-card-actions { margin-top: 10px; }
 .cma-applied { margin: 0; font-variant-numeric: tabular-nums; }
-.cma-apply { flex: none; min-height: 32px; }
+.cma-apply { position: absolute; top: 14px; right: 16px; min-height: 32px; font-size: 11px; white-space: nowrap; }
+.cma-apply.is-applied { border-color: var(--accent-ink); }
+.cma-apply:focus-visible, .cma-upload:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
 .cma-apply:disabled { opacity: .55; cursor: default; }
-.cma-status { margin: 8px 0 0; min-height: 18px; }
+.cma-status { margin: 0; padding: 0 16px 12px; }
 .cma-warning { color: var(--up-ink); font-size: 12px; line-height: 1.5; }
 .cma-asset-label {
   display: inline; padding: 2px 0; border: 0; border-bottom: 1px dotted var(--ink-3); border-radius: 0;
@@ -80,6 +85,7 @@
 @media (max-width: 480px) { .cma-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 420px) {
   .cma-summary, .cma-editor { padding: 12px 9px; }
+  .cma-apply { top: 12px; right: 9px; }
   .cma-table th, .cma-table td { padding: 6px 3px; }
   .cma-table th:first-child { width: 44px; }
   .cma-totals { gap: 7px 11px; font-size: 11px; }
