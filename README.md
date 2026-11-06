@@ -30,6 +30,10 @@ Pages에 게시되는 것은 패널에 선별된 시리즈의 값(최근 구간 
 
 토큰·시크릿·Pages 설정(전부 GitHub 웹에서 가능)은 **[docs/SETUP.md](docs/SETUP.md)** 를 따라 진행하세요.
 
+홈페이지에서 바로 갱신하려면 **Pseudo 옆 Upload**에서 `data_bb`·`data_info` 두 XLSX를
+함께 선택합니다. 기존 자동 갱신과 같은 비공개 Data → 전체 빌드·배포 경로를 사용합니다.
+연결 토큰·파일 규칙·반영 확인은 **[docs/UPLOAD.md](docs/UPLOAD.md)** 를 참고하세요.
+
 ## 구성
 
 | 경로 | 역할 |

@@ -1,0 +1,30 @@
+#upload-content { max-width: 1080px; margin: 0 auto; }
+.upload-intro { color: var(--ink-2); margin: 0 0 14px; }
+.upload-source { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.upload-source span { padding: 5px 10px; border: 1px solid var(--border); border-radius: 20px; color: var(--ink-2); font-size: 12px; }
+.upload-source span:last-child { color: var(--markov-mid); }
+.upload-card { padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); margin-bottom: 16px; min-width: 0; }
+.upload-card h3 { margin: 0 0 16px; font-size: 17px; color: var(--ink-1); }
+.upload-auth { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; }
+.upload-auth label { grid-column: 1 / -1; }
+#upload label { display: block; font-size: 12px; color: var(--ink-2); margin-bottom: 8px; }
+#upload input, #upload select { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid var(--baseline); border-radius: 6px; background: var(--page); color: var(--ink-1); padding: 10px; font: inherit; }
+#upload input[type="file"] { font-size: 13px; }
+#upload input::file-selector-button { border: 1px solid var(--border); border-radius: 4px; color: var(--ink-1); background: var(--surface); padding: 6px 10px; margin-right: 10px; cursor: pointer; }
+.upload-files { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.upload-muted, .upload-help { color: var(--ink-2); font-size: 12px; overflow-wrap: anywhere; line-height: 1.65; }
+.upload-help summary { cursor: pointer; }
+.upload-primary { background: var(--accent-solid); color: #fff; border: 1px solid var(--accent-solid); border-radius: 6px; padding: 12px 18px; font: inherit; font-weight: 600; cursor: pointer; }
+#upload button:disabled, #upload input:disabled, #upload select:disabled { opacity: .5; cursor: not-allowed; }
+#upload-status, #upload-deployment { color: var(--ink-2); line-height: 1.7; overflow-wrap: anywhere; }
+#upload-status.upload-error { color: var(--up-ink); }
+.upload-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.upload-actions a { font-size: 12px; }
+#upload-commit { overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  .upload-files { grid-template-columns: 1fr; gap: 0; }
+  .upload-auth { grid-template-columns: 1fr 1fr; }
+  .upload-auth input { grid-column: 1 / -1; }
+  .upload-primary { width: 100%; }
+  .upload-card { padding: 16px; }
+}

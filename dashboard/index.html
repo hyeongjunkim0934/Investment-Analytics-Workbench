@@ -15,6 +15,7 @@
 <link rel="stylesheet" href="fx-model-c.css?v=20261031-quarterly-1">
 <link rel="stylesheet" href="fx-model-d.css?v=20261103-volatility-1">
 <link rel="stylesheet" href="summary-forecasts.css?v=20261103-volatility-1">
+<link rel="stylesheet" href="data-upload.css?v=20261106-upload-1">
 </head>
 <body>
 
@@ -62,6 +63,7 @@
       <a href="#fxoutlook">환율전망</a>
       <a href="#cma">CMA</a>
       <a href="#pseudo">Pseudo</a>
+      <a href="#upload">Upload</a>
     </nav>
     <button class="theme-btn" id="theme-btn" title="라이트/다크 전환" aria-label="라이트/다크 전환">◐</button>
   </div>
@@ -175,6 +177,11 @@
   <section id="pseudo" class="section">
     <h2>Pseudo</h2>
     <div id="pseudo-content"></div>
+  </section>
+
+  <section id="upload" class="section">
+    <h2>Upload</h2>
+    <div id="upload-content"></div>
   </section>
 
   <section id="alloc" class="section" aria-label="자산배분">
@@ -299,6 +306,8 @@
 <script src="pseudo/alloc.js?v=20261012-summary-five-cards-2"></script>
 <script src="pseudo/hedge.js?v=20261103-volatility-1"></script>
 <script src="pseudo.js?v=20260930-pseudo-1"></script>
+<script src="data-upload-client.js?v=20261106-upload-1"></script>
+<script src="data-upload.js?v=20261106-upload-1"></script>
 <script src="fx-markov.js?v=20261020-fx-mc-1"></script>
 <script src="fx-lstm-xgb.js?v=20261019-lstm-xgb-1"></script>
 <script src="fx-model-c.js?v=20261031-quarterly-1"></script>
@@ -312,6 +321,6 @@
 <script src="summary-fx.js?v=20261103-volatility-1"></script>
 <script src="summary-hedge.js?v=20261102-hedge-model-c-1"></script>
 <script src="summary-forecasts.js?v=20261102-hedge-model-c-1"></script>
-<script src="app.js?v=20261103-hedge-monitoring-1"></script>
+<script src="app.js?v=20261106-upload-1"></script>
 </body>
 </html>

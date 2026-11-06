@@ -246,6 +246,15 @@ FX분산 0은 최소분산 비식별로 표시하고, 자연헤지의 음의 위
 - 명세는 `docs/FX_MODEL_C.md`, 화면 방법론은 접힘 상세와 Pseudo의 `fx-model-c`다.
   허용 저장소에 KG 정독 본문이 없어 KG 직접 반영·논문 재현은 미완료다.
 
+## 홈페이지 Upload (2026-11-06)
+
+상단 `Pseudo` 다음의 `#upload`는 `data-upload.js`가 한 번만 마운트한다.
+`data-upload-client.js`는 고정된 비공개 `hyeongjunkim0934/Data`에만 두 XLSX를 단일
+커밋으로 저장한다. 기본 브랜치/HEAD 재확인, 기존 경로 교체, 비강제 ref 갱신,
+응답 유실 재조회, 토큰 비저장을 지킨다. 기존 자동 수신과 전체 Python 빌드를 유지한다.
+실제 checkout SHA를 `--source-sha`로 `meta.json.data_source_sha`에 기록하고 UI는
+정확한 SHA 일치만 반영 완료로 표시한다. 수식·모형 변경 없음. [세부 계약](docs/UPLOAD.md).
+
 ## Pseudo 인수인계 문서
 
 2026-09-30 사용자 요청으로 `#pseudo` 탭을 추가했다. 현재 상단 순서는 환헤지 → CMA → Pseudo다.

@@ -10,6 +10,23 @@
 
 ## 0. 30초 요약
 
+### 2026-11-06 홈페이지 Upload · 기존 데이터 갱신과 병행
+
+- 범위: `hyeongjunkim0934/Investment-Analytics-Workbench`만 변경. 두 허용 저장소의
+  실제 기본 브랜치 `claude/data-repo-dashboard-automation-cj8y59` 확인. 기준 `fe98a61`,
+  작업 브랜치 `codex/hj-only-data-upload-20261106`. Data 코드·원본 변경 없음.
+- `Pseudo` 옆 Upload에서 두 XLSX를 기존 Data 경로에 하나의 커밋으로 교체한다.
+  외부 자동 갱신·BM/지수 파일을 유지하며 기본 브랜치/HEAD 충돌 시 재연결한다.
+  토큰은 메모리에서만 사용한다. 연결 시와 업로드 종료·페이지 이탈 시 입력을 비운다.
+- 전체 기존 Python 빌드와 배포 게이트를 재사용한다. 실제 Data checkout SHA를
+  배포 메타에 기록하고 정확히 일치할 때만 홈페이지 반영 완료를 표시한다.
+  새로고침은 모든 JSON을 캐시 무효화한다. 두 파일이 동일하면 새 저장·배포 없음.
+- 상세 계약·사용법·실패 복구는 `docs/UPLOAD.md`. 모형·수식·단위 변경이 없으므로
+  Pseudo 금융 문서는 그대로 유지한다. 외부 사전계산 모형의 재학습은 추가하지 않는다.
+- 검증: client API mock + 실제 UI DOM 이벤트 + 합성 파이프라인/계약 회귀.
+  최종 건수·CI는 PR 참조. 실제 운영 토큰 업로드·외부 Drive 동기화는 미실행.
+  공유 preview 슬롯 사용 중으로 브라우저 시각검증 미완료. 머지는 사용자 요청 시 수행한다.
+
 ### 2026-11-03 환헤지 모니터링 · A/B/C 결과 카드
 
 - 범위: `hyeongjunkim0934/Investment-Analytics-Workbench`만 변경. 기준 `ef88f088`,
