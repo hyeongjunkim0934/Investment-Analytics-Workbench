@@ -14,12 +14,28 @@ let cmaStateCache = null;
 let cmaStorageError = "";
 let cmaPopup = null;
 let cmaPopupSequence = 0;
+let cmaUploadStatus = "";
+let cmaUploadError = false;
+let cmaUploadBusy = false;
 
 function cmaNumber(value) {
   if (typeof value !== "number" && typeof value !== "string") return NaN;
   if (typeof value === "string" && value.trim() === "") return NaN;
   const n = Number(value);
   return Number.isFinite(n) ? n : NaN;
+}
+
+function cmaRoundHundredth(value) {
+  const rounded = Math.round((Math.abs(value) + Number.EPSILON * Math.abs(value)) * 100) / 100;
+  return value < 0 && rounded ? -rounded : rounded;
+}
+
+// Quantize only newly edited μ/σ. Opening an older saved assumption preserves
+// its original calculation precision; a negative σ remains invalid before rounding.
+function cmaEditedValue(value, field) {
+  const n = cmaNumber(value);
+  return field !== "p" && Number.isFinite(n) && !(field === "sig" && n < 0)
+    ? cmaRoundHundredth(n).toFixed(2) : value;
 }
 
 function cmaMoments(scenarios) {
@@ -205,6 +221,34 @@ function renderCma() {
     return;
   }
   const st = typeof portPanelDraft !== "undefined" && portPanelDraft?.source === P ? portPanelDraft.st : portState(P);
+  const upload = el("button", { type: "button", class: "btn-ghost cma-upload" }, "CMA Upload");
+  const fileInput = el("input", { type: "file", accept: ".xlsx,.xls", "aria-label": "CMA 엑셀 파일" });
+  fileInput.hidden = true;
+  upload.disabled = cmaUploadBusy;
+  const uploadStatus = el("p", { class: cmaUploadError ? "cma-warning" : "cma-upload-status", role: "status", "aria-live": "polite" }, cmaUploadStatus);
+  uploadStatus.hidden = !cmaUploadStatus;
+  upload.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (!file || cmaUploadBusy) return;
+    cmaUploadBusy = true; upload.disabled = true;
+    uploadStatus.hidden = false; uploadStatus.textContent = "CMA 파일을 읽는 중입니다.";
+    try {
+      const parsed = await cmaReadUpload(file, P.assets);
+      const current = typeof DATA === "undefined" ? null : DATA.alloc?.port;
+      if (current !== P) throw new Error("자산배분 데이터가 변경되었습니다. 파일을 다시 선택하십시오.");
+      const result = cmaImportRows(parsed.rows, P.assets);
+      cmaUploadError = !result.persisted;
+      cmaUploadStatus = `${file.name} · ${result.count}개 자산을 불러왔습니다. 카드 우측 버튼으로 자산배분에 반영하십시오.${result.persisted ? "" : " 브라우저 저장에 실패하여 현재 화면에만 유지됩니다."}`;
+    } catch (error) {
+      cmaUploadError = true;
+      cmaUploadStatus = `CMA Upload 실패: ${error.message || "파일을 확인하십시오."}`;
+    } finally {
+      cmaUploadBusy = false; fileInput.value = ""; renderCma();
+    }
+  });
+  host.append(el("div", { class: "cma-toolbar" }, upload, fileInput,
+    el("span", { class: "cma-upload-hint" }, "엑셀 열: 자산군 · 기대수익률 (%) · 변동성 (%)")), uploadStatus);
   const grid = el("div", { class: "cma-grid" });
   P.assets.forEach((asset, i) => {
     const entry = cmaEnsureAsset(asset, cmaUnderlyingBaseline(P, st, asset));
@@ -235,8 +279,8 @@ function renderCma() {
     const body = el("tbody"), inputs = [];
     const status = el("p", { id: statusId, class: "cma-status", role: "status" });
     const totals = el("div", { class: "cma-totals" });
-    const applied = el("p", { class: "cma-applied" });
-    const apply = el("button", { type: "button", class: "btn-ghost cma-apply" }, "적용");
+    const apply = el("button", { type: "button", class: "btn-ghost cma-apply",
+      "aria-label": `${asset} 자산배분 모듈에 반영`, "aria-describedby": statusId }, "자산배분 모듈에 반영");
     const refresh = () => {
       const result = cmaMoments(entry.draft), validApplied = cmaMoments(entry.applied).valid;
       toggle.checked = entry.enabled === true && validApplied;
@@ -259,26 +303,25 @@ function renderCma() {
       metricValues.sig.textContent = displayPercent(result.sig);
       metricValues["ref-mu"].textContent = displayPercent(ref?.mean_pct);
       metricValues["ref-sig"].textContent = displayPercent(ref?.vol_pct);
-      summaryState.textContent = !result.valid ? "입력 확인" : changed ? "미적용 초안" : entry.enabled ? "적용 중" : "CMA 해제";
+      summaryState.textContent = !result.valid ? "입력 확인" : changed ? "" : entry.enabled ? "적용 중" : "CMA 해제";
       summaryState.classList.toggle("cma-warning", !result.valid);
       status.classList.toggle("cma-warning", !result.valid);
       const overProbability = cmaNumber(entry.draft[2].p) < 0;
       status.textContent = !result.valid ? `${overProbability ? "낙관·중립 확률 합계는 100% 이하여야 합니다." : result.error} 기존 적용값은 유지됩니다.`
-        : changed ? "미적용 초안" : entry.enabled ? "자산배분 반영 중" : "CMA 해제 · 자산배분 입력 사용";
+        : "";
+      status.hidden = result.valid;
       const current = cmaAssetAssumption(asset);
-      applied.textContent = current ? `적용값 ${fmtNum(current.mu, 2)}% / ${fmtNum(current.sig, 2)}% (μ / σ)`
-        : "자산배분 입력값 사용";
       apply.disabled = !result.valid;
-      apply.textContent = current && !changed ? "적용 완료" : "적용";
+      apply.classList.toggle("is-applied", !!current && !changed);
     };
     CMA_SCENARIOS.forEach((definition, row) => {
       const tr = el("tr", {}, el("th", { scope: "row", class: `cma-${definition.id}` }, definition.label));
       [["p", "확률"], ["mu", "기대수익"], ["sig", "변동성"]].forEach(([field, label]) => {
-        const value = entry.draft[row][field], sigma = field === "sig" ? cmaNumber(value) : NaN;
+        const value = entry.draft[row][field], number = field !== "p" ? cmaNumber(value) : NaN;
         // Format the editor only. Existing high-precision drafts/applied values
         // remain unchanged until the user actually edits the field.
-        const attrs = { type: "number", step: field === "sig" ? "0.01" : "any",
-          value: Number.isFinite(sigma) ? sigma.toFixed(2) : value ?? "",
+        const attrs = { type: "number", step: field !== "p" ? "0.01" : "any",
+          value: Number.isFinite(number) && !(field === "sig" && number < 0) ? number.toFixed(2) : value ?? "",
           "aria-label": `${asset} ${definition.label} ${label} %`, "aria-describedby": statusId };
         if (field !== "mu") attrs.min = "0";
         if (field === "p") attrs.max = "100";
@@ -286,27 +329,41 @@ function renderCma() {
         const input = el("input", attrs);
         input.addEventListener("input", () => {
           if (field === "p" && row === 2) { refresh(); return; }
-          entry.draft[row][field] = input.validity?.badInput ? "" : input.value;
+          entry.draft[row][field] = input.validity?.badInput ? "" : cmaEditedValue(input.value, field);
           if (field === "p") cmaSyncDraftProbability(entry.draft);
           cmaSave(); refresh();
         });
+        const formatEdited = () => {
+          const n = cmaNumber(entry.draft[row][field]);
+          if (field !== "p" && Number.isFinite(n) && !(field === "sig" && n < 0))
+            input.value = n.toFixed(2);
+        };
+        input.addEventListener("change", formatEdited);
+        input.addEventListener("blur", formatEdited);
         inputs.push({ input, row, field });
         tr.append(el("td", {}, input));
       });
       body.append(tr);
     });
     table.append(body);
-    apply.addEventListener("click", () => { cmaApplyAsset(asset); refresh(); });
+    apply.addEventListener("click", () => {
+      const result = cmaApplyAsset(asset); refresh();
+      if (result.valid) {
+        status.hidden = false;
+        status.textContent = `${asset} 자산배분 반영 완료`;
+      }
+    });
     toggle.addEventListener("change", () => { cmaSetEnabled(asset, toggle.checked); refresh(); });
-    editor.append(table, totals, el("div", { class: "cma-card-actions" }, applied, apply), status);
-    disclosure.append(summary, editor); card.append(disclosure);
+    editor.append(table, totals);
+    disclosure.append(summary, editor); card.append(disclosure, apply, status);
     refresh(); grid.append(card);
   });
   host.append(grid);
   const details = [
     el("p", {}, "입력·산출: 사용자 가정, 1년 수익률 기준(연 %) · 추가 환헤지 전. 자산별 적용을 누르면 기대수익과 변동성이 자산배분에 함께 반영됩니다."),
     el("p", {}, "초기 확률 25/50/25%는 편집용 가정이며 세 시나리오의 μ·σ는 모두 현재 자산배분 기준값으로 시작합니다. 전망 차이는 직접 입력하십시오."),
-    el("p", {}, "비관 확률은 100%에서 낙관·중립 확률을 뺀 값입니다. 두 확률의 합계가 100%를 넘으면 적용할 수 없습니다. 카드의 시나리오 수치는 현재 초안이며 적용 상태를 함께 표시합니다."),
+    el("p", {}, "비관 확률은 100%에서 낙관·중립 확률을 뺀 값입니다. 두 확률의 합계가 100%를 넘으면 적용할 수 없습니다. 카드 우측 버튼으로 해당 자산의 입력값을 반영합니다."),
+    el("p", {}, "CMA Upload는 엑셀의 자산군·기대수익률·변동성을 읽습니다. 일반 숫자 4.12와 엑셀 백분율 4.12%는 모두 연 4.12%입니다. 업로드한 μ·σ는 세 시나리오에 동일하게 입력하며, 기존 확률을 유지합니다. 파일은 이 브라우저에서만 처리합니다."),
     el("p", {}, "10년 수익률은 과거 월 수익률의 산술평균을 연환산한 참고값이며, 10년 변동성은 같은 표본의 연환산 표준편차입니다. 120개월 자료가 없는 자산은 —로 표시합니다."),
     el("p", {}, "기대수익은 확률가중 평균입니다. 변동성은 시나리오 내부 분산과 시나리오 평균 차이의 분산을 합산합니다."),
     el("p", {}, "기존 자산 간 상관계수를 유지합니다. 자산별 시나리오는 공동 시나리오를 정의하지 않으므로 시나리오별 포트폴리오 손익·공분산을 직접 추정한 결과가 아닙니다."),
@@ -357,8 +414,6 @@ function cmaAssetLabel(asset) {
       });
       table.append(tbody); node.append(table);
       node.append(el("p", { class: "cma-popup-total" }, `${entry.enabled ? "적용" : "마지막 적용"} μ ${fmtNum(result.mu, 2)}% · σ ${fmtNum(result.sig, 2)}%`));
-      if (Array.isArray(entry.draft) && entry.draft.length === 3 && entry.draft.every((s) => s && typeof s === "object") && cmaDraftChanged(entry))
-        node.append(el("p", { class: "cma-popup-state" }, "미적용 초안 있음"));
     } else node.append(el("p", { class: "cma-popup-state" }, "적용된 시나리오가 없습니다. CMA에서 입력 후 적용하십시오."));
     node.append(el("a", { href: "#cma", class: "cma-popup-link" }, "CMA 편집 →"));
     document.body.append(node);

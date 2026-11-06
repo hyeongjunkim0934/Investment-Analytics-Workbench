@@ -3,7 +3,7 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.alloc = {
   id: "alloc",
   title: "자산배분",
-  updated: "2026-10-12",
+  updated: "2026-11-06",
   summary: "SAA 제약·TAA 입력 시나리오 → Baseline·비중1/비중2 비교 → 리스크 연계 비중",
   inputs: "월말 지수·USDKRW, 연 μ·σ(%), CMA 시나리오 확률(%), 상관계수, h(0~1), 그룹 최소·최대(%), 자산별 최소(%). 공분산은 게시 소수² → 계산 %²(×10,000)",
   outputs: "포트폴리오 μ·σ, Baseline, 선택 Conservative·Optimistic, 현재·잠재 리스크 연계 비중",
@@ -11,6 +11,7 @@ globalThis.PSEUDO_DOCS.alloc = {
     { path: "dashboard/port-constraints.js", symbols: ["portConstraintSpec", "portConstrainedModel"] },
     { path: "pipeline/port.py", symbols: ["build", "_stats", "_fx_stats", "_hedge_cost"] },
     { path: "dashboard/cma.js", symbols: ["cmaMoments", "cmaAssetAssumption", "renderCma", "cmaAssetLabel"] },
+    { path: "dashboard/cma-upload.js", symbols: ["cmaReadUpload", "cmaImportRows"] },
     { path: "dashboard/app.js", symbols: ["portRiskInputs", "portModelInputs", "portRobustModel", "portFrontiers", "portHedgeInputs", "allocRiskObservations", "allocRiskOptimize"] }
   ],
   sections: [
@@ -74,15 +75,18 @@ globalThis.PSEUDO_DOCS.alloc = {
         "require_finite_probability_mean_sigma(draft)",
         "require_nonnegative_probability_sigma_and_probability_sum_100(draft)",
         "mu, sigma ← mixture_mean_and_total_variance(draft)",
-        "on_apply: persist_valid_draft_as_applied_asset_assumption()",
+        "on_excel_upload: validate_all_rows_and_percent_units_before_changing_any_asset()",
+        "on_valid_upload: set_each_imported_asset_scenario_mu_sigma_to_uploaded_pair()",
+        "on_asset_button: persist_valid_draft_as_applied_asset_assumption()",
         "if enabled: replace_asset_mu_sigma_and_retain_correlation()",
         "else: restore_underlying_manual_or_published_inputs()",
         "apply_existing_hedge_after_unhedged_CMA()",
         "show_applied_scenarios_on_allocation_asset_label_hover()"
       ].join("\n"),
-      note: "비관 확률은 잔여값으로 자동 산출하며 낙관·중립 합계 100% 초과·빈칸은 적용 불가. 초안과 적용값은 분리 저장. 변동성 입력은 0.01 단위·두 자리 표시이며 기존 저장 원정밀도는 유지. 접힌 카드는 초안 μ·σ와 자산별 120개월 연환산 참고 μ·σ를 표시하며 표본 부족은 공란. 초기 25/50/25%는 편집 시작값. 자산별 주변분포 가정이며 공통 거시 상태·자산 간 독립성을 뜻하지 않음.",
+      note: "비관 확률은 잔여값으로 자동 산출하며 낙관·중립 합계 100% 초과·빈칸은 적용 불가. 입력과 적용값은 분리 저장. 기대수익·변동성은 0.01 단위·두 자리 표시이며 기존 저장 원정밀도는 편집 전까지 유지. CMA Upload의 일반 숫자는 연 % 단위, 엑셀 백분율 셀은 저장 소수에 100을 곱함. 전체 검증 후 자산별 세 시나리오에 동일 μ·σ를 채우며 기존 확률을 유지. 카드 우측 버튼은 해당 자산만 반영. 접힌 카드는 입력 μ·σ와 자산별 120개월 연환산 참고 μ·σ를 표시하며 표본 부족은 공란. 초기 25/50/25%는 편집 시작값. 자산별 주변분포 가정이며 공통 거시 상태·자산 간 독립성을 뜻하지 않음.",
       sources: [
         { path: "dashboard/cma.js", symbols: ["cmaSyncDraftProbability", "cmaMoments", "cmaAssetAssumption", "renderCma", "cmaAssetLabel"] },
+        { path: "dashboard/cma-upload.js", symbols: ["cmaReadUpload", "cmaImportRows"] },
         { path: "dashboard/app.js", symbols: ["portRiskInputs", "portModelInputs"] }
       ]
     },

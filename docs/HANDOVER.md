@@ -10,6 +10,21 @@
 
 ## 0. 30초 요약
 
+### 2026-11-06 CMA 입력 정밀도 · Excel Upload · 자산별 반영
+
+- 범위: `hyeongjunkim0934/Investment-Analytics-Workbench`만 변경. 기준 `fe98a610`,
+  실제 기본 브랜치 `claude/data-repo-dashboard-automation-cj8y59`, 작업 브랜치
+  `codex/hj-only-cma-upload-precision-20261106`. Data는 기본 브랜치 확인만 했고 수정 없음.
+- μ·σ 입력/표시를 소수 두 자리로 통일. 기존 고정밀 저장값은 편집 전까지 유지하며,
+  직접입력/업로드 반올림 경계 규칙은 공통 함수 사용. 음수 σ는 반올림 전에 거부한다.
+- CMA 전용 Upload는 브라우저 안에서 XLSX/XLS의 자산명·μ·σ를 읽는다. 일반 숫자와 Excel %
+  서식을 구분하고 모든 행·확률을 검증한 후 시나리오 μ·σ를 채운다. 적용값/다른 자산은 유지한다.
+- 접힌 자산카드 우측 `자산배분 모듈에 반영` 버튼으로 해당 자산만 적용. 요청한 하단/초안 문구 제거.
+- 검증: DOM 입력→업로드→적용→저장→재로드, 단위/결측/음수/중복/오류 무변경,
+  기존 SAA/TAA 초안·공분산/환헤지/리스크 연계 보존. 독립 openpyxl 파일도 실제 파서로 확인.
+- 브라우저 시각 QA는 다른 작업의 preview lock 때문에 미실행. 기존 preview를 중단하지 않았다.
+  전체 pytest 및 GitHub CI 최종 결과는 PR 참조. 머지는 사용자 요청 시 수행한다.
+
 ### 2026-11-06 리스크 연계 · λ 기초통계
 
 - 범위: `hyeongjunkim0934/Investment-Analytics-Workbench`만 변경. 실제 기본 브랜치
