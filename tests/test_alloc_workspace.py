@@ -22,7 +22,7 @@ def test_workspace_scope_and_metadata(workspace):
                 "retiredPanelsHidden", "pressedState", "portTocRemoved",
                 "institutionTocRemoved", "workspaceExplanationRemoved", "hashUntouched"):
         assert workspace[key], key
-    assert workspace["workspaceLabels"] == ["포트폴리오", "리스크연계"]
+    assert workspace["workspaceLabels"] == ["포트폴리오", "리스크연계", "레퍼런스 포트폴리오"]
 
 
 def test_risk_workspace_is_separate_and_handles_missing_alloc(workspace):

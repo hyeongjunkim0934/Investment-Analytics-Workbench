@@ -4,13 +4,14 @@ globalThis.PSEUDO_DOCS.alloc = {
   "id": "alloc",
   "title": "자산배분",
   "updated": "2026-11-06",
-  "summary": "표본·적용 입력 확정 → CMA 합성 → 환헤지 조정 → SAA 제약 최적화 → 목표·요약카드 → 리스크 연계. 같은 입력 스냅숏을 기준으로 대안을 비교한다.",
+  "summary": "표본·적용 입력 확정 → CMA 합성 → 환헤지 조정 → SAA 제약 최적화 → 목표·요약카드 → 리스크 연계. 같은 입력 스냅숏을 기준으로 대안을 비교한다. 레퍼런스 포트폴리오는 별도 공통표본의 과거 모멘트를 비교한다.",
   "inputs": "월말 지수·USDKRW, 연 μ·σ(%), CMA 시나리오 확률(%), 상관계수, h(0~1), 그룹 최소·최대(%), 자산별 최소(%). 공분산은 게시 소수² → 계산 %²(×10,000)",
-  "outputs": "포트폴리오 μ·σ, Baseline, 선택 Conservative·Optimistic, 현재·잠재 리스크 연계 비중",
+  "outputs": "포트폴리오 μ·σ, Baseline, 선택 Conservative·Optimistic, 현재·잠재 리스크 연계 비중; 레퍼런스 예시·직접비중의 과거 평균·변동성·CD 대비 샤프 근사·위험기여",
   "readingGuide": [
     "입력의 원천·기간·단위와 초안/적용 상태를 먼저 고정한다.",
     "CMA 이후 환헤지를 반영한 μ·C와 SAA 제약을 공통 입력으로 경계선·목표·카드를 계산한다.",
-    "리스크 연계는 현재 μ·C를 고정한 민감도 분석이다. 과거 시점의 실제 운용성과와 분리해서 전달한다."
+    "리스크 연계는 현재 μ·C를 고정한 민감도 분석이다. 과거 시점의 실제 운용성과와 분리해서 전달한다.",
+    "레퍼런스 포트폴리오는 별도 과거 표본 비교이며 기존 SAA/TAA/CMA 입력을 바꾸지 않는다."
   ],
   "sources": [
     {
@@ -464,6 +465,59 @@ globalThis.PSEUDO_DOCS.alloc = {
         "배율을 1에서 0.1로 바꾸면 λ와 Δλ의 평균·표준편차도 0.1배가 되는지 확인한다.",
         "선택 기간 밖의 직전 값이 첫 Δλ에 섞이지 않는지, Δλ 관측수가 λ보다 1개 적은지 확인한다.",
         "λ=0 및 상수 점수 경계, 제약/KKT 잔차, 동일 λ의 재사용 해가 동일 입력에 의존하는지 확인한다."
+      ]
+    },
+    {
+      "id": "reference-portfolio",
+      "title": "레퍼런스 포트폴리오 · 과거 모멘트 비교",
+      "formulas": [
+        {
+          "expression": "r(KRW) = (1 + r(USD)) × (1 + r(FX)) − 1",
+          "legend": "동일 날짜 지수·달러원을 환산한 완료월 단순수익률. 월 누락 연결 금지.",
+          "latex": "r_t^{\\mathrm{KRW}}=(1+r_t^{\\mathrm{USD}})(1+r_t^{\\mathrm{FX}})-1"
+        },
+        {
+          "expression": "μp = wᵀμ; σp = 100√(wᵀΣw); RCᵢ = 100wᵢ(Σw)ᵢ/(wᵀΣw)",
+          "legend": "μ는 과거 산술 연평균 %, Σ는 연 소수수익률². 매월 고정비중 재조정. RC는 분산 기여 비중 %.",
+          "latex": "\\mu_p=w^\\top\\mu,\\qquad\\sigma_p=100\\sqrt{w^\\top\\Sigma w},\\qquad\\mathrm{RC}_i=100\\frac{w_i(\\Sigma w)_i}{w^\\top\\Sigma w}"
+        },
+        {
+          "expression": "Sharpe(근사) = (μp − CD평균)/σp",
+          "legend": "CD(AAA) 3M 전월 말 금리의 동일 표본 평균. 초과수익률 변동성 대신 포트폴리오 변동성 사용.",
+          "latex": "\\mathrm{Sharpe}_{\\mathrm{approx}}=\\frac{\\mu_p-\\overline{y}_{\\mathrm{CD}}}{\\sigma_p}"
+        }
+      ],
+      "code": "validate_source_levels_and_duplicate_bond_history()\nalign_assets_and_fx_on_same_dates()\nexclude_latest_source_month_and_keep_calendar_gaps()\npublish_1_3_5_10_year_aggregate_moments_only()\nreject_positive_weights_on_unavailable_assets()\ncompare_example_and_applied_custom_weights_without_changing_SAA_TAA_CMA()",
+      "note": "원천은 data_bb. 국내·미국·한미 60/40, 분산50/40/10은 예시이며 전망·최적화 결과가 아니다. 원자재는 GSCI TR이고 spot 대체 금지. 단위·표본·비활성 사유는 CSV/화면에 포함. CAGR·MDD·누적경로는 집계 모멘트로 복원하지 않는다.",
+      "sources": [
+        {
+          "path": "pipeline/reference_portfolio.py",
+          "symbols": [
+            "build"
+          ]
+        },
+        {
+          "path": "dashboard/reference-portfolio.js",
+          "symbols": [
+            "referenceMoments",
+            "renderReferencePortfolio"
+          ]
+        }
+      ],
+      "purpose": "예시 또는 직접 입력한 고정비중을 동일한 과거 공통표본으로 비교한다. 전망 입력·최적화·실현 운용성과와 구분한다.",
+      "decisions": [
+        "data_bb 총수익 지수의 동일 날짜 원화 환산값으로 완료월 수익률을 만든다. 달력 월 누락을 이어 붙이지 않으며 해외자산의 환산은 한 번만 수행한다.",
+        "선택한 1·3·5·10년 창의 공통 월 표본으로 산술 연평균(%)·연 공분산(소수²)을 계산한다. 매월 고정비중 재조정과 비용 미반영을 가정한다.",
+        "국내채권의 미국채권 복제 원천과 원자재 총수익 지수 부재는 비활성 사유로 표시한다. 결측 자산에 양의 비중을 준 계산을 막고 원자재 spot으로 대체하지 않는다.",
+        "CD 비교금리는 동일 표본의 전월 말 CD(AAA) 3M 연금리 평균이다. 샤프 분모는 포트폴리오 변동성이므로 초과수익률 변동성으로 계산한 샤프와 구분한다.",
+        "엄격한 계약을 통과한 Data 집계 snapshot이 raw 계산보다 최신이면 이 탭에서만 사용한다. 직접비중 저장과 적용은 기존 SAA/TAA/CMA 입력을 변경하지 않는다.",
+        "원본 수준·수익률·누적경로는 게시하지 않는다. 집계 모멘트만으로 CAGR·MDD·누적 성과를 복원하지 않는다."
+      ],
+      "checks": [
+        "단일자산 100%에서 게시 평균·변동성이 복원되고, 양의 분산에서 위험기여도 합계가 100%인지 확인한다.",
+        "합계 100% 위반·음수·비유한 비중, 결측 자산의 양의 비중에서는 적용을 거부하고 이전 적용값을 보존한다.",
+        "동일 날짜 FX 환산·누락 월·최신 미완료월 배제와 snapshot 검증 실패 시 raw 복귀를 대조한다.",
+        "US60/40 10년 통계를 별도 openpyxl·scalar 경로와 대조한다. 동일 원본을 사용한 구현 검증이며 독립 벤더 원천 검증은 아니다."
       ]
     }
   ]

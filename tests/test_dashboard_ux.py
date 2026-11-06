@@ -1785,12 +1785,12 @@ def test_cma_screen_shows_layer_mapping_and_provenance(probe):
 
 
 def test_alloc_removes_toc_and_preserves_workspace_switch(probe):
-    """중복 목차는 제거하고 두 탭의 전환은 해시를 바꾸지 않는다."""
+    """중복 목차는 제거하고 하위 탭 전환은 해시를 바꾸지 않는다."""
     c = probe["allocToc"]
     assert c["renderErrors"] == 0
     assert c["tocRemoved"] is True
     assert 'id="alloc-toc"' not in INDEX_HTML.read_text(encoding="utf-8")
-    assert c["workspaceButtons"] == ["포트폴리오", "리스크연계"]
+    assert c["workspaceButtons"] == ["포트폴리오", "리스크연계", "레퍼런스 포트폴리오"]
     assert c["workspaceSwitchPreservesHash"] is True
 
 
