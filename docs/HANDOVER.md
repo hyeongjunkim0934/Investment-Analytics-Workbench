@@ -16,6 +16,7 @@
   실제 기본 브랜치 `claude/data-repo-dashboard-automation-cj8y59` 확인. 기준 `fe98a61`,
   작업 브랜치 `codex/hj-only-data-upload-20261106`. Data 코드·원본 변경 없음.
   통합 시 기본 브랜치 `86c2115`의 λ 통계 및 `4fa2260`의 CMA 업로드 변경도 보존했다.
+  머지 시 추가 반영된 `043fe18`의 Pseudo Overview·LaTeX 개편도 보존했다.
 - `Pseudo` 옆 Upload에서 두 XLSX를 기존 Data 경로에 하나의 커밋으로 교체한다.
   외부 자동 갱신·BM/지수 파일을 유지하며 기본 브랜치/HEAD 충돌 시 재연결한다.
   토큰은 메모리에서만 사용한다. 연결 시와 업로드 종료·페이지 이탈 시 입력을 비운다.
@@ -27,6 +28,32 @@
 - 검증: client API mock + 실제 UI DOM 이벤트 + 합성 파이프라인/계약 회귀.
   최종 건수·CI는 PR 참조. 실제 운영 토큰 업로드·외부 Drive 동기화는 미실행.
   공유 preview 슬롯 사용 중으로 브라우저 시각검증 미완료. 머지는 사용자 요청 시 수행한다.
+
+### 2026-11-06 Pseudo · Overview와 LaTeX 인수인계
+
+- 범위: `hyeongjunkim0934/Investment-Analytics-Workbench`만 변경. 실제 기본 브랜치는
+  `claude/data-repo-dashboard-automation-cj8y59`, 기준 커밋 `86c2115e1b966de952154ded05f7f53ca52fb663`,
+  작업 브랜치 `codex/hj-pseudo-handover-latex-20261106`.
+  CMA PR #127 머지 후 `4fa2260a`로 재기반하고 업로드·단위·자산별 적용 설명을 함께 갱신했다. Data는 저장소/기본 브랜치 조회만 수행.
+- Pseudo 순서: Overview → 리스크 → 자산배분 → 환헤지 → 환율전망. 기본 Overview.
+  코드스페이스 도식·모듈 바로가기, 절별 목차, 목적·수식·처리 순서·판단 경계·인수 검증·소스 연결.
+  환율 A/B/C/D·컨센서스·FX 요약을 `pseudo/fx.js`로 분리하고 환헤지와 의미를 구분했다.
+- 로컬 KaTeX 0.19.1(JS/CSS/폰트/라이선스)로 95개 LaTeX 식을 표시한다. CDN 없음.
+  렌더 실패 시 일반식과 상태 안내 유지, 복사본에는 LaTeX 원문·판단조건·검증·소스 포함.
+  금융 엔진·게시 JSON·입력 저장·인증·배포 워크플로는 변경하지 않았다.
+- 실제 코드 대조에서 FX B LSTM의 마지막 입력→라벨이 lag+1행, 게시 목표는 lag행인
+  기존 정렬 차이를 발견했다. 실제 make_sequences 함수의 작은 입력으로 별도 재현했으며
+  Pseudo에 현재 동작·한계를 명시했다. 향후 정렬 교정·산출물 재생성·동일 표본 재평가가 필요하다.
+  결측 제거 후 행 지평, LSTM만 표준화, 헤지 C 초기비용 1회 등 기존 설명도 정정했다.
+- 5탭/키보드·도식/목차 이동·복사·수식 성공/실패·시장데이터 실패·금융 상태 불변성,
+  실제 KaTeX 전체 파서·로컬 폰트·소스 함수 존재 검사 통과. 별도 감사에서 핵심 단위/부호/연계와
+  헤지 B 독립 숫자 사례를 대조했다. 전체 테스트 최종 건수는 PR 본문 참조.
+- 실제 브라우저의 분리된 Pseudo 화면에서 Overview·수식·라이트/다크·복사 상태·360px iframe
+  뷰포트와 긴 수식의 영역 내 스크롤을 확인했다. 시장 JSON·인증 후 전체 통합 화면 검증은 미실행.
+  임시 QA 페이지·미리보기 설정은 커밋하지 않는다. 머지는 사용자 요청 시 수행한다.
+- 환경: Python 3.12.14, numpy2.5.1/pandas3.0.5/pytest9.1.1(저장소 고정 의존성과 일치).
+  재현: `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python -m pytest -q`.
+
 
 ### 2026-11-06 CMA 입력 정밀도 · Excel Upload · 자산별 반영
 
