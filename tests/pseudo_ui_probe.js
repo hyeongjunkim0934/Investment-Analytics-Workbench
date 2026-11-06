@@ -17,7 +17,7 @@ sandbox.localStorage = {
   setItem: (key, value) => { writes.push([key, String(value)]); saved.set(key, String(value)); },
   removeItem: (key) => { writes.push([key, null]); saved.delete(key); }
 };
-for (const name of ["pseudo/risk.js", "pseudo/alloc.js", "pseudo/hedge.js", "pseudo.js"])
+for (const name of ["pseudo/overview.js", "pseudo/risk.js", "pseudo/alloc.js", "pseudo/hedge.js", "pseudo/fx.js", "pseudo.js"])
   vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", name), "utf8"), sandbox, {filename: name});
 const noBoot = APP.replace(/\\nboot\\(\\);\\s*$/, "\\n");
 if (noBoot === APP) throw new Error("app boot boundary");
@@ -36,6 +36,7 @@ for (const match of navHTML[1].matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([^<]+)<\/
   const anchor = elem("a"); anchor.setAttribute("href", match[1]); anchor.textContent = match[2]; nav.append(anchor);
 }
 const docs = sandbox.PSEUDO_DOCS;
+const moduleIds = ["overview", "risk", "alloc", "hedge", "fx"];
 const result = { docs: JSON.parse(JSON.stringify(docs)) };
 const selected = () => [...byId("pseudo-content").querySelectorAll("button")]
   .filter((node) => node.getAttribute("role") === "tab" && node.getAttribute("aria-selected") === "true")
@@ -72,24 +73,51 @@ const nextTick = () => new Promise((resolve) => setImmediate(resolve));
     panelRole: byId("pseudo-panel").getAttribute("role"),
     panelLabel: byId("pseudo-panel").getAttribute("aria-labelledby")
   };
-  result.keyboard = [keyboard("risk", "ArrowRight"), keyboard("alloc", "ArrowLeft"),
-    keyboard("risk", "ArrowLeft"), keyboard("hedge", "Home"), keyboard("risk", "End"),
-    keyboard("hedge", "ArrowRight")];
+  const overview = docs.overview;
+  const diagram = byId("pseudo-panel").querySelector(".pseudo-diagram");
+  const diagramNodes = overview.diagram.layers.flatMap((layer) => layer.nodes);
+  result.overview = {
+    accessible: diagram.getAttribute("aria-label") === overview.diagram.title,
+    allNodesVisible: diagramNodes.every((node) => diagram.textContent.includes(node.title) && diagram.textContent.includes(node.detail)),
+    allRelationsVisible: overview.diagram.relations.every((text) => diagram.textContent.includes(text)),
+    targets: diagramNodes.filter((node) => node.target).map((node) => node.target),
+    routes: []
+  };
+  result.overview.targets.forEach((target, index) => {
+    byId("pseudo-tab-overview").click();
+    const buttons = byId("pseudo-panel").querySelectorAll(".pseudo-map-link");
+    buttons[index].click();
+    result.overview.routes.push({target, selected: selected(), focus: DOC.activeElement.id});
+  });
+  byId("pseudo-tab-overview").click();
+  result.keyboard = [keyboard("overview", "ArrowRight"), keyboard("risk", "ArrowRight"),
+    keyboard("alloc", "ArrowRight"), keyboard("hedge", "ArrowRight"), keyboard("fx", "ArrowRight"),
+    keyboard("overview", "ArrowLeft"), keyboard("fx", "Home"), keyboard("overview", "End")];
   result.rendered = {};
-  for (const id of ["risk", "alloc", "hedge"]) {
+  for (const id of moduleIds) {
     byId(`pseudo-tab-${id}`).click();
     const cards = [...byId("pseudo-panel").querySelectorAll(".pseudo-card")];
     result.rendered[id] = cards.map((card, index) => {
       const content = docs[id].sections[index], code = card.querySelector("code");
       const formulas = [...card.querySelectorAll(".pseudo-formula")];
+      byId("pseudo-panel").querySelector(".pseudo-toc").querySelectorAll("button")[index].click();
       return { codeMatches: code.textContent === content.code,
         formulaMatches: JSON.stringify(formulas.map((node) => node.textContent)) === JSON.stringify(content.formulas.map((f) => f.expression)),
         separate: formulas.every((node) => !code.contains(node) && !node.closest("pre")),
-        accessible: formulas.every((node) => node.getAttribute("role") === "math" && node.getAttribute("aria-label") === node.textContent) };
+        accessible: formulas.every((node) => node.getAttribute("role") === "math" && node.getAttribute("aria-label") === node.textContent),
+        purposeVisible: card.textContent.includes(content.purpose),
+        decisionsVisible: content.decisions.every((value) => card.textContent.includes(value)),
+        checksVisible: content.checks.every((value) => card.textContent.includes(value)),
+        tocFocus: DOC.activeElement === card };
     });
   }
   let copied = null;
   sandbox.navigator.clipboard = {writeText: async (text) => { copied = text; }};
+  byId("pseudo-tab-overview").click();
+  byId("pseudo-panel").querySelector(".pseudo-copy").click();
+  await nextTick();
+  result.overview.copy = copied;
+  byId("pseudo-tab-fx").click();
   byId("pseudo-panel").querySelector(".pseudo-copy").click();
   await nextTick();
   result.copy = {text: copied, status: byId("pseudo-panel").querySelector(".pseudo-status").textContent};
@@ -103,12 +131,42 @@ const nextTick = () => new Promise((resolve) => setImmediate(resolve));
   byId("pseudo-panel").querySelector(".pseudo-copy").click();
   await nextTick();
   result.fallback.count = byId("pseudo-panel").querySelectorAll(".pseudo-copy-fallback").length;
-  delete docs.hedge;
+  delete docs.fx;
   P.renderSection("pseudo");
   result.missing = {message: byId("pseudo-panel").textContent, codeCount: byId("pseudo-panel").querySelectorAll("code").length,
     noRenderError: !section.querySelector(".render-error")};
-  docs.hedge = result.docs.hedge;
+  docs.fx = result.docs.fx;
   P.renderSection("pseudo");
+  // Verify integration calls separately from KaTeX's actual parser. The tiny DOM
+  // is deliberately not a browser layout engine and does not render KaTeX HTML.
+  const mathCalls = [];
+  sandbox.katex = {render(latex, node, options) {
+    mathCalls.push({latex, options});
+    node.textContent = "rendered math";
+  }};
+  byId("pseudo-tab-risk").click();
+  const riskFormulas = docs.risk.sections.flatMap((entry) => entry.formulas || []);
+  result.mathRenderer = {
+    calls: mathCalls,
+    expectedLatex: riskFormulas.map((formula) => formula.latex),
+    accessible: [...byId("pseudo-panel").querySelectorAll(".pseudo-formula")]
+      .every((node, index) => node.getAttribute("aria-label") === riskFormulas[index].expression),
+    noRenderError: !section.querySelector(".render-error")
+  };
+  sandbox.katex.render = (_latex, node) => {
+    node.textContent = "partial broken rendering";
+    throw new Error("KaTeX unavailable");
+  };
+  byId("pseudo-tab-risk").click();
+  result.mathFailure = {
+    expressions: [...byId("pseudo-panel").querySelectorAll(".pseudo-formula")].map((node) => node.textContent),
+    expected: riskFormulas.map((formula) => formula.expression),
+    noRenderError: !section.querySelector(".render-error"),
+    status: byId("pseudo-panel").querySelector(".pseudo-math-status")?.textContent,
+    fallbackMarked: [...byId("pseudo-panel").querySelectorAll(".pseudo-formula")]
+      .every((node) => node.getAttribute("data-math-fallback") === "true")
+  };
+  delete sandbox.katex;
   byId("pseudo-tab-alloc").click();
   result.unchanged = {data: JSON.stringify(P.DATA) === dataBefore,
     storage: JSON.stringify([...saved]) === storageBefore, writes: writes.length, fetches: FETCH_CALLS.length};
