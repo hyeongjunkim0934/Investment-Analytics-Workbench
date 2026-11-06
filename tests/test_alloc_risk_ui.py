@@ -42,3 +42,7 @@ def test_risk_invalid_history_never_leaks_stale_or_monthly_results(risk_ui):
 def test_risk_recomputes_for_changed_cma_and_asset_constraints(risk_ui):
     assert risk_ui["cacheRespondsToInputs"]
     assert risk_ui["visiblePortfolioInputsDriveRisk"]
+
+
+def test_lambda_statistics_follow_visible_period_scale_and_partial_week(risk_ui):
+    assert risk_ui["lambdaStatistics"]

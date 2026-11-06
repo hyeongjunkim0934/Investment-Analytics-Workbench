@@ -207,11 +207,13 @@ globalThis.PSEUDO_DOCS.alloc = {
         "    lambda ← point.score * selected_scale",
         "    w ← active_set_QP(mu, C, lambda)",
         "    require_constraint_and_KKT_certificate(w)",
-        "  draw_asset_weights(history)"
+        "  draw_asset_weights(history)",
+        "  delta_lambda ← adjacent_differences(selected_lambdas)",
+        "  summarize_levels_and_changes(count, latest, mean, median, sample_std, min, max)"
       ].join("\n"),
-      note: "현재 μ·C를 과거 전 기간에 고정 적용한 시나리오 경로. 시점별 재추정·실현수익 백테스트가 아님.",
+      note: "현재 μ·C를 과거 전 기간에 고정 적용한 시나리오 경로. 시점별 재추정·실현수익 백테스트가 아님. λ 통계는 선택 기간·배율의 원시 관측을 동일가중으로 계산. Δλ는 기간 내부 직전 관측과의 차이이며 비연율화. 표준편차 분모는 각 열의 관측수−1, 관측수 2 미만은 결측.",
       sources: [
-        { path: "dashboard/app.js", symbols: ["portRiskAllocationEngine", "allocRiskViewState", "allocRiskObservations", "allocRiskOptimize"] }
+        { path: "dashboard/app.js", symbols: ["portRiskAllocationEngine", "allocRiskViewState", "allocRiskObservations", "allocRiskOptimize", "allocRiskLambdaStats"] }
       ]
     }
   ]
