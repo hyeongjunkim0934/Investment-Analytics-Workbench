@@ -1423,6 +1423,15 @@ a.kpi-link .kpi-label > span:first-child::after {
 .rp-tooltip > span { display: flex; justify-content: space-between; gap: 10px; margin-top: 3px; }
 .rp-tooltip b { font-weight: 500; }
 .rp-legend { justify-content: center; }
+.rp-stats { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.rp-stats-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 8px; }
+.rp-stats-head h3 { margin: 0; color: var(--ink-1); font-size: 13px; font-weight: 600; }
+.rp-stats-table { width: 100%; table-layout: fixed; font-size: 12px; font-variant-numeric: tabular-nums; }
+.rp-stats-table th, .rp-stats-table td { padding: 6px 8px; text-align: right; }
+.rp-stats-table th:first-child { text-align: left; }
+.rp-stats-table tbody th { color: var(--ink-2); font-weight: 400; }
+.rp-stats-table tbody tr[data-stat="latest"] td { color: var(--ink-1); font-weight: 600; }
+.rp-stats-note { margin-top: 6px; line-height: 1.5; }
 @media (max-width: 720px) {
   .rp-panels { grid-template-columns: 1fr; }
   #alloc-risk-proc.port-frontier { padding: 12px 10px; }

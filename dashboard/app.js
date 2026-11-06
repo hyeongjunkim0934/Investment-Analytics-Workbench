@@ -5579,6 +5579,54 @@ function allocRiskObservations(E, st, layer) {
   return {observations, keys: V.keys};
 }
 
+// Equal-weight observations, including the latest partial week; no time scaling.
+function allocRiskLambdaStats(observations) {
+  if (!Array.isArray(observations) || !observations.length
+      || observations.some((m) => !Number.isFinite(m?.lam))) return null;
+  const summarize = (values) => {
+    const count = values.length;
+    if (!count) return {count: 0, latest: null, mean: null, median: null, std: null, min: null, max: null};
+    const sorted = [...values].sort((a, b) => a - b), middle = Math.floor(count / 2);
+    const mean = values.reduce((sum, value) => sum + value, 0) / count;
+    return {count, latest: values[count - 1], mean,
+      median: count % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2,
+      std: count > 1 ? Math.sqrt(values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (count - 1)) : null,
+      min: sorted[0], max: sorted[count - 1]};
+  };
+  const values = observations.map((m) => m.lam);
+  return {level: summarize(values), change: summarize(values.slice(1).map((value, i) => value - values[i]))};
+}
+
+function renderAllocRiskLambdaStats(panel, observations, layer) {
+  const stats = allocRiskLambdaStats(observations);
+  if (!stats) return;
+  const titleId = `alloc-rp-stats-title-${layer}`;
+  const section = el("section", {id: `alloc-rp-stats-${layer}`, class: "rp-stats", "aria-labelledby": titleId});
+  section.append(el("div", {class: "rp-stats-head"},
+    el("h3", {id: titleId}, "λ 기초통계"),
+    el("span", {class: "card-sub"}, `${tsToDate(observations[0].t)} ~ ${tsToDate(observations[observations.length - 1].t)}`)));
+  const table = el("table", {class: "rp-stats-table", "aria-labelledby": titleId});
+  table.append(el("thead", {}, el("tr", {},
+    el("th", {scope: "col"}, "통계량"), el("th", {scope: "col"}, "λ"), el("th", {scope: "col"}, "Δλ"))));
+  const body = el("tbody");
+  for (const [key, label] of [["count", "관측수"], ["latest", "최근값"], ["mean", "평균"],
+    ["median", "중앙값"], ["std", "표준편차"], ["min", "최솟값"], ["max", "최댓값"]]) {
+    const format = (value, signed) => {
+      if (value == null) return "–";
+      const rounded = +value.toFixed(key === "count" ? 0 : 2);
+      return `${signed && rounded > 0 ? "+" : ""}${fmtNum(rounded === 0 ? 0 : rounded, key === "count" ? 0 : 2)}`;
+    };
+    body.append(el("tr", {"data-stat": key}, el("th", {scope: "row"}, label),
+      el("td", {}, format(stats.level[key], false)),
+      el("td", {}, format(stats.change[key], key !== "count" && key !== "std"))));
+  }
+  table.append(body);
+  section.append(table,
+    el("div", {class: "card-sub rp-stats-note"}, "Δλ: 직전 관측 대비 · 표준편차: n−1"),
+    el("div", {class: "card-sub rp-stats-note"}, "주간·최신 관측 · 동일가중 · 비연율화"));
+  panel.append(section);
+}
+
 function renderAllocRiskProc(card, E, st, pal, rerender, infeas) {
   card.textContent = "";
   card.classList.add("port-frontier");
@@ -5747,6 +5795,7 @@ function renderAllocRiskLayer(panel, E, st, pal, result = allocRiskObservations(
   panel.append(el("div", { class: "port-frontier-key rp-legend" }, ...keys.map((key, i) =>
     el("span", { class: "port-marker-key" },
       el("i", { class: "sim-dot", style: `background:${pal.series[i % pal.series.length]};opacity:.65` }), allocShortK(key)))));
+  renderAllocRiskLambdaStats(panel, observations, st.rp_layer);
 }
 
 
