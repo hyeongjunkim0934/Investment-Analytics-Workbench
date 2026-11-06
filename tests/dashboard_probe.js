@@ -72,7 +72,7 @@ secNodes.alloc.append(elem("div", "alloc-workspace"));
 ["alloc-port-panel",
  "alloc-sim-panel",
  "alloc-headline", "alloc-summary", "alloc-controls", "alloc-cards", "alloc-levers",
- "alloc-risk-proc",
+ "alloc-risk-proc", "alloc-reference-panel",
  ]
   .forEach((id) => secNodes.alloc.append(elem("div", id)));
 
@@ -224,6 +224,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-tail-optimiz
   { filename: "dashboard/hedge-tail-optimizer.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-model-c.js"), "utf8"), sandbox,
   { filename: "dashboard/hedge-model-c.js" });
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "reference-portfolio.js"), "utf8"), sandbox,
+  { filename: "dashboard/reference-portfolio.js" });
 /* app.js 의 top-level `const`/`function` 은 스크립트 렉시컬 스코프에 산다 —
    밖에서 잡으려면 같은 스크립트 안에서 내보내야 한다. */
 const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "sectionHasRangedChart",

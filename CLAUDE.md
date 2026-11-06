@@ -11,6 +11,15 @@
 GitHub Pages 배포까지 수행한다. 즉 **원본은 여기 없고, 여기 있는 것은 가공 코드와 표시 코드뿐**이다.
 세 번째 저장소 `AIs`(검증 패널 에이전트 정의)는 이 코드와 런타임 의존이 없다.
 
+## 레퍼런스 포트폴리오 (2026-11-06)
+
+`pipeline/reference_portfolio.py`는 data_bb 총수익 지수·USD/KRW의 완료월 공통표본에서
+평균·공분산만 게시한다(`alloc.reference`). Data의 `reference_portfolio_snapshot.json`이
+엄격한 계약을 충족하고 raw 계산보다 최신이면 이 탭에만 선택한다. 다른 입력은 변경하지 않는다.
+`dashboard/reference-portfolio.js`·`.css`는 예시 및 직접비중을 비교하며 기존 SAA/TAA/CMA와
+저장을 분리한다. 결측 원천에 양의 비중을 둔 계산은 차단한다. Pseudo·게이트와 함께 갱신한다.
+상세 정의·원본 이상·재현은 `docs/REFERENCE_PORTFOLIO.md`.
+
 ## 저장소 지도
 
 | 경로 | 역할 |

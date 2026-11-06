@@ -15,6 +15,7 @@
 <link rel="stylesheet" href="fx-model-c.css?v=20261031-quarterly-1">
 <link rel="stylesheet" href="fx-model-d.css?v=20261103-volatility-1">
 <link rel="stylesheet" href="summary-forecasts.css?v=20261103-volatility-1">
+<link rel="stylesheet" href="reference-portfolio.css?v=20261106-reference-1">
 </head>
 <body>
 
@@ -179,10 +180,11 @@
 
   <section id="alloc" class="section" aria-label="자산배분">
     <div class="alloc-workspace" id="alloc-workspace"></div>
-    <!-- 포트폴리오와 리스크연계 두 탭만 표시한다. -->
+    <!-- 자산배분 하위 작업 공간. -->
     <div class="card" id="alloc-port-panel" style="margin-top:10px"></div>
     <!-- 리스크연계: 현재·잠재 주간 점수에 따른 배분 경로. -->
     <div class="card" id="alloc-risk-proc" style="margin-top:10px" hidden></div>
+    <div id="alloc-reference-panel" role="region" aria-label="레퍼런스 포트폴리오" hidden></div>
     <!-- 리스크연계의 공통 엔진·저장 호환용 패널. 화면에서는 표시하지 않는다. -->
     <div class="howto" id="alloc-controls" hidden></div>
     <div class="card" id="alloc-sim-panel" hidden style="margin-top:10px"></div>
@@ -296,7 +298,7 @@
 <script src="port-opportunities.js?v=20260913-improvement-conditions-1"></script>
 <script src="cma.js?v=20261011-cma-precision-1"></script>
 <script src="pseudo/risk.js?v=20260930-pseudo-1"></script>
-<script src="pseudo/alloc.js?v=20261106-risk-lambda-stats-1"></script>
+<script src="pseudo/alloc.js?v=20261106-reference-1"></script>
 <script src="pseudo/hedge.js?v=20261103-volatility-1"></script>
 <script src="pseudo.js?v=20260930-pseudo-1"></script>
 <script src="fx-markov.js?v=20261020-fx-mc-1"></script>
@@ -312,6 +314,7 @@
 <script src="summary-fx.js?v=20261103-volatility-1"></script>
 <script src="summary-hedge.js?v=20261102-hedge-model-c-1"></script>
 <script src="summary-forecasts.js?v=20261102-hedge-model-c-1"></script>
-<script src="app.js?v=20261106-risk-lambda-stats-1"></script>
+<script src="reference-portfolio.js?v=20261106-reference-1"></script>
+<script src="app.js?v=20261106-reference-1"></script>
 </body>
 </html>

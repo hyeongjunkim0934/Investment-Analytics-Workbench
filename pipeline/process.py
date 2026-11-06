@@ -37,6 +37,7 @@ import fx_outlook
 import hedge
 import panel
 import port
+import reference_portfolio
 import regime
 import risk
 # 재수출(re-export): 예전 process.epoch_seconds 를 쓰던 호출부를 그대로 두면서
@@ -979,6 +980,13 @@ def main() -> None:
             traceback.print_exc()
             warn("port: 포트폴리오 구성 통계 계산 실패 — 해당 패널 없이 배포됩니다")
             payloads["alloc.json"]["port"] = {"active": False, "reason": "계산 실패 — 빌드 로그 확인"}
+        try:
+            payloads["alloc.json"]["reference"] = reference_portfolio.build_for_data_dir(SERIES, warn, args.data_dir)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            warn("reference: 레퍼런스 포트폴리오 계산 실패")
+            payloads["alloc.json"]["reference"] = reference_portfolio.inactive("계산 실패 — 빌드 로그 확인")
 
     payloads.update({
         "rates.json": build_rates(),

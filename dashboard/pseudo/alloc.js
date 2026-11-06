@@ -3,7 +3,7 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.alloc = {
   id: "alloc",
   title: "자산배분",
-  updated: "2026-10-12",
+  updated: "2026-11-06",
   summary: "SAA 제약·TAA 입력 시나리오 → Baseline·비중1/비중2 비교 → 리스크 연계 비중",
   inputs: "월말 지수·USDKRW, 연 μ·σ(%), CMA 시나리오 확률(%), 상관계수, h(0~1), 그룹 최소·최대(%), 자산별 최소(%). 공분산은 게시 소수² → 계산 %²(×10,000)",
   outputs: "포트폴리오 μ·σ, Baseline, 선택 Conservative·Optimistic, 현재·잠재 리스크 연계 비중",
@@ -14,6 +14,21 @@ globalThis.PSEUDO_DOCS.alloc = {
     { path: "dashboard/app.js", symbols: ["portRiskInputs", "portModelInputs", "portRobustModel", "portFrontiers", "portHedgeInputs", "allocRiskObservations", "allocRiskOptimize"] }
   ],
   sections: [
+    {
+      id: "reference-portfolio",
+      title: "레퍼런스 포트폴리오 · 과거 모멘트 비교",
+      formulas: [
+        { expression: "r(KRW) = (1 + r(USD)) × (1 + r(FX)) − 1", legend: "동일 날짜 지수·달러원을 환산한 완료월 단순수익률. 월 누락 연결 금지." },
+        { expression: "μp = wᵀμ; σp = 100√(wᵀΣw); RCᵢ = 100wᵢ(Σw)ᵢ/(wᵀΣw)", legend: "μ는 과거 산술 연평균 %, Σ는 연 소수수익률². 매월 고정비중 재조정. RC는 분산 기여 비중 %." },
+        { expression: "Sharpe(근사) = (μp − CD평균)/σp", legend: "CD(AAA) 3M 전월 말 금리의 동일 표본 평균. 초과수익률 변동성 대신 포트폴리오 변동성 사용." }
+      ],
+      code: ["validate_source_levels_and_duplicate_bond_history()", "align_assets_and_fx_on_same_dates()", "exclude_latest_source_month_and_keep_calendar_gaps()", "publish_1_3_5_10_year_aggregate_moments_only()", "reject_positive_weights_on_unavailable_assets()", "compare_example_and_applied_custom_weights_without_changing_SAA_TAA_CMA()"].join("\n"),
+      note: "원천은 data_bb. 국내·미국·한미 60/40, 분산50/40/10은 예시이며 전망·최적화 결과가 아니다. 원자재는 GSCI TR이고 spot 대체 금지. 단위·표본·비활성 사유는 CSV/화면에 포함. CAGR·MDD·누적경로는 집계 모멘트로 복원하지 않는다.",
+      sources: [
+        { path: "pipeline/reference_portfolio.py", symbols: ["build"] },
+        { path: "dashboard/reference-portfolio.js", symbols: ["referenceMoments", "renderReferencePortfolio"] }
+      ]
+    },
     {
       id: "target-return-ladder",
       title: "Target Return · 5개 목표 비교",

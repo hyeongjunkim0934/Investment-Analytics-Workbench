@@ -71,7 +71,7 @@ REQUIRED_KEYS = {
               "cma",
               # port = 7자산군 포트폴리오 구성(port.build). 프록시가 없어도
               # active:false 블록이 게시돼야 한다 — cma 와 같은 체인 안전장치.
-              "port"],
+              "port", "reference"],
     "risk":  ["asof", "grade_bands", "howto", "layers", "weights",
               "validation", "factors", "limits",
               # regime = 시장 국면 참고 블록(regime.py). 계산이 실패해도
@@ -124,6 +124,176 @@ def fail(msg: str) -> None:
 
 def note(msg: str) -> None:
     _notes.append(msg)
+
+
+def _valid_reference_snapshot_source(source):
+    """Only provenance, never a path/URL to be fetched by the loader."""
+    if (not isinstance(source, dict) or set(source) != {"name", "modified_at", "sha256"}
+            or source.get("name") != "data_git/data_bb.xlsx"
+            or not isinstance(source.get("sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", source["sha256"]) is None
+            or not isinstance(source.get("modified_at"), str)):
+        return False
+    try:
+        value = datetime.fromisoformat(source["modified_at"].replace("Z", "+00:00"))
+        return value.tzinfo is not None
+    except ValueError:
+        return False
+
+
+def _check_reference_portfolio(block, errors=None):
+    """Five fixed slots; unavailable assets are null, never silently zero-filled."""
+    prefix = "alloc.json: reference: "
+    def invalid(message):
+        if errors is None:
+            fail(prefix + message)
+        else:
+            errors.append(prefix + message)
+    def finite(value):
+        try:
+            return type(value) in (int, float) and math.isfinite(value)
+        except OverflowError:
+            return False
+    def month_end(value):
+        try:
+            d = date.fromisoformat(value)
+            return d if d.day == calendar.monthrange(d.year, d.month)[1] else None
+        except (TypeError, ValueError):
+            return None
+    allowed = {"version", "active", "reason", "assets", "windows", "defaults", "asof",
+               "data_asof", "common_observation", "frequency", "annualization", "ddof",
+               "basis", "rf_source", "rf_label", "source_observations", "unavailable_windows",
+               "contiguous_months", "sample_start", "source_snapshot"}
+    if not isinstance(block, dict):
+        invalid("객체 필요")
+        return
+    if set(block) - allowed:
+        invalid("미승인 필드 — 원본 시계열 게시 금지")
+    if type(block.get("version")) is not int or block.get("version") != 1 or type(block.get("active")) is not bool:
+        invalid("version/active 규약 위반")
+    if "source_snapshot" in block and not _valid_reference_snapshot_source(block["source_snapshot"]):
+        invalid("snapshot 출처 메타데이터 위반")
+    if (block.get("frequency") != "monthly" or block.get("annualization") != 12
+            or block.get("ddof") != 1 or block.get("rf_source") != "bb:한국_크레딧_CD_AAA_3m"
+            or block.get("rf_label") != "CD(AAA) 3M 대용금리"
+            or block.get("basis") != "KRW · USD 자산 미헤지 · 월별 목표비중 재조정"):
+        invalid("표시통화·월간 표본·연율·대용금리 규약 위반")
+    missing_years = block.get("unavailable_windows")
+    if (not isinstance(missing_years, list)
+            or any(type(y) is not int or y not in (1, 3, 5, 10) for y in missing_years)
+            or len(missing_years) != len(set(missing_years))):
+        invalid("부족 창 메타데이터 규약 위반")
+    assets = block.get("assets")
+    keys = ["kr_bond", "us_bond", "kr_equity", "us_equity", "commodity"]
+    sources = ["bb:한국종합", "bb:미국종합", "bb:한국_KOSPI_TR", "bb:미국_S&P500_TR", "bb:S&P GSCI TR CME"]
+    labels = ["국내채권", "미국채권", "국내주식", "미국주식", "원자재"]
+    currencies = ["KRW", "USD→KRW", "KRW", "USD→KRW", "USD→KRW"]
+    if not isinstance(assets, list) or len(assets) != 5 or any(
+            not isinstance(a, dict) or a.get("key") != keys[i]
+            or a.get("source") != sources[i] or a.get("label") != labels[i]
+            or a.get("currency") != currencies[i]
+            or type(a.get("available")) is not bool
+            or not isinstance(a.get("reason"), str)
+            or set(a) - {"key", "label", "source", "currency", "available", "reason"}
+            for i, a in enumerate(assets)):
+        invalid("자산 순서·메타데이터 위반")
+        return
+    observations = block.get("source_observations")
+    if not isinstance(observations, dict) or set(observations) - set(sources + ["bb:달러원", "bb:한국_크레딧_CD_AAA_3m"]) or any(
+            not isinstance(value, dict) or set(value) != {"first", "last", "n"}
+            or type(value.get("n")) is not int or value["n"] < 1
+            or not isinstance(value.get("first"), str) or not isinstance(value.get("last"), str)
+            for value in (observations or {}).values()):
+        invalid("원천 메타데이터 규약 위반 — 원본 값 게시 금지")
+    if not isinstance(block.get("defaults"), dict) or set(block["defaults"]) != {"window"}:
+        invalid("defaults 규약 위반")
+        return
+    present = [i for i, a in enumerate(assets) if a["available"]]
+    for a in assets:
+        if not a["available"] and not a["reason"]:
+            invalid("누락 자산 사유 필요")
+    if block.get("active") is False:
+        if not block.get("reason") or block.get("windows") != []:
+            invalid("비활성 사유와 빈 windows 필요")
+        return
+    if type(block.get("contiguous_months")) is not int or block["contiguous_months"] < 12 or month_end(block.get("sample_start")) is None:
+        invalid("연속 공동 표본 메타데이터 위반")
+    if len(present) < 2 or block.get("frequency") != "monthly" or block.get("annualization") != 12 or block.get("ddof") != 1:
+        invalid("동일 월간 표본·연율 규약 위반")
+    windows = block.get("windows")
+    if not isinstance(windows, list) or not windows:
+        invalid("활성 windows 필요")
+        return
+    seen = set()
+    for w in windows:
+        if not isinstance(w, dict):
+            invalid("window 객체 필요")
+            continue
+        if set(w) != {"key", "label", "n_months", "start", "end", "mean_pct", "vol_pct", "cov", "rf_mean_pct", "rf_reason"}:
+            invalid("window 필드 규약 위반 — 원자료 게시 금지")
+        if not isinstance(w.get("key"), str):
+            invalid("창 key 문자열 필요")
+            continue
+        expected = {"y1": 12, "y3": 36, "y5": 60, "y10": 120}.get(w["key"])
+        if (expected is None or type(w.get("n_months")) is not int or w.get("n_months") != expected
+                or w.get("key") in seen or (expected is not None and w.get("label") != f"{expected // 12}년")):
+            invalid("창 길이·중복 위반")
+        seen.add(w.get("key"))
+        start, end = month_end(w.get("start")), month_end(w.get("end"))
+        if start is None or end is None or (end.year - start.year) * 12 + end.month - start.month + 1 != expected or w.get("end") != block.get("asof"):
+            invalid("연속 완료월 창 날짜 위반")
+        try:
+            data_asof = date.fromisoformat(block.get("data_asof"))
+            if end is not None and (end.year, end.month) >= (data_asof.year, data_asof.month):
+                invalid("부분월 포함")
+        except (TypeError, ValueError):
+            invalid("원천 기준일 필요")
+        m, v, c = w.get("mean_pct"), w.get("vol_pct"), w.get("cov")
+        if (not isinstance(m, list) or len(m) != 5 or not isinstance(v, list) or len(v) != 5
+                or not isinstance(c, list) or len(c) != 5 or any(not isinstance(r, list) or len(r) != 5 for r in c)):
+            invalid("모멘트 차원 위반")
+            continue
+        numeric_ok = True
+        for i in range(5):
+            if i not in present:
+                if m[i] is not None or v[i] is not None or any(x is not None for x in c[i]) or any(r[i] is not None for r in c):
+                    invalid("누락 자산은 null 필요")
+            elif not finite(m[i]) or not finite(v[i]) or v[i] < 0 or any(not finite(c[i][j]) for j in present):
+                invalid("유한 모멘트 필요")
+                numeric_ok = False
+        if numeric_ok:
+            for i in present:
+                if c[i][i] < -1e-12 or abs(v[i] ** 2 / 10000 - c[i][i]) > 1e-9:
+                    invalid("변동성·분산 단위 불일치")
+                for j in present:
+                    if abs(c[i][j] - c[j][i]) > 1e-12:
+                        invalid("비대칭 공분산")
+            # Cholesky with tiny relative tolerance permits rank-deficient PSD.
+            scale = max(1e-12, *(abs(c[i][i]) for i in present))
+            L = [[0.0] * len(present) for _ in present]
+            psd = True
+            for ii, i in enumerate(present):
+                for jj, j in enumerate(present[:ii + 1]):
+                    value = c[i][j] / scale + (1e-9 if ii == jj else 0)
+                    value -= sum(L[ii][k] * L[jj][k] for k in range(jj))
+                    if ii == jj:
+                        if value <= 0:
+                            psd = False
+                            break
+                        L[ii][jj] = math.sqrt(value)
+                    else:
+                        L[ii][jj] = value / L[jj][jj]
+                if not psd:
+                    break
+            if not psd:
+                invalid("공분산 PSD 위반")
+        if w.get("rf_mean_pct") is not None and not finite(w["rf_mean_pct"]):
+            invalid("CD 대용금리 비유한 값")
+        if w.get("rf_mean_pct") is None and not w.get("rf_reason"):
+            invalid("CD 대용금리 누락 사유 필요")
+    default_window = block["defaults"].get("window")
+    if not isinstance(default_window, str) or default_window not in seen:
+        invalid("기본 창 없음")
 
 
 def _check_hedge_tail(payload):
@@ -837,6 +1007,8 @@ def check(out: Path, max_warnings: int, min_series: int, dashboard: Path | None)
         _check_fx_model_c(fx.get("model_c"))
         _check_fx_model_d(fx.get("model_d"))
     _check_hedge_tail(payloads.get("hedge"))
+    if isinstance(payloads.get("alloc"), dict):
+        _check_reference_portfolio(payloads["alloc"].get("reference"))
 
     seen = [0]
     for name, obj in payloads.items():

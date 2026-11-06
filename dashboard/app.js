@@ -6044,12 +6044,13 @@ function allocDonutSVG(entries, size) {
 
 /* ================= 자산배분 — 화면 ================= */
 
-/* 화면은 포트폴리오·리스크연계만 표시한다. 리스크연계가 사용하는 기존 기관 엔진과
+/* 화면은 포트폴리오·리스크연계·레퍼런스를 표시한다. 리스크연계가 사용하는 기존 기관 엔진과
    저장값은 유지하되 기관배분/헤지 패널은 모든 화면 전환에서 숨긴다. */
 let allocWorkspace = "port";
 const ALLOC_WORKSPACES = {
   port: { label: "포트폴리오", panels: ["alloc-port-panel"] },
   risk: { label: "리스크연계", panels: ["alloc-risk-proc"] },
+  reference: { label: "레퍼런스 포트폴리오", panels: ["alloc-reference-panel"] },
 };
 const ALLOC_RETIRED_PANELS = ["alloc-sim-panel", "alloc-headline", "alloc-summary",
   "alloc-controls", "alloc-cards", "alloc-levers"];
@@ -6083,6 +6084,7 @@ function selectAllocWorkspace(key) {
   });
   refreshAllocWorkspaceInfo();
   if (key === "risk") renderLinkedAllocRisk();
+  if (key === "reference") renderReferencePortfolio();
 }
 
 function renderAllocWorkspace() {

@@ -58,7 +58,7 @@ P.renderSection("alloc");
 r.noRenderErrors = byId("alloc").querySelectorAll(".render-error").length === 0;
 r.defaultPort = !byId("alloc-port-panel").hidden && byId("alloc-sim-panel").hidden;
 r.portContext = byId("alloc-workspace-info").hidden
-  && byId("alloc-workspace").textContent === "포트폴리오리스크연계"
+  && byId("alloc-workspace").textContent === "포트폴리오리스크연계레퍼런스 포트폴리오"
   && /2027-01-31~2030-06-30/.test(periodText("alloc-port-panel"))
   && /42개월/.test(periodText("alloc-port-panel"));
 r.workspaceExplanationRemoved = !/대체 통합|달러\/원화 유동성|체계별 입력 별도 저장|브라우저 저장값/.test(
