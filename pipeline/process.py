@@ -35,6 +35,7 @@ import fx_markov
 import fx_model_c
 import fx_model_d
 import fx_outlook
+import fx_validation
 import hedge
 import panel
 import port
@@ -738,9 +739,17 @@ def build_fx() -> dict:
     except Exception:
         warn("fx_model_d: 환율모형D 계산 실패 — 비활성으로 게시됩니다")
         model_d = fx_model_d.skeleton("계산 실패 — 빌드 로그 확인")
-    return {"ts": ts, "outlook": fx_outlook.build(raw),
+    outlook = fx_outlook.build(raw)
+    try:
+        validation = fx_validation.build(outlook, model_c, warn=warn)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        warn("fx_validation: 공통 표본외 검증 실패 — 비활성으로 게시됩니다")
+        validation = fx_validation.skeleton("계산 실패 — 빌드 로그 확인")
+    return {"ts": ts, "outlook": outlook,
             "markov": fx_markov.build(raw, warn=warn), "model_c": model_c,
-            "model_d": model_d}
+            "model_d": model_d, "validation": validation}
 
 
 def build_inflation() -> dict:

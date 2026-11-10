@@ -13,8 +13,14 @@ let fxLxCharts = [];
 let fxLstmXgbResize = null;
 
 function fxLxPositive(v) { return Number.isFinite(v) && v > 0; }
+function fxLxMonthKey(t) {
+  if (!Number.isInteger(t) || t < 0) return null;
+  const d = new Date(t * 1000);
+  if (!Number.isFinite(d.getTime()) || Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0) / 1000 !== t) return null;
+  return d.getUTCFullYear() * 12 + d.getUTCMonth();
+}
 
-function fxLxComboValid(c) {
+function fxLxComboValid(c, cutoff = Infinity) {
   if (!c || typeof c.key !== "string" || !Number.isInteger(c.lag) || c.lag < 1
       || !Number.isInteger(c.window) || c.window < 2) return false;
   const arrays = [c.t_base, c.t_target, c.base, c.actual];
@@ -24,9 +30,11 @@ function fxLxComboValid(c) {
   if (n < 1 || arrays.some((a) => a.length !== n) || ["xgb", "lstm", "ensemble"].some((m) => c.pred[m].length !== n)) return false;
   for (let i = 0; i < n; i++) {
     if (!Number.isInteger(c.t_base[i]) || !Number.isInteger(c.t_target[i]) || c.t_target[i] <= c.t_base[i]) return false;
+    const originMonth = fxLxMonthKey(c.t_base[i]), targetMonth = fxLxMonthKey(c.t_target[i]);
+    if (originMonth === null || targetMonth === null || targetMonth - originMonth !== c.lag || c.t_base[i] > cutoff) return false;
     if (i && c.t_base[i] <= c.t_base[i - 1]) return false;
     if (!fxLxPositive(c.base[i]) || (c.actual[i] !== null && !fxLxPositive(c.actual[i]))) return false;
-    if (i && c.actual[i] !== null && c.actual[i - 1] === null) return false;
+    if (c.actual[i] !== null && c.t_target[i] > cutoff) return false;
     if (["xgb", "lstm", "ensemble"].some((m) => !fxLxPositive(c.pred[m][i]))) return false;
   }
   return true;
@@ -35,7 +43,18 @@ function fxLxComboValid(c) {
 function fxLxValid(payload) {
   if (!payload || typeof payload !== "object") return { ok: false, reason: "환율모형B 분석 데이터를 불러오지 못했습니다." };
   if (payload.active !== true) return { ok: false, reason: payload.reason || "모형 산출물이 없습니다." };
-  if (!Array.isArray(payload.combos) || !payload.combos.length || !payload.combos.every(fxLxComboValid))
+  const contract = { version: "2", replicate_notebook: false,
+    label_alignment: "calendar_month_target_realized_by_base_date", sequence_alignment: "last_input_month_matches_label_origin",
+    horizon_unit: "calendar_month", train_window: "consecutive_calendar_origin_months" };
+  if (payload.schema !== "fx_lstm_xgb/2" || !Object.entries(contract).every(([k, v]) => payload.runner?.[k] === v)
+      || !Number.isInteger(payload.runner?.seed) || payload.runner.seed < 0
+      || !["ffill", "none"].includes(payload.model?.ns?.fill)
+      || !Number.isInteger(payload.model?.bop_lag_months) || payload.model.bop_lag_months < 2)
+    return { ok: false, reason: "안전한 달력·시퀀스 정렬을 확인할 수 없어 표시하지 않습니다. v2 러너로 재생성하십시오." };
+  const end = payload.data?.table?.end;
+  const cutoff = typeof end === "string" && /^\d{4}-\d{2}-\d{2}$/.test(end) ? Date.parse(end + "T00:00:00Z") / 1000 : null;
+  if (fxLxMonthKey(cutoff) === null || new Date(cutoff * 1000).toISOString().slice(0, 10) !== end
+      || !Array.isArray(payload.combos) || !payload.combos.length || !payload.combos.every((c) => fxLxComboValid(c, cutoff)))
     return { ok: false, reason: "모형 산출물의 형식을 확인할 수 없어 표시하지 않습니다." };
   const lags = [...new Set(payload.combos.map((c) => c.lag))].sort((a, b) => a - b);
   const windows = [...new Set(payload.combos.map((c) => c.window))].sort((a, b) => a - b);
@@ -88,8 +107,9 @@ function fxLxCombo(payload, lag, window) {
 }
 
 /* Row view of one combo: random walk = the base-date spot carried forward. */
-function fxLxRows(combo, model) {
-  return combo.t_base.map((tb, i) => ({ tb, tt: combo.t_target[i], base: combo.base[i], actual: combo.actual[i],
+function fxLxRows(combo, model, today = fxForecastToday(), history = null) {
+  return combo.t_base.map((tb, i) => ({ tb, tt: combo.t_target[i], base: combo.base[i],
+    actual: fxForecastStatus(combo.t_target[i], combo.pred[model][i], history, null, null, today, combo.actual[i]).actual,
     pred: combo.pred[model][i], xgb: combo.pred.xgb[i], lstm: combo.pred.lstm[i], ensemble: combo.pred.ensemble[i],
     rw: combo.base[i] }));
 }
@@ -135,8 +155,7 @@ function renderFxLstmXgb(host) {
     host.append(el("div", { class: "card fx-lx-empty", role: "status" },
       el("span", { class: "card-title" }, "USDKRW · LSTM / XGBoost walk-forward"),
       el("p", { class: "card-sub" }, valid.reason),
-      el("p", { class: "card-sub" }, "오프라인 러너(pipeline/research/fx_lstm_xgb_runner.py)의 산출물 fx_lstm_xgb.json 을 "
-        + "Data 저장소에 커밋하면 다음 빌드부터 표시됩니다.")));
+      el("p", { class: "card-sub" }, "월간 입력 3개가 준비되면 다음 빌드에서 자동 학습합니다. 검증된 v2 전망 파일도 불러올 수 있습니다.")));
     return;
   }
   const view = fxLxViewState(payload, valid);
@@ -209,10 +228,11 @@ function renderFxLstmXgb(host) {
     const take = shown.slice().reverse().slice(0, cap);
     return {
       headers: ["기준일", "예측시점", "기준 환율", "실제 환율", "XGBoost", "LSTM", "앙상블", "랜덤워크",
-        `${modelLabel()} 오차`, "랜덤워크 오차"],
+        `${modelLabel()} 오차`, "랜덤워크 오차", "전망 상태"],
       rows: take.map((r) => [tsToDate(r.tb), tsToDate(r.tt), num(r.base), num(r.actual), num(r.xgb), num(r.lstm),
         num(r.ensemble), num(r.rw), num(r.actual === null ? null : r.pred - r.actual),
-        num(r.actual === null ? null : r.rw - r.actual)]),
+        num(r.actual === null ? null : r.rw - r.actual),
+        fxForecastStatus(r.tt, r.pred, null, null, null, fxForecastToday(), r.actual).label]),
     };
   };
   const box = cardScaffold(chartCard, { title: "USDKRW · LSTM / XGBoost walk-forward", sub: "원/달러 · 예측시점 기준",
@@ -226,7 +246,7 @@ function renderFxLstmXgb(host) {
 
   /* ---- error card ---- */
   const errorCard = el("div", { class: "card fx-outlook-card fx-lx-error-card" });
-  const errorBox = cardScaffold(errorCard, { title: "실제 − 전망 차이", sub: "원 · 예측 − 실제 (양수 = 과대 예측)" });
+  const errorBox = cardScaffold(errorCard, { title: "예측 − 실제 차이", sub: "원 · 예측 − 실제 (양수 = 과대 예측)" });
   errorBox.classList.add("time-chart-hover", "fx-outlook-chart", "fx-lx-error-chart");
   hedgeChartLegend(errorBox, [["모형 오차", modelColor], ["랜덤워크 오차", rwColor, true]]);
   const errorHost = el("div", { class: "hedge-plot-host" }); errorBox.append(errorHost);
@@ -343,7 +363,7 @@ function renderFxLstmXgb(host) {
   function update() {
     const combo = fxLxCombo(payload, view.lag, view.window);
     if (!combo) { status.textContent = `선택한 조합(${view.lag}개월 · ${view.window}개월)의 산출물이 없습니다.`; status.hidden = false; return; }
-    rows = fxLxRows(combo, view.model);
+    rows = fxLxRows(combo, view.model, fxForecastToday(), DATA.fx?.outlook?.history);
     cutoff = fxLxCutoff(rows, view.range);
     shown = rows.filter((r) => r.tt >= cutoff);
     const realized = rows.filter((r) => r.actual !== null);
@@ -354,9 +374,15 @@ function renderFxLstmXgb(host) {
     tiles.textContent = "";
     const delta = (v) => `${v >= last.base ? "+" : ""}${fmtNum((v / last.base - 1) * 100, 2)}%`;
     tiles.append(tile("기준 환율", `${fmtNum(last.base, 0)}원`, `기준일 ${tsToDate(last.tb)}`, "fx-lx-tile-base"));
-    FX_LX_MODELS.forEach(([key, name]) => tiles.append(tile(`${name} · ${view.lag}개월 후`, `${fmtNum(last[key], 0)}원`,
-      `${tsToDate(last.tt)} · 기준 대비 ${delta(last[key])}${last.actual === null ? "" : ` · 실제 ${fmtNum(last.actual, 0)}원`}`,
-      `fx-lx-tile-${key}`)));
+    FX_LX_MODELS.forEach(([key, name]) => {
+      const lifecycle = fxForecastStatus(last.tt, last[key], null, null, null, fxForecastToday(), last.actual);
+      const item = tile(`${name} · ${view.lag}개월${lifecycle.expired ? " 당시 전망" : " 후"}`, `${fmtNum(last[key], 0)}원`,
+        `${tsToDate(last.tt)} · 기준 대비 ${delta(last[key])}`, `fx-lx-tile-${key}`);
+      if (lifecycle.expired) item.append(el("span", { class: "card-sub fx-lx-expired", role: "status" }, lifecycle.label));
+      if (lifecycle.actual !== null) item.append(el("span", { class: "card-sub fx-lx-realized" },
+        fxForecastEvaluationText(lifecycle, (v) => fmtNum(v, 0))));
+      tiles.append(item);
+    });
     mount();
     if (mainPlot) {
       const data = chartData();
@@ -374,9 +400,11 @@ function renderFxLstmXgb(host) {
         const [min, max] = bounds(err, 5); errorPlot.setScale("y", { min, max });
       }
     }
-    const pending = shown.filter((r) => r.actual === null).length;
+    const pending = shown.filter((r) => r.actual === null && r.tt > fxForecastToday()).length;
+    const expiredPending = shown.filter((r) => r.actual === null && r.tt <= fxForecastToday()).length;
     chartNote.textContent = `${modelLabel()} · 지평 ${view.lag}개월 · 학습창 ${view.window}개월 · 표시 ${shown.length}행`
-      + (pending ? ` (미실현 예측 ${pending}행 — 점선 오른쪽)` : "") + (combo.n_realized ? "" : " · 실현된 예측이 아직 없습니다.");
+      + (pending ? ` · 미래 예측 ${pending}행` : "") + (expiredPending ? ` · 목표일 경과·실현 대기 ${expiredPending}행` : "")
+      + (realized.length ? "" : " · 실현된 예측이 아직 없습니다.");
     const table = chartCard.querySelector(".chart-table");
     if (table && !table.classList.contains("hidden")) renderTable(table, tableFn());
     // Metrics: every model on the same realized rows, selected one in bold.

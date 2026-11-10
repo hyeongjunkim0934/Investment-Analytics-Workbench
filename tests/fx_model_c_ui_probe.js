@@ -11,6 +11,7 @@ const iso=t=>new Date(t*1000).toISOString().slice(0,10);
 const end=(y,m)=>Date.UTC(y,m+1,0)/1000;
 const near=(a,b)=>assert(Math.abs(a-b)<1e-8,a+' != '+b);
 const same=(a,b)=>assert.equal(JSON.stringify(a),JSON.stringify(b));
+sandbox.Date = class extends Date {constructor(...args){super(...(args.length ? args : ['2026-01-01T00:00:00Z']));}};
 const fixture={active:true,schema:'fx_model_c_v1',pair:'USDKRW',unit:'KRW/USD',source:'bb:달러원',asof:'2025-12-31',model_date:'2025-12-31',
   anchor:{t:stamp('2025-12-31'),quote_t:stamp('2025-12-31'),v:1375.125},
   sample:{start:'2010-01-29',end:'2025-12-31',n_months:192,latest_common_date:'2026-01-08'},
@@ -110,7 +111,25 @@ if(process.env.FX_MODEL_C_FIXTURE){
   const result=render(enginePayload);assert(result.forecast&&result.errors,'real engine payload must render');
   enginePayload.horizons.filter(r=>r.active).forEach(r=>near(result.forecast.data[2][result.forecast.data[0].indexOf(r.target_t)],r.point));
 }
-console.log(JSON.stringify({fourTabsAndNamePersistence:true,commonMonthEndDateContract:true,chartIntervalsAndNoMarkers:true,
+// Seoul midnight retires the forecast while preserving its published value and consensus draft.
+sandbox.Date = class extends Date {constructor(...args){super(...(args.length ? args : ['2026-01-30T14:59:59Z']));}};
+render(); assert.equal(host().querySelectorAll('.fx-c-expired').length,0);
+const consensusInput = DOC.getElementById('fxoutlook-content').querySelector('input');
+const priorInputValue = consensusInput.value;
+sandbox.Date = class extends Date {constructor(...args){super(...(args.length ? args : ['2026-01-30T15:00:00Z']));}};
+tab('modelC').click();
+assert.strictEqual(DOC.getElementById('fxoutlook-content').querySelector('input'),consensusInput);
+assert.equal(consensusInput.value,priorInputValue);
+assert(host().querySelector('.fx-c-expired').textContent.includes('실현 대기'));
+assert.equal(host().querySelector('.fx-c-value').textContent,Math.round(fixture.horizons[0].point).toLocaleString('en-US'));
+const expiredTarget=fixture.horizons[0].target_t;
+history.t.push(expiredTarget, expiredTarget+86400); history.v.push(1400,9999);
+const evaluated=render();
+assert(host().querySelector('.fx-c-realized').textContent.includes('실현 1,400원'));
+near(evaluated.forecast.data[1][evaluated.forecast.data[0].indexOf(expiredTarget)],1400);
+assert(!evaluated.forecast.data[0].includes(expiredTarget+86400),'future quote never enters realized line');
+history.t.splice(-2); history.v.splice(-2);
+console.log(JSON.stringify({expiryBoundaryExactActualAndConsensusDraft:true,fourTabsAndNamePersistence:true,commonMonthEndDateContract:true,chartIntervalsAndNoMarkers:true,
   sameSampleMetricsAndContributions:true,forecastAndBacktestCsvPrecision:true,controlsAndConsensusPreserved:true,
   chartLifecycle:true,malformedInactiveAndMissingIntervals:true,fiveHorizonsAndLegacyCompatibility:true}));
 `;

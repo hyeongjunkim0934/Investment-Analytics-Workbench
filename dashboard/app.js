@@ -2582,6 +2582,7 @@ function sectionHasRangedChart(sec) {
 function routeView() {
   if (typeof cmaCloseTooltip === "function") cmaCloseTooltip();
   refreshObservationBadges();
+  if (typeof refreshFxForecastDates === "function") refreshFxForecastDates();
   const hash = location.hash.replace(/^#/, "");
   const sec = underlyingSection(hash);
   const showVillage = !sec;
@@ -10461,7 +10462,13 @@ function bindTheme() {
   /* 탭이 백그라운드로 가면 영상 디코드·타이머를 멈추고, 돌아오면 다시 건다. */
   document.addEventListener("visibilitychange", () => {
     restartSceneCycle();
-    if (!document.hidden) refreshObservationBadges();
+    if (!document.hidden) {
+      refreshObservationBadges();
+      if (typeof refreshFxForecastDates === "function") refreshFxForecastDates();
+    }
+  });
+  window.addEventListener("focus", () => {
+    if (typeof refreshFxForecastDates === "function") refreshFxForecastDates();
   });
   matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", () => {
     restartSceneCycle();

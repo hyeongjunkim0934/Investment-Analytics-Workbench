@@ -123,11 +123,11 @@ assert.equal(shim.localStorage.getItem('iaw-fx-outlook-v2'),saved);
 button('표').click();button('CSV').click();
 const csv=CSV_DOWNLOADS.at(-1).replace(/^\uFEFF/,'').trim().split('\n').map(row=>row.split(','));
 const headers=csv.shift(),table=host().querySelector('.chart-table').querySelectorAll('tbody tr');
-assert.equal(headers.length,6);assert.equal(table.length,u.data[0].length);
-assert(headers.slice(1).every(label=>label.includes('원/달러')));
+assert.equal(headers.length,9);assert.equal(table.length,u.data[0].length);
+assert(headers.slice(1,6).every(label=>label.includes('원/달러')));
 csv.forEach((row,i)=>{
   const j=u.data[0].length-1-i,cells=table[i].querySelectorAll('td');assert.equal(row[0],iso(u.data[0][j]));
-  row.slice(1).forEach((text,col)=>{
+  row.slice(1,6).forEach((text,col)=>{
     const value=u.data[col+1][j];
     if(value==null){assert.equal(text,'');assert.equal(cells[col+1].textContent,'–');}
     else{near(Number(text),value);assert.equal(numeric(cells[col+1].textContent),Math.round(value));}
@@ -208,7 +208,17 @@ assert(!host().querySelector('.fx-markov-forecast'));
 render(null);assert(host().textContent.includes('분석 데이터를 불러오지 못했습니다.'));
 // An extreme positive tail can put the arithmetic mean above the central interval.
 const skewed=copy();skewed.simulation.mean[252]=skewed.simulation.upper95[252]*2;assert(render(skewed).u);
-console.log(JSON.stringify({monteCarloDailyMeanMedianAndControls:true,anchorAndForecastBands:true,threeRegimesAndForecastCards:true,
+// A frozen forecast remains inspectable after expiry and evaluates only an exact target quote.
+sandbox.Date = class extends Date {constructor(...args){super(...(args.length ? args : ['2026-12-29T14:59:59Z']));}};
+render();assert.equal(host().querySelectorAll('.fx-markov-expired').length,0);
+sandbox.Date = class extends Date {constructor(...args){super(...(args.length ? args : ['2026-12-29T15:00:00Z']));}};
+render();assert(host().querySelector('.fx-markov-expired').textContent.includes('실현 대기'));
+history.t.push(simulation.t[63],simulation.t[63]+86400);history.v.push(1340,9999);
+const evaluated=render();assert(evaluated.u,'new actuals must not invalidate the frozen anchor');
+assert(host().querySelector('.fx-markov-realized').textContent.includes('실현 1,340원'));
+assert(!evaluated.u.data[0].some((t,i)=>evaluated.u.data[1][i]===9999));
+near(evaluated.u.data[2][evaluated.u.data[0].indexOf(simulation.t[63])],simulation.mean[63]);
+console.log(JSON.stringify({historicalForecastLifecycle:true,monteCarloDailyMeanMedianAndControls:true,anchorAndForecastBands:true,threeRegimesAndForecastCards:true,
   integerDisplayRawCsvHover:true,periodLeavesForecastUnchanged:true,consensusStatePreserved:true,
   modelNameEditingPreserved:true,chartResizeAndCleanup:true,malformedAndInactiveGraceful:true}));
 `;

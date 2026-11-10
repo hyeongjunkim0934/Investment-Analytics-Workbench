@@ -17,7 +17,7 @@ function fxMarkovValid(payload, outlook) {
   const p = payload, a = p?.anchor, s = p?.simulation;
   const history = fxOutlookHistory(outlook);
   if (p?.active !== true || !Number.isFinite(a?.t) || !Number.isFinite(a?.v) || a.v <= 0
-      || history.t.at(-1) !== a.t || history.v.at(-1) !== a.v
+      || history.v[history.t.indexOf(a.t)] !== a.v
       || s?.schema_version !== 1 || s.engine !== "gaussian_markov_log_returns"
       || !Number.isInteger(s.path_count) || s.path_count < 2
       || !Number.isInteger(s.seed) || s.seed < 0 || s.parameter_uncertainty_included !== false
@@ -56,7 +56,8 @@ function fxMarkovSelection(payload, outlook, years = fxMarkovYears) {
   const lo = years ? start.getTime() / 1000 : history.t[0];
   const rows = new Map(), count = 5 + s.sample_paths.length;
   const row = (t) => { if (!rows.has(t)) rows.set(t, Array(count).fill(null)); return rows.get(t); };
-  history.t.forEach((t, i) => { if (t >= lo) row(t)[0] = history.v[i]; });
+  const today = fxForecastToday();
+  history.t.forEach((t, i) => { if (t >= lo && (t <= a.t || t <= today)) row(t)[0] = history.v[i]; });
   s.t.forEach((t, i) => {
     const item = row(t);
     item[1] = s.mean[i]; item[2] = s.median[i];
@@ -65,7 +66,7 @@ function fxMarkovSelection(payload, outlook, years = fxMarkovYears) {
   });
   const t = [...rows.keys()].sort((x, y) => x - y);
   return { data: [t, ...Array.from({ length: count }, (_, i) => t.map((time) => rows.get(time)[i]))],
-    min: Math.min(lo, t[0]), max: s.t.at(-1) };
+    min: Math.min(lo, t[0]), max: Math.max(s.t.at(-1), t.at(-1)) };
 }
 
 function renderFxMarkov(host) {
@@ -102,7 +103,19 @@ function renderFxMarkov(host) {
   const controls = el("div", { class: "fx-outlook-period fx-markov-controls" },
     el("label", {}, "기간 ", period), el("label", {}, "구간 ", interval), el("label", {}, paths, "표본 경로"));
   let selected = fxMarkovSelection(payload, outlook);
-  const tableFn = (cap, raw) => tsTableFn(labels.map((s) => `${s} (원/달러)`), selected.data.slice(0, 6), 0)(cap, raw);
+  const tableFn = (cap, raw) => {
+    const table = tsTableFn(labels.map((s) => `${s} (원/달러)`), selected.data.slice(0, 6), 0)(cap, raw);
+    const dates = selected.data[0].slice().reverse();
+    table.headers.push("전망 상태", "오차 (평균−실제)", "95% 구간 포함");
+    table.rows.forEach((row, index) => {
+      const step = simulation.t.indexOf(dates[index]);
+      const status = step > 0 ? fxForecastStatus(dates[index], simulation.mean[step], outlook?.history,
+        simulation.lower95[step], simulation.upper95[step]) : null;
+      row.push(status?.label || "실제 관측", status?.error == null ? (raw ? null : "–")
+        : raw ? status.error : fmtNum(status.error, 0), status?.covered ?? null);
+    });
+    return table;
+  };
   const box = cardScaffold(card, { title: "USDKRW · Markov Monte Carlo", sub: "원/달러", controls,
     csvName: "USDKRW-Markov-MonteCarlo.csv", tableFn });
   box.classList.add("time-chart-hover", "fx-outlook-chart", "fx-markov-chart");
@@ -113,7 +126,7 @@ function renderFxMarkov(host) {
   card.append(el("div", { class: "hedge-outlook-summary fx-markov-current" },
     el("b", {}, `최근 ${fmtNum(payload.anchor.v, 0)}`),
     el("span", {}, tsToDate(payload.anchor.t)),
-    el("span", {}, `현재 ${names[payload.current.regime]}`),
+    el("span", {}, `기준일 ${names[payload.current.regime]}`),
     el("span", {}, `${simulation.path_count.toLocaleString("ko-KR")}회 · 252단계`)));
   const warnings = [];
   if (payload.diagnostics?.weak_volatility_separation) warnings.push("국면 간 변동성 구분이 약합니다.");
@@ -124,20 +137,25 @@ function renderFxMarkov(host) {
   const forecastBounds = [];
   [3, 6, 12].forEach((month) => {
     const i = month * 21;
+    const status = fxForecastStatus(simulation.t[i], simulation.mean[i], fxOutlookHistory(outlook),
+      simulation.lower95[i], simulation.upper95[i]);
     const bounds = el("span", { class: "fx-markov-bounds" }); forecastBounds.push([i, bounds]);
     forecastGrid.append(el("div", { class: "card fx-markov-forecast", "data-month": String(month) },
       el("span", { class: "card-sub" }, `${month}개월 · ${tsToDate(simulation.t[i])}`),
+      ...(status.expired ? [el("span", { class: "card-sub fx-markov-expired", role: "status" }, status.label)] : []),
       el("div", { class: "fx-markov-center-row" }, el("span", {}, "평균"),
         el("b", { class: "fx-markov-forecast-value" }, `${fmtNum(simulation.mean[i], 0)}원`)),
       el("div", { class: "fx-markov-center-row" }, el("span", {}, "중앙값"),
-        el("b", { class: "fx-markov-forecast-value fx-markov-median-value" }, `${fmtNum(simulation.median[i], 0)}원`)), bounds));
+        el("b", { class: "fx-markov-forecast-value fx-markov-median-value" }, `${fmtNum(simulation.median[i], 0)}원`)), bounds,
+      ...(status.actual !== null ? [el("span", { class: "card-sub fx-markov-realized" },
+        fxForecastEvaluationText(status, (v) => fmtNum(v, 0)))] : [])));
   });
   const regimeGrid = el("div", { class: "fx-markov-grid fx-markov-regimes" }); host.append(regimeGrid);
   payload.regimes.forEach((regime, i) => {
     const tile = el("div", { class: "card fx-markov-regime", "data-regime": String(i) });
     tile.classList.toggle("is-current", payload.current.regime === i);
     tile.append(el("div", { class: "card-head" }, el("span", { class: "card-title" }, names[i]),
-      el("span", { class: "card-sub" }, payload.current.regime === i ? "현재 최빈 국면" : "")),
+      el("span", { class: "card-sub" }, payload.current.regime === i ? "기준일 최빈 국면" : "")),
       el("b", { class: "fx-markov-probability" }, `${fmtNum(payload.current.probabilities[i] * 100, 2)}%`),
       el("dl", { class: "fx-markov-metrics" },
         el("dt", {}, "연 변동성"), el("dd", {}, `${fmtNum(regime.sigma_annual_pct, 2)}%`),

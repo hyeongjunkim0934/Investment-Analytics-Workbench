@@ -40,6 +40,13 @@ function summaryForecastCard(model, kind) {
       { title: row.intervalReason || "" }));
     quarter.append(summaryForecastMetric("VaR 97.5%", summaryForecastNumber(row.var975Pct, 2, "%"),
       { className: "summary-forecast-var", title: row.varReason || (hedge ? "원화 누적 총수익의 손실" : "달러 보유자의 원화 환손실") }));
+    if (!hedge && row.lifecycle?.expired && Number.isFinite(row.historicalPoint)) {
+      quarter.append(summaryForecastMetric("당시 전망 (원)", summaryForecastNumber(row.historicalPoint)));
+      if (Number.isFinite(row.historicalLower) && Number.isFinite(row.historicalUpper))
+        quarter.append(summaryForecastMetric("당시 95% 범위", `${summaryForecastNumber(row.historicalLower)} ~ ${summaryForecastNumber(row.historicalUpper)}`));
+      if (row.lifecycle.actual !== null) quarter.append(el("div", { class: "summary-forecast-sample" },
+        fxForecastEvaluationText(row.lifecycle, (v) => fmtNum(v, 0))));
+    }
     if (row.reason) quarter.append(el("div", { class: "summary-forecast-missing", role: "status",
       title: row.reason }, row.reason.includes("fx_lstm_xgb.json") ? "학습 산출물 미등록" : row.reason));
     else if (row.intervalReason) quarter.append(el("div", { class: "summary-forecast-missing" }, row.intervalReason));
@@ -62,7 +69,7 @@ function summaryForecastCsv(models, kind) {
   return {
     headers: ["구분", "모형", "산출 기준", "기준일", "기준환율", "지평 (개월)", "분기", "목표일",
       "중심 정의", "예상치", "단위", "헤지비율 (%)", "구간 정의", "하단", "상단", "VaR 신뢰수준 (%)",
-      "VaR (%)", "표본/응답 N", "미산출 사유", "구간 미산출 사유", "VaR 미산출 사유"],
+      "VaR (%)", "표본/응답 N", "미산출 사유", "구간 미산출 사유", "VaR 미산출 사유", "전망 상태", "당시 전망", "당시 95% 하단", "당시 95% 상단", "실현 환율", "오차 (예측−실제)", "95% 구간 포함"],
     rows: models.flatMap((model) => (model.rows || []).map((row) => [
       hedge ? "환헤지" : "환율", model.label, model.basis, row.anchorDate || model.anchorDate,
       row.anchorValue ?? model.anchorValue ?? null, model.key === "consensus" ? null : row.horizonMonths,
@@ -72,6 +79,8 @@ function summaryForecastCsv(models, kind) {
       row.intervalLabel || model.intervalLabel || model.uncertaintyKind, row.lower ?? row.lower95 ?? null,
       row.upper ?? row.upper95 ?? null, 97.5, row.var975Pct, row.sampleCount ?? null,
       row.reason || "", row.intervalReason || "", row.varReason || "",
+      row.lifecycle?.label || "", row.historicalPoint ?? null, row.historicalLower ?? null, row.historicalUpper ?? null,
+      row.lifecycle?.actual ?? null, row.lifecycle?.error ?? null, row.lifecycle?.covered ?? null,
     ])),
   };
 }

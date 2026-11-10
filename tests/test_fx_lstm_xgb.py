@@ -84,6 +84,38 @@ def test_bop_join_uses_publication_lag_by_month_not_row_position():
     assert np.isnan(runner.join_bop(table, bop.iloc[:3], bop_lag=0)[0].loc["2020-06-30", "경상수지"])
 
 
+def test_feature_build_keeps_month_grid_and_target_spot_with_missing_features(tmp_path, monkeypatch):
+    table = _rates_table(9).drop(_rates_table(9).index[4])
+    table.rename_axis("date").reset_index().to_csv(tmp_path / "table.csv", index=False)
+    months = pd.period_range("2019-11", periods=11, freq="M")
+    for name, columns in (("국제수지_1.csv", runner.BOP1_COLS), ("국제수지_2.csv", runner.BOP2_COLS)):
+        frame = pd.DataFrame({"변환": months.astype(str), **{key: np.arange(11.) + 1 for key in columns}})
+        frame.to_csv(tmp_path / name, index=False)
+    captured = []
+
+    def fake_arma(spot, window):
+        captured.append(spot.copy())
+        factors = pd.DataFrame({"AR(1)": 0.2, "MA(1)": -0.1}, index=spot.index)
+        factors.loc["2020-07-31", "AR(1)"] = np.nan
+        return factors
+
+    monkeypatch.setattr(runner, "arma_factors", fake_arma)
+    features, info = runner.build_features(tmp_path, bop_lag=2, ns_fill="none", arma_window=3, drop_last_row=False)
+    assert len(features) == 9 and features.index[4] == pd.Timestamp("2020-05-31")
+    assert np.isnan(captured[0].loc["2020-05-31"])
+    assert np.isnan(features.loc["2020-05-31", "spot"])
+    assert np.isfinite(features.loc["2020-07-31", "spot"])
+    assert np.isnan(features.loc["2020-07-31", "AR(1)"])
+    assert info["n_feature_rows"] == 7 and info["n_incomplete_feature_months"] == 2
+
+
+@pytest.mark.parametrize("dates", [["2020-01-31", "2020-01-30"], ["2020-01-31", None]])
+def test_load_table_validates_dates_before_dropping_incomplete_last_row(tmp_path, dates):
+    pd.DataFrame({"date": dates, "spot": [1000, 1001]}).to_csv(tmp_path / "table.csv", index=False)
+    with pytest.raises(ValueError, match="날짜|중복"):
+        runner.load_table(tmp_path / "table.csv")
+
+
 def test_walk_forward_trains_only_on_labels_realized_by_the_base_date(monkeypatch):
     n = 40
     idx = pd.date_range("2020-01-31", periods=n, freq="BME")
@@ -104,22 +136,24 @@ def test_walk_forward_trains_only_on_labels_realized_by_the_base_date(monkeypatc
     lag, window, seq_len = 3, 12, 6
     rows = runner.walk_forward(feature, lag=lag, window=window, seq_len=seq_len, hidden_size=1,
                                num_layers=1, epochs=1, lr=1e-3, seed=1)
-    assert rows[0]["t_base"] == idx[lag + window - 1]
-    assert rows[-1]["t_base"] == idx[-1]
+    month_end = idx.to_period("M").to_timestamp(how="end").normalize()
+    assert rows[0]["t_base"] == month_end[lag + window - 1]
+    assert rows[-1]["t_base"] == month_end[-1]
     for kind, base_row, max_label_row, *rest in seen:
         assert max_label_row == base_row, f"{kind}: 기준 행 {base_row} 학습에 {max_label_row} 행 환율이 쓰였다"
         if kind == "lstm":
             assert rest == [seq_len]
     realized = [r for r in rows if r["actual"] is not None]
     pending = [r for r in rows if r["actual"] is None]
-    assert len(pending) == lag and all(r["t_target"] > idx[-1] for r in pending)
-    assert realized[-1]["actual"] == 1000 + (n - 1) and realized[-1]["t_target"] == idx[-1]
+    assert len(pending) == lag and all(r["t_target"] > month_end[-1] for r in pending)
+    assert realized[-1]["actual"] == 1000 + (n - 1) and realized[-1]["t_target"] == month_end[-1]
     assert all(r["ensemble"] == (r["xgb"] + r["lstm"]) / 2 for r in rows)
-    # 원 노트북 정렬을 켜면 라벨이 기준일 뒤 환율까지 들어간다(look-ahead 재현 플래그).
+    # 누수 재현 플래그는 운영 v2에서 학습 전 거부한다.
     seen.clear()
-    runner.walk_forward(feature, lag=lag, window=window, seq_len=seq_len, hidden_size=1, num_layers=1,
-                        epochs=1, lr=1e-3, seed=1, replicate_notebook=True)
-    assert all(max_label_row == min(base_row + lag - 1, n - 1) for _, base_row, max_label_row, *_ in seen)
+    with pytest.raises(ValueError, match="look-ahead"):
+        runner.walk_forward(feature, lag=lag, window=window, seq_len=seq_len, hidden_size=1, num_layers=1,
+                            epochs=1, lr=1e-3, seed=1, replicate_notebook=True)
+    assert seen == []
 
 
 def test_summary_metrics_by_hand():
@@ -142,18 +176,22 @@ def test_summary_metrics_by_hand():
 # 로더 — 산출물 계약
 # --------------------------------------------------------------------------
 def _artifact(n=5, lag=3, window=24):
-    t_base = [1704067200 + 2592000 * i for i in range(n)]
+    months = pd.period_range("2024-01", periods=n, freq="M")
+    stamp = lambda periods: [runner.epoch(p.to_timestamp(how="end").normalize()) for p in periods]
+    t_base = stamp(months)
     actual = [1300.0 + i for i in range(n - lag)] + [None] * lag
     return {
         "schema": fx_lstm_xgb.SCHEMA, "generated_at": "2026-10-19T00:00:00Z",
-        "runner": {"version": "1", "seed": 7, "replicate_notebook": False, "label_alignment": "realized_by_base_date",
+        "runner": {**fx_lstm_xgb.RUNNER_CONTRACT, "seed": 7,
                    "secret_note": "drop me"},
-        "model": {"name": "lstm_xgb_walk_forward", "features": ["spot"], "bop_lag_months": 2, "extra": 1},
-        "data": {"n_feature_rows": n},
+        "model": {"name": "lstm_xgb_walk_forward", "target": "spot", "unit": "KRW/USD",
+                  "frequency": "monthly", "features": ["spot"], "bop_lag_months": 2,
+                  "ns": {"fill": "ffill"}, "extra": 1},
+        "data": {"n_feature_rows": n, "table": {"end": str(months[-1].to_timestamp(how="end").date())}},
         "grid": {"lags": [lag], "windows": [window]},
         "regime_defaults": {"low_below": 1100, "high_above": 1300},
         "combos": [{"key": f"l{lag}_w{window}", "lag": lag, "window": window,
-                    "t_base": t_base, "t_target": [t + 86400 * 90 for t in t_base],
+                    "t_base": t_base, "t_target": stamp(months + lag),
                     "base": [1290.0 + i for i in range(n)], "actual": actual,
                     "pred": {m: [1295.0 + i for i in range(n)] for m in fx_lstm_xgb.MODELS},
                     "summary": {m: {"n": n - lag, "rmse": 1.0, "mae": 1.0, "bias": 0.0, "theil_u": 1.0,
@@ -195,9 +233,12 @@ def test_valid_artifact_is_published_with_known_keys_only(tmp_path):
     (lambda d: d.update(schema="fx_lstm_xgb/0"), "schema"),
     (lambda d: d["combos"][0]["actual"].pop(), "길이"),
     (lambda d: d["combos"][0]["t_base"].reverse(), "오름차순"),
-    (lambda d: d["combos"][0]["actual"].__setitem__(4, 1310.0), "미실현"),
+    (lambda d: d["combos"][0]["actual"].__setitem__(4, 1310.0), "자료 기준일"),
     (lambda d: d["combos"][0]["pred"]["lstm"].__setitem__(0, -1.0), "pred.lstm"),
     (lambda d: d["grid"].update(lags=[1]), "grid"),
+    (lambda d: d["grid"].update(lags=[3, "bad"]), "grid"),
+    (lambda d: d["combos"][0].update(key="another_name"), "key"),
+    (lambda d: d["combos"][0]["pred"]["ensemble"].__setitem__(0, 1400.0), "앙상블"),
     (lambda d: d.update(combos=[]), "combos"),
     (lambda d: d["combos"].append(dict(d["combos"][0])), "중복"),
     (lambda d: d.pop("generated_at"), "generated_at"),
@@ -244,7 +285,9 @@ def test_runner_artifact_round_trips_through_the_loader(tmp_path, monkeypatch):
              "t_base": [runner.epoch(r["t_base"]) for r in rows], "t_target": [runner.epoch(r["t_target"]) for r in rows],
              "base": [r["base"] for r in rows], "actual": [r["actual"] for r in rows],
              "pred": {m: [r[m] for r in rows] for m in runner.MODELS}, "summary": runner.summarize(rows)}
-    doc = runner.build_artifact([combo], info={"n_feature_rows": n}, args=Args, lags=[1], windows=[8])
+    doc = runner.build_artifact([combo], info={"n_feature_rows": n,
+        "table": {"end": str(idx[-1].to_period("M").to_timestamp(how="end").date())}},
+        args=Args, lags=[1], windows=[8])
     clean, error = fx_lstm_xgb.validate(json.loads(json.dumps(doc)))
     assert error is None and clean["active"] and clean["combos"][0]["n_realized"] == len(rows) - 1
-    assert clean["model"]["bop_lag_months"] == 2 and clean["runner"]["label_alignment"] == "realized_by_base_date"
+    assert clean["model"]["bop_lag_months"] == 2 and clean["runner"]["label_alignment"] == runner.LABEL_ALIGNMENT

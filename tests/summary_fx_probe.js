@@ -8,7 +8,7 @@ const end = (year, month) => Date.UTC(year, month + 1, 0) / 1000;
 const near = (a, b, tol = 1e-9) => assert(Math.abs(a - b) < tol, `${a} != ${b}`);
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const context = vm.createContext({ Date, Intl, console, tsToDate: iso });
-for (const file of ["fx-outlook.js", "fx-markov.js", "fx-lstm-xgb.js", "fx-model-c.js", "fx-model-d.js", "summary-fx.js"])
+for (const file of ["fx-forecast-status.js", "fx-outlook.js", "fx-markov.js", "fx-lstm-xgb.js", "fx-model-c.js", "fx-model-d.js", "summary-fx.js"])
   vm.runInContext(fs.readFileSync(path.join(root, "dashboard", file), "utf8"), context, { filename: file });
 const run = vm.runInContext("summaryFxModels", context);
 const now = new Date("2026-10-01T00:00:00Z"), anchor = { t: stamp("2026-09-30"), v: 1350 };
@@ -41,7 +41,10 @@ const modelC = () => ({ active: true, schema: "fx_model_c_v1", pair: "USDKRW", u
       metrics: { n: 0, n_interval: 0, rmse: null, mae: null, rw_rmse: null, ridge_rmse: null,
         theil_u: null, coverage68: null, coverage95: null } };
   }) });
-const modelB = () => ({ active: true, grid: { lags: [3, 6, 9, 12], windows: [24, 36] }, combos:
+const modelB = () => ({ active: true, schema: "fx_lstm_xgb/2",
+  runner:{version:"2",seed:20261110,replicate_notebook:false,label_alignment:"calendar_month_target_realized_by_base_date",
+    sequence_alignment:"last_input_month_matches_label_origin",horizon_unit:"calendar_month",train_window:"consecutive_calendar_origin_months"},
+  model:{ns:{fill:"ffill"},bop_lag_months:2},data:{table:{end:"2026-09-30"}}, grid: { lags: [3, 6, 9, 12], windows: [24, 36] }, combos:
   [24, 36].flatMap((window) => [3, 6, 9, 12].map((lag) => {
     const c = { key: `l${lag}_w${window}`, lag, window, t_base: [], t_target: [], base: [], actual: [],
       pred: { xgb: [], lstm: [], ensemble: [] } };
@@ -88,11 +91,9 @@ const futureLeak = fixture();
 futureLeak.lstm_xgb.combos.forEach((c) => {
   const firstPending = c.actual.indexOf(null);
   assert(c.t_target[firstPending] > anchor.t);
-  c.actual[firstPending] = 999999; // Corrupt future realized value still passes the legacy shape validator.
+  c.actual[firstPending] = 999999; // A v2 artifact cannot claim an actual beyond its published data cutoff.
 });
-get(futureLeak)[1].rows.forEach((r, i) => {
-  near(r.lower95, values[1].rows[i].lower95); assert.equal(r.sampleCount, values[1].rows[i].sampleCount);
-});
+assert(get(futureLeak)[1].rows.every((r) => r.point === null && r.reason.includes("확인할 수 없어")));
 const alternate = get(fixture(), {}, { window: 36, model: "xgb" })[1];
 assert.notEqual(alternate.rows[0].point, values[1].rows[0].point);
 assert.notEqual(alternate.rows[0].lower95, values[1].rows[0].lower95);
@@ -162,7 +163,23 @@ if (process.env.SUMMARY_FX_PUBLISHED) {
   assert(result[1].rows.every((r) => r.point === null));
   assert(result[2].rows.filter((r) => r.horizonMonths !== 9).every((r) => r.point !== null));
 }
-console.log(JSON.stringify({ markovAnchorsAndVaR: true, actualDatesAndExpiredTargets: true,
+// Same Seoul boundary and exact target evidence in detailed and summary views.
+const observed = fixture(), target = observed.markov.simulation.t[63];
+observed.outlook.history.t.push(target - 86400, target, target + 86400);
+observed.outlook.history.v.push(1100, 1340, 9999);
+const beforeTarget = new Date(target * 1000 - 9 * 3600000 - 1);
+assert(get(observed, {}, view, beforeTarget)[0].rows[0].point !== null);
+const targetMidnight = new Date(target * 1000 - 9 * 3600000);
+const historical = get(observed, {}, view, targetMidnight)[0].rows[0];
+assert.equal(historical.point, null); assert.equal(historical.var975Pct, null);
+assert.equal(historical.historicalPoint, values[0].rows[0].point);
+assert.equal(historical.lifecycle.actual, 1340);
+near(historical.lifecycle.error, historical.historicalPoint - 1340);
+observed.outlook.history.t.splice(2, 1); observed.outlook.history.v.splice(2, 1);
+const pendingHistorical = get(observed, {}, view, targetMidnight)[0].rows[0];
+assert.equal(pendingHistorical.lifecycle.actual, null);
+assert(pendingHistorical.reason.includes("실현 대기"));
+console.log(JSON.stringify({ historicalForecastEvaluation: true, markovAnchorsAndVaR: true, actualDatesAndExpiredTargets: true,
   sameHorizonErrorQuantiles: true, noFutureLeakage: true, noWindowOrHorizonSubstitution: true,
   minCalibrationAndStaleOrigin: true, cDirectHorizonsAndLegacy: true, offCenterIntervals: true,
   consensusSpreadNotVaR: true, seoulQuarterRollover: true, noMutation: true }));
