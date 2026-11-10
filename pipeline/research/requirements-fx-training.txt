@@ -1,6 +1,6 @@
 # Build-time FX B CPU training; versions are part of the artifact cache key.
 -r ../requirements.txt
-scikit-learn==1.8.0
+scikit-learn==1.9.1
 statsmodels==0.15.0
 xgboost==3.4.1
 # Install separately from the official CPU wheel index (see build workflow).
