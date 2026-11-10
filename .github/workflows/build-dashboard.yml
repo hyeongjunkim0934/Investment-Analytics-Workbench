@@ -139,7 +139,7 @@ jobs:
 
       - name: Restore validated FX B forecast cache
         if: steps.fx-b-inputs.outputs.ready == 'true'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           # Forecast JSON only: never cache the private CSV inputs or checkout.
           path: .fx-model-b-cache/fx_lstm_xgb.json
@@ -163,7 +163,7 @@ jobs:
 
       - name: Save validated FX B forecast cache
         if: steps.fx-b-cache.outputs.needs_training == 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .fx-model-b-cache/fx_lstm_xgb.json
           key: ${{ steps.fx-b-inputs.outputs.cache_key }}
