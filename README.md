@@ -69,6 +69,15 @@ CMA 탭의 기대수익률·변동성은 연 % 단위로 소수 두 자리까지
 
 ## 로컬 실행
 
+환율모형 B는 비공개 Data의 `models/fx_lstm_xgb/`에 `table.csv`, `국제수지_1.csv`,
+`국제수지_2.csv`를 같은 커밋으로 준비하면 빌드에서 학습·검증·게시합니다.
+입력·코드·의존성 해시가 같으면 검증된 결과만 재사용합니다. 기존 v1 결과는 달력·LSTM
+정렬이 교정된 v2로 다시 생성해야 합니다. 입력 형식은 [FX_LSTM_XGB](docs/FX_LSTM_XGB.md)를 따릅니다.
+
+환율전망 하단의 **공통 표본외 검증**은 A/C/D를 같은 기준일·목표일에서 비교합니다.
+점예측·구간·분산의 표본과 평가 기준은 [FX_VALIDATION](docs/FX_VALIDATION.md)에 있습니다.
+목표일이 지난 전망은 당시 전망과 실현 평가로 구분하며 인접일 환율로 대신하지 않습니다.
+
 ```bash
 pip install -r pipeline/requirements.txt
 python pipeline/process.py --data-dir <data 저장소 경로> --out _site/data

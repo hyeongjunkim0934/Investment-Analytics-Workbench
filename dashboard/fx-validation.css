@@ -1,0 +1,8 @@
+.fx-validation { margin-top: 12px; padding: 14px 16px; }
+.fx-validation > summary { cursor: pointer; }
+.fx-validation-controls { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 14px 0 8px; }
+.fx-validation-controls select { margin-left: 8px; }
+.fx-validation-table { margin: 10px 0; overflow-x: auto; }
+.fx-validation-table table { width: 100%; }
+.fx-validation-method { margin-top: 12px; }
+.fx-validation-method p { max-width: 100ch; line-height: 1.65; }

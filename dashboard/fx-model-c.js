@@ -59,15 +59,19 @@ function fxModelCValid(p) {
 
 function fxModelCNumber(value, digits = 2) { return Number.isFinite(value) ? fmtNum(value, digits) : "–"; }
 function fxModelCForecastTable(payload, raw = false) {
-  const number = (v) => raw ? v : fxModelCNumber(v);
+  const number = (v, digits = 0) => raw ? v : fxModelCNumber(v, digits);
   return { headers: ["모형 기준일", "호가 기준일", "지평 (개월)", "목표일", "C 로그 중심 (원/달러)",
-    "Ridge 로그 중심 (원/달러)", "RW (원/달러)", "변화율 (%)", "68% 하단", "68% 상단", "95% 하단", "95% 상단", "학습 N", "구간 보정 N"],
-    rows: payload.horizons.map((r) => [payload.model_date, payload.asof, r.horizon_months, r.target_date,
-      ...(r.active ? [r.point, r.ridge_point, r.rw, r.change_pct, r.lower68, r.upper68, r.lower95, r.upper95] : Array(8).fill(null)).map(number),
-      r.active ? r.n_train : 0, r.active ? r.n_calibration : 0]) };
+    "Ridge 로그 중심 (원/달러)", "RW (원/달러)", "변화율 (%)", "68% 하단", "68% 상단", "95% 하단", "95% 상단", "학습 N", "구간 보정 N", "상태", "실현 환율", "오차 (예측−실제)", "95% 구간 포함"],
+    rows: payload.horizons.map((r) => {
+      const status = fxForecastStatus(r.target_t, r.point, DATA.fx?.outlook?.history, r.lower95, r.upper95);
+      return [payload.model_date, payload.asof, r.horizon_months, r.target_date,
+        ...(r.active ? [r.point, r.ridge_point, r.rw, r.change_pct, r.lower68, r.upper68, r.lower95, r.upper95] : Array(8).fill(null)).map((v, i) => number(v, i === 3 ? 2 : 0)),
+        r.active ? r.n_train : 0, r.active ? r.n_calibration : 0, r.active ? status.label : r.reason,
+        number(status.actual), number(r.active ? status.error : null), r.active && status.covered !== null ? status.covered : null];
+    }) };
 }
 function fxModelCBacktestTable(row, raw = false) {
-  const number = (v) => raw ? v : fxModelCNumber(v);
+  const number = (v) => raw ? v : fxModelCNumber(v, 0);
   return { headers: ["예측 기준일", "목표일", "기준 호가일", "실현 호가일", "기준 환율", "실제 환율", "C", "Ridge", "RW",
     "C 오차 (예측−실제)", "RW 오차", "68% 하단", "68% 상단", "95% 하단", "95% 상단", "과거 보정 N"],
     rows: [...row.backtest].reverse().map((r) => [r.origin_date, r.target_date, r.origin_quote_date, r.target_quote_date,
@@ -96,17 +100,21 @@ function renderFxModelC(host) {
   const meta = el("div", { class: "fx-c-meta" },
     el("b", {}, "USDKRW · 축소추정 · 금리차·모멘텀"),
     el("span", {}, `모형 기준일 ${payload.model_date}`),
-    el("span", {}, `호가 ${payload.asof} · ${fxModelCNumber(payload.anchor.v)} 원/달러`));
+    el("span", {}, `호가 ${payload.asof} · ${fxModelCNumber(payload.anchor.v, 0)} 원/달러`));
   host.append(meta);
   const grid = el("div", { class: "fx-c-grid" }); host.append(grid);
   const cardBounds = [];
   payload.horizons.forEach((r) => {
+    const status = fxForecastStatus(r.target_t, r.point, DATA.fx?.outlook?.history, r.lower95, r.upper95);
     const bounds = el("span", { class: "fx-c-bounds" });
     const tile = el("div", { class: "card fx-c-forecast", "data-month": String(r.horizon_months) },
       el("span", { class: "card-sub" }, `${r.horizon_months}개월 · ${r.target_date || "–"}`),
+      ...(r.active && status.expired ? [el("span", { class: "card-sub fx-c-expired", role: "status" }, status.label)] : []),
       el("span", { class: "fx-c-center-label" }, "로그 중심 · 원/달러"),
-      el("b", { class: "fx-c-value" }, r.active ? fxModelCNumber(r.point) : "–"),
-      el("span", { class: "fx-c-change" }, r.active ? `${r.change_pct >= 0 ? "+" : ""}${fxModelCNumber(r.change_pct)}%` : r.reason), bounds);
+      el("b", { class: "fx-c-value" }, r.active ? fxModelCNumber(r.point, 0) : "–"),
+      el("span", { class: "fx-c-change" }, r.active ? `${r.change_pct >= 0 ? "+" : ""}${fxModelCNumber(r.change_pct)}%` : r.reason), bounds,
+      ...(r.active && status.actual !== null ? [el("span", { class: "card-sub fx-c-realized" },
+        fxForecastEvaluationText(status, (v) => fmtNum(v, 0)))] : []));
     cardBounds.push([r, bounds]); grid.append(tile);
   });
   const interval = el("select", { id: "fx-c-interval", "aria-label": "과거오차 구간" });
@@ -120,11 +128,12 @@ function renderFxModelC(host) {
   const forecastData = () => {
     const rows = new Map(), history = fxOutlookHistory(DATA.fx?.outlook);
     const lo = new Date(payload.anchor.t * 1000); lo.setUTCFullYear(lo.getUTCFullYear() - 3);
-    history.t.forEach((t, i) => { if (t >= lo.getTime() / 1000 && t <= payload.anchor.quote_t) rows.set(t, [history.v[i], null, null, null, null]); });
+    const today = fxForecastToday();
+    history.t.forEach((t, i) => { if (t >= lo.getTime() / 1000 && (t <= payload.anchor.quote_t || t <= today)) rows.set(t, [history.v[i], null, null, null, null]); });
     rows.set(payload.anchor.t, [payload.anchor.v, payload.anchor.v, payload.anchor.v, payload.anchor.v, payload.anchor.v]);
     payload.horizons.forEach((r) => {
       if (Number.isInteger(r.target_t)) rows.set(r.target_t,
-        [null, r.active ? r.point : null, payload.anchor.v, r.active ? r[`lower${fxModelCInterval}`] : null, r.active ? r[`upper${fxModelCInterval}`] : null]);
+        [rows.get(r.target_t)?.[0] ?? null, r.active ? r.point : null, payload.anchor.v, r.active ? r[`lower${fxModelCInterval}`] : null, r.active ? r[`upper${fxModelCInterval}`] : null]);
     });
     const t = [...rows.keys()].sort((a, b) => a - b);
     return [t, ...Array.from({ length: 5 }, (_, i) => t.map((time) => rows.get(time)[i]))];
@@ -135,17 +144,17 @@ function renderFxModelC(host) {
     const plotHost = el("div", { class: "hedge-plot-host" }); box.append(plotHost);
     const tip = el("div", { class: "time-chart-tooltip", role: "status" }); tip.hidden = true; box.append(tip);
     const options = { width: Math.max(280, box.clientWidth), height,
-      tzDate: (t) => uPlot.tzDate(new Date(t * 1000), "Etc/UTC"), axes: baseAxes(pal, (v) => fmtNum(v, 2)),
+      tzDate: (t) => uPlot.tzDate(new Date(t * 1000), "Etc/UTC"), axes: baseAxes(pal, (v) => fmtNum(v, 0)),
       legend: { show: false }, cursor: { y: false, points: { show: false }, drag: { setScale: false } },
       series: [{ label: "일자" }, ...labels.map((label, i) => ({ label, stroke: colors[i], width: label.includes("하단") || label.includes("상단") ? 0 : 1.8,
         dash: label === "RW" ? [5, 4] : [], points: { show: false }, spanGaps: false,
-        value: (_u, v) => fxModelCNumber(v) }))], bands,
+        value: (_u, v) => fxModelCNumber(v, 0) }))], bands,
       hooks: { setCursor: [(u) => {
         const { idx, left, top } = u.cursor;
         if (idx == null || left < 0 || top < 0 || !Number.isFinite(u.data[0]?.[idx])) { tip.hidden = true; return; }
         tip.textContent = ""; tip.append(el("strong", {}, tsToDate(u.data[0][idx])));
         labels.forEach((label, i) => { const value = u.data[i + 1][idx];
-          if (Number.isFinite(value)) tip.append(el("div", {}, el("span", {}, label), el("b", {}, fxModelCNumber(value)))); });
+          if (Number.isFinite(value)) tip.append(el("div", {}, el("span", {}, label), el("b", {}, fxModelCNumber(value, 0)))); });
         tip.hidden = false; tip.style.left = left > box.clientWidth / 2 ? "12px" : "auto";
         tip.style.right = left > box.clientWidth / 2 ? "auto" : "12px";
       }], setData: [() => { tip.hidden = true; }] } };
@@ -215,7 +224,7 @@ function renderFxModelC(host) {
     const item = forecastLegend.children[3]; item.textContent = "";
     item.append(el("i", { class: "is-band", style: `--legend-color:${gold}` }), `${fxModelCInterval}% 구간`);
     cardBounds.forEach(([r, node]) => { node.textContent = r.active && fxModelCPositive(r[`lower${fxModelCInterval}`])
-      ? `${fxModelCInterval}% · ${fxModelCNumber(r[`lower${fxModelCInterval}`])} ~ ${fxModelCNumber(r[`upper${fxModelCInterval}`])}`
+      ? `${fxModelCInterval}% · ${fxModelCNumber(r[`lower${fxModelCInterval}`], 0)} ~ ${fxModelCNumber(r[`upper${fxModelCInterval}`], 0)}`
       : r.active ? "과거오차 구간 · 표본 부족" : ""; });
     forecastPlot.setData(forecastData());
   };

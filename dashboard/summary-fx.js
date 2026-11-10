@@ -33,10 +33,13 @@ function summaryFxPointRow(horizonMonths, anchor, target, point, lower, upper, t
     targetDate: summaryFxDate(target) };
   if (!dates.targetDate || !(target > anchor?.t) || !(Number.isFinite(point) && point > 0))
     return summaryFxEmptyRow(horizonMonths, "전망 시점·값 확인 필요", { ...dates, ...extra });
-  if (target <= today)
-    return summaryFxEmptyRow(horizonMonths, "목표일 경과 · 새 전망 필요", { ...dates, ...extra });
+  const lifecycle = fxForecastStatus(target, point, extra.history, lower, upper, today, extra.publishedActual);
+  const { history: _history, publishedActual: _actual, ...metadata } = extra;
+  if (lifecycle.expired)
+    return summaryFxEmptyRow(horizonMonths, lifecycle.label, { ...dates, ...metadata, lifecycle,
+      historicalPoint: point, historicalLower: lower, historicalUpper: upper });
   const hasBounds = Number.isFinite(lower) && lower > 0 && Number.isFinite(upper) && upper >= lower;
-  return { ...summaryFxEmptyRow(horizonMonths, null), ...dates, ...extra, point,
+  return { ...summaryFxEmptyRow(horizonMonths, null), ...dates, ...metadata, lifecycle, point,
     lower: hasBounds ? lower : null, upper: hasBounds ? upper : null,
     lower95: hasBounds ? lower : null, upper95: hasBounds ? upper : null,
     var975Pct: hasBounds ? summaryFxVaR975(lower, anchor?.v) : null,
@@ -61,7 +64,7 @@ function summaryFxModelA(fx, today) {
   return { ...model, rows: SUMMARY_FX_HORIZONS.map((h) => {
     const i = h * 21;
     return summaryFxPointRow(h, p.anchor, s.t[i], s.mean[i], s.lower95[i], s.upper95[i], today,
-      { sampleCount: s.path_count, median: s.median[i] });
+      { sampleCount: s.path_count, median: s.median[i], history: fx?.outlook?.history });
   }) };
 }
 
@@ -70,7 +73,7 @@ function summaryFxModelB(fx, view, today) {
   const model = { key: "modelB", label: "환율모형 B", pointLabel: "예상치", unit: "원/달러",
     anchorDate: null, anchorValue: null, basis: "LSTM · XGBoost", intervalLabel: "과거오차 95%", details: [
       "게시된 동일 학습창·선택 모형의 3·6·9·12개월 직접 전망만 사용합니다. 없는 지평은 보간하지 않습니다.",
-      "선택 학습창의 최신 기준일로 맞춥니다. 최신 기준일 전망이 없는 지평과 목표일이 지난 전망은 표시하지 않습니다.",
+      "선택 학습창의 최신 기준일로 맞춥니다. 최신 기준일 전망이 없는 지평은 비우고, 목표일이 지난 값은 당시 전망·실현 평가로 구분합니다.",
       "구간은 전망 기준일까지 실현된 동일 지평의 로그 오차 log(실제/예측)의 2.5·97.5% 분위수로 보정합니다. 최소 24개가 필요하며 미래 포함률을 보장하지 않습니다.",
       "VaR 97.5%는 모형 기준 환율 대비 달러 보유자의 원화 환손실률입니다. 과거오차의 시계열 의존성과 모수 불확실성은 별도로 추정하지 않습니다.",
     ] };
@@ -96,8 +99,6 @@ function summaryFxModelB(fx, view, today) {
     const i = c.t_base.indexOf(origin);
     if (i < 0 || c.base[i] !== anchor.v)
       return summaryFxEmptyRow(h, "최신 공통 기준일 전망 없음", dates);
-    if (c.actual[i] !== null)
-      return summaryFxEmptyRow(h, "이미 실현된 전망", { ...dates, targetDate: summaryFxDate(c.t_target[i]) });
     const errors = c.t_base.flatMap((baseTime, j) => baseTime < origin && c.t_target[j] <= origin
       && c.actual[j] !== null ? [Math.log(c.actual[j]) - Math.log(c.pred[chosen.model][j])] : []);
     const enough = errors.length >= 24 && errors.every(Number.isFinite);
@@ -105,7 +106,8 @@ function summaryFxModelB(fx, view, today) {
     const low = enough ? Math.exp(Math.log(point) + summaryFxQuantile(errors, .025)) : null;
     const high = enough ? Math.exp(Math.log(point) + summaryFxQuantile(errors, .975)) : null;
     return summaryFxPointRow(h, anchor, c.t_target[i], point, low, high, today,
-      { sampleCount: errors.length, intervalReason: enough ? "구간 수치 범위 초과" : "과거 실현오차 24개 미만" });
+      { sampleCount: errors.length, intervalReason: enough ? "구간 수치 범위 초과" : "과거 실현오차 24개 미만",
+        publishedActual: c.actual[i], history: fx?.outlook?.history });
   }) };
 }
 
@@ -128,7 +130,7 @@ function summaryFxModelC(fx, today) {
       targetDate: summaryFxDate(row?.target_t) };
     if (!row?.active) return summaryFxEmptyRow(h, row?.reason || `${h}개월 산출물 없음`, dates);
     return summaryFxPointRow(h, p.anchor, row.target_t, row.point, row.lower95, row.upper95, today,
-      { sampleCount: row.n_calibration });
+      { sampleCount: row.n_calibration, history: fx?.outlook?.history });
   }) };
 }
 
@@ -150,7 +152,7 @@ function summaryFxModelD(fx, today) {
     const r = p.horizons.find((row) => row.horizon_months === h);
     if (!r) return summaryFxEmptyRow(h, `${h}개월 산출물 없음`);
     return summaryFxPointRow(h, p.anchor, r.target_t, r.median, r.lower95, r.upper95, today,
-      { sampleCount: p.forecast.path_count, mean: r.mean, volPct: r.vol_pct });
+      { sampleCount: p.forecast.path_count, mean: r.mean, volPct: r.vol_pct, history: fx?.outlook?.history });
   }) };
 }
 
@@ -184,8 +186,7 @@ function summaryFxConsensus(fx, state, today) {
 }
 
 function summaryFxModels(fxPayload, consensusState, viewB, nowDate = new Date()) {
-  const today = typeof fxOutlookToday === "function" ? fxOutlookToday(nowDate)
-    : Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate()) / 1000;
+  const today = fxForecastToday(nowDate);
   return [summaryFxModelA(fxPayload, today), summaryFxModelB(fxPayload, viewB, today),
     summaryFxModelC(fxPayload, today), summaryFxModelD(fxPayload, today),
     summaryFxConsensus(fxPayload, consensusState, today)];

@@ -59,9 +59,13 @@ function fxModelDExposure(target, vol) {
 function fxModelDForecastTable(p, raw = false) {
   const n = (v, digits = 2) => raw ? v : fxModelDNumber(v, digits);
   return { headers: ["기준일", "지평 (개월)", "모형 관측일", "목표일", "평균 (원/달러)", "중앙값 (원/달러)",
-    "68% 하단", "68% 상단", "95% 하단", "95% 상단", "연율 변동성 (%)", "환손실 VaR95 (%)", "환손실 ES95 (%)"],
-  rows: p.horizons.map((r) => [p.asof, r.horizon_months, r.steps, r.target_date,
-    ...FX_MODEL_D_LEVELS.map((k) => n(r[k], 0)), n(r.vol_pct), n(r.var95_pct), n(r.es95_pct)]) };
+    "68% 하단", "68% 상단", "95% 하단", "95% 상단", "연율 변동성 (%)", "환손실 VaR95 (%)", "환손실 ES95 (%)", "상태", "실현 환율", "오차 (중앙값−실제)", "95% 구간 포함"],
+  rows: p.horizons.map((r) => {
+    const status = fxForecastStatus(r.target_t, r.median, DATA.fx?.outlook?.history, r.lower95, r.upper95);
+    return [p.asof, r.horizon_months, r.steps, r.target_date,
+      ...FX_MODEL_D_LEVELS.map((k) => n(r[k], 0)), n(r.vol_pct), n(r.var95_pct), n(r.es95_pct),
+      status.label, n(status.actual, 0), n(status.error, 0), status.covered];
+  }) };
 }
 function fxModelDBacktestTable(p, raw = false) {
   const n = (v, digits = 2) => raw ? v : fxModelDNumber(v, digits);
@@ -85,8 +89,8 @@ function renderFxModelD(host) {
         : p?.reason || "환율모형D 분석 데이터를 불러오지 못했습니다.")));
     return;
   }
-  const today = fxOutlookToday(new Date());
-  const expired = (r) => r.target_t <= today;
+  const statusOf = (r) => fxForecastStatus(r.target_t, r.median, DATA.fx?.outlook?.history, r.lower95, r.upper95);
+  const expired = (r) => statusOf(r).expired;
   const pal = palette(), gold = currentTheme() === "light" ? "#8a5c00" : "#edbd63";
   const blue = currentTheme() === "light" ? "#233c66" : "#73a4df", teal = currentTheme() === "light" ? "#16776d" : "#64c5bb";
   host.append(el("div", { class: "fx-d-meta" }, el("b", {}, "USDKRW · 조건부 변동성"),
@@ -98,14 +102,17 @@ function renderFxModelD(host) {
   const grid = el("div", { class: "fx-d-grid" }); host.append(grid);
   const cardBounds = [];
   p.horizons.forEach((r) => {
+    const status = statusOf(r);
     const bounds = el("div", { class: "fx-d-bounds" }); cardBounds.push([r, bounds]);
     grid.append(el("div", { class: "card fx-d-forecast", "data-month": String(r.horizon_months) },
       el("span", { class: "card-sub" }, `${r.horizon_months}개월 · ${r.target_date}`),
-      ...(expired(r) ? [el("span", { class: "fx-d-expired", role: "status" }, "목표일 경과 · 당시 전망")] : []),
+      ...(status.expired ? [el("span", { class: "fx-d-expired", role: "status" }, status.label)] : []),
       el("span", { class: "fx-d-value-label" }, "연율 변동성 (%)"),
       el("b", { class: "fx-d-value" }, fxModelDNumber(r.vol_pct)), bounds,
       el("div", { class: "fx-d-risk" }, el("span", {}, "환손실 VaR95 / ES95 (%)"),
-        el("b", {}, `${fxModelDNumber(r.var95_pct)} / ${fxModelDNumber(r.es95_pct)}`))));
+        el("b", {}, `${fxModelDNumber(r.var95_pct)} / ${fxModelDNumber(r.es95_pct)}`)),
+      ...(status.actual !== null ? [el("span", { class: "card-sub fx-d-realized" },
+        fxForecastEvaluationText(status, (v) => fmtNum(v, 0)))] : [])));
   });
   const interval = el("select", { id: "fx-d-interval", "aria-label": "D 조건부 예측구간" });
   [68, 95].forEach((v) => interval.append(el("option", { value: String(v) }, `${v}%`))); interval.value = String(fxModelDInterval);
@@ -117,8 +124,9 @@ function renderFxModelD(host) {
   const forecastData = () => {
     const rows = new Map(), history = fxOutlookHistory(DATA.fx?.outlook), start = new Date(p.anchor.t * 1000);
     start.setUTCFullYear(start.getUTCFullYear() - 1);
-    history.t.forEach((t, i) => { if (t >= start.getTime() / 1000 && t < p.anchor.t) rows.set(t, [history.v[i], null, null, null, null]); });
-    p.forecast.t.forEach((t, i) => rows.set(t, [i === 0 ? p.anchor.v : null, p.forecast.mean[i], p.forecast.median[i],
+    const today = fxForecastToday();
+    history.t.forEach((t, i) => { if (t >= start.getTime() / 1000 && (t < p.anchor.t || t <= today)) rows.set(t, [history.v[i], null, null, null, null]); });
+    p.forecast.t.forEach((t, i) => rows.set(t, [i === 0 ? p.anchor.v : rows.get(t)?.[0] ?? null, p.forecast.mean[i], p.forecast.median[i],
       p.forecast[`lower${fxModelDInterval}`][i], p.forecast[`upper${fxModelDInterval}`][i]]));
     const t = [...rows.keys()].sort((a, b) => a - b);
     return [t, ...Array.from({ length: 5 }, (_, i) => t.map((time) => rows.get(time)[i]))];

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""환율모형B 오프라인 러너 — LSTM·XGBoost walk-forward 원/달러 수준 예측 (퀀트팀 모형 이식).
+"""환율모형B 별도 학습 러너 — LSTM·XGBoost walk-forward 원/달러 수준 예측 (퀀트팀 모형 이식).
 
-CI 미실행. torch·xgboost·statsmodels·scikit-learn 이 필요하다
+직접 실행하거나 CSV 세 개가 준비된 빌드에서 실행한다. torch·xgboost·statsmodels·scikit-learn 이 필요하다
 (`pipeline/research/requirements-fx-lstm-xgb.txt`). 파이프라인 고정 의존성 3개와 섞지 말 것.
 
 입력 CSV 3개는 비공개 Data 저장소 `models/fx_lstm_xgb/` 에 둔다 (파이프라인은 .xlsx 만
@@ -14,14 +14,15 @@ CI 미실행. torch·xgboost·statsmodels·scikit-learn 이 필요하다
 게시되는 것은 기준일·예측시점·기준 환율·실제 환율·모형 예측치뿐이다 — 국제수지·금리
 피처값은 JSON 에 싣지 않는다(비공개 원자료).
 
-원 코드(fx_predict.py / fx.ipynb) 대비 바뀐 점 — 전부 플래그로 되돌릴 수 있다:
+운영 v2의 정보시점·시간축 규칙:
   · 국제수지 결합: 행 위치가 아니라 월(YYYY-MM) 기준 조인. '변환' 의 01-Jan / Jan-01 두 표기 모두 해석.
   · 국제수지 공표 지연: --bop-lag (기본 2개월) 만큼 피처를 뒤로 민다 — 월말 기준일에 그 달·전달
     국제수지는 아직 공표 전이다. 원 코드는 0.
-  · NS 요인 결측: 앞채움(ffill). 원 코드의 양방향 선형보간은 미래값을 쓴다. --ns-fill interpolate 로 복원.
-  · 학습 라벨 정렬: 기준일 t 에서 **실현된** 타깃(행 ≤ t−lag)만 학습한다. 원 노트북의 백테스트는
-    행 t−1 까지의 타깃(= t+lag−1 시점 환율)을 학습해 look-ahead 가 있었다. --replicate-notebook 로 복원.
-  · 시드 고정: --seed 기본 20261019 (torch 스텝별 manual_seed(seed+t), XGBRegressor(random_state, n_jobs=1)).
+  · NS 요인 결측: 앞채움(ffill) 또는 결측 유지(none). 미래값을 섞는 interpolate는 운영에서 거부한다.
+  · 달력 월 격자: 없는 달·피처 결측을 삭제하지 않으며 ARIMA·LSTM 창도 월 간격을 보존한다.
+  · 학습 라벨: 기준월 t에서 실현된 t−lag 이하 기준월의 타깃만 쓴다. 누수 재현 플래그는 거부한다.
+  · LSTM: 마지막 입력 기준월과 라벨 기준월이 같다. v1의 한 행 추가 지평을 교정했다.
+  · 시드 고정: --seed 기본 20261019 (torch는 기준월 키를 더함, XGBRegressor(random_state, n_jobs=1)).
   · 그리드: --lags 1,3,6,9,12 × --windows 24,36 을 전부 walk-forward 로 돌려 한 JSON 에 싣는다.
 그 밖의 산식은 원 코드 그대로다: NS λ=0.7308·만기 0.25/1/3/10년, ARIMA(1,1,1) 36개월 롤링 계수,
 피처 10개(spot·경상수지·증권투자(자산)·직접투자비율(수익)·증권투자비율(수익)·NS 3·AR(1)·MA(1)),
@@ -47,8 +48,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-SCHEMA = "fx_lstm_xgb/1"
-RUNNER_VERSION = "1"
+SCHEMA = "fx_lstm_xgb/2"
+RUNNER_VERSION = "2"
+LABEL_ALIGNMENT = "calendar_month_target_realized_by_base_date"
+SEQUENCE_ALIGNMENT = "last_input_month_matches_label_origin"
+TRAIN_WINDOW = "consecutive_calendar_origin_months"
 ARTIFACT = "fx_lstm_xgb.json"
 MODELS = ("xgb", "lstm", "ensemble")
 FEATURES = ["spot", "경상수지", "증권투자(자산)", "직접투자비율(수익)", "증권투자비율(수익)",
@@ -99,6 +103,30 @@ def to_number(series: pd.Series) -> pd.Series:
     return pd.to_numeric(cleaned, errors="coerce")
 
 
+def monthly_grid(frame: pd.DataFrame) -> pd.DataFrame:
+    """One observation per month, dated at month-end; absent months stay missing.
+
+    Input dates identify an observation month (e.g. its last business day).
+    Decisions are made at calendar month-end, never before that observation.
+    Duplicate months cannot be resolved without an explicit source rule.
+    """
+    if not isinstance(frame.index, pd.DatetimeIndex) or frame.index.hasnans:
+        raise ValueError("유효한 월별 DatetimeIndex가 필요합니다")
+    if frame.index.tz is not None:
+        raise ValueError("월별 입력 날짜는 시간대 없는 날짜여야 합니다")
+    ordered = frame.sort_index().copy()
+    months = ordered.index.to_period("M")
+    if months.has_duplicates:
+        raise ValueError("같은 달이 두 번 나옵니다")
+    if not len(ordered):
+        return ordered
+    ordered.index = months
+    ordered = ordered.reindex(pd.period_range(months[0], months[-1], freq="M"))
+    ordered.index = ordered.index.to_timestamp(how="end").normalize()
+    ordered.index.name = "date"
+    return ordered
+
+
 def load_table(path: Path, drop_last_row: bool = True) -> tuple[pd.DataFrame, dict]:
     table = pd.read_csv(path)
     table.columns = [str(c).strip() for c in table.columns]
@@ -106,6 +134,8 @@ def load_table(path: Path, drop_last_row: bool = True) -> tuple[pd.DataFrame, di
         raise ValueError("table.csv 에 date·spot 열이 필요합니다")
     table["date"] = pd.to_datetime(table["date"])
     table = table.sort_values("date").reset_index(drop=True)
+    if table["date"].isna().any() or table["date"].dt.to_period("M").duplicated().any():
+        raise ValueError("table.csv에 유효하지 않은 날짜 또는 중복 월이 있습니다")
     dropped = None
     if drop_last_row and len(table):
         dropped = table["date"].iloc[-1].strftime("%Y-%m-%d")
@@ -113,7 +143,10 @@ def load_table(path: Path, drop_last_row: bool = True) -> tuple[pd.DataFrame, di
     table = table.set_index("date", drop=True)
     for col in table.columns:
         table[col] = to_number(table[col])
-    return table, {"rows": int(len(table)), "dropped_last_row": dropped,
+    observed_rows = len(table)
+    table = monthly_grid(table)
+    return table, {"rows": int(observed_rows), "calendar_months": len(table),
+                   "missing_months": len(table) - observed_rows, "dropped_last_row": dropped,
                    "start": table.index[0].strftime("%Y-%m-%d") if len(table) else None,
                    "end": table.index[-1].strftime("%Y-%m-%d") if len(table) else None}
 
@@ -192,6 +225,7 @@ def arma_factors(spot: pd.Series, window: int = 36) -> pd.DataFrame:
     """롤링 ARIMA(1,1,1) 의 AR(1)·MA(1) 계수 — 원 코드 그대로(창 미달·적합 실패는 NaN)."""
     from statsmodels.tsa.arima.model import ARIMA  # 지연 import — 테스트가 피처 함수만 쓸 수 있게
     import warnings
+    spot = monthly_grid(spot.to_frame("spot"))["spot"]
     rows = []
     for i in range(window, len(spot) + 1):
         y = spot.iloc[i - window:i].dropna()
@@ -213,18 +247,23 @@ def arma_factors(spot: pd.Series, window: int = 36) -> pd.DataFrame:
 
 def build_features(data_dir: Path, *, bop_lag: int, ns_fill: str, arma_window: int,
                    drop_last_row: bool) -> tuple[pd.DataFrame, dict]:
+    if bop_lag < 2 or ns_fill not in ("ffill", "none"):
+        raise ValueError("운영 모형은 bop_lag ≥ 2 및 NS ffill/none만 허용합니다")
     table, table_info = load_table(data_dir / "table.csv", drop_last_row=drop_last_row)
     bop, bop_info = load_bop(data_dir)
     total, join_info = join_bop(table, bop, bop_lag)
     ns = ns_factors(table, fill=ns_fill)
     arma = arma_factors(table["spot"], window=arma_window)
     base = total[["spot", "경상수지", "증권투자(자산)", "직접투자비율(수익)", "증권투자비율(수익)"]]
-    feature_data = pd.concat([base, ns, arma], axis=1).replace([np.inf, -np.inf], np.nan).dropna()
+    feature_data = pd.concat([base, ns, arma], axis=1).replace([np.inf, -np.inf], np.nan)
     feature_data = feature_data[FEATURES]
+    complete = feature_data.dropna()
     info = {"table": table_info, "bop": bop_info, "join": join_info,
-            "feature_start": feature_data.index[0].strftime("%Y-%m-%d") if len(feature_data) else None,
-            "feature_end": feature_data.index[-1].strftime("%Y-%m-%d") if len(feature_data) else None,
-            "n_feature_rows": int(len(feature_data))}
+            "feature_start": complete.index[0].strftime("%Y-%m-%d") if len(complete) else None,
+            "feature_end": complete.index[-1].strftime("%Y-%m-%d") if len(complete) else None,
+            "n_feature_rows": int(len(complete)), "n_calendar_months": len(feature_data),
+            "n_incomplete_feature_months": len(feature_data) - len(complete),
+            "date_convention": "calendar_month_end_decision"}
     return feature_data, info
 
 
@@ -232,10 +271,13 @@ def build_features(data_dir: Path, *, bop_lag: int, ns_fill: str, arma_window: i
 # 3. 모형 — 원 코드의 LSTM · XGBoost 를 한 스텝 함수로
 # ----------------------------------------------------------------------
 def make_sequences(X: np.ndarray, y: np.ndarray, seq_len: int):
+    """A sequence ending at origin t receives that origin's h-month target y[t]."""
+    if seq_len < 1 or len(X) != len(y):
+        raise ValueError("유효한 seq_len과 동일 길이 X/y가 필요합니다")
     xs, ys = [], []
-    for i in range(len(X) - seq_len):
+    for i in range(len(X) - seq_len + 1):
         xs.append(X[i:i + seq_len])
-        ys.append(y[i + seq_len])
+        ys.append(y[i + seq_len - 1])
     return np.array(xs), np.array(ys)
 
 
@@ -298,38 +340,50 @@ def walk_forward(feature_data: pd.DataFrame, *, lag: int, window: int, seq_len: 
                  max_steps: int | None = None, progress=None) -> list[dict]:
     """반환: 기준일별 {t_base, t_target, base, actual|None, xgb, lstm, ensemble}.
 
-    기준일 행 i 의 타깃은 행 i+lag 의 spot(아직 없으면 None — 미실현 예측).
-    학습창은 행 [end−window+1, end] 이고 end = i−lag(실현 라벨만) — replicate_notebook 이면 end = i−1
-    (원 노트북 정렬: 타깃이 기준일 뒤 환율까지 포함돼 look-ahead). LSTM 입력 시퀀스는 기준일까지의
-    피처 seq_len 행이다(피처는 기준일에 전부 관측돼 있다).
+    모든 날짜는 달력 월말 의사결정일이다. 누락 월을 포함한 월 격자에서
+    타깃은 정확히 lag개월 뒤 spot, 학습창은 기준월−lag까지의 연속 window개
+    피처 기준월이다. XGB는 window쌍, LSTM은 window−seq_len+1개 연속 시퀀스를
+    학습한다. 피처·실현 라벨·현재 시퀀스가 불완전하면 그 기준월은 건너뛴다.
+    실제 타깃 월의 spot만 있으면 그 달 피처가 결측이어도 실현값은 보존한다.
     """
-    df = feature_data.sort_index()
+    if replicate_notebook:
+        raise ValueError("notebook look-ahead 재현 모드는 운영 러너에서 허용하지 않습니다")
+    df = monthly_grid(feature_data)
     X = df[FEATURES].to_numpy(dtype=float)
     spot = df["spot"].to_numpy(dtype=float)
     n = len(df)
     if lag < 1 or window < seq_len + 1:
         raise ValueError("lag ≥ 1, window > seq_len 이어야 합니다")
     rows = []
-    first = (lag if not replicate_notebook else 1) + window - 1
+    if max_steps is not None and max_steps < 1:
+        raise ValueError("max_steps는 양의 정수여야 합니다")
+    first = lag + window - 1
     first = max(first, seq_len - 1)
     steps = list(range(first, n))
     if max_steps is not None:
         steps = steps[-max_steps:]
     for k, i in enumerate(steps):
-        # 재현 모드: 노트북은 데이터 끝 기준으로 실현된 라벨(행 ≤ n−1−lag)까지만 가지므로
-        # 미실현 구간의 예측(predict_next)은 마지막 학습창을 그대로 쓴다.
-        end = i - lag if not replicate_notebook else min(i - 1, n - 1 - lag)
+        end = i - lag
         start = end - window + 1
         if start < 0 or end < 0:
             continue
         train_idx = np.arange(start, end + 1)
         train_X, train_y = X[train_idx], spot[train_idx + lag]
         seq_X = X[i - seq_len + 1:i + 1]
+        if (not np.isfinite(train_X).all() or not np.isfinite(train_y).all()
+                or not np.isfinite(seq_X).all() or np.any(train_y <= 0)
+                or np.any(train_X[:, 0] <= 0) or np.any(seq_X[:, 0] <= 0)):
+            continue
         xgb = fit_predict_xgb(train_X, train_y, X[i], seed)
+        # Calendar-key seed is invariant to adding older data or a missing month.
+        origin_seed = seed + df.index[i].year * 12 + df.index[i].month
         lstm = fit_predict_lstm(train_X, train_y, seq_X, seq_len=seq_len, hidden_size=hidden_size,
-                                num_layers=num_layers, epochs=epochs, lr=lr, seed=seed + i)
-        actual = float(spot[i + lag]) if i + lag < n else None
-        t_target = df.index[i + lag] if i + lag < n else df.index[i] + pd.DateOffset(months=lag)
+                                num_layers=num_layers, epochs=epochs, lr=lr, seed=origin_seed)
+        if not all(math.isfinite(value) and value > 0 for value in (xgb, lstm)):
+            raise ValueError("모형 예측이 유한 양수가 아닙니다")
+        actual = (float(spot[i + lag]) if i + lag < n
+                  and math.isfinite(spot[i + lag]) and spot[i + lag] > 0 else None)
+        t_target = (df.index[i].to_period("M") + lag).to_timestamp(how="end").normalize()
         rows.append({"t_base": df.index[i], "t_target": t_target, "base": float(spot[i]), "actual": actual,
                      "xgb": xgb, "lstm": lstm, "ensemble": (xgb + lstm) / 2})
         if progress:
@@ -369,12 +423,15 @@ def epoch(ts: pd.Timestamp) -> int:
 
 
 def build_artifact(combos: list[dict], *, info: dict, args, lags: list[int], windows: list[int]) -> dict:
+    if args.replicate_notebook or args.ns_fill not in ("ffill", "none") or args.bop_lag < 2:
+        raise ValueError("누수 재현 설정으로 운영 산출물을 만들 수 없습니다")
     return {
         "schema": SCHEMA,
         "generated_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "runner": {"version": RUNNER_VERSION, "seed": int(args.seed),
-                   "replicate_notebook": bool(args.replicate_notebook),
-                   "label_alignment": "notebook_lookahead" if args.replicate_notebook else "realized_by_base_date"},
+                   "replicate_notebook": False, "label_alignment": LABEL_ALIGNMENT,
+                   "sequence_alignment": SEQUENCE_ALIGNMENT, "horizon_unit": "calendar_month",
+                   "train_window": TRAIN_WINDOW},
         "model": {"name": "lstm_xgb_walk_forward", "target": "spot", "unit": "KRW/USD", "frequency": "monthly",
                   "features": FEATURES,
                   "ns": {"lambda": NS_LAMBDA, "maturities_years": NS_MATURITIES.tolist(), "fill": args.ns_fill},
@@ -407,10 +464,12 @@ def main(argv=None) -> int:
     parser.add_argument("--bop-lag", type=int, default=2, help="국제수지 공표 지연(개월). 원 코드 = 0")
     parser.add_argument("--ns-fill", choices=["ffill", "interpolate", "none"], default="ffill")
     parser.add_argument("--seed", type=int, default=20261019)
-    parser.add_argument("--replicate-notebook", action="store_true", help="원 노트북의 학습 라벨 정렬(look-ahead) 재현")
+    parser.add_argument("--replicate-notebook", action="store_true", help="폐기된 누수 재현 옵션 — 운영 v2에서는 거부")
     parser.add_argument("--keep-last-row", action="store_true", help="table.csv 마지막 행을 버리지 않는다(원 코드는 버림)")
     parser.add_argument("--max-steps", type=int, default=None, help="스모크용 — 조합당 마지막 N 스텝만")
     args = parser.parse_args(argv)
+    if args.replicate_notebook or args.ns_fill == "interpolate" or args.bop_lag < 2:
+        parser.error("운영 v2는 notebook look-ahead·양방향 보간·bop-lag<2를 허용하지 않습니다")
 
     data_dir = Path(args.data_dir)
     out = Path(args.out) if args.out else data_dir / ARTIFACT
@@ -437,6 +496,8 @@ def main(argv=None) -> int:
                                 lr=args.lr, seed=args.seed, replicate_notebook=args.replicate_notebook,
                                 max_steps=args.max_steps, progress=progress)
             summary = summarize(rows)
+            if not rows:
+                raise ValueError(f"{key}: 연속 월 학습창·실현 라벨을 갖춘 기준월이 없습니다")
             combos.append({
                 "key": key, "lag": lag, "window": window, "n": len(rows),
                 "n_realized": sum(1 for r in rows if r["actual"] is not None),
@@ -447,11 +508,12 @@ def main(argv=None) -> int:
             })
             s = summary
             if s["rw"].get("n"):
-                print("      " + " · ".join(f"{m} RMSE {s[m]['rmse']:.1f} U {s[m]['theil_u']:.3f} "
+                print("      " + " · ".join(f"{m} RMSE {s[m]['rmse']:.1f} U "
+                                            + (f"{s[m]['theil_u']:.3f}" if s[m]['theil_u'] is not None else "–") + " "
                                             f"적중 {100 * (s[m]['hit_rate'] or 0):.0f}%" for m in MODELS)
                       + f" · RW RMSE {s['rw']['rmse']:.1f} (n={s['rw']['n']})")
     artifact = build_artifact(combos, info=info, args=args, lags=lags, windows=windows)
-    out.write_text(json.dumps(artifact, ensure_ascii=False, indent=1), encoding="utf-8")
+    out.write_text(json.dumps(artifact, ensure_ascii=False, indent=1, allow_nan=False), encoding="utf-8")
     print(f"[3/3] wrote {out} ({out.stat().st_size:,} bytes) in {time.time() - started:.0f}s")
     return 0
 

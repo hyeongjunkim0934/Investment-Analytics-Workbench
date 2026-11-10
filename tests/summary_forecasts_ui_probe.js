@@ -94,13 +94,26 @@ assert.equal(cards('fx').length,5,'forecast cards survive unavailable portfolio 
 assert.equal(host.querySelectorAll('.summary-forecast-quarter').length,32,'rerender does not duplicate cards');
 const children=secNodes.summary.children;
 assert(children.indexOf(DOC.getElementById('summary-cards'))<children.indexOf(host));
+// Expired forecast remains an explicitly historical value, never a current VaR/recommendation.
+sandbox.Date = class extends Date {constructor(...args){super(...(args.length ? args : ['2026-12-29T15:00:00Z']));}};
+const target=P.DATA.fx.markov.simulation.t[63];
+P.DATA.fx.outlook.history.t.push(target);P.DATA.fx.outlook.history.v.push(1340);
+render();
+const retired=cards('fx')[0].querySelector('.summary-forecast-quarter');
+assert.equal(metric(retired,'평균'),'—');assert.equal(metric(retired,'VaR 97.5%'),'—');
+assert.equal(metric(retired,'당시 전망 (원)'),'1,363');
+assert(retired.textContent.includes('실현 1,340원'));assert(retired.textContent.includes('실현 평가'));
+sections()[0].querySelector('button').click();
+csv=CSV_DOWNLOADS.at(-1).replace(/^\uFEFF/,'').trim().split('\n').map(line=>line.split(','));
+assert.equal(csv[1][9],'');assert.equal(csv[1][16],'');assert.equal(Number(csv[1][22]),1362.6);
+assert.equal(Number(csv[1][25]),1340);
 P.DATA.fx=null;P.DATA.hedge=null;render();
 assert.equal(cards('fx').length,5);assert.equal(cards('hedge').length,3);
 assert(cards('hedge').every(card=>card.querySelectorAll('.summary-forecast-point b').every(n=>n.textContent==='—')));
 assert(cards('fx')[1].textContent.includes('불러오지 못했습니다'));
 assert(!host.textContent.includes('NaN'));assert(!host.textContent.includes('undefined'));
 console.log(JSON.stringify({placement:true,thirtyTwoQuarters:true,modelLabels:true,numericDisplay:true,
-  uncertaintyTypes:true,var975:true,consensusNoVar:true,unroundedCsv:true,calendarCsv:true,
+  expiredHistoricalDisplayAndCsv:true,uncertaintyTypes:true,var975:true,consensusNoVar:true,unroundedCsv:true,calendarCsv:true,
   marketChange:true,appliedState:true,disclosurePreserved:true,missingInputs:true,portfolioIsolation:true}));
 `;
 const filename = path.join(repo, "tests/summary_forecasts_ui_runtime.js");

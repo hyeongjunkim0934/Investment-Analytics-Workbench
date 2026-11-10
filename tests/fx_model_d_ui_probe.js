@@ -10,6 +10,7 @@ const stamp=date=>Date.parse(date+'T00:00:00Z')/1000;
 const iso=t=>new Date(t*1000).toISOString().slice(0,10);
 const near=(a,b)=>assert(Math.abs(a-b)<1e-8,a+' != '+b);
 const same=(a,b)=>assert.equal(JSON.stringify(a),JSON.stringify(b));
+sandbox.Date = class extends Date {constructor(...args){super(...(args.length ? args : ['2029-01-01T00:00:00Z']));}};
 const anchor={t:stamp('2028-12-31'),v:1375.125};
 const steps=Array.from({length:253},(_,i)=>i);
 const times=steps.map(i=>anchor.t+i*86400);
@@ -104,7 +105,15 @@ if(process.env.FX_MODEL_D_FIXTURE){
  assert.equal(host().querySelectorAll('.fx-d-expired').length,expired.length);
  if(expired.length) assert(host().querySelector('.fx-d-exposure-table').textContent.includes('목표일 경과'));
 }
-console.log(JSON.stringify({fiveTabsAndNamePersistence:true,conditionalIntervalsAndRiskCards:true,compactMetadata:true,
+// Expired risk stays historical; current exposure is suppressed at Seoul midnight.
+sandbox.Date = class extends Date {constructor(...args){super(...(args.length ? args : ['2029-01-20T15:00:00Z']));}};
+render();assert(host().querySelector('.fx-d-expired').textContent.includes('실현 대기'));
+assert(host().querySelector('.fx-d-exposure-table').querySelector('tbody tr').textContent.includes('목표일 경과'));
+history.t.push(fixture.horizons[0].target_t);history.v.push(1399.25);
+const evaluated=render();assert(host().querySelector('.fx-d-realized').textContent.includes('실현 1,399원'));
+assert.equal(byId('fx-d-target-vol').value,'5');
+near(evaluated.forecast.data[1][evaluated.forecast.data[0].indexOf(fixture.horizons[0].target_t)],1399.25);
+console.log(JSON.stringify({expiredExposureAndExactEvaluation:true,fiveTabsAndNamePersistence:true,conditionalIntervalsAndRiskCards:true,compactMetadata:true,
  exposureBoundariesAndNoDefaultTarget:true,sameSampleVolatilityComparison:true,rawCsvPrecision:true,malformedAndInactiveRejected:true,
  chartLifecycleAndKeyboard:true,collapsedMethodState:true}));
 `;

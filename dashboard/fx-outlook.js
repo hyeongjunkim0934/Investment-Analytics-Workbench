@@ -19,6 +19,17 @@ const FX_WORKSPACES = {
 let fxOutlookWorkspace = "consensus";
 let fxOutlookModelNames = null;
 let fxOutlookNameDraft = null;
+let fxForecastRenderedDay = null;
+
+function refreshFxForecastDates(now = new Date()) {
+  const day = typeof fxForecastToday === "function" ? fxForecastToday(now) : fxOutlookToday(now);
+  if (!Number.isFinite(day) || fxForecastRenderedDay === null || day === fxForecastRenderedDay) return false;
+  // Rebuild the dated model outputs, retaining stored/applied model settings and
+  // the consensus editor. No market fetch or model refit is performed here.
+  renderFxOutlookWorkspace();
+  if (typeof renderSummaryForecasts === "function") renderSummaryForecasts();
+  return true;
+}
 
 function fxOutlookNames() {
   if (fxOutlookModelNames) return fxOutlookModelNames;
@@ -36,6 +47,7 @@ function fxOutlookNames() {
 
 function selectFxOutlookWorkspace(key) {
   if (!Object.hasOwn(FX_WORKSPACES, key)) return;
+  refreshFxForecastDates();
   if (fxOutlookWorkspace !== key) {
     fxOutlookNameDraft = null;
     const editor = document.getElementById("fx-outlook-name-editor");
@@ -61,6 +73,7 @@ function selectFxOutlookWorkspace(key) {
 function renderFxOutlookWorkspace() {
   const host = document.getElementById("fxoutlook-workspace");
   if (!host) return;
+  fxForecastRenderedDay = typeof fxForecastToday === "function" ? fxForecastToday() : fxOutlookToday();
   host.textContent = "";
   const names = fxOutlookNames(), keys = Object.keys(FX_WORKSPACES);
   const tabs = el("div", { class: "alloc-tabs fx-outlook-tabs", role: "tablist", "aria-label": "환율전망 분석" });
@@ -152,6 +165,7 @@ function renderFxOutlookWorkspace() {
   if (fxOutlookNameDraft) input.value = fxOutlookNameDraft.value;
   host.append(tabs, editor);
   selectFxOutlookWorkspace(fxOutlookWorkspace);
+  if (typeof renderFxValidation === "function") renderFxValidation(document.getElementById("fx-validation-content"));
 }
 
 function fxOutlookToday(now = new Date()) {

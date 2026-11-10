@@ -115,6 +115,7 @@ secNodes.hedge.append(elem("div", "hedge-workspace", "hedge-workspace"));
 ["hedge-cost-dashboard", "hedge-model-summary", "hedge-merit-card"]
   .forEach((id) => DOC.getElementById("hedge-monitoring").append(elem("div", id, "card")));
 secNodes.fxoutlook.append(elem("div", "fxoutlook-workspace", "fx-outlook-workspace"));
+secNodes.fxoutlook.append(elem("div", "fx-validation-content"));
 [["fxoutlook-content", "consensus"], ["fxoutlook-model-a", "modelA"], ["fxoutlook-model-b", "modelB"], ["fxoutlook-model-c", "modelC"], ["fxoutlook-model-d", "modelD"]]
   .forEach(([id, key]) => {
     const panel = elem("div", id);
@@ -204,6 +205,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "port-opportunities
   { filename: "dashboard/port-opportunities.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "port-constraints.js"), "utf8"), sandbox,
   { filename: "dashboard/port-constraints.js" });
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-forecast-status.js"), "utf8"), sandbox,
+  { filename: "dashboard/fx-forecast-status.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-markov.js"), "utf8"), sandbox,
   { filename: "dashboard/fx-markov.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-lstm-xgb.js"), "utf8"), sandbox,
@@ -212,6 +215,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-model-c.js"), "
   { filename: "dashboard/fx-model-c.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-model-d.js"), "utf8"), sandbox,
   { filename: "dashboard/fx-model-d.js" });
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-validation.js"), "utf8"), sandbox,
+  { filename: "dashboard/fx-validation.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-outlook.js"), "utf8"), sandbox,
   { filename: "dashboard/fx-outlook.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-cip.js"), "utf8"), sandbox,

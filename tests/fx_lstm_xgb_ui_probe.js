@@ -26,12 +26,13 @@ const makeCombo=(lag,window,n=30)=>{
   const ensemble=xgb.map((v,i)=>(v+lstm[i])/2);
   return {key:'l'+lag+'_w'+window,lag,window,n,n_realized:n-lag,t_base,t_target,base,actual,pred:{xgb,lstm,ensemble},summary:null};
 };
-const fixture=()=>({active:true,artifact:'fx_lstm_xgb.json',path:'models/fx_lstm_xgb/fx_lstm_xgb.json',schema:'fx_lstm_xgb/1',reason:null,
-  generated_at:'2026-10-19T01:02:03Z',runner:{version:'1',seed:20261019,replicate_notebook:false,label_alignment:'realized_by_base_date'},
+sandbox.Date = class extends Date {constructor(...args){super(...(args.length ? args : ['2025-07-01T00:00:00Z']));}};
+const fixture=()=>({active:true,artifact:'fx_lstm_xgb.json',path:'models/fx_lstm_xgb/fx_lstm_xgb.json',schema:'fx_lstm_xgb/2',reason:null,
+  generated_at:'2026-10-19T01:02:03Z',runner:{version:'2',seed:20261019,replicate_notebook:false,label_alignment:'calendar_month_target_realized_by_base_date',sequence_alignment:'last_input_month_matches_label_origin',horizon_unit:'calendar_month',train_window:'consecutive_calendar_origin_months'},
   model:{name:'lstm_xgb_walk_forward',features:['spot','ns_level'],ns:{lambda:0.7308,maturities_years:[0.25,1,3,10],fill:'ffill'},
     arma:{order:[1,1,1],window_months:36},bop_lag_months:2,lstm:{hidden_size:32,num_layers:1,seq_len:6,epochs:100,lr:0.001},
     xgb:{},ensemble:'mean(xgb, lstm)',benchmark:'random_walk_base_level'},
-  data:{feature_start:'2003-12-31',feature_end:'2026-05-29',n_feature_rows:270},
+  data:{table:{end:'2025-06-30'},feature_start:'2003-12-31',feature_end:'2026-05-29',n_feature_rows:270},
   grid:{lags:[1,3],windows:[24,36]},regime_defaults:{low_below:1100,high_above:1300},
   combos:[makeCombo(1,24),makeCombo(3,24),makeCombo(1,36),makeCombo(3,36)]});
 const history={t:[stamp('2023-01-31'),stamp('2026-05-29')],v:[1250,1360]};
@@ -63,7 +64,7 @@ assert(host().textContent.includes('fx_lstm_xgb.json 없음 — 테스트 사유
 assert(!DOC.getElementById('fxoutlook-model-b').textContent.includes('등록된 모형이 없습니다'));
 assert.equal(live(),1);
 render(null);assert(host().textContent.includes('불러오지 못했습니다'));assert.equal(live(),1);
-render({active:true,combos:[]});assert(host().textContent.includes('형식을 확인할 수 없어'));
+render({active:true,combos:[]});assert(host().textContent.includes('확인할 수 없어'));
 
 // 2. Default view = lag 3 · window 24 · ensemble · 전체; chart data is the published combo on the target-date axis.
 resetView();r=render(fixture());assert(r.main&&r.err);assert.equal(live(),3);
@@ -80,7 +81,7 @@ assert(byId('fx-lx-tile-base').textContent.includes(Math.round(combo.base[29]).t
 assert(byId('fx-lx-tile-base').textContent.includes(iso(combo.t_base[29])));
 ['xgb','lstm','ensemble'].forEach(m=>assert(byId('fx-lx-tile-'+m).textContent.includes(Math.round(combo.pred[m][29]).toLocaleString('en-US')+'원')));
 assert(byId('fx-lx-tile-ensemble').textContent.includes(iso(combo.t_target[29]))&&byId('fx-lx-tile-ensemble').textContent.includes('3개월 후'));
-assert(host().querySelector('.fx-lx-chart-note').textContent.includes('미실현 예측 3행'));
+assert(host().querySelector('.fx-lx-chart-note').textContent.includes('미래 예측 3행'));
 assert(host().querySelector('.fx-lx-method').textContent.includes('공표 지연 2개월'));
 assert(host().querySelector('.fx-lx-method').textContent.includes('시드 20261019'));
 assert(host().querySelector('.fx-lx-method').textContent.includes('참고 표시 전용'));
@@ -142,7 +143,7 @@ const chartCard=host().querySelector('.fx-lx-chart-card');
 const button=label=>Array.from(chartCard.querySelectorAll('button')).find(b=>b.textContent===label);
 button('표').click();button('CSV').click();
 const csv=CSV_DOWNLOADS.at(-1).replace(/^﻿/,'').trim().split('\n').map(row=>row.split(','));
-const headers=csv.shift();assert.equal(headers.length,10);assert.equal(csv.length,expected.length);
+const headers=csv.shift();assert.equal(headers.length,11);assert.equal(csv.length,expected.length);
 assert.equal(csv[0][1],iso(c1.t_target[c1.n-1]));assert.equal(csv[0][3],'');
 near(Number(csv[1][4]),c1.pred.xgb[c1.n-2]);near(Number(csv[1][8]),c1.pred.xgb[c1.n-2]-c1.actual[c1.n-2]);
 const tableRows=chartCard.querySelector('.chart-table').querySelectorAll('tbody tr');
@@ -182,7 +183,19 @@ const malformed=[p=>p.combos[0].actual.pop(),p=>p.combos[0].t_base.reverse(),p=>
   p=>delete p.combos[0].pred.xgb,p=>p.combos[0].window=1];
 for(const mutate of malformed){const broken=fixture();mutate(broken);const res=render(broken);assert(!res.main&&!res.err);
   assert(host().textContent.includes('확인할 수 없어')||host().textContent.includes('맞지 않아'));assert.equal(live(),1);}
-console.log(JSON.stringify({inactiveAndMissingGraceful:true,defaultViewAndChartData:true,metricsMatchOracle:true,
+// Legacy and unsafe runner outputs cannot appear as current forecasts.
+for(const mutate of [p=>p.schema='fx_lstm_xgb/1',p=>p.runner.replicate_notebook=true,p=>p.model.ns.fill='interpolate',
+  p=>p.runner.sequence_alignment='old',p=>p.model.bop_lag_months=0,p=>p.combos[0].t_target[0]+=86400]){
+ const p=fixture();mutate(p);assert(!render(p).main);
+}
+sandbox.Date = class extends Date {constructor(...args){super(...(args.length ? args : ['2025-09-29T15:00:00Z']));}};
+const matured=fixture();render(matured);assert(host().querySelector('.fx-lx-expired').textContent.includes('실현 대기'));
+matured.data.table.end='2025-09-30';
+matured.combos.forEach(c=>{c.actual[29]=1400;});
+const evaluated=render(matured);assert(evaluated.main,'a missing historical actual does not invalidate later observed targets');
+assert(host().querySelector('.fx-lx-realized').textContent.includes('실현 1,400원'));
+assert(host().querySelector('.fx-lx-error-card').textContent.includes('예측 − 실제 차이'));
+console.log(JSON.stringify({v2ContractAndExpiredEvaluation:true,inactiveAndMissingGraceful:true,defaultViewAndChartData:true,metricsMatchOracle:true,
   regimeThresholdsValidatedAndPersisted:true,comboModelRangeSwitches:true,rawCsvAndTable:true,hoverTooltip:true,
   viewPersistenceAndCleanup:true,tabResizeNameEditingConsensus:true,malformedGraceful:true}));
 `;

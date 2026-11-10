@@ -10,11 +10,12 @@
 
 | 층 | 파일 | 실행 위치 |
 |---|---|---|
-| 러너 | `pipeline/research/fx_lstm_xgb_runner.py` | **오프라인**(CI 미실행). torch·xgboost·statsmodels·scikit-learn 필요 — `pipeline/research/requirements-fx-lstm-xgb.txt`. 파이프라인 고정 의존성 3개와 섞지 말 것 |
+| 러너 | `pipeline/research/fx_lstm_xgb_runner.py` | 직접 실행 또는 CSV 세 개가 준비된 빌드에서 CPU 학습. 전용 의존성은 `pipeline/research/requirements-fx-lstm-xgb.txt` |
 | 로더 | `pipeline/fx_lstm_xgb.py` | 파이프라인. `fx_lstm_xgb.json` 을 Data 저장소 재귀 탐색으로 찾아 스키마 검증 후 `fx.json.lstm_xgb` 로 게시. 표준 라이브러리만 |
 | 화면 | `dashboard/fx-lstm-xgb.js` | 브라우저. 랜덤워크 대조·오차·지표·국면 분해를 게시된 행에서 계산 |
 
-모형은 브라우저에서도 CI 에서도 다시 추정하지 않는다. JSON 15개 계약은 그대로다(`fx.json` 안의 블록).
+모형은 브라우저에서 다시 추정하지 않는다. 빌드의 별도 학습 단계와 일반 파이프라인 로더를 분리한다.
+JSON 파일 계약은 `fx.json` 안의 모형B 블록을 유지한다.
 
 ### 게시 경계 (공개 저장소)
 
@@ -24,10 +25,12 @@
 (`MODEL_META_KEYS`·`RUNNER_KEYS`·`SUMMARY_KEYS`), `tests/test_fx_lstm_xgb_ui.py` 가 화면 코드에
 피처 필드명이 없음을 검사한다. 원/달러 수준 자체는 이미 `fx.json.ts`·`outlook` 으로 게시되는 값이다.
 
-## 입력과 피처 (원 코드 그대로)
+## 입력과 피처
 
 - `table.csv`(월말): date, dollar_index, spot, future, usa_3m/1y/3y/10y, kr_3m/1y/3y/10y
   (sofr·30y 열은 있어도 쓰지 않는다). 마지막 행은 원 코드와 같이 버린다(`--keep-last-row` 로 유지).
+  날짜는 관측 월을 나타내며 월별 한 행만 허용한다. 마지막 영업일 등 원래 날짜를 해당 달의
+  달력 월말 의사결정일로 표시한다. 중복 월은 거부하고 없는 달은 결측 행으로 남긴다.
 - `국제수지_1.csv`: 경상수지·증권투자(자산) 등, `국제수지_2.csv`: 투자소득수익·직접투자소득수익·
   증권투자소득수익 등. '변환' 열의 월 표기(01-Jan / Jan-01 / 2001-01 …)를 해석해 **월 기준으로
   조인**한다 — 원 코드는 행 위치로 붙였다.
@@ -37,48 +40,87 @@
   (ARIMA(1,1,1) 36개월 롤링 계수).
 - 타깃: `lag` 개월 뒤 원/달러 수준.
 
-## 학습·평가 설계
+## 학습·평가 설계 — 운영 v2
 
-기준일 t 마다 직전 `window` 개월을 학습창으로 삼아 XGBoost(기본 파라미터)와 LSTM(hidden 32·1층·
-seq 6·100 epoch·Adam 1e-3·StandardScaler·전체배치)을 **다시 학습**하고 t 의 피처로 t+lag 수준을
-예측한다. 앙상블은 두 예측의 단순평균. 기본 그리드 `--lags 1,3,6,9,12 × --windows 24,36` 열 조합을 한
-JSON 에 싣는다 — 화면의 「파라미터 변경」은 이 격자에서 고르는 것이고 브라우저 재학습은 없다.
-기존 산출물에 9·12개월이 없으면 해당 전망은 재실행한 산출물을 게시한 뒤 제공되며, 짧은 지평을 외삽하지 않는다.
-기존 6조합 실행 비용(실측, 4코어 CPU): 100 epoch 기준 스텝당 약 1.5초 → 300개월 자료 × 6조합 약 40분. 확장한 10조합의 실행시간은 별도 측정하지 않았다.
-`--epochs 5 --max-steps 10` 스모크는 몇 초다.
+기준월 t에서 정확히 h개 **달력 월** 뒤의 원/달러 수준을 예측한다. 기준일과 목표일은 모두
+달력 월말이다. 역사적 실현 전망과 아직 미실현인 전망에 같은 날짜 규칙을 사용한다.
+피처 생성 뒤 결측 행을 삭제하지 않는다. ARIMA의 36개월 창, LSTM의 6개월 시퀀스,
+타깃 지평 어느 곳에서도 없는 달을 다음 관측 월로 압축하지 않는다.
 
-### 원 코드 대비 바뀐 점 — 전부 플래그로 되돌릴 수 있다
+학습창은 t−h까지의 연속 `window`개 **피처 기준월**이다. 모든 학습 라벨은 기준월 t까지
+실현되어 있어야 한다. XGB는 `window`개 피처·라벨 쌍을 사용하고 LSTM은 같은 창 안의
+`window−seq_len+1`개 연속 시퀀스를 사용한다. LSTM 시퀀스의 마지막 입력 월과 라벨의
+예측 기준월은 같다. 현재 예측 시퀀스는 t까지의 연속 `seq_len`개월이다.
 
-| 항목 | 원 코드 | 러너 기본 | 복원 플래그 |
-|---|---|---|---|
-| 학습 라벨 정렬 | 행 t−1 까지의 타깃(= t+lag−1 시점 환율)을 학습 → look-ahead | 기준일에 **실현된** 타깃(행 ≤ t−lag)만 학습 | `--replicate-notebook` |
-| 국제수지 공표 지연 | 0 | 2개월 뒤로 밀기 | `--bop-lag 0` |
-| NS 요인 결측 | 양방향 선형보간(미래값 사용) | 앞채움 | `--ns-fill interpolate` |
-| 국제수지 조인 | 행 위치 | 월(YYYY-MM) 키 | 없음 — 위치 조인은 열 길이가 다르면 조용히 틀린다 |
-| 난수 | 미고정 | `--seed 20261019`(torch 스텝별 `seed+t`, XGB `random_state`, `n_jobs=1`) | `--seed` |
+학습 피처·실현 라벨·현재 시퀀스 중 하나라도 불완전한 기준월은 건너뛴다. 학습창을 더 과거로
+늘리거나 누락 월을 채우지 않는다. 타깃 월의 환율은 있으나 그 달의 다른 피처가 결측인 경우
+타깃 환율은 평가에 보존한다. 역사적 타깃 환율 자체가 없는 행은 `actual=null`로 남으며
+이후 달의 실현값이 다시 나타날 수 있다. null은 손실 0이나 예측 오차 0으로 계산하지 않는다.
 
-산식(NS·ARIMA·피처·하이퍼파라미터·앙상블)은 바꾸지 않았다. 러너는 `label_alignment` 와
-`replicate_notebook` 을 JSON 에 적고 화면이 그대로 표시한다 — 어느 설정의 결과인지 숨기지 않는다.
+모형 피처와 하이퍼파라미터는 유지한다. XGBoost 기본값, LSTM hidden 32·1층·seq 6·
+100 epoch·Adam 1e-3·StandardScaler·전체배치를 사용한다. LSTM 표준화는 해당 학습창에서만
+적합한다. 앙상블은 XGB와 LSTM 단순평균이며 랜덤워크는 기준월 환율 유지다.
+기본 그리드는 `--lags 1,3,6,9,12 × --windows 24,36`이다. 화면 선택은 게시된 조합 선택이며
+브라우저 재학습이 아니다. 모형 시드는 기준월 키에 연결되어 과거 자료 추가로 행 번호가
+바뀌어도 같은 기준월의 시드가 바뀌지 않는다.
 
-## 산출물 스키마 `fx_lstm_xgb/1`
+### v1에서 교정한 사항
 
-```
-{schema, generated_at, runner{version, seed, replicate_notebook, label_alignment},
- model{name, target, unit, frequency, features[], ns{lambda, maturities_years, fill}, arma{order, window_months},
-       bop_lag_months, lstm{hidden_size, num_layers, seq_len, epochs, lr}, xgb, ensemble, benchmark},
- data{table, bop, join, feature_start, feature_end, n_feature_rows},
- grid{lags[], windows[]}, regime_defaults{low_below, high_above},
- combos[{key, lag, window, n, n_realized, t_base[], t_target[], base[], actual[],
-         pred{xgb[], lstm[], ensemble[]}, summary{<model>: {n, rmse, mae, bias, theil_u, hit_rate, n_direction}}}]}
-```
+| 항목 | v1 | 운영 v2 |
+|---|---|---|
+| LSTM 라벨 | 마지막 입력보다 h+1행 뒤를 학습, h행 뒤로 게시 | 마지막 입력 월과 같은 기준월의 h개월 타깃 |
+| 결측 월 | 피처 결측 제거 후 h행 이동 | 월 격자 유지, 정확히 h달력개월 이동 |
+| 목표일 | 실현 행 날짜와 미실현 DateOffset 혼용 | 양쪽 모두 달력 월말 |
+| 누수 설정 | notebook look-ahead·NS 양방향 보간도 게시 가능 | 러너와 로더에서 차단 |
+| 국제수지 지연 | 0개월 선택 가능 | 운영은 2개월 이상만 허용 |
+| 지표 | 입력 JSON의 summary 전달 | 동일 실현 행에서 로더가 다시 계산 |
 
-- 시각은 epoch 초(`t_base` 오름차순). `actual` 은 아직 실현되지 않은 마지막 `lag` 행이 `null` 이며
-  실현 행 뒤에 다시 실현 행이 올 수 없다.
-- 로더 검증: schema · grid 와 combos 의 lag/window 일치 · 배열 길이 · 오름차순 · 유한 양수 · pred 세
-  모형 존재 · `generated_at` 날짜. 하나라도 어긋나면 **사유와 함께 `active:false`** 로 게시한다(다른
-  모형 대체 없음). 파일이 여러 개면 정렬 첫 번째를 쓰고 경고한다.
-- 게이트: `REQUIRED_KEYS["fx"]` 의 `lstm_xgb` 와 `REQUIRED_NESTED_KEYS[("fx","lstm_xgb")]`. 파일이 없어도
-  블록은 항상 있다(체인 안전장치).
+`--replicate-notebook`, `--ns-fill interpolate`, `--bop-lag` 0·1은 운영에서 오류로 중단한다.
+국제수지 2개월 지연은 공표 달력의 근사이므로 당시 빈티지·수정치 검증을 대신하지 않는다.
+
+## 산출물 스키마 `fx_lstm_xgb/2`
+
+운영 로더는 **v2로 재생성된 산출물만** 활성화한다. v1 파일의 schema 문자열만 바꾸는 이관은
+허용하지 않는다. 기존 예측치를 날짜만 바꾸거나 보간해 재사용하지 말고 교정된 러너를 다시
+실행해야 한다. 데이터 입력과 실제 재학습이 완료되지 않으면 B는 사유를 표시한 비활성 상태다.
+
+필수 정렬 메타데이터는 다음과 같다.
+
+| 필드 | 값 |
+|---|---|
+| schema | fx_lstm_xgb/2 |
+| runner.version | 2 |
+| runner.replicate_notebook | false |
+| runner.label_alignment | calendar_month_target_realized_by_base_date |
+| runner.sequence_alignment | last_input_month_matches_label_origin |
+| runner.horizon_unit | calendar_month |
+| runner.train_window | consecutive_calendar_origin_months |
+
+기존 `model`, `grid`, `regime_defaults`, `combos` 구조와 공개 범위는 유지한다.
+`data.table.end`는 월말 자료 기준일이고 `data`는 유효 피처 월 수·전체 달력 월 수·불완전 피처
+월 수를 기록한다. 시각 배열은 UTC 달력 월말 자정의 epoch 초다. 모든 행에서 목표 월과
+기준 월의 차이가 `lag`와 정확히 같아야 한다. 기준일이나 실제 환율의 목표일이 자료 기준일을
+넘으면 로더가 거부한다. 생성시각은 시간대가 있어야 하고 자료 기준일 이후여야 한다.
+
+로더는 정렬 메타데이터, NS 결측 규칙, 국제수지 공표 지연, 날짜·배열 길이·유한 양수·
+앙상블 평균·그리드를 검증한다. RMSE·MAE·편향·Theil U·방향 적중률은 동일한 유효 실현
+행에서 재계산한다. JSON의 주장 지표를 그대로 신뢰하지 않는다. 실패하면 사유와 함께
+`active:false`로 게시한다. 파일이 여러 개면 정렬 첫 번째를 쓰고 경고한다.
+
+게이트는 `REQUIRED_KEYS["fx"]`의 `lstm_xgb`와 중첩 키 계약을 유지한다. 파일이 없거나
+v1이어도 블록은 항상 있으므로 다른 모형이나 화면 갱신을 막지 않는다.
+
+## 자동 학습과 재생성
+
+기존 Data 갱신 이벤트, 기본 브랜치의 pipeline/dashboard 변경, 수동 build 실행에서
+`models/fx_lstm_xgb/`의 입력 CSV 세 개를 확인한다. 세 파일이 모두 있으면 입력·러너·로더·
+학습 보조 코드·의존성 정의의 SHA256을 묶은 키로 검증된 산출물 캐시를 찾는다. 맞는 캐시가
+없으면 기본 10개 조합을 CPU에서 학습하고, v2 로더 검증을 통과한 결과만 일반 파이프라인과
+배포에 연결한다. 일부 CSV만 있는 경우에는 빌드를 중단해 불완전한 입력을 숨기지 않는다.
+
+입력 파일이 모두 없는 경우 직접 게시한 v2 JSON 경로를 유지한다. JSON도 없으면 B는
+비활성이다. 학습 결과는 빌드 체크아웃 안에서 사용하며 Data 원격 저장소에 자동 커밋하지
+않는다. 캐시에는 검증된 JSON만 저장한다. 재현 정보는 `data.provenance`에 포함한다.
 
 ## 화면 (`renderFxLstmXgb`)
 
@@ -94,24 +136,24 @@ JSON 에 싣는다 — 화면의 「파라미터 변경」은 이 격자에서 �
 
 ## 검증
 
-- `tests/test_fx_lstm_xgb.py`: 월 표기 해석, NS 최소제곱 독립 대조, 국제수지 지연 정렬, walk-forward
-  라벨 정렬(정직 모드는 학습 라벨 행 ≤ 기준일, 복제 모드는 원 노트북과 같은 t+lag−1), 요약 지표
-  손계산, 로더 스키마·오류·중복 처리, 러너→로더 왕복.
-- `tests/test_fx_lstm_xgb_ui.py` + `tests/fx_lstm_xgb_ui_probe.js`: 지표 오라클 대조, 국면 경계 검증·저장,
-  조합/모형/기간 전환, CSV/표, 호버, 재렌더 정리, 탭 리사이즈·이름 편집·컨센서스 보존, 깨진 산출물
-  9종이 차트를 그리지 않음.
-- 합성 CSV 로 러너 완주(스모크·48스텝 격자)와 NS 요인의 원 노트북 행 일치를 확인했고, 그 산출물을 임시
-  데이터 디렉터리에 넣어 파이프라인·게이트를 통과시킨 뒤 실브라우저(Chromium)에서 패널 렌더를 캡처했다.
-  실데이터 파이프라인(503계열·13경고·JSON 15개)은 산출물 부재 상태에서 비활성 블록을 게시하고 게이트를 통과한다. **실제 CSV 는 아직 받지
-  못해 실성과 수치는 없다** — Data 저장소에 CSV 3개를 올리고 러너를 돌려 JSON 을 커밋하면 화면이
-  켜진다(Data `CLAUDE.md` 「환율모형B 입력·산출물」).
+`tests/test_fx_lstm_xgb.py`는 입력 해석·NS 최소제곱·국제수지 공표 지연·학습 라벨 만기·
+지표 손계산·로더 게시·러너 왕복을 검증한다. `tests/test_fx_lstm_xgb_alignment_v2.py`는
+실제 `make_sequences`의 마지막 입력과 라벨을 독립 정수 인덱스로 대조한다. 또한 독립
+달력 월 계산, 결측 월 압축 방지와 연속구간 복구, 피처 결측일의 실제 타깃 보존, 미래자료
+교란·표본 절단에 대한 과거 예측 불변성, v1·누수 설정·잘못된 목표일 차단을 검증한다.
+이 정렬 검사는 모형 예측 부분을 대체하므로 실제 LSTM·XGBoost의 학습 성과 검증과 다르다.
+
+UI 검증은 `tests/test_fx_lstm_xgb_ui.py`와 `tests/fx_lstm_xgb_ui_probe.js`가 담당한다.
+원자료 CSV 세 개가 없는 상태에서는 실제 재학습·예측력 검증을 완료했다고 보고하지 않는다.
+과거 v1 합성 실행 결과는 v2 정렬·실성과 검증으로 전용하지 않는다.
 
 ## 한계
 
-- 표본 외 우월성은 화면 지표로만 판단한다. 24~36개월 창의 LSTM 은 표본이 매우 작고 결과가 시드에
+- 화면 지표는 동일 표본의 기술통계이며 표본 외 우월성의 통계적 증명이 아니다. 24~36개월 창의 LSTM 은 표본이 매우 작고 결과가 시드에
   민감할 수 있다(시드 고정은 재현성이지 안정성이 아니다). 원 자료 어디에도 표본 외 성과 수치가
   없었다.
 - 국면 경계(1100/1300)는 노트북의 고정값이며 추정값이 아니다 — 사용자가 바꾸면 분해만 바뀐다.
 - 국제수지 공표 지연 2개월은 ECOS 월별 공표 관행에 맞춘 근사다. 실제 공표일 달력은 쓰지 않는다.
-- 산출물은 러너를 돌린 시점의 스냅숏이다. 새 월이 쌓이면 러너를 다시 돌려 커밋해야 한다(자동 갱신
-  없음). 평가 자료로 창·lag·시드를 다시 고르면 표본 외 평가가 아니다.
+- 산출물은 학습 시점의 스냅숏이다. CSV 입력이 갱신되어 빌드가 실행되면 캐시 키가 바뀌어
+  재학습한다. 입력 파일 자체의 최신성은 별도 확인이 필요하다. 평가 자료로 창·lag·시드를
+  다시 고르면 미사용 표본의 평가가 아니다.

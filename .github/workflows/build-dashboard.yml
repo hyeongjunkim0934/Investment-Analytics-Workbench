@@ -80,6 +80,9 @@ jobs:
   build:
     needs: test
     runs-on: ubuntu-latest
+    # The first complete FX B monthly fit is slower than a normal data refresh.
+    # Subsequent builds reuse only an exact input/code/version-matched artifact.
+    timeout-minutes: 240
     steps:
       - name: Checkout workbench
         uses: actions/checkout@v7
@@ -127,6 +130,43 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r pipeline/requirements.txt
+
+      - name: Inspect FX B monthly training inputs
+        id: fx-b-inputs
+        run: >-
+          python pipeline/research/fx_training_input.py probe
+          --data-dir source-data --github-output "$GITHUB_OUTPUT"
+
+      - name: Restore validated FX B forecast cache
+        if: steps.fx-b-inputs.outputs.ready == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          # Forecast JSON only: never cache the private CSV inputs or checkout.
+          path: .fx-model-b-cache/fx_lstm_xgb.json
+          key: ${{ steps.fx-b-inputs.outputs.cache_key }}
+
+      - name: Validate FX B forecast cache
+        if: steps.fx-b-inputs.outputs.ready == 'true'
+        id: fx-b-cache
+        run: >-
+          python pipeline/research/fx_training_input.py check-cache
+          --data-dir source-data --github-output "$GITHUB_OUTPUT"
+
+      - name: Install FX B CPU training dependencies
+        if: steps.fx-b-cache.outputs.needs_training == 'true'
+        run: |
+          pip install -r pipeline/research/requirements-fx-training.txt
+          pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Prepare FX B validated forecast for publication
+        run: python pipeline/research/fx_training_input.py ensure --data-dir source-data
+
+      - name: Save validated FX B forecast cache
+        if: steps.fx-b-cache.outputs.needs_training == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .fx-model-b-cache/fx_lstm_xgb.json
+          key: ${{ steps.fx-b-inputs.outputs.cache_key }}
 
       - name: Build dashboard data
         run: |

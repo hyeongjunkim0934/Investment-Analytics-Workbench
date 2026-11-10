@@ -102,6 +102,8 @@ def write_payloads(directory, markov):
     payloads["fx"]["model_c"] = fx_model_c.skeleton("synthetic: no Model C inputs")
     import fx_model_d
     payloads["fx"]["model_d"] = fx_model_d.skeleton("synthetic: no Model D inputs")
+    import fx_validation
+    payloads["fx"]["validation"] = fx_validation.skeleton("synthetic: no common validation inputs")
     import reference_portfolio
     payloads["alloc"]["reference"] = reference_portfolio.inactive("synthetic: no reference inputs")
     for name, value in payloads.items():

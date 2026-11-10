@@ -36,6 +36,8 @@ import math
 import re
 import sys
 from pathlib import Path
+import fx_validation_contract
+import fx_lstm_xgb
 
 # process.py 의 payloads 딕셔너리 = dashboard/app.js 의 FILES 상수 = 이 목록.
 # 셋 중 하나만 고치면 안 된다.
@@ -57,7 +59,7 @@ META_FIELDS = ["built_at_utc", "last_observation", "series_count", "files", "war
 REQUIRED_KEYS = {
     # lstm_xgb = 환율모형B(오프라인 러너 산출물). 파일이 없어도 active:false 블록이
     # 게시돼야 한다 — 부재는 wiring 누락이다.
-    "fx": ["ts", "outlook", "markov", "lstm_xgb", "model_c", "model_d"],  # 결측이어도 비활성 블록은 필수.
+    "fx": ["ts", "outlook", "markov", "lstm_xgb", "model_c", "model_d", "validation"],  # 결측이어도 비활성 블록은 필수.
     "hedge": ["asof", "default_tenor_m", "matrix", "curves", "backtest",
               "cost_hist_curve", "cost_hist_usd", "cost_dashboard", "cip", "fx_volatility", "cost_stats", "mtm", "sim",
               # ust_merit = 미국채 투자 메리트 모니터(§7.7.14). 시리즈가 없어도
@@ -1006,6 +1008,14 @@ def check(out: Path, max_warnings: int, min_series: int, dashboard: Path | None)
         _check_fx_simulation(fx.get("markov"))
         _check_fx_model_c(fx.get("model_c"))
         _check_fx_model_d(fx.get("model_d"))
+        fx_history = fx["outlook"].get("history") if isinstance(fx.get("outlook"), dict) else None
+        for error in fx_validation_contract.errors(fx.get("validation"),
+                history=fx_history, model_c=fx.get("model_c")):
+            fail(f"fx.json: validation: {error}")
+        if isinstance(fx.get("lstm_xgb"), dict) and fx["lstm_xgb"].get("active"):
+            _, error = fx_lstm_xgb.validate(fx["lstm_xgb"])
+            if error:
+                fail(f"fx.json: lstm_xgb: {error}")
     _check_hedge_tail(payloads.get("hedge"))
     if isinstance(payloads.get("alloc"), dict):
         _check_reference_portfolio(payloads["alloc"].get("reference"))
