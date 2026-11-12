@@ -8187,6 +8187,20 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
     });
     if (report) riskStatus.textContent = invalid ? "대체투자 자동 비중을 계산할 수 없습니다. 다른 자산 비중을 0~100%, 합계 100% 이하로 입력하십시오." : "";
   };
+  // One table-level warning when any asset falls back to the realized sample mean (per-row notes stay hidden).
+  const histMuNote = el("div", { id: "port-hist-mu-note", class: "port-warn d-up", role: "status" });
+  const syncHistMuNote = () => {
+    const fileMu = (P.cma_input && P.cma_input.mu_pct) || {};
+    const hist = P.assets.filter((a) => !portCmaAssumption(a)
+      && !(st.mu[a] != null && isFinite(+st.mu[a]))
+      && !(fileMu[a] != null && isFinite(+fileMu[a])));
+    const W0 = E0.W;
+    histMuNote.hidden = !hist.length;
+    histMuNote.textContent = hist.length
+      ? `기대수익 미입력 ${hist.length}개 자산(${hist.join("·")})은 표본 실현 평균을 사용 중 — ` +
+        `${W0.start} ~ ${W0.end} (${W0.n_months}개월). 예측치가 아니므로 기대수익을 입력하거나 CMA를 적용하십시오.`
+      : "";
+  };
   const table = el("table", { class: "port-table" });
   // Suppress default-source notes while retaining explicit key-in/CMA indicators.
   const sourceLabel = (source) => source === "과거 평균(참고)" || source === "실측" ? "" : source;
@@ -8231,7 +8245,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
       if (blank) delete st.mu[a]; else st.mu[a] = muInp.validity?.badInput ? NaN : v;
       muInp.setAttribute("aria-invalid", String(!blank && (!Number.isFinite(v) || !!muInp.validity?.badInput)));
       srcCells[a].textContent = blank ? "" : "키인";
-      markPending();
+      syncHistMuNote(); markPending();
     });
     const srcNote = el("span", { class: "port-src" }, sourceLabel(E0.src[i]));
     srcCells[a] = srcNote;
@@ -8312,6 +8326,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   table.append(tbody);
   table.querySelectorAll("input").forEach((input) => rememberInput(input));
   syncAlternative();
+  syncHistMuNote();
   const sumBadge = el("span", { class: "port-badge" }), sum2Badge = el("span", { class: "port-badge" });
   const saveNote = el("span", { class: "port-note" },
     "입력 후 업데이트");
@@ -8333,7 +8348,7 @@ function renderPortPanel(A, { preserveDraft = false } = {}) {
   const taaPanel = el("div", { id: "port-taa-panel", class: "table-wrap port-input-table-wrap", role: "tabpanel",
     "aria-labelledby": `port-taa-tab-${st.taaTab}` }, table);
   box.append(el("div", { class: "port-sec-title port-constraint-heading" }, "TAA", scenarioTabs("taa")),
-    taaPanel, el("div", { id: "port-auto-weight-note", class: "port-note" }, "대체투자 비중 자동 · 100% − 나머지 자산 비중"), btnRow, riskStatus);
+    histMuNote, taaPanel, el("div", { id: "port-auto-weight-note", class: "port-note" }, "대체투자 비중 자동 · 100% − 나머지 자산 비중"), btnRow, riskStatus);
 
   const expTa = el("textarea", { class: "port-export", readonly: "", rows: "11",
                                  "aria-label": "CMA JSON" });
