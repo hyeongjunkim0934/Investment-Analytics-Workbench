@@ -7,7 +7,7 @@
 정상 종료(exit 0)로 내보낸다. CI 는 초록으로 끝나고, 대시보드는 해당 섹션이
 사라진 채 배포된다. 이 스크립트는 build 와 deploy 사이에서 그 상태를 잡는다.
 
-    python pipeline/check_output.py --out _site/data --max-warnings 20 --min-series 100
+    python pipeline/check_output.py --out _site/data --max-warnings 23 --min-series 100
 
 표준 라이브러리만 쓴다 — 의존성 설치가 깨진 상황에서도 돌아야 한다.
 

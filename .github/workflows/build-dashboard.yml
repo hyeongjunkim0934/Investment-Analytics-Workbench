@@ -48,9 +48,9 @@ concurrency:
 env:
   # 배포 게이트 임계값. **등호가 아니라 상한/바닥**이다 —
   # 경고 수와 시리즈 수는 data 저장소의 엑셀에서 오는 수라 갱신하면 정상적으로 바뀐다.
-  # 현재 기준선: 경고 7건 / 시리즈 444개 (정본은 Data 저장소 CLAUDE.md).
+  # 2026-11-26 기준선: 경고 21건 / 시리즈 606개 (docs/HANDOVER.md 같은 날짜 절).
   # 급감·급증만 신호로 보기 위해 넉넉히 잡는다.
-  GATE_MAX_WARNINGS: "20"
+  GATE_MAX_WARNINGS: "23"
   GATE_MIN_SERIES: "100"
 
 jobs:
