@@ -61,7 +61,7 @@ REQUIRED_KEYS = {
     # 게시돼야 한다 — 부재는 wiring 누락이다.
     "fx": ["ts", "outlook", "markov", "lstm_xgb", "model_c", "model_d", "validation"],  # 결측이어도 비활성 블록은 필수.
     "hedge": ["asof", "default_tenor_m", "matrix", "curves", "backtest",
-              "cost_hist_curve", "cost_hist_usd", "cost_dashboard", "cip", "fx_volatility", "cost_stats", "mtm", "sim",
+              "cost_hist_curve", "cost_hist_usd", "cost_dashboard", "cip", "forward", "fx_volatility", "cost_stats", "mtm", "sim",
               # ust_merit = 미국채 투자 메리트 모니터(§7.7.14). 시리즈가 없어도
               # active:false 로 항상 게시된다(bm.cma 와 같은 체인 안전장치).
               "ust_merit", "jgb_merit", "agb_merit", "bond_merits",
@@ -114,6 +114,8 @@ REQUIRED_NESTED_KEYS = {
     ("hedge", "cost_read"): ["label", "window", "asof"],
     ("hedge", "cost_dashboard"): ["JPY", "AUD", "USD"],
     ("hedge", "cip"): ["currency", "premium_method", "tenors"],
+    ("hedge", "forward"): ["schema", "active", "reason", "currency", "asof", "method", "current",
+                           "segments", "history", "backtest"],
 }
 
 _errors: list[str] = []
@@ -298,6 +300,88 @@ def _check_reference_portfolio(block, errors=None):
         invalid("기본 창 없음")
 
 
+def _check_hedge_forward(block):
+    """Forward-implied hedge premium path: identities and units, not forecast quality."""
+    if not isinstance(block, dict):
+        return                                   # absence is reported by REQUIRED_KEYS
+
+    def invalid(message):
+        fail(f"hedge.json: forward: {message}")
+
+    def finite(value):
+        return type(value) in (int, float) and math.isfinite(value)
+
+    def close(a, b):
+        return math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-9)
+
+    if block.get("schema") != "hedge_forward_v1" or block.get("currency") != "USD":
+        invalid("schema·통화 불일치")
+        return
+    if (block.get("method") or {}).get("forecast_skill_claimed") is not False:
+        invalid("예측 우위를 주장하지 않는다는 표시 누락")
+    backtest = block.get("backtest")
+    if not isinstance(backtest, list):
+        invalid("backtest 배열 필요")
+        return
+    for row in backtest:
+        if not isinstance(row, dict) or type(row.get("n")) is not int or row["n"] < 0:
+            invalid("backtest 행 형식 오류")
+            continue
+        if row.get("active") is not True:
+            if not row.get("reason"):
+                invalid("비활성 backtest 행의 사유 누락")
+            continue
+        if not all(finite(row.get(k)) and row[k] >= 0 for k in ("rmse", "rw_rmse")) or not finite(row.get("bias")):
+            invalid("backtest 지표가 유한한 수가 아님")
+            continue
+        if row["rw_rmse"] > 0 and not (finite(row.get("theil_u")) and close(row["theil_u"], row["rmse"] / row["rw_rmse"])):
+            invalid("Theil U가 RMSE 비율과 불일치")
+        if row.get("hit_rate") is not None and not (finite(row["hit_rate"]) and 0 <= row["hit_rate"] <= 1):
+            invalid("방향 적중률 범위 오류")
+        if type(row.get("hit_n")) is not int or not 0 <= row["hit_n"] <= row["n"]:
+            invalid("방향 판정 표본수 오류")
+    history = block.get("history") or {}
+    times = history.get("t")
+    if not isinstance(times, list) or not isinstance(history.get("segments"), list):
+        invalid("history 형식 오류")
+    elif any(not isinstance(s, dict) or not isinstance(s.get("diff"), list) or len(s["diff"]) != len(times)
+             or not all(finite(v) for v in s["diff"]) for s in history["segments"]):
+        invalid("history 길이·값 오류")
+    elif any(not finite(t) for t in times) or any(b <= a for a, b in zip(times, times[1:])):
+        invalid("history 시점이 오름차순이 아님")
+    if block.get("active") is not True:
+        if not block.get("reason"):
+            invalid("비활성 사유 누락")
+        return
+    current, segments = block.get("current"), block.get("segments")
+    if not isinstance(current, dict) or not all(finite(current.get(k)) for k in ("premium", "spread_1y", "gap", "gap_bp", "t")):
+        invalid("현재값 누락")
+        return
+    if not close(current["gap"], current["premium"] - current["spread_1y"]) or not close(current["gap_bp"], current["gap"] * 100):
+        invalid("괴리 = 프리미엄 − 1년 금리차 항등식 불일치")
+    if not isinstance(segments, list) or not segments:
+        invalid("구간 배열 필요")
+        return
+    previous_end = 0
+    for i, seg in enumerate(segments):
+        years = seg.get("years") if isinstance(seg, dict) else None
+        if (not isinstance(years, list) or len(years) != 2 or years[0] != previous_end or years[1] <= years[0]
+                or not all(finite(seg.get(k)) for k in ("kr", "us", "diff", "implied_premium", "change_vs_now"))):
+            invalid("구간이 0년부터 이어지지 않거나 값 누락")
+            return
+        previous_end = years[1]
+        if not close(seg["diff"], seg["kr"] - seg["us"]) or not close(seg["implied_premium"], seg["diff"] + current["gap"]) \
+                or not close(seg["change_vs_now"], seg["diff"] - current["spread_1y"]):
+            invalid("구간 금리차·내재 프리미엄 항등식 불일치")
+        if i == 0 and not (close(seg["diff"], current["spread_1y"]) and close(seg["implied_premium"], current["premium"])):
+            invalid("첫 구간이 현재 프리미엄과 일치하지 않음")
+    try:
+        if block.get("asof") != datetime.fromtimestamp(current["t"], tz=timezone.utc).strftime("%Y-%m-%d"):
+            invalid("asof와 현재 시점 불일치")
+    except (OverflowError, OSError, ValueError):
+        invalid("현재 시점을 날짜로 변환할 수 없음")
+
+
 def _check_hedge_tail(payload):
     """Validate optional bond analytics without requiring them in legacy fixtures.
 
@@ -464,8 +548,15 @@ def _check_fx_model_c(model):
     if not positive(anchor.get("v")) or not finite(anchor.get("t")) or not finite(anchor.get("quote_t")):
         invalid("기준 환율·시점 누락")
         return
-    if anchor["quote_t"] != anchor["t"]:
-        invalid("공통 호가일과 의사결정일 불일치")
+    # 월말 당일 공통 호가가 없으면 같은 달의 직전 공통 호가(최대 7일 전)를 쓴다.
+    if not 0 <= anchor["t"] - anchor["quote_t"] <= 7 * 86400:
+        invalid("공통 호가일이 의사결정일보다 늦거나 7일 넘게 이름")
+    stamp = lambda t: datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%d")
+    try:
+        if model.get("asof") != stamp(anchor["quote_t"]) or model.get("model_date") != stamp(anchor["t"]):
+            invalid("asof·model_date가 공통 호가일·의사결정일 시점과 불일치")
+    except (OverflowError, OSError, ValueError):
+        invalid("기준 시점을 날짜로 변환할 수 없음")
     spec = model.get("model") or {}
     if spec.get("ridge_lambda") != 1 or spec.get("shrinkage") != 0.5:
         invalid("고정 λ·축소비율 불일치")
@@ -1017,6 +1108,7 @@ def check(out: Path, max_warnings: int, min_series: int, dashboard: Path | None)
             if error:
                 fail(f"fx.json: lstm_xgb: {error}")
     _check_hedge_tail(payloads.get("hedge"))
+    _check_hedge_forward((payloads.get("hedge") or {}).get("forward"))
     if isinstance(payloads.get("alloc"), dict):
         _check_reference_portfolio(payloads["alloc"].get("reference"))
 

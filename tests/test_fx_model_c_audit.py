@@ -199,7 +199,7 @@ def test_fast_fx_updates_do_not_advance_common_month_or_select_longer_fallback()
     assert short["source"] == "bb:달러원"
 
 
-def test_missing_final_weekday_month_is_excluded_consistently_before_and_after_future_data():
+def test_missing_final_weekday_month_uses_earlier_quote_without_rewriting_earlier_forecasts():
     raw = _synthetic()
     quote_index = 125
     close_date = raw["bb:달러원"].index[quote_index]
@@ -214,9 +214,15 @@ def test_missing_final_weekday_month_is_excluded_consistently_before_and_after_f
     full, prefix = _horizons(full_payload), _horizons(prefix_payload)
     assert prefix_payload["model_date"] == str(raw["bb:달러원"].index[quote_index - 1].date())
     omitted_month = close_date.to_period("M")
+    used = 0
     for h, horizon in full.items():
-        assert all(_period(r["origin_date"]) != omitted_month and _period(r["target_date"]) != omitted_month
-                   for r in horizon["backtest"])
+        for r in horizon["backtest"]:
+            for side in ("origin", "target"):
+                if _period(r[side + "_date"]) == omitted_month:
+                    # Labelled at the last weekday, observed two business days earlier.
+                    assert r[side + "_date"] == str(close_date.date())
+                    assert r[side + "_quote_date"] == str(quote_date.date())
+                    used += 1
         old_rows = [r for r in horizon["backtest"] if r["target_date"] <= prefix_payload["model_date"]]
         assert old_rows == prefix[h]["backtest"]
         comparison = next((r for r in horizon["backtest"] if r["origin_date"] == prefix_payload["model_date"]), None)
@@ -227,3 +233,4 @@ def test_missing_final_weekday_month_is_excluded_consistently_before_and_after_f
         assert comparison["ridge"] == prefix[h]["ridge_point"]
         for name in ("n_train", "n_calibration", "lower68", "upper68", "lower95", "upper95"):
             assert comparison[name] == prefix[h][name]
+    assert used > 0

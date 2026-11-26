@@ -97,6 +97,11 @@ for(const mutate of [p=>p.anchor.t=p.anchor.quote_t=1e15,p=>p.horizons[0].target
   p=>p.horizons[0].metrics.coverage68=1.1,p=>p.horizons[0].n_calibration=2,p=>p.horizons.reverse()]){
   const broken=copy();mutate(broken);const result=render(broken);assert(!result.forecast&&!result.errors);assert.equal(live(),1);assert(host().textContent.includes('확인할 수 없어'));
 }
+// A month-end without a common quote is anchored on an earlier quote of that month (at most 7 days).
+const early=copy();early.anchor.quote_t=early.anchor.t-3*86400;early.asof=iso(early.anchor.quote_t);
+assert(render(early).forecast);assert(host().textContent.includes('호가 '+early.asof));assert(host().textContent.includes('모형 기준일 '+early.model_date));assert.notEqual(early.asof,early.model_date);
+const tooEarly=copy();tooEarly.anchor.quote_t=tooEarly.anchor.t-8*86400;tooEarly.asof=iso(tooEarly.anchor.quote_t);
+assert(!render(tooEarly).forecast);assert(host().textContent.includes('확인할 수 없어'));
 render({active:false,reason:'같은 날짜 금리자료가 부족합니다.'});assert(host().textContent.includes('같은 날짜 금리자료가 부족합니다.'));assert(!host().querySelector('.fx-c-value'));
 const noBounds=copy();noBounds.horizons.forEach(r=>{r.n_calibration=23;for(const k of ['lower68','upper68','lower95','upper95'])r[k]=null;});assert(render(noBounds).forecast);assert(host().querySelectorAll('.fx-c-bounds').every(n=>n.textContent.includes('표본 부족')));
 const oneInactive=copy();Object.assign(oneInactive.horizons[4],{active:false,reason:'학습 표본 부족'});assert(render(oneInactive).forecast);assert.equal(byId('fx-c-horizon').value,'1');assert(host().querySelectorAll('.fx-c-forecast')[4].textContent.includes('학습 표본 부족'));

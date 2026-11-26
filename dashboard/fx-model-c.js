@@ -16,7 +16,8 @@ function fxModelCBounds(row) {
 function fxModelCValid(p) {
   if (p?.active !== true || p.schema !== "fx_model_c_v1" || p.pair !== "USDKRW" || p.unit !== "KRW/USD"
       || !fxModelCTimestamp(p.anchor?.t) || !fxModelCTimestamp(p.anchor?.quote_t)
-      || p.anchor.quote_t !== p.anchor.t || !fxModelCPositive(p.anchor.v)
+      // 월말 당일 공통 호가가 없으면 같은 달의 직전 공통 호가(최대 7일 전)가 기준이다.
+      || p.anchor.quote_t > p.anchor.t || p.anchor.t - p.anchor.quote_t > 7 * 86400 || !fxModelCPositive(p.anchor.v)
       || p.asof !== tsToDate(p.anchor.quote_t) || p.model_date !== tsToDate(p.anchor.t)
       || !Array.isArray(p.horizons) || ![4, 5].includes(p.horizons.length)
       || p.model?.shrinkage !== .5 || p.model?.ridge_lambda !== 1) return false;

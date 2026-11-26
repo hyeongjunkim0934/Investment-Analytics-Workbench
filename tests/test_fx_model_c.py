@@ -131,26 +131,61 @@ def test_month_close_requires_latest_shared_date_and_drops_partial_month():
     assert result["sample"]["latest_common_date"] == partial.strftime("%Y-%m-%d")
 
 
-def test_month_end_weekend_uses_preceding_weekday_and_rejects_stale_quote():
+def _replace_last_quote(inputs, day, later="2015-11-02", keys=None):
+    out = {}
+    for key, values in inputs.items():
+        values = values.copy()
+        if keys is None or key in keys:
+            values.index = values.index[:-1].append(pd.DatetimeIndex([day]))
+        out[key] = pd.concat([values, pd.Series([float(values.iloc[-1])], index=[pd.Timestamp(later)])]) if later else values
+    return out
+
+
+def test_month_end_weekend_uses_preceding_weekday():
     inputs = raw(180, start="2000-11-01")
     # The final month is October 2015: the 31st is Saturday, decision is Friday30.
     assert inputs["bb:달러원"].index[-1] == pd.Timestamp("2015-10-30")
     result = model.build(inputs)
-    assert result["model_date"] == "2015-10-30"
-    assert horizon(result, 1)["target_date"] == "2015-11-30"
-    # A later November observation cannot retroactively complete stale October.
-    for key, values in inputs.items():
-        values = values.copy()
-        values.index = values.index[:-1].append(pd.DatetimeIndex(["2015-10-27"]))
-        inputs[key] = pd.concat([values, pd.Series([float(values.iloc[-1])], index=[pd.Timestamp("2015-11-02")])])
-    result = model.build(inputs)
-    assert result["asof"] == result["model_date"] == "2015-09-30"
+    assert result["asof"] == result["model_date"] == "2015-10-30"
     assert result["anchor"]["quote_t"] == result["anchor"]["t"]
-    assert result["sample"]["n_months"] == 179
-    assert result["model"]["max_endpoint_gap_days"] == 0
-    prefix = model.build({key: values.loc[:"2015-10-30"] for key, values in inputs.items()})
-    assert result["anchor"] == prefix["anchor"]
-    assert result["horizons"] == prefix["horizons"]
+    assert horizon(result, 1)["target_date"] == "2015-11-30"
+
+
+def test_month_end_without_common_quote_uses_latest_earlier_quote_of_that_month():
+    inputs = raw(180, start="2000-11-01")
+    exact = model.build(inputs)
+    # No common quote on Friday 30: Tuesday 27 stands in once later data closes the month.
+    moved = _replace_last_quote(inputs, "2015-10-27")
+    result = model.build(moved)
+    assert result["model_date"] == "2015-10-30" and result["asof"] == "2015-10-27"
+    assert result["anchor"]["t"] - result["anchor"]["quote_t"] == 3 * 86400
+    assert result["anchor"]["v"] == exact["anchor"]["v"]          # same level, earlier observation date
+    assert result["sample"]["n_months"] == exact["sample"]["n_months"] == 180
+    assert result["model"]["max_endpoint_gap_days"] == 7
+    assert horizon(result, 1)["target_date"] == "2015-11-30"
+    # Until data reaches the last weekday the month is still open: nothing is assumed.
+    open_month = model.build({key: values.loc[:"2015-10-30"] for key, values in moved.items()})
+    assert open_month["asof"] == open_month["model_date"] == "2015-09-30"
+    assert open_month["sample"]["n_months"] == 179
+    # A quote missing in only one input is not a common quote either.
+    partial = {key: pd.concat([values, pd.Series([float(values.iloc[-1])], index=[pd.Timestamp("2015-10-29")])]).sort_index()
+               for key, values in inputs.items()}
+    partial = _replace_last_quote(partial, "2015-10-28", keys={"bb:달러원"})      # FX has 28·29, rates have 29·30
+    one_missing = model.build(partial)
+    assert one_missing["model_date"] == "2015-10-30" and one_missing["asof"] == "2015-10-29"
+
+
+def test_month_end_fallback_never_reaches_past_seven_days_or_into_later_dates():
+    inputs = raw(180, start="2000-11-01")
+    # Tuesday 20 is ten days before the decision date: too old to stand for month-end.
+    stale = model.build(_replace_last_quote(inputs, "2015-10-20"))
+    assert stale["asof"] == stale["model_date"] == "2015-09-30"
+    assert stale["sample"]["n_months"] == 179
+    # Friday 23 is exactly seven days: still accepted.
+    edge = model.build(_replace_last_quote(inputs, "2015-10-23"))
+    assert edge["model_date"] == "2015-10-30" and edge["asof"] == "2015-10-23"
+    # The November quote is never borrowed backwards for October.
+    assert stale["anchor"]["t"] == stale["anchor"]["quote_t"]
 
 
 def test_missing_exact_month_endpoint_is_excluded_without_row_shift():
@@ -172,7 +207,7 @@ def test_missing_exact_month_endpoint_is_excluded_without_row_shift():
             assert origin != missing_month and target != missing_month
 
 
-def test_two_day_stale_historical_month_never_becomes_forecast_origin_later():
+def test_two_day_early_historical_month_end_is_used_with_its_actual_quote_date():
     inputs = raw(180)
     missing = inputs["bb:달러원"].index[100]
     for key, values in inputs.items():
@@ -184,9 +219,19 @@ def test_two_day_stale_historical_month_never_becomes_forecast_origin_later():
     full = model.build(inputs)
     prefix = model.build({key: values.loc[:missing] for key, values in inputs.items()})
     assert prefix["model_date"] == inputs["bb:달러원"].index[99].strftime("%Y-%m-%d")
-    assert full["sample"]["n_months"] == 179
+    assert full["sample"]["n_months"] == 180
+    label, quoted = missing.strftime("%Y-%m-%d"), (missing - pd.offsets.BDay(2)).strftime("%Y-%m-%d")
+    seen = 0
     for h in full["horizons"]:
-        assert all(bt["origin_date"] != missing.strftime("%Y-%m-%d") for bt in h["backtest"])
+        for bt in h["backtest"]:
+            # The decision label stays the month's last weekday; the quote date is the real one.
+            if bt["origin_date"] == label:
+                assert bt["origin_quote_date"] == quoted
+                seen += 1
+            if bt["target_date"] == label:
+                assert bt["target_quote_date"] == quoted
+                seen += 1
+            assert bt["origin_quote_date"] <= bt["origin_date"] and bt["target_quote_date"] <= bt["target_date"]
         # Forecasts actually available at the preceding completed month agree
         # whenever the h-month future target exists in the extended dataset.
         historical = next((bt for bt in h["backtest"] if bt["origin_date"] == prefix["model_date"]), None)
@@ -195,6 +240,7 @@ def test_two_day_stale_historical_month_never_becomes_forecast_origin_later():
             assert historical["model_c"] == estimate["point"]
             assert historical["ridge"] == estimate["ridge_point"]
             assert historical["n_calibration"] == estimate["n_calibration"]
+    assert seen > 0
 
 
 def test_calibration_count_requires_matured_errors_and_quantiles_match():
