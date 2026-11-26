@@ -106,6 +106,8 @@ def write_payloads(directory, markov):
     payloads["fx"]["validation"] = fx_validation.skeleton("synthetic: no common validation inputs")
     import reference_portfolio
     payloads["alloc"]["reference"] = reference_portfolio.inactive("synthetic: no reference inputs")
+    import hedge_forward
+    payloads["hedge"]["forward"] = hedge_forward.skeleton("synthetic: no forward-path inputs")
     for name, value in payloads.items():
         (directory / f"{name}.json").write_text(json.dumps(value), encoding="utf-8")
 
