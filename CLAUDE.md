@@ -7,6 +7,9 @@
 - `pipeline/research/fx_training_input.py`가 비공개 CSV 3개를 검사한다. 모두 있으면 빌드에서
   CPU 학습 또는 입력·코드·환경 키가 일치하는 캐시를 이용하고, 검증된 예측 JSON만 게시한다.
   일부 입력만 있으면 빌드를 중단한다. 원자료나 학습 로그를 캐시하지 않는다.
+  2026-11-26: `table.csv`는 선택이다. 국제수지 CSV 2개만 있으면 금리·환율 월말 표를 기존
+  `bb:달러원`·`info:UST*`·`info:한국_*` 계열에서 만든다(`month_end_table`). 표 내용이 캐시 키에 들어가므로
+  엑셀이 갱신되어 완료월이 늘면 다시 학습한다. 올린 `table.csv`가 있으면 그것이 우선한다.
 - `dashboard/fx-forecast-status.js`는 서울 날짜·정확한 목표일 관측으로 A–D·요약의
   미래/당시 전망/실현대기를 구분한다. 현재 VaR·노출 참고치와 역사적 결과를 분리한다.
 - `pipeline/fx_validation.py` → `fx.json.validation`: 공통 기준일·목표일에서 A/C/D,
