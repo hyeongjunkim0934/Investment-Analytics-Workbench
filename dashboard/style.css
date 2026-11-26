@@ -1700,6 +1700,15 @@ a.kpi-link .kpi-label > span:first-child::after {
 .hedge-cip-chart .uplot { display: flex; flex-direction: column; }
 .hedge-cip-chart .u-legend { order: -1; margin: 0 0 10px !important; }
 .hedge-cip-chart-sample { color: var(--ink-3); font-size: 10px; margin: 8px 0 0; font-variant-numeric: tabular-nums; }
+.hedge-forward { margin-top: 28px; padding-top: 6px; border-top: 1px solid var(--border); }
+.hedge-forward-verdict { margin: 0 0 12px; }
+.hedge-forward-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.hedge-forward-tile .hedge-cip-metric { grid-template-columns: minmax(0, 1fr) max-content max-content; }
+.hedge-forward-card.card { min-width: 0; margin: 14px 0 0; }
+.hedge-forward-history .uplot { display: flex; flex-direction: column; }
+.hedge-forward-history .u-legend { order: -1; margin: 0 0 10px !important; }
+.hedge-forward-path, .hedge-forward-backtest { width: 100%; }
+@media (max-width: 900px) { .hedge-forward-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 1050px) {
   .hedge-cip-value { font-size: 17px; }
   .hedge-cip-stat.card { padding: 11px; }

@@ -4190,6 +4190,7 @@ function renderHedge() {
   if (!$("#hedge")) return;
   renderHedgeWorkspace();
   renderHedgeCip(H2?.cip);
+  renderHedgeForward(H2?.forward);
   renderHedgeModelB(H2);
   renderHedgeModelC(H2);
   renderHedgeModelSummary(H2);

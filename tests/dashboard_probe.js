@@ -221,6 +221,8 @@ vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "fx-outlook.js"), "
   { filename: "dashboard/fx-outlook.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-cip.js"), "utf8"), sandbox,
   { filename: "dashboard/hedge-cip.js" });
+vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-forward.js"), "utf8"), sandbox,
+  { filename: "dashboard/hedge-forward.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-optimizer.js"), "utf8"), sandbox,
   { filename: "dashboard/hedge-optimizer.js" });
 vm.runInContext(fs.readFileSync(path.join(ROOT, "dashboard", "hedge-model-b.js"), "utf8"), sandbox,
@@ -238,7 +240,7 @@ const EXPORTS = ["baseAxes", "stampLatest", "stampDate", "makeTimeChart", "secti
   "bandInk", "relLum", "deltaText", "factorRow", "renderEvents", "renderMetaLine",
   "cardScaffold", "el", "registry", "DATA", "BANDS", "SECTION_IDS", "palette",
   "renderHedge", "openHedgeSim", "hedgeRows", "hedgeCostAt", "renderMacro", "COST_SIGN_KEY",
-  "hedgeCostSnapshot", "hedgeCipStats", "hedgeCipSelection", "renderHedgeCip", "selectHedgeWorkspace", "applyRange", "bindRangeButtons", "state",
+  "hedgeCostSnapshot", "hedgeCipStats", "hedgeCipSelection", "renderHedgeCip", "renderHedgeForward", "hedgeForwardValid", "hedgeForwardVerdict", "selectHedgeWorkspace", "applyRange", "bindRangeButtons", "state",
   "hedgeModelBCompute", "hedgeModelBDefaults", "renderHedgeModelB", "hedgeModelBResize", "hedgeModelBDispose",
   "hedgeModelCCompute", "hedgeModelCDefaults", "renderHedgeModelC", "hedgeModelCResize", "hedgeModelCDispose", "hedgeModelCLoadState",
   "SCENE_CYCLE_MS", "sceneCycleAllowed", "restartSceneCycle", "stopSceneCycle",

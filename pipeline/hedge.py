@@ -22,6 +22,7 @@ import pandas as pd
 
 import common
 import hedge_cip
+import hedge_forward
 import hedge_tail
 # 재수출 — 정의는 common 에만 있다 (tests/test_formulas.py 가 동일성을 단정).
 from common import epoch_seconds
@@ -460,6 +461,15 @@ def build_bond_merits(series: dict, warn, ust_merit: dict) -> dict:
     return merits
 
 
+def _forward(series: dict, warn) -> dict:
+    """Forward-implied premium path; a failure here must not cost the whole hedge payload."""
+    try:
+        return hedge_forward.build(series)
+    except Exception as exc:  # noqa: BLE001 — isolate, surface, keep publishing the block
+        warn(f"hedge: forward path failed ({type(exc).__name__}) — 비활성 블록으로 게시")
+        return hedge_forward.skeleton("계산 실패 — 빌드 경고를 확인하십시오")
+
+
 def build(series_store: dict, warn) -> dict:
     S = {k: v["s"] for k, v in series_store.items()}
 
@@ -704,6 +714,7 @@ def build(series_store: dict, warn) -> dict:
         "matrix": matrix,
         "cost_dashboard": cost_dashboard,
         "cip": hedge_cip.build(S),
+        "forward": _forward(S, warn),
         "fx_volatility": build_fx_volatility(S),
         "curves": curves,
         "backtest": backtest,

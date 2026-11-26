@@ -28,7 +28,7 @@ SHRINKAGE = 0.5
 MIN_TRAIN = 60
 MAX_TRAIN = 120
 MIN_CALIBRATION = 24
-ENDPOINT_MAX_DAYS = 0
+ENDPOINT_MAX_DAYS = 7
 FEATURES = (
     ("rate_spread", "한미 1년 금리차"),
     ("momentum_1m", "1개월 모멘텀"),
@@ -67,7 +67,7 @@ def skeleton(reason="입력 데이터 없음"):
             "rates": {"kr": KR_SOURCE, "us": US_SOURCE, "unit": "percent_points"},
             "features": [key for key, _ in FEATURES],
             "alignment": "same_date_inner_join_no_fill",
-            "month_close": "exact_last_weekday_common_quote_no_holiday_calendar",
+            "month_close": "last_common_quote_on_or_before_last_weekday_no_holiday_calendar",
             "max_endpoint_gap_days": ENDPOINT_MAX_DAYS,
             "interval": "past_matured_oos_log_error_empirical_quantiles",
             "interval_min_n": MIN_CALIBRATION,
@@ -96,13 +96,18 @@ def _monthly_panel(series):
         return source, daily, rows
     latest = daily.index[-1]
     for period, block in daily.groupby(daily.index.to_period("M")):
-        quote = block.index[-1]
         decision = _decision_date(period)
-        # Require an actual common quote on the scheduled last weekday. A later
-        # month's data must not retroactively turn an earlier stale quote into
-        # a known month-end observation. Missing local holidays are therefore
-        # omitted, not filled; a historical prefix yields the same snapshots.
-        if latest < decision or quote != decision:
+        block = block.loc[:decision]
+        # The month closes only once common data reaches its last weekday or
+        # beyond. When that day has no common quote (holiday, bad export
+        # cell) the latest earlier common quote of the same month stands in,
+        # at most ENDPOINT_MAX_DAYS calendar days old; nothing is filled or
+        # taken from a later date. ``date`` stays the decision label and
+        # ``quote_date`` records the observation actually used.
+        if latest < decision or block.empty:
+            continue
+        quote = block.index[-1]
+        if (decision - quote).days > ENDPOINT_MAX_DAYS:
             continue
         value = block.iloc[-1]
         rows[period] = {"period": period, "date": decision, "quote_date": quote,

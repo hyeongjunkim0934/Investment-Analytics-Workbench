@@ -13,6 +13,11 @@ def payload():
     return fx_model_c.build(raw(150))
 
 
+def _day(t):
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
 def errors(payload):
     check_output._errors.clear()
     check_output._check_fx_model_c(payload)
@@ -33,6 +38,9 @@ def test_valid_active_inactive_and_short_history_contracts(payload):
     lambda p: p["horizons"][3].update(horizon_months=8),
     lambda p: p["anchor"].update(v=None),
     lambda p: p["anchor"].update(quote_t=p["anchor"]["t"] - 86400),
+    lambda p: p["anchor"].update(quote_t=p["anchor"]["t"] + 86400),
+    lambda p: (p["anchor"].update(quote_t=p["anchor"]["t"] - 8 * 86400), p.update(asof=_day(p["anchor"]["quote_t"]))),
+    lambda p: p.update(model_date="2000-01-31"),
     lambda p: p["model"].update(shrinkage=.8),
     lambda p: p["horizons"][0].update(point=float("nan")),
     lambda p: p["horizons"][0].update(ridge_point=1500),
@@ -67,3 +75,11 @@ def test_pipeline_adds_model_c_and_isolates_its_failure(monkeypatch):
     result = process.build_fx()
     assert result["model_c"]["active"] is False
     assert result["model_c"]["reason"] and process.WARNINGS
+
+
+def test_anchor_may_be_an_earlier_quote_of_the_same_week_when_dates_say_so(payload):
+    early = copy.deepcopy(payload)
+    early["anchor"]["quote_t"] = early["anchor"]["t"] - 3 * 86400
+    early["asof"] = _day(early["anchor"]["quote_t"])
+    assert not errors(early)
+    assert early["asof"] != early["model_date"]

@@ -3,7 +3,7 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.hedge = {
   "id": "hedge",
   "title": "환헤지",
-  "updated": "2026-11-06",
+  "updated": "2026-11-26",
   "summary": "현재 캐리 관측 → 공동 채권·환 위험 → A의 금리차 진단 → B의 평균분산·C의 꼬리손실 의사결정 → 누적수익률 요약. 각 단계의 데이터·단위·가정·적용 범위를 분리한다.",
   "inputs": "HP 3M·6M·12M, SMB USD 3M, 10년 국채금리: 연 % · 환율: 외화당 원(JPY는 100엔당 원)",
   "outputs": "비용·금리·연 변동성: % · 메리트·위험감소: %p · A 괴리: bp·Z · B/C 헤지비율: % · 월간 ES: 손실 % · 요약: 누적수익률 %",
@@ -379,6 +379,58 @@ globalThis.PSEUDO_DOCS.hedge = {
             "hedgeCipStats",
             "hedgeCipSelection",
             "renderHedgeCip"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "usd-forward-path",
+      "title": "USD 모델A · 금리 곡선에 내재된 헤지비용 경로",
+      "formulas": [
+        {
+          "expression": "f(a,b) = [(1 + y_b)^b / (1 + y_a)^a]^(1/(b−a)) − 1; f(0,b) = y_b",
+          "legend": "a~b년 구간의 연율 포워드 금리 · y: 1·2·3·5·10년 국채금리를 연복리 제로금리로 간주한 소수 금리 · 구간 0~1, 1~2, 2~3, 3~5, 5~10년",
+          "latex": String.raw`f(a,b)=\left[\frac{(1+y_b)^b}{(1+y_a)^a}\right]^{\frac1{b-a}}-1,\qquad f(0,b)=y_b`
+        },
+        {
+          "expression": "Δ(a,b) = f_KR(a,b) − f_US(a,b); g = p̄ − Δ(0,1); p̂(a,b) = Δ(a,b) + g",
+          "legend": "Δ: 포워드 금리차 %p(한국−미국) · p̄: 모델A와 같은 평균 헤지 프리미엄 연 %(양수 수취·음수 지불) · g: 현재 괴리, 미래에도 일정하다고 가정 · p̂(0,1) = p̄",
+          "latex": String.raw`\begin{aligned}\Delta(a,b)&=f_{KR}(a,b)-f_{US}(a,b),\\g&=\bar p-\Delta(0,1),\\\hat p(a,b)&=\Delta(a,b)+g\end{aligned}`
+        },
+        {
+          "expression": "eₜ = Δₜ(k,k+1) − Δₜ₊₁₂ₖ(0,1); e_RW,ₜ = Δₜ(0,1) − Δₜ₊₁₂ₖ(0,1); U = RMSE(e) / RMSE(e_RW)",
+          "legend": "k = 1, 2년 · t: 매월 마지막 공통 관측(최신 월 제외) · 목표는 달력 월 키로 12k개월 뒤 · 편향 = mean(e) · 방향 적중은 예측·실현 변화가 모두 있을 때만",
+          "latex": String.raw`\begin{aligned}e_t&=\Delta_t(k,k+1)-\Delta_{t+12k}(0,1),\\e_{RW,t}&=\Delta_t(0,1)-\Delta_{t+12k}(0,1),\\U&=\frac{\mathrm{RMSE}(e)}{\mathrm{RMSE}(e_{RW})}\end{aligned}`
+        }
+      ],
+      "code": "curve = inner_join_by_date(korea_and_us_yields_at_1_2_3_5_10_years)  # 보간·앞채움 없음\nforwards = annual_compounding_forward_rates_between_consecutive_nodes(curve)\ndifferential = forwards.korea - forwards.us\nhistory = weekly_last_actual_observation(differential)\nfor k in 1, 2:\n  monthly = last_common_observation_of_each_completed_month(differential)\n  compare(differential[k..k+1], no_change, realized_1y_differential_after_12k_months_by_calendar_month)\n  publish(n, rmse, rw_rmse, theil_u, bias, hit_rate) if n >= 24 else publish_reason()\ntoday = latest_date_with_curve_and_all_three_hedge_quotes()\ngap = average_premium(today) - differential[0..1](today)\nfor segment: implied_premium = differential[segment](today) + gap",
+      "note": "시장이 반영한 경로이며 예측 우위를 주장하지 않는다. 화면은 과거 성적을 같은 자리에 표시하고 포워드가 현 수준 유지보다 못했으면 그 사실을 접지 않고 적는다. 이표채 금리를 제로금리로 쓰는 근사이며 국채금리와 선물환 프리미엄은 상품·만기가 다르다. 괴리는 전망하지 않고 현재값을 유지한다. 월별 평가 표본은 겹치며 현재 자료로 다시 계산한 값이다. 자세한 정의는 docs/HEDGE_FORWARD.md.",
+      "purpose": "두 나라 금리 곡선이 이미 반영한 미래 금리차로 헤지 프리미엄의 내재 경로를 읽고 그 기대의 과거 성적을 함께 본다.",
+      "decisions": [
+        "금리차는 한국−미국, 프리미엄은 양수 수취·음수 지불이다. 첫 구간의 내재 프리미엄은 현재 평균 프리미엄과 항상 같다.",
+        "괴리(베이시스)는 수급 요인이라 전망하지 않고 현재값으로 고정한다. 내재 경로의 변화는 전부 포워드 금리차에서 온다.",
+        "과거 성적의 비교 기준은 1년 금리차가 그대로라는 가정이다. Theil U가 1 이상이면 포워드가 더 나쁜 것이며 전망으로 쓰지 않는다.",
+        "모든 입력이 같은 날짜에 관측된 경우만 쓴다. 헤지 호가가 금리보다 먼저 끊기면 경로의 기준일은 호가가 있는 마지막 날이다."
+      ],
+      "checks": [
+        "첫 구간 금리차 = 현재 1년 금리차, 첫 구간 내재 프리미엄 = 현재 평균 프리미엄인지 확인한다.",
+        "각 구간에서 금리차 = 한국 포워드 − 미국 포워드, 내재 프리미엄 = 금리차 + 현재 괴리가 성립하는지 확인한다.",
+        "평가 표본이 24개 미만인 지평은 지표 대신 사유가 표시되는지, 최신(미완료) 월이 평가에서 빠지는지 확인한다."
+      ],
+      "sources": [
+        {
+          "path": "pipeline/hedge_forward.py",
+          "symbols": [
+            "forward_rate",
+            "build"
+          ]
+        },
+        {
+          "path": "dashboard/hedge-forward.js",
+          "symbols": [
+            "hedgeForwardValid",
+            "hedgeForwardVerdict",
+            "renderHedgeForward"
           ]
         }
       ]
