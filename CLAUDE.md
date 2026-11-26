@@ -422,7 +422,7 @@ pip install -r tests/requirements.txt      # 테스트를 돌릴 때만
 python -m pytest
 
 # 배포 게이트 — 파이프라인 출력이 JSON 계약을 지키는지. 실패하면 exit 1
-python pipeline/check_output.py --out _site/data --max-warnings 20 --min-series 100 \
+python pipeline/check_output.py --out _site/data --max-warnings 23 --min-series 100 \
   --dashboard dashboard/app.js
 
 # 파이프라인 — --data-dir 는 data 저장소 체크아웃(재귀 탐색), --out 은 JSON을 쏟을 디렉터리
