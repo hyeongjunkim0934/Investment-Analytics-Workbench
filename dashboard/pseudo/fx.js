@@ -3,7 +3,7 @@ globalThis.PSEUDO_DOCS = globalThis.PSEUDO_DOCS || {};
 globalThis.PSEUDO_DOCS.fx = {
   "id": "fx",
   "title": "환율전망",
-  "updated": "2026-11-10",
+  "updated": "2026-11-26",
   "summary": "정본 환율·컨센서스 → A 국면전환·B 달력 정렬 학습·C 축소추정·D 조건부 변동성 → 만기별 실현 평가와 공통 표본외 검증. 전망 중심·구간·평가 표본의 정의를 구분한다.",
   "inputs": "USDKRW 양수 관측(원/달러), 모형별 금리·피처·오프라인 artifact, 브라우저 컨센서스 입력 · 일/월 표본·정보 가용시점은 모형별 계약을 따른다.",
   "outputs": "환율 수준: 원/달러 · 로그수익률: 소수 · 연 변동성·달러 보유자의 손실 VaR/ES: % · 모형별 기준일·목표일·표본·가용 상태",
@@ -332,11 +332,11 @@ globalThis.PSEUDO_DOCS.fx = {
           "latex": "\\begin{aligned}U&=\\frac{\\mathrm{RMSE}}{\\mathrm{RMSE}_{RW}},\\\\\\operatorname{HitRate}&=\\frac1N\\sum_t\\mathbf1\\!\\left[\\operatorname{sgn}(\\hat S_{t+l}-S_t)=\\operatorname{sgn}(S_{t+l}-S_t)\\right]\\end{aligned}"
         }
       ],
-      "code": "inspect_exact_three_private_monthly_CSV_inputs()\nif partial_inputs: fail_build_without_reusing_old_artifact()\nif complete_inputs: reuse_exact_hash_cache_or_train_v2_and_validate()\nmonthly_grid = retain_missing_calendar_months()\nfor origin in monthly_grid:\n  train = consecutive_complete_origin_months_with_labels_matured_by(origin)\n  sequence_label = target_of_last_input_month()\n  predict_both_models_at_exact_calendar_target()\nvalidate_v2_safety_calendar_cutoff_and_equal_weight_ensemble()\nrecompute_metrics_on_observed_targets_and_publish_only_forecast_metadata()",
+      "code": "inspect_two_private_BOP_CSV_inputs_and_optional_table_CSV()\nif partial_inputs: fail_build_without_reusing_old_artifact()\nif table_CSV_absent: table = month_end_last_valid_weekday_quotes_of_existing_FX_and_KR_US_yield_series_without_fill()\nif complete_inputs: reuse_exact_hash_cache_or_train_v2_and_validate()\nmonthly_grid = retain_missing_calendar_months()\nfor origin in monthly_grid:\n  train = consecutive_complete_origin_months_with_labels_matured_by(origin)\n  sequence_label = target_of_last_input_month()\n  predict_both_models_at_exact_calendar_target()\nvalidate_v2_safety_calendar_cutoff_and_equal_weight_ensemble()\nrecompute_metrics_on_observed_targets_and_publish_only_forecast_metadata()",
       "note": "v2는 달력 월말 의사결정일·연속 월 학습창·시퀀스 마지막 입력 정렬을 강제한다. 작은 학습창·시드 민감성과 실제 공표일·자료 개정 빈티지의 한계는 남는다. 학습 입력이 없는 상태를 다른 모형으로 대체하지 않는다.",
       "purpose": "오프라인에서 생성한 LSTM·XGBoost 예측을 계약 검증 후 게시하고 같은 평가행에서 비교한다.",
       "decisions": [
-        "기존 빌드는 CSV 3개가 모두 있으면 정확한 입력·코드·의존성 해시 캐시를 검증하거나 CPU 러너를 실행한다. 입력이 모두 없으면 수동 산출물 경로를 유지하고, 일부만 있으면 배포를 차단한다.",
+        "기존 빌드는 국제수지 CSV 2개가 있으면 정확한 입력·코드·의존성 해시 캐시를 검증하거나 CPU 러너를 실행한다. 금리·환율 월말 표는 올린 table.csv가 없으면 대시보드의 기존 원/달러·한미 국채 3개월·1·3·10년 계열에서 만든다. 각 칸은 해당 월 마지막 유효 평일 관측이며 월말 7일 이내 관측이 없으면 결측이다. 입력이 모두 없으면 수동 산출물 경로를 유지하고, 일부만 있으면 배포를 차단한다.",
         "v1·notebook 미래 라벨·NS 양방향 보간·국제수지 지연 2개월 미만은 운영 로더가 거부한다. 공표 지연은 실제 공표일 달력이 아닌 근사다.",
         "월 격자의 누락 월은 유지한다. 연속 학습창·현재 시퀀스가 불완전하면 그 기준일을 건너뛰고, 타깃 월 spot은 그 달 피처가 없어도 실현값으로 보존한다.",
         "XGB는 원피처, LSTM은 학습창으로만 표준화한다. 두 모형은 동일 달력 지평을 예측하며 단순평균 가중치를 표본 성과로 바꾸지 않는다.",

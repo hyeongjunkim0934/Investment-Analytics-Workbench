@@ -187,3 +187,104 @@ def test_workflow_orders_training_before_normal_loader_and_never_caches_inputs()
     assert "needs_training == 'true'" in workflow
     assert "timeout-minutes: 240" in workflow
     assert "pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu" in workflow
+
+
+# ---- table.csv derived from the dashboard's own series (BOP CSVs only) ----
+def _bop_only(tmp_path):
+    data, folder = _inputs(tmp_path)
+    (folder / training.TABLE_INPUT).unlink()
+    return data, folder
+
+
+def _daily(values_by_date):
+    import pandas as pd
+    return pd.Series(list(values_by_date.values()), index=pd.to_datetime(list(values_by_date)))
+
+
+def _series(spot_key="bb:달러원", **overrides):
+    days = {"2030-01-30": 1.0, "2030-01-31": 2.0, "2030-02-27": 3.0, "2030-02-28": 4.0, "2030-03-12": 5.0}
+    out = {spot_key: _daily({day: 1000 + value for day, value in days.items()})}
+    for column, key in training.TABLE_YIELDS:
+        out[key] = _daily(days)
+    out.update(overrides)
+    return out
+
+
+def test_month_end_table_uses_last_valid_weekday_and_keeps_incomplete_month_last():
+    table = training.month_end_table(_series())
+    assert list(table.columns) == ["date", "spot"] + [column for column, _ in training.TABLE_YIELDS]
+    assert list(table["date"]) == ["2030-01-31", "2030-02-28", "2030-03-31"]
+    assert list(table["spot"]) == [1002.0, 1004.0, 1005.0]
+    assert list(table["kr_10y"]) == [2.0, 4.0, 5.0]
+
+
+def test_month_end_table_rejects_stale_weekend_and_nonpositive_values_without_filling():
+    import math
+    # Saturday quote and a zero level are not observations; the 20th is too early to stand for month-end.
+    spot = _daily({"2030-01-31": 1002.0, "2030-02-28": 0.0, "2030-02-20": 1003.0, "2030-03-12": 1005.0})
+    kr = _daily({"2030-01-31": 2.0, "2030-02-28": 4.0, "2030-03-02": 9.0, "2030-03-12": 5.0})   # 03-02 = Saturday
+    table = training.month_end_table(_series(**{"bb:달러원": spot, "info:한국_3m": kr}))
+    assert math.isnan(table["spot"][1]) and table["spot"][0] == 1002.0
+    assert list(table["kr_3m"]) == [2.0, 4.0, 5.0]
+
+
+def test_month_end_table_ends_at_the_earliest_latest_observation():
+    late = _daily({"2030-01-31": 2.0, "2030-02-27": 3.9, "2030-02-28": 4.0, "2030-03-12": 5.0, "2030-04-30": 6.0})
+    early = _daily({"2030-01-31": 2.0, "2030-02-27": 3.5})
+    table = training.month_end_table(_series(**{"info:UST10y": late, "info:한국_1y": early}))
+    # No column may contribute a day another column has not reached.
+    assert list(table["date"]) == ["2030-01-31", "2030-02-28"]
+    assert table["usa_10y"][1] == 3.9 and table["kr_1y"][1] == 3.5
+
+
+def test_month_end_table_spot_fallback_and_missing_series_error_names_no_values():
+    fallback = _series(spot_key="info:USDKRW")
+    assert training.month_end_table(fallback)["spot"][0] == 1002.0
+    broken = _series()
+    del broken["info:UST3y"]
+    with pytest.raises(training.InputError, match="usa_3y") as error:
+        training.month_end_table(broken)
+    assert "1002" not in str(error.value)
+
+
+def test_bop_only_upload_is_ready_and_table_bytes_enter_cache_identity(tmp_path):
+    data, folder = _bop_only(tmp_path)
+    first = training.inspect_inputs(data, ROOT, table=lambda *_: b"date,spot\n2030-01-31,1\n")
+    assert first["ready"] and first["status"] == "inputs_ready_table_derived"
+    assert first["provenance"]["table_source"] == "dashboard_series_month_end"
+    second = training.inspect_inputs(data, ROOT, table=lambda *_: b"date,spot\n2030-01-31,2\n")
+    assert first["cache_key"] != second["cache_key"]
+    explicit = training.inspect_inputs(_inputs(tmp_path / "explicit")[0], ROOT)
+    assert "table_source" not in explicit["provenance"] and explicit["table_csv"] is None
+
+
+def test_table_without_both_bop_files_is_still_a_partial_upload(tmp_path):
+    data, folder = _inputs(tmp_path)
+    for name in training.BOP_INPUTS:
+        (folder / name).unlink()
+    with pytest.raises(training.InputError, match="일부만"):
+        training.inspect_inputs(data, ROOT, table=lambda *_: pytest.fail("no derivation for a partial upload"))
+
+
+def test_derived_table_trains_from_scratch_folder_and_never_lands_in_data(tmp_path, monkeypatch):
+    from test_fx_lstm_xgb import _artifact
+    data, folder = _bop_only(tmp_path)
+    table = lambda *_: b"derived-table-bytes"
+    monkeypatch.setattr(training.importlib.metadata, "version", lambda name: "fixture")
+    seen = {}
+    def run(command, **kwargs):
+        inputs = Path(command[command.index("--data-dir") + 1])
+        seen["dir"] = inputs
+        seen["files"] = {path.name: path.read_bytes() for path in inputs.iterdir()}
+        Path(command[command.index("--out") + 1]).write_text(json.dumps(_artifact()), encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    assert training.ensure_artifact(data, ROOT, tmp_path / "cache", run=run, table=table) == "trained_and_validated"
+    assert seen["files"][training.TABLE_INPUT] == b"derived-table-bytes"
+    assert set(seen["files"]) == set(training.INPUTS)
+    assert not seen["dir"].is_relative_to(data) and not seen["dir"].exists()
+    assert not (folder / training.TABLE_INPUT).exists()
+    assert sorted(path.name for path in folder.iterdir()) == sorted([*training.BOP_INPUTS, training.ARTIFACT])
+    def forbidden(*args, **kwargs):
+        pytest.fail("matching derived-table cache must avoid retraining")
+    assert training.ensure_artifact(data, ROOT, tmp_path / "cache", run=forbidden, table=table) == "validated_cache_reused"
+    assert training.ensure_artifact(data, ROOT, tmp_path / "cache", run=run, table=lambda *_: b"newer-table") == "trained_and_validated"
