@@ -55,6 +55,10 @@ assert.equal(live(), before + 1);
 const chart = shim.UPlotStub.made.filter(u => !u.dead).at(-1);
 assert.equal(chart.data.length, 4);
 assert.deepEqual(Array.from(chart.data[2]), [-0.7,-0.6,-0.5]);
+const emptyNote = () => host().querySelectorAll('p').find(n => n.textContent.includes('표시할 이력이 없습니다'));
+assert(emptyNote() && emptyNote().hidden, 'the empty-history note must be hidden while a chart is shown');
+const noHistory = copy(); noHistory.history = {t:[],segments:[]}; P.renderHedgeForward(noHistory);
+assert(emptyNote() && !emptyNote().hidden); assert.equal(live(), before); P.renderHedgeForward(copy());
 
 // Track record: active row shows the ratio; inactive row shows its reason, never a made-up number.
 const bt = rows('hedge-forward-backtest');

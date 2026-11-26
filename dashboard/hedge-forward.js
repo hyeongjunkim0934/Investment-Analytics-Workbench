@@ -106,6 +106,7 @@ function renderHedgeForward(payload) {
     tableFn: tsTableFn(labels.map((l) => `${l} (%p)`), [history.t || [], ...shown.map((s) => s.diff)], 2) });
   const empty = el("p", { class: "card-sub", role: "status" }, "표시할 이력이 없습니다.");
   box.append(empty);
+  empty.hidden = Boolean(shown.length && history.t.length);
   if (shown.length && history.t.length) {
     const pal = palette();
     const chart = makeTimeChart(box, { labels, colors: shown.map((_, i) => pal.series[i % pal.series.length]),
